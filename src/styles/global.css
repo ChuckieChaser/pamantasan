@@ -1,0 +1,43 @@
+/* --- IMPORTS --- */
+@import './theme.css';
+@import './animation.css';
+
+/* --- STYLES --- */
+@layer base {
+    * {
+        scrollbar-width: none;
+    }
+
+    *:focus-visible {
+        outline: 2px solid var(--color-accent);
+        outline-offset: 2px;
+    }
+
+    *::-webkit-scrollbar {
+        display: none;
+    }
+
+    :where(h1, h2, h3, h4, h5, h6) {
+        font-family: var(--font-serif);
+    }
+
+    ::selection {
+        background-color: var(--color-accent-background);
+        color: var(--color-accent);
+    }
+
+    html {
+        scroll-behavior: smooth;
+    }
+
+    body {
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+
+        background-color: var(--color-background);
+        color: var(--color-text);
+
+        font-family: var(--font-sans);
+        text-rendering: optimizeLegibility;
+    }
+}

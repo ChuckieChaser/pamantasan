@@ -1,0 +1,102 @@
+/* --- IMPORTS --- */
+@import 'tailwindcss';
+
+/* --- CONFIGURATIONS --- */
+@font-face {
+    font-family: 'Fraunces';
+    src: url('../assets/fonts/Fraunces.ttf') format('truetype-variations');
+    font-weight: 100 900;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: 'Inter';
+    src: url('../assets/fonts/Inter.ttf') format('truetype-variations');
+    font-weight: 100 900;
+    font-style: normal;
+    font-display: swap;
+}
+
+/* --- STYLES --- */
+@theme {
+    /* SCALING MULTIPLIER */
+    --spacing: 0.25rem;
+
+    --text-xs: 0.75rem;
+    --text-sm: 0.875rem;
+    --text-base: 1rem;
+    --text-lg: 1.125rem;
+    --text-xl: 1.5rem;
+    --text-2xl: 1.75rem;
+
+    --radius-sm: 0.25rem;
+    --radius-md: 0.5rem;
+    --radius-lg: 0.75rem;
+    --radius-xl: 1rem;
+
+    /* COLOR PALETTE */
+    --color-background: var(--color-zinc-50);
+    --color-surface: var(--color-white);
+    --color-surface-border: var(--color-zinc-200);
+    --color-surface-hover: var(--color-zinc-100);
+
+    --color-text: var(--color-zinc-900);
+    --color-text-muted: var(--color-zinc-500);
+
+    --color-accent: var(--color-emerald-600);
+    --color-accent-hover: var(--color-emerald-700);
+    --color-accent-background: var(--color-emerald-50);
+    --color-accent-border: var(--color-emerald-200);
+
+    --color-information: var(--color-indigo-600);
+    --color-information-hover: var(--color-indigo-700);
+    --color-information-background: var(--color-indigo-50);
+    --color-information-border: var(--color-indigo-200);
+
+    --color-warning: var(--color-amber-600);
+    --color-warning-hover: var(--color-amber-700);
+    --color-warning-background: var(--color-amber-50);
+    --color-warning-border: var(--color-amber-200);
+
+    --color-error: var(--color-rose-600);
+    --color-error-hover: var(--color-rose-700);
+    --color-error-background: var(--color-rose-50);
+    --color-error-border: var(--color-rose-200);
+
+    /* TYPOGRAPHY NAMESPACE */
+    --font-serif: 'Fraunces', Georgia, serif;
+    --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+@layer base {
+    .dark {
+        --color-background: var(--color-zinc-950);
+        --color-surface: var(--color-zinc-900);
+        --color-surface-border: var(--color-zinc-800);
+        --color-surface-hover: var(--color-zinc-800);
+
+        --color-text: var(--color-zinc-50);
+        --color-text-muted: var(--color-zinc-400);
+
+        --color-accent: var(--color-emerald-500);
+        --color-accent-hover: var(--color-emerald-400);
+        --color-accent-background: var(--color-emerald-950);
+        --color-accent-border: var(--color-emerald-800);
+
+        --color-information: var(--color-indigo-500);
+        --color-information-hover: var(--color-indigo-400);
+        --color-information-background: var(--color-indigo-950);
+        --color-information-border: var(--color-indigo-800);
+
+        --color-warning: var(--color-amber-500);
+        --color-warning-hover: var(--color-amber-400);
+        --color-warning-background: var(--color-amber-950);
+        --color-warning-border: var(--color-amber-800);
+
+        --color-error: var(--color-rose-500);
+        --color-error-hover: var(--color-rose-400);
+        --color-error-background: var(--color-rose-950);
+        --color-error-border: var(--color-rose-800);
+    }
+}
