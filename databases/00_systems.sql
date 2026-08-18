@@ -1,5 +1,28 @@
 --- EXTENSIONS ---
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE EXTENSION IF NOT EXISTS vector;
+
+
+--- AUTH SCHEMA & FIREBASE SQL CONNECT ADAPTER ---
+CREATE SCHEMA IF NOT EXISTS auth;
+
+CREATE OR REPLACE FUNCTION auth.uid()
+RETURNS UUID AS $$
+BEGIN
+    RETURN NULLIF(
+        COALESCE(
+            current_setting('request.jwt.claim.sub', true),
+            current_setting('firebase.auth.uid', true),
+            current_setting('app.current_user_id', true)
+        ),
+        ''
+    )::UUID;
+EXCEPTION
+    WHEN OTHERS THEN
+        RETURN NULL;
+END;
+$$ LANGUAGE plpgsql STABLE;
 
 
 --- FUNCTIONS ---
@@ -107,12 +130,12 @@ BEGIN
         WHERE id = NEW.document_id;
 
         IF target_is_folder THEN
-            WITH RECURSIVE descendants
-            AS (
+            WITH RECURSIVE descendants AS (
                 SELECT id
                 FROM public.documents
                 WHERE parent_id = NEW.document_id
-                UNION ALL SELECT documents.id
+                UNION ALL
+                SELECT documents.id
                 FROM public.documents
                 JOIN descendants
                 ON documents.parent_id = descendants.id
@@ -120,8 +143,7 @@ BEGIN
             UPDATE public.document_shares
             SET status = NEW.status
             WHERE department_id = NEW.department_id
-            AND document_id
-            IN (
+            AND document_id IN (
                 SELECT id
                 FROM descendants
             );
