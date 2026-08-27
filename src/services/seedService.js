@@ -7,63 +7,64 @@ import {
     signOut,
 } from 'firebase/auth';
 import { isConfigured } from './firebase';
+import { USER_ROLES, INSTITUTIONAL_CONFIG } from '../constants';
 
 // --- CONFIGURATIONS ---
 const CLOUD_SEEDS = [
     {
         universityId: '20-00001',
-        email: '20-00001@plpasig.edu.ph',
+        email: `20-00001${INSTITUTIONAL_CONFIG.EMAIL_DOMAIN}`,
         password: 'password',
         displayName: 'Arthur Pendragon',
-        role: 'ADMINISTRATOR',
+        role: USER_ROLES.ADMINISTRATOR,
         department: 'College of Computer Studies',
     },
     {
         universityId: '20-00002',
-        email: '20-00002@plpasig.edu.ph',
+        email: `20-00002${INSTITUTIONAL_CONFIG.EMAIL_DOMAIN}`,
         password: 'password',
         displayName: 'Cora Smith',
-        role: 'COORDINATOR',
+        role: USER_ROLES.COORDINATOR,
         department: 'College of Computer Studies',
     },
     {
         universityId: '20-00003',
-        email: '20-00003@plpasig.edu.ph',
+        email: `20-00003${INSTITUTIONAL_CONFIG.EMAIL_DOMAIN}`,
         password: 'password',
         displayName: 'Diana Prince',
-        role: 'DIRECTOR',
+        role: USER_ROLES.DIRECTOR,
         department: 'College of Computer Studies',
     },
     {
         universityId: '20-00004',
-        email: '20-00004@plpasig.edu.ph',
+        email: `20-00004${INSTITUTIONAL_CONFIG.EMAIL_DOMAIN}`,
         password: 'password',
         displayName: 'Oliver Queen',
-        role: 'OFFICER',
+        role: USER_ROLES.OFFICER,
         department: 'College of Computer Studies',
     },
     {
         universityId: '20-00005',
-        email: '20-00005@plpasig.edu.ph',
+        email: `20-00005${INSTITUTIONAL_CONFIG.EMAIL_DOMAIN}`,
         password: 'password',
         displayName: 'Marcus Aurelius',
-        role: 'MEMBER',
+        role: USER_ROLES.MEMBER,
         department: 'College of Computer Studies',
     },
     {
         universityId: '21-00001',
-        email: '21-00001@plpasig.edu.ph',
+        email: `21-00001${INSTITUTIONAL_CONFIG.EMAIL_DOMAIN}`,
         password: 'password',
         displayName: 'Helena Roosevelt',
-        role: 'MEMBER',
+        role: USER_ROLES.MEMBER,
         department: 'Human Resources',
     },
     {
         universityId: '21-00002',
-        email: '21-00002@plpasig.edu.ph',
+        email: `21-00002${INSTITUTIONAL_CONFIG.EMAIL_DOMAIN}`,
         password: 'password',
         displayName: 'Henry Wallace',
-        role: 'MEMBER',
+        role: USER_ROLES.MEMBER,
         department: 'Human Resources',
     },
 ];
@@ -84,7 +85,6 @@ const seedService = {
             appId: import.meta.env.VITE_FIREBASE_APP_ID?.trim(),
         };
 
-        // Use an isolated temporary app instance so batch creation does not affect main session state
         const tempAppName = `seedApp-${Date.now()}`;
         const tempApp = initializeApp(firebaseConfig, tempAppName);
         const tempAuth = getAuth(tempApp);
@@ -103,7 +103,7 @@ const seedService = {
                     const userCredential = await createUserWithEmailAndPassword(
                         tempAuth,
                         seed.email,
-                        seed.password
+                        seed.password,
                     );
 
                     await updateProfile(userCredential.user, {
@@ -133,8 +133,8 @@ const seedService = {
                         throw new Error(message);
                     } else {
                         results.failed += 1;
-                        const errorMsg = `[${seed.universityId}] ${error.message}`;
-                        results.errors.push(errorMsg);
+                        const errorMessage = `[${seed.universityId}] ${error.message}`;
+                        results.errors.push(errorMessage);
                         results.details.push({
                             universityId: seed.universityId,
                             email: seed.email,
@@ -153,7 +153,7 @@ const seedService = {
         }
 
         if (results.failed > 0 && results.created === 0 && results.alreadyExisting === 0) {
-            const firstError = results.errors[0] || 'Unknown error occurred while pushing accounts.';
+            const firstError = results.errors[0] ?? 'Unknown error occurred while pushing accounts.';
             throw new Error(firstError);
         }
 

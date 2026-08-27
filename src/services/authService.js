@@ -1,156 +1,170 @@
 // --- IMPORTS ---
-import {
-    auth,
-    googleProvider,
-    isConfigured,
-    signInWithEmailAndPassword,
-    signInWithPopup,
-    signOut,
-    onAuthStateChanged,
-} from './firebase';
+import { MOCK_USERS, MOCK_DEPARTMENTS } from '../mocks';
+import { USER_ROLES } from '../constants';
 
 // --- CONFIGURATIONS ---
-const INSTITUTIONAL_DOMAIN = 'plpasig.edu.ph';
+const STORAGE_KEY = 'dms_mock_active_user_id';
+const authListeners = new Set();
 
 // --- HELPERS ---
-function mapUniversityIdToEmail(universityId) {
-    if (universityId.includes('@')) {
-        return universityId;
+function formatUserRecord(rawUser) {
+    if (!rawUser) {
+        return null;
     }
 
-    return `${universityId}@${INSTITUTIONAL_DOMAIN}`;
+    const department = MOCK_DEPARTMENTS.find(
+        (dept) => dept.id === rawUser.department_id
+    );
+
+    return {
+        id: rawUser.id,
+        university_id: rawUser.university_id,
+        universityId: rawUser.university_id,
+        first_name: rawUser.first_name,
+        last_name: rawUser.last_name,
+        name: `${rawUser.first_name} ${rawUser.last_name}`,
+        email: rawUser.email,
+        role: rawUser.role ?? USER_ROLES.MEMBER,
+        title: rawUser.title ?? 'University Member',
+        department_id: rawUser.department_id,
+        department: department?.name ?? 'College of Computer Studies (CCS)',
+        department_code: department?.code ?? 'CCS',
+        avatar_path: rawUser.avatar_path ?? null,
+        status: rawUser.status ?? 'VERIFIED',
+        created_at: rawUser.created_at,
+        updated_at: rawUser.updated_at,
+    };
 }
 
-function parseUserRoleFromClaims(firebaseUser) {
-    const userEmail = (firebaseUser.email || '').toLowerCase();
-    const displayName = (firebaseUser.displayName || '').toLowerCase();
-
-    if (userEmail.startsWith('20-00001') || userEmail.includes('admin') || displayName.includes('arthur')) {
-        return 'admin';
+function getStoredUser() {
+    try {
+        const storedId = localStorage.getItem(STORAGE_KEY);
+        if (storedId === 'signed_out') {
+            return null;
+        }
+        if (storedId) {
+            const foundUser = MOCK_USERS.find((user) => user.id === storedId);
+            if (foundUser) {
+                return formatUserRecord(foundUser);
+            }
+        }
+    } catch {
+        // Fallback gracefully on storage access restriction
     }
 
-    if (userEmail.startsWith('20-00003') || userEmail.includes('director') || userEmail.includes('dean') || displayName.includes('diana')) {
-        return 'dean';
-    }
-
-    if (userEmail.startsWith('20-00002') || userEmail.includes('coord') || displayName.includes('cora')) {
-        return 'coordinator';
-    }
-
-    if (userEmail.startsWith('20-00004') || userEmail.includes('officer') || displayName.includes('oliver')) {
-        return 'reviewer';
-    }
-
-    return 'faculty';
+    // Default to primary administrator mock user on first session
+    return formatUserRecord(MOCK_USERS[0]);
 }
 
-function parseDepartmentFromUser(firebaseUser) {
-    const userEmail = (firebaseUser.email || '').toLowerCase();
-    if (userEmail.includes('.hr@') || userEmail.startsWith('21-')) {
-        return 'Human Resources';
-    }
-    return 'College of Computer Studies';
+function notifyListeners(user) {
+    authListeners.forEach((listener) => {
+        try {
+            listener(user);
+        } catch {
+            // Guard against listener execution failure
+        }
+    });
 }
 
-// --- AUTHENTICATION SERVICE ---
+// --- MOCK AUTHENTICATION SERVICE ---
 const authService = {
+    loginWithEmail: async (email, password) => {
+        return authService.loginWithUniversityId(email, password);
+    },
+
     loginWithUniversityId: async (universityId, password) => {
-        if (!isConfigured || !auth) {
-            throw new Error('Firebase configuration missing in .env file.');
+        const cleanInput = (universityId ?? '').trim().toLowerCase();
+        const cleanNormalized = cleanInput.replace(/-/g, '');
+
+        const matchedUser = MOCK_USERS.find((user) => {
+            const userUniId = (user.university_id ?? '').toLowerCase();
+            const userNormalizedUniId = userUniId.replace(/-/g, '');
+            const userEmail = (user.email ?? '').toLowerCase();
+
+            return (
+                userUniId === cleanInput ||
+                userNormalizedUniId === cleanNormalized ||
+                userEmail === cleanInput
+            );
+        });
+
+        if (!matchedUser) {
+            throw new Error(`No account found matching "${universityId}". Use a valid mock University ID like 20-00001.`);
         }
 
-        const cleanId = universityId.trim();
-        const primaryEmail = mapUniversityIdToEmail(cleanId);
+        const formattedUser = formatUserRecord(matchedUser);
 
         try {
-            const userCredential = await signInWithEmailAndPassword(auth, primaryEmail, password);
-            const firebaseUser = userCredential.user;
-
-            return {
-                id: firebaseUser.uid,
-                universityId: cleanId,
-                email: firebaseUser.email,
-                name: firebaseUser.displayName || cleanId,
-                role: parseUserRoleFromClaims(firebaseUser),
-                department: parseDepartmentFromUser(firebaseUser),
-            };
-        } catch (primaryError) {
-            // Secondary attempt: try unhyphenated format
-            if (cleanId.includes('-')) {
-                const unhyphenatedEmail = `${cleanId.replace(/-/g, '')}@${INSTITUTIONAL_DOMAIN}`;
-                try {
-                    const fallbackCredential = await signInWithEmailAndPassword(auth, unhyphenatedEmail, password);
-                    const fallbackUser = fallbackCredential.user;
-
-                    return {
-                        id: fallbackUser.uid,
-                        universityId: cleanId,
-                        email: fallbackUser.email,
-                        name: fallbackUser.displayName || cleanId,
-                        role: parseUserRoleFromClaims(fallbackUser),
-                        department: parseDepartmentFromUser(fallbackUser),
-                    };
-                } catch {
-                    throw primaryError;
-                }
-            }
-
-            throw primaryError;
+            localStorage.setItem(STORAGE_KEY, formattedUser.id);
+        } catch {
+            // Storage access guard
         }
+
+        notifyListeners(formattedUser);
+        return formattedUser;
     },
 
     loginWithGoogle: async () => {
-        if (!isConfigured || !auth) {
-            throw new Error('Firebase configuration missing in .env file.');
+        // Sign in as default mock administrator
+        const defaultUser = formatUserRecord(MOCK_USERS[0]);
+
+        try {
+            localStorage.setItem(STORAGE_KEY, defaultUser.id);
+        } catch {
+            // Storage access guard
         }
 
-        const userCredential = await signInWithPopup(auth, googleProvider);
-        const firebaseUser = userCredential.user;
-
-        return {
-            id: firebaseUser.uid,
-            universityId: '20-00099',
-            email: firebaseUser.email,
-            name: firebaseUser.displayName || 'Google User',
-            role: parseUserRoleFromClaims(firebaseUser),
-            department: parseDepartmentFromUser(firebaseUser),
-        };
+        notifyListeners(defaultUser);
+        return defaultUser;
     },
 
     logout: async () => {
-        if (auth) {
-            await signOut(auth);
+        try {
+            localStorage.setItem(STORAGE_KEY, 'signed_out');
+        } catch {
+            // Storage access guard
         }
+
+        notifyListeners(null);
     },
 
     onAuthStateChanged: (callback) => {
-        if (!auth) {
-            callback(null);
-            return () => { };
+        authListeners.add(callback);
+
+        // Immediate invocation with current mock user
+        const currentUser = getStoredUser();
+        callback(currentUser);
+
+        return () => {
+            authListeners.delete(callback);
+        };
+    },
+
+    getCurrentUser: () => {
+        return getStoredUser();
+    },
+
+    switchMockUserById: (userId) => {
+        const targetUser = MOCK_USERS.find((user) => user.id === userId);
+        if (!targetUser) {
+            return null;
         }
 
-        return onAuthStateChanged(auth, (firebaseUser) => {
-            if (!firebaseUser) {
-                callback(null);
-                return;
-            }
+        const formattedUser = formatUserRecord(targetUser);
+        try {
+            localStorage.setItem(STORAGE_KEY, formattedUser.id);
+        } catch {
+            // Storage access guard
+        }
 
-            callback({
-                id: firebaseUser.uid,
-                email: firebaseUser.email,
-                name: firebaseUser.displayName || firebaseUser.email,
-                role: parseUserRoleFromClaims(firebaseUser),
-                department: parseDepartmentFromUser(firebaseUser),
-            });
-        });
+        notifyListeners(formattedUser);
+        return formattedUser;
     },
 };
 
 export {
     authService,
-    mapUniversityIdToEmail,
-    parseUserRoleFromClaims,
-    parseDepartmentFromUser,
+    formatUserRecord,
 };
 
 export default authService;
