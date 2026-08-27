@@ -1,5 +1,6 @@
 // --- IMPORTS ---
 import { useState, useRef, useEffect } from 'react';
+import { Outlet } from 'react-router-dom';
 import {
     Bell,
     PanelRight,
@@ -557,7 +558,7 @@ const MainLayout = ({
 
                 {/* MAIN WORKSPACE CONTENT CONTAINER */}
                 <main className="flex-1 p-4 sm:p-6 lg:p-8 flex flex-col gap-6 overflow-y-auto">
-                    {children}
+                    {children ?? <Outlet />}
                 </main>
             </div>
 

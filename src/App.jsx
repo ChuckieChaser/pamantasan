@@ -1,19 +1,21 @@
 // --- IMPORTS ---
 import { useState, useMemo } from 'react';
 import {
+    BrowserRouter,
+    Routes,
+    Route,
+    Navigate,
+    useLocation,
+    useNavigate,
+} from 'react-router-dom';
+import {
     LayoutDashboard,
     Files,
     FilePlus,
     Users,
     Building2,
-    UserCheck,
     Inbox,
-    Calendar,
-    User,
-    Download,
-    Share2,
 } from 'lucide-react';
-import logoImage from './assets/logo.jpg';
 import {
     LoginPage,
     ForgotPasswordPage,
@@ -26,14 +28,10 @@ import {
 } from './pages';
 import { MainLayout } from './layouts';
 import {
-    PrimaryButton,
-    SecondaryButton,
-    Badge,
-    RoleBadge,
-    StatusBadge,
-    ClassificationBadge,
     Inspector,
     ToastProvider,
+    ProtectedRoute,
+    PublicOnlyRoute,
     useToast,
 } from './components';
 import { useAuth } from './hooks';
@@ -41,7 +39,7 @@ import {
     useNotificationStore,
     useCoordinatorRequestStore,
 } from './stores';
-import { USER_ROLES, DOCUMENT_CLASSIFICATIONS } from './constants';
+import { USER_ROLES } from './constants';
 
 // --- MODULE-LEVEL CONSTANTS ---
 const PAGE_TITLES = {
@@ -56,6 +54,8 @@ const PAGE_TITLES = {
 // --- COMPONENTS ---
 const AppContent = () => {
     // HOOKS
+    const location = useLocation();
+    const navigate = useNavigate();
     const { showToast } = useToast();
     const { currentUser, isLoading, loginWithUniversityId, loginWithGoogle, logout } = useAuth();
 
@@ -63,13 +63,31 @@ const AppContent = () => {
     const notifications = useNotificationStore((state) => state.notifications);
     const unreadNotificationCount = notifications.filter((item) => !item.is_read).length;
 
-    // NAVIGATION & WORKSPACE STATES
-    const [authScreen, setAuthScreen] = useState('login');
-    const [activeNavigationKey, setActiveNavigationKey] = useState('dashboard');
+    // WORKSPACE & INSPECTOR STATES
     const [selectedItem, setSelectedItem] = useState(null);
     const [isDetailPanelOpen, setIsDetailPanelOpen] = useState(false);
 
-    // DERIVED VALUES
+    // DERIVED VALUES: CURRENT NAVIGATION KEY
+    const activeNavigationKey = useMemo(() => {
+        const path = location.pathname;
+        if (path.startsWith('/documents')) {
+            return 'documents';
+        }
+        if (path.startsWith('/request-document')) {
+            return 'request_document';
+        }
+        if (path.startsWith('/departments')) {
+            return 'departments';
+        }
+        if (path.startsWith('/users')) {
+            return 'users';
+        }
+        if (path.startsWith('/requests')) {
+            return 'requests';
+        }
+        return 'dashboard';
+    }, [location.pathname]);
+
     const userRole = currentUser?.role ?? USER_ROLES.MEMBER;
     const isAdmin = userRole === USER_ROLES.ADMINISTRATOR;
     const isCoordinator = userRole === USER_ROLES.COORDINATOR;
@@ -108,7 +126,7 @@ const AppContent = () => {
     }, [canRequestDocument]);
 
     const adminNavigationItems = useMemo(() => {
-        if (!isAdmin) {
+        if (!isAdmin && !isCoordinator) {
             return [];
         }
 
@@ -135,7 +153,7 @@ const AppContent = () => {
                 icon: Inbox,
             },
         ];
-    }, [isAdmin]);
+    }, [isAdmin, isCoordinator]);
 
     // HANDLERS
     const handleLoginSuccess = async ({ universityId, email, password }) => {
@@ -146,6 +164,7 @@ const AppContent = () => {
             description: `Welcome to Pamantasan Records, ${authenticatedUser.name ?? authenticatedUser.email}.`,
             variant: 'success',
         });
+        navigate('/dashboard');
     };
 
     const handleGoogleLogin = async () => {
@@ -155,14 +174,7 @@ const AppContent = () => {
             description: `Signed in with ${authenticatedUser.email}.`,
             variant: 'success',
         });
-    };
-
-    const handleForgotPasswordClick = () => {
-        setAuthScreen('forgot_password');
-    };
-
-    const handleBackToLogin = () => {
-        setAuthScreen('login');
+        navigate('/dashboard');
     };
 
     const handleSignOut = async () => {
@@ -170,7 +182,7 @@ const AppContent = () => {
             await logout();
             setSelectedItem(null);
             setIsDetailPanelOpen(false);
-            setAuthScreen('login');
+            navigate('/login');
             showToast({
                 title: 'Signed Out',
                 description: 'You have been safely signed out.',
@@ -185,10 +197,13 @@ const AppContent = () => {
         }
     };
 
-    // HANDLERS
     const handleNavigationChange = (navigationKey) => {
-        setActiveNavigationKey(navigationKey);
         setSelectedItem(null);
+        const targetPath =
+            navigationKey === 'request_document'
+                ? '/request-document'
+                : `/${navigationKey}`;
+        navigate(targetPath);
     };
 
     const handleToggleDetailPanel = () => {
@@ -201,7 +216,6 @@ const AppContent = () => {
 
     const handleSelectActivity = (activityItem) => {
         setSelectedItem(activityItem);
-
         if (activityItem) {
             setIsDetailPanelOpen(true);
         }
@@ -237,7 +251,7 @@ const AppContent = () => {
 
         if (actionKey === 'open' || actionKey === 'open_folder') {
             if (item?.subject) {
-                setActiveNavigationKey('requests');
+                navigate('/requests');
                 return;
             }
             showToast({
@@ -374,124 +388,157 @@ const AppContent = () => {
     };
 
     const handleRequestDocument = () => {
-        showToast({
-            title: 'New Document Request',
-            description: 'Document request builder will be configured next.',
-            variant: 'information',
-        });
+        navigate('/request-document');
     };
 
-    // RENDER: LOADING STATE
-    if (isLoading && !currentUser) {
-        return (
-            <div className="min-h-screen bg-surface text-text flex items-center justify-center">
-                <div className="flex flex-col items-center gap-3">
-                    <img
-                        src={logoImage}
-                        alt="Pamantasan Records"
-                        className="h-12 w-12 rounded-full object-cover bg-surface shadow-md animate-pulse shrink-0"
-                    />
-                    <span className="text-xs text-text-muted">Loading records system...</span>
-                </div>
-            </div>
-        );
-    }
-
-    // RENDER: UNAUTHENTICATED LOGIN / FORGOT PASSWORD FLOW
-    if (!currentUser) {
-        if (authScreen === 'forgot_password') {
-            return <ForgotPasswordPage onBackToLogin={handleBackToLogin} />;
-        }
-
-        return (
-            <LoginPage
-                onLoginSuccess={handleLoginSuccess}
-                onGoogleLogin={handleGoogleLogin}
-                onForgotPasswordClick={handleForgotPasswordClick}
-            />
-        );
-    }
-
-    // RENDER: AUTHENTICATED APPLICATION SHELL WITH MAIN LAYOUT
     return (
-        <MainLayout
-            currentUser={currentUser}
-            navigationItems={generalNavigationItems}
-            adminNavigationItems={adminNavigationItems}
-            activeNavigationKey={activeNavigationKey}
-            pageTitle={pageTitle}
-            notificationCount={unreadNotificationCount}
-            hasUnreadNotifications={unreadNotificationCount > 0}
-            isDetailPanelOpen={isDetailPanelOpen}
-            detailPanelTitle={selectedItem ? 'Record Inspector' : 'Inspector'}
-            detailPanelContent={
-                <Inspector
-                    item={selectedItem}
-                    currentUser={currentUser}
-                    onClose={handleCloseDetailPanel}
-                    onAction={handleDetailAction}
+        <Routes>
+            {/* 1. PUBLIC-ONLY ROUTES (LOGGED IN USERS AUTO-REDIRECT TO /dashboard) */}
+            <Route
+                element={
+                    <PublicOnlyRoute
+                        currentUser={currentUser}
+                        isLoading={isLoading}
+                    />
+                }
+            >
+                <Route
+                    path="/login"
+                    element={
+                        <LoginPage
+                            onLoginSuccess={handleLoginSuccess}
+                            onGoogleLogin={handleGoogleLogin}
+                            onForgotPasswordClick={() => navigate('/forgot-password')}
+                        />
+                    }
                 />
-            }
-            onNavigationChange={handleNavigationChange}
-            onToggleDetailPanel={handleToggleDetailPanel}
-            onCloseDetailPanel={handleCloseDetailPanel}
-            onSignOut={handleSignOut}
-        >
-            {activeNavigationKey === 'dashboard' && (
-                <DashboardPage
-                    currentUser={currentUser}
-                    onNavigate={setActiveNavigationKey}
-                    onUploadDocument={handleUploadDocument}
-                    onRequestDocument={handleRequestDocument}
-                    onSelectActivity={handleSelectActivity}
+                <Route
+                    path="/forgot-password"
+                    element={<ForgotPasswordPage onBackToLogin={() => navigate('/login')} />}
                 />
-            )}
+            </Route>
 
-            {activeNavigationKey === 'documents' && (
-                <DocumentsPage
-                    currentUser={currentUser}
-                    onUploadDocument={handleUploadDocument}
-                    onSelectDocument={handleSelectActivity}
-                />
-            )}
+            {/* 2. AUTHENTICATED PROTECTED SHELL (REQUIRES LOGGED IN USER) */}
+            <Route
+                element={
+                    <ProtectedRoute
+                        currentUser={currentUser}
+                        isLoading={isLoading}
+                    >
+                        <MainLayout
+                            currentUser={currentUser}
+                            navigationItems={generalNavigationItems}
+                            adminNavigationItems={adminNavigationItems}
+                            activeNavigationKey={activeNavigationKey}
+                            pageTitle={pageTitle}
+                            notificationCount={unreadNotificationCount}
+                            hasUnreadNotifications={unreadNotificationCount > 0}
+                            isDetailPanelOpen={isDetailPanelOpen}
+                            detailPanelTitle={selectedItem ? 'Record Inspector' : 'Inspector'}
+                            detailPanelContent={
+                                <Inspector
+                                    item={selectedItem}
+                                    currentUser={currentUser}
+                                    onClose={handleCloseDetailPanel}
+                                    onAction={handleDetailAction}
+                                />
+                            }
+                            onNavigationChange={handleNavigationChange}
+                            onToggleDetailPanel={handleToggleDetailPanel}
+                            onCloseDetailPanel={handleCloseDetailPanel}
+                            onSignOut={handleSignOut}
+                        />
+                    </ProtectedRoute>
+                }
+            >
+                {/* ROOT REDIRECT */}
+                <Route path="/" element={<Navigate to="/dashboard" replace />} />
 
-            {activeNavigationKey === 'request_document' && (
-                <RequestDocumentPage
-                    currentUser={currentUser}
-                    onSelectDocument={handleSelectActivity}
+                {/* GENERAL AUTHENTICATED PAGES */}
+                <Route
+                    path="/dashboard"
+                    element={
+                        <DashboardPage
+                            currentUser={currentUser}
+                            onNavigate={handleNavigationChange}
+                            onUploadDocument={handleUploadDocument}
+                            onRequestDocument={handleRequestDocument}
+                            onSelectActivity={handleSelectActivity}
+                        />
+                    }
                 />
-            )}
+                <Route
+                    path="/documents"
+                    element={
+                        <DocumentsPage
+                            currentUser={currentUser}
+                            onUploadDocument={handleUploadDocument}
+                            onSelectDocument={handleSelectActivity}
+                        />
+                    }
+                />
+                <Route
+                    path="/request-document"
+                    element={
+                        <RequestDocumentPage
+                            currentUser={currentUser}
+                            onSelectDocument={handleSelectActivity}
+                        />
+                    }
+                />
 
-            {activeNavigationKey === 'departments' && (
-                <DepartmentsPage
-                    currentUser={currentUser}
-                    onSelectDepartment={handleSelectActivity}
-                />
-            )}
+                {/* ADMINISTRATIVE PROTECTED SUB-ROUTES (ADMINISTRATOR & COORDINATOR ONLY) */}
+                <Route
+                    element={
+                        <ProtectedRoute
+                            currentUser={currentUser}
+                            allowedRoles={[USER_ROLES.ADMINISTRATOR, USER_ROLES.COORDINATOR]}
+                            requiredRoleLabel="Administrator or Coordinator"
+                        />
+                    }
+                >
+                    <Route
+                        path="/departments"
+                        element={
+                            <DepartmentsPage
+                                currentUser={currentUser}
+                                onSelectDepartment={handleSelectActivity}
+                            />
+                        }
+                    />
+                    <Route
+                        path="/users"
+                        element={
+                            <UsersPage
+                                currentUser={currentUser}
+                                onSelectUser={handleSelectActivity}
+                            />
+                        }
+                    />
+                    <Route
+                        path="/requests"
+                        element={
+                            <RequestsPage
+                                currentUser={currentUser}
+                                onSelectRequest={handleSelectActivity}
+                            />
+                        }
+                    />
+                </Route>
 
-            {activeNavigationKey === 'users' && (
-                <UsersPage
-                    currentUser={currentUser}
-                    onSelectUser={handleSelectActivity}
-                />
-            )}
-
-            {activeNavigationKey === 'requests' && (
-                <RequestsPage
-                    currentUser={currentUser}
-                    onSelectRequest={handleSelectActivity}
-                />
-            )}
-        </MainLayout>
+                {/* CATCH-ALL REDIRECT TO DASHBOARD */}
+                <Route path="*" element={<Navigate to="/dashboard" replace />} />
+            </Route>
+        </Routes>
     );
 };
 
-const App = () => {
+export default function App() {
     return (
         <ToastProvider>
-            <AppContent />
+            <BrowserRouter>
+                <AppContent />
+            </BrowserRouter>
         </ToastProvider>
     );
-};
-
-export default App;
+}
