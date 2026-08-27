@@ -3,18 +3,25 @@ import { cloneElement, isValidElement } from 'react';
 import { Loader2 } from 'lucide-react';
 
 // --- CONFIGURATIONS ---
-const BASE_STYLE = 'inline-flex items-center justify-center font-medium rounded-md transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 h-8 px-3 text-sm gap-2';
+const BASE_STYLE = 'inline-flex items-center justify-center font-medium rounded-md transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50';
 const ICON_STYLE = 'h-4 w-4 shrink-0';
 
+const SIZE_STYLE = {
+    sm: 'h-8 px-3 text-sm gap-2',
+    md: 'h-10 px-4 text-base gap-2',
+    lg: 'h-12 px-6 text-lg gap-3',
+};
+
 const VARIANT_STYLE = {
-    primary: 'bg-accent text-white hover:bg-accent-hover',
+    primary: 'bg-accent text-text-inverted hover:bg-accent-hover',
     secondary: 'bg-surface text-text border border-surface-border hover:bg-surface-hover',
-    destructive: 'bg-error text-white hover:bg-error-hover',
+    destructive: 'bg-error text-text-inverted hover:bg-error-hover',
 };
 
 // --- COMPONENTS ---
 const Button = ({
     variant = 'primary',
+    size = 'sm',
     type = 'button',
     disabled = false,
     loading = false,
@@ -23,28 +30,29 @@ const Button = ({
     trailingIcon,
     onClick,
     className,
+    children,
     ...props
 }) => {
-    // HANDLERS
-    const isButtonDisabled = disabled || loading;
+    // GUARD CLAUSES
+    // (none — all states handled via disabled/loading props)
 
+    // HANDLERS
     const handleClick = (event) => {
-        if (isButtonDisabled) {
+        if (disabled || loading) {
             return;
         }
 
         onClick?.(event);
     };
 
-    // STYLES
+    // DERIVED VALUES
+    const sizeStyle = SIZE_STYLE[size] ?? SIZE_STYLE.sm;
     const variantStyle = VARIANT_STYLE[variant] ?? VARIANT_STYLE.primary;
-    const composedClassName = `${BASE_STYLE} ${variantStyle} ${className ?? ''}`.trim();
+    const composedClassName = `${BASE_STYLE} ${sizeStyle} ${variantStyle} ${className ?? ''}`.trim();
 
-    const renderedLeadingIcon = loading ? (
-        <Loader2 className={`${ICON_STYLE} animate-spin`} />
-    ) : (
-        renderIcon(leadingIcon)
-    );
+    const renderedLeadingIcon = loading
+        ? <Loader2 className={`${ICON_STYLE} animate-spin`} />
+        : renderIcon(leadingIcon);
 
     const renderedTrailingIcon = renderIcon(trailingIcon);
 
@@ -52,13 +60,13 @@ const Button = ({
     return (
         <button
             type={type}
-            disabled={isButtonDisabled}
+            disabled={disabled || loading}
             onClick={handleClick}
             className={composedClassName}
             {...props}
         >
             {renderedLeadingIcon}
-            {label}
+            {children ?? label}
             {renderedTrailingIcon}
         </button>
     );

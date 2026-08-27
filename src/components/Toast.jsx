@@ -15,7 +15,7 @@ import { CardContainer } from './Container';
 // --- CONFIGURATIONS ---
 const ICON_STYLE = 'h-5 w-5 shrink-0';
 const ACTION_ICON_STYLE = 'h-4 w-4 shrink-0';
-const ITEM_ICON_STYLE = 'h-3.5 w-3.5 shrink-0';
+const ITEM_ICON_STYLE = 'h-4 w-4 shrink-0';
 
 const AUTO_DISMISS_DURATION_MILLISECONDS = 5000;
 
@@ -62,25 +62,6 @@ const AutoDismissToast = ({
     const remainingTimeReference = useRef(duration);
     const startTimeReference = useRef(Date.now());
 
-    // HOOKS
-    useEffect(() => {
-        if (isHovered) {
-            return;
-        }
-
-        startTimeReference.current = Date.now();
-
-        timerReference.current = setTimeout(() => {
-            handleTriggerDismiss();
-        }, remainingTimeReference.current);
-
-        return () => {
-            if (timerReference.current) {
-                clearTimeout(timerReference.current);
-            }
-        };
-    }, [isHovered]);
-
     // HANDLERS
     const handleTriggerDismiss = () => {
         if (timerReference.current) {
@@ -108,7 +89,26 @@ const AutoDismissToast = ({
         handleTriggerDismiss();
     };
 
-    // STYLES
+    // HOOKS
+    useEffect(() => {
+        if (isHovered) {
+            return;
+        }
+
+        startTimeReference.current = Date.now();
+
+        timerReference.current = setTimeout(() => {
+            handleTriggerDismiss();
+        }, remainingTimeReference.current);
+
+        return () => {
+            if (timerReference.current) {
+                clearTimeout(timerReference.current);
+            }
+        };
+    }, [isHovered]);
+
+    // DERIVED VALUES
     const IconComponent = VARIANT_ICON[variant] ?? VARIANT_ICON.information;
     const iconColorStyle = VARIANT_ICON_STYLE[variant] ?? VARIANT_ICON_STYLE.information;
     const progressColorStyle = VARIANT_PROGRESS_STYLE[variant] ?? VARIANT_PROGRESS_STYLE.information;
@@ -120,7 +120,7 @@ const AutoDismissToast = ({
             onClick={handleClick}
             onMouseEnter={handleMouseEnter}
             onMouseLeave={handleMouseLeave}
-            className={`relative overflow-hidden cursor-pointer select-none animate-toast-in p-4 gap-3 border-surface-border ${className ?? ''}`.trim()}
+            className={`relative overflow-hidden cursor-pointer select-none pointer-events-auto animate-toast-in p-4 gap-3 border-surface-border ${className ?? ''}`.trim()}
             {...props}
         >
             <div className="flex items-start gap-3">
@@ -164,6 +164,21 @@ const ProcessingToast = ({
     // STATES
     const [isMinimized, setIsMinimized] = useState(false);
 
+    // HOOKS
+    useEffect(() => {
+        if (!isAllCompleted) {
+            return;
+        }
+
+        const finishTimer = setTimeout(() => {
+            onFinish?.();
+        }, 500);
+
+        return () => {
+            clearTimeout(finishTimer);
+        };
+    }, [isAllCompleted, onFinish]);
+
     // DERIVED VALUES
     const resolvedItems = items.length > 0
         ? items
@@ -186,7 +201,7 @@ const ProcessingToast = ({
                   (accumulator, item) =>
                       accumulator + (item.progress ?? (item.isFinished ? 100 : 0)),
                   0
-              ) / (totalItemsCount || 1)
+              ) / Math.max(1, totalItemsCount)
           );
 
     const effectiveTitle = title ?? (
@@ -199,21 +214,6 @@ const ProcessingToast = ({
 
     const isAllCompleted = isFinished || completedItemsCount === totalItemsCount;
 
-    // HOOKS
-    useEffect(() => {
-        if (!isAllCompleted) {
-            return;
-        }
-
-        const finishTimer = setTimeout(() => {
-            onFinish?.();
-        }, 500);
-
-        return () => {
-            clearTimeout(finishTimer);
-        };
-    }, [isAllCompleted, onFinish]);
-
     // HANDLERS
     const handleCardClick = () => {
         setIsMinimized((previousState) => !previousState);
@@ -224,7 +224,7 @@ const ProcessingToast = ({
         return (
             <div
                 onClick={handleCardClick}
-                className={`animate-toast-in cursor-pointer select-none inline-flex self-end ${className ?? ''}`.trim()}
+                className={`animate-toast-in cursor-pointer select-none pointer-events-auto inline-flex self-end ${className ?? ''}`.trim()}
                 title="Click to expand"
                 {...props}
             >
@@ -249,7 +249,7 @@ const ProcessingToast = ({
     return (
         <CardContainer
             onClick={handleCardClick}
-            className={`animate-toast-in cursor-pointer select-none p-4 gap-3 border-surface-border ${className ?? ''}`.trim()}
+            className={`animate-toast-in cursor-pointer select-none pointer-events-auto p-4 gap-3 border-surface-border ${className ?? ''}`.trim()}
             title="Click to minimize"
             {...props}
         >
@@ -282,7 +282,7 @@ const ProcessingToast = ({
             </div>
 
             {/* OVERALL PROGRESS BAR */}
-            <div className="w-full h-1.5 bg-surface-hover rounded-full overflow-hidden">
+            <div className="w-full h-2 bg-surface-hover rounded-full overflow-hidden">
                 <div
                     className="h-full bg-accent rounded-full transition-all duration-200 ease-out"
                     style={{ width: `${Math.min(100, Math.max(0, computedOverallProgress))}%` }}
@@ -290,7 +290,7 @@ const ProcessingToast = ({
             </div>
 
             {/* CONSOLIDATED ITEM BREAKDOWN LIST WITH STAGE HELPER TEXT */}
-            <div className="flex flex-col gap-1.5 max-h-48 overflow-y-auto pt-1">
+            <div className="flex flex-col gap-2 max-h-48 overflow-y-auto pt-1">
                 {resolvedItems.map((item) => {
                     const isItemDone = item.isFinished || (item.progress ?? 0) >= 100;
                     const stageHelperText = item.statusText ?? getItemStageDescription(item.progress, item.isFinished);
@@ -298,7 +298,7 @@ const ProcessingToast = ({
                     return (
                         <div
                             key={item.id}
-                            className="flex items-center justify-between px-2.5 py-1.5 rounded bg-surface-hover text-xs gap-3"
+                            className="flex items-center justify-between px-3 py-2 rounded bg-surface-hover text-xs gap-3"
                         >
                             <div className="flex flex-col min-w-0 flex-1">
                                 <span className="truncate text-text font-medium">
@@ -308,7 +308,7 @@ const ProcessingToast = ({
                                     {stageHelperText}
                                 </span>
                             </div>
-                            <div className="flex items-center gap-1.5 shrink-0">
+                            <div className="flex items-center gap-2 shrink-0">
                                 {isItemDone ? (
                                     <CheckCircle2 className={`${ITEM_ICON_STYLE} text-accent`} />
                                 ) : (
@@ -329,7 +329,7 @@ const ProcessingToast = ({
 const ToastViewport = ({ children, className, ...props }) => {
     return (
         <div
-            className={`fixed bottom-6 right-6 z-50 flex flex-col gap-3 max-w-sm w-full pointer-events-none [&>*]:pointer-events-auto ${className ?? ''}`.trim()}
+            className={`fixed bottom-6 right-6 z-50 flex flex-col gap-3 max-w-sm w-full pointer-events-none ${className ?? ''}`.trim()}
             {...props}
         >
             {children}

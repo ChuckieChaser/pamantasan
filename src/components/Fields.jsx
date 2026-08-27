@@ -1,9 +1,8 @@
 // --- IMPORTS ---
-import { useState, useRef, cloneElement, isValidElement } from 'react';
+import { useState, useRef, useMemo, cloneElement, isValidElement } from 'react';
 import { Search, Eye, EyeOff, ChevronDown, Check, X } from 'lucide-react';
 import { DropdownContainer } from './Container';
-import useClickOutside from '../hooks/useClickOutside';
-import useSmartPosition from '../hooks/useSmartPosition';
+import { useClickOutside, useSmartPosition } from '../hooks';
 
 // --- CONFIGURATIONS ---
 const ICON_STYLE = 'h-4 w-4 shrink-0';
@@ -24,9 +23,14 @@ const CONTROL_STATE_STYLE = {
 const AREA_WRAPPER_BASE_STYLE =
     'p-3 text-sm rounded-md border bg-surface hover:bg-surface-hover focus-within:bg-surface text-text placeholder:text-text-muted transition-colors w-full min-h-20 flex items-start gap-2 disabled:cursor-not-allowed disabled:opacity-50';
 
-const DROPDOWN_POSITION_STYLE = {
+const DROPDOWN_VERTICAL_STYLE = {
     bottom: 'top-full mt-1',
     top: 'bottom-full mb-1',
+};
+
+const DROPDOWN_HORIZONTAL_STYLE = {
+    left: 'left-0',
+    right: 'right-0',
 };
 
 // --- COMPONENTS ---
@@ -56,7 +60,7 @@ const TextField = ({
         onChange?.(event);
     };
 
-    // STYLES
+    // DERIVED VALUES
     const stateStyle = error
         ? CONTROL_STATE_STYLE.error
         : CONTROL_STATE_STYLE.default;
@@ -133,7 +137,7 @@ const PasswordField = ({
         onChange?.(event);
     };
 
-    // STYLES
+    // DERIVED VALUES
     const stateStyle = error
         ? CONTROL_STATE_STYLE.error
         : CONTROL_STATE_STYLE.default;
@@ -214,7 +218,7 @@ const AreaField = ({
         onChange?.(event);
     };
 
-    // STYLES
+    // DERIVED VALUES
     const stateStyle = error
         ? CONTROL_STATE_STYLE.error
         : CONTROL_STATE_STYLE.default;
@@ -284,7 +288,7 @@ const SearchField = ({
         onClear?.();
     };
 
-    // STYLES
+    // DERIVED VALUES
     const stateStyle = error
         ? CONTROL_STATE_STYLE.error
         : CONTROL_STATE_STYLE.default;
@@ -341,6 +345,7 @@ const SelectField = ({
     placeholder = 'Select option...',
     leadingIcon,
     trailingIcon,
+    dropdownAlign = 'auto',
     disabled = false,
     error,
     helperText,
@@ -361,7 +366,7 @@ const SelectField = ({
         setIsOpen(false);
     });
 
-    const position = useSmartPosition(triggerReference, dropdownReference, isOpen);
+    const position = useSmartPosition(triggerReference, dropdownReference, isOpen, dropdownAlign);
 
     // HANDLERS
     const handleToggleOpen = () => {
@@ -381,13 +386,17 @@ const SelectField = ({
         setIsOpen(false);
     };
 
-    // STYLES
+    // DERIVED VALUES
     const selectedOption = options.find((option) => option.value === value);
     const stateStyle = error
         ? CONTROL_STATE_STYLE.error
         : CONTROL_STATE_STYLE.default;
     const composedTriggerClassName = `${CONTROL_BASE_STYLE} ${stateStyle} justify-between cursor-pointer ${className ?? ''}`.trim();
-    const positionStyle = DROPDOWN_POSITION_STYLE[position] ?? DROPDOWN_POSITION_STYLE.bottom;
+    const verticalStyle = DROPDOWN_VERTICAL_STYLE[position.vertical] ?? DROPDOWN_VERTICAL_STYLE.bottom;
+    const horizontalStyle = DROPDOWN_HORIZONTAL_STYLE[position.horizontal] ?? (
+        dropdownAlign === 'right' ? DROPDOWN_HORIZONTAL_STYLE.right : DROPDOWN_HORIZONTAL_STYLE.left
+    );
+    const composedPositionStyle = `${verticalStyle} ${horizontalStyle}`;
 
     const displayLeadingIcon = leadingIcon ?? selectedOption?.icon;
 
@@ -407,12 +416,16 @@ const SelectField = ({
                 onClick={handleToggleOpen}
                 className={composedTriggerClassName}
             >
-                <span className="flex items-center gap-2 truncate">
-                    {displayLeadingIcon && renderIcon(displayLeadingIcon)}
-                    <span className={selectedOption ? 'text-text' : 'text-text-muted'}>
+                <div className="flex items-center gap-2 truncate min-w-0 flex-1">
+                    {displayLeadingIcon && (
+                        <span className="text-text-muted shrink-0">
+                            {renderIcon(displayLeadingIcon)}
+                        </span>
+                    )}
+                    <span className={`truncate ${selectedOption ? 'text-text' : 'text-text-muted'}`}>
                         {selectedOption?.label ?? placeholder}
                     </span>
-                </span>
+                </div>
                 <span className="text-text-muted shrink-0">
                     {trailingIcon ? (
                         renderIcon(trailingIcon)
@@ -427,14 +440,14 @@ const SelectField = ({
             {isOpen && (
                 <div
                     ref={dropdownReference}
-                    className={`absolute z-50 w-full left-0 ${positionStyle}`}
+                    className={`absolute z-50 min-w-full w-max max-w-sm sm:max-w-md ${composedPositionStyle}`}
                 >
-                    <DropdownContainer className="max-h-60 overflow-y-auto">
+                    <DropdownContainer className="p-1 max-h-60 overflow-y-auto shadow-xl flex flex-col gap-1 border border-surface-border bg-surface">
                         {options.map((option) => {
                             const isSelected = option.value === value;
                             const itemClassName = isSelected
-                                ? 'w-full flex items-center justify-between px-3 py-1.5 text-xs bg-accent text-white rounded transition-colors text-left cursor-pointer'
-                                : 'w-full flex items-center justify-between px-3 py-1.5 text-xs text-text hover:bg-surface-hover rounded transition-colors text-left cursor-pointer';
+                                ? 'w-full h-6 flex items-center justify-between px-2 text-xs bg-accent-background text-accent font-semibold rounded-md transition-colors text-left cursor-pointer select-none gap-2 whitespace-nowrap'
+                                : 'w-full h-6 flex items-center justify-between px-2 text-xs text-text hover:bg-surface-hover rounded-md transition-colors text-left cursor-pointer select-none gap-2 whitespace-nowrap';
 
                             return (
                                 <button
@@ -443,11 +456,15 @@ const SelectField = ({
                                     onClick={() => handleSelectOption(option.value)}
                                     className={itemClassName}
                                 >
-                                    <span className="flex items-center gap-2 truncate">
-                                        {option.icon && renderIcon(option.icon)}
-                                        <span>{option.label}</span>
-                                    </span>
-                                    {isSelected && <Check className={ICON_STYLE} />}
+                                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                                        {option.icon && (
+                                            <span className="text-text-muted shrink-0">
+                                                {renderIcon(option.icon)}
+                                            </span>
+                                        )}
+                                        <span className="whitespace-nowrap">{option.label}</span>
+                                    </div>
+                                    {isSelected && <Check className={`${ICON_STYLE} text-accent shrink-0`} />}
                                 </button>
                             );
                         })}
@@ -463,14 +480,17 @@ const SelectField = ({
     );
 };
 
-// 6. COMBO FIELD (MULTI OPTION FILTER DROPDOWN)
+// 6. COMBO FIELD (MULTI-CATEGORY FACETED DROPDOWN)
 const ComboField = ({
     label,
-    values = [],
+    value,
+    values,
     options = [],
-    placeholder = 'Filter options...',
+    placeholder = 'Filter criteria...',
     leadingIcon,
     trailingIcon,
+    dropdownAlign = 'auto',
+    multiple = true,
     disabled = false,
     error,
     helperText,
@@ -480,7 +500,6 @@ const ComboField = ({
 }) => {
     // STATES
     const [isOpen, setIsOpen] = useState(false);
-    const [filterQuery, setFilterQuery] = useState('');
 
     // REFS
     const containerReference = useRef(null);
@@ -492,7 +511,46 @@ const ComboField = ({
         setIsOpen(false);
     });
 
-    const position = useSmartPosition(triggerReference, dropdownReference, isOpen);
+    const position = useSmartPosition(triggerReference, dropdownReference, isOpen, dropdownAlign);
+
+    // DERIVED VALUES
+    const selectedValues = useMemo(() => {
+        const rawValues = value ?? values ?? [];
+        if (Array.isArray(rawValues)) {
+            return rawValues;
+        }
+        return rawValues !== undefined && rawValues !== null && rawValues !== ''
+            ? [rawValues]
+            : [];
+    }, [value, values]);
+
+    const categorizedGroups = useMemo(() => {
+        const groupsMap = new Map();
+
+        options.forEach((option) => {
+            const categoryName = option.category ?? 'Options';
+            if (!groupsMap.has(categoryName)) {
+                groupsMap.set(categoryName, []);
+            }
+            groupsMap.get(categoryName).push(option);
+        });
+
+        return Array.from(groupsMap.entries()).map(([categoryTitle, categoryOptions]) => ({
+            title: categoryTitle,
+            options: categoryOptions,
+        }));
+    }, [options]);
+
+    const stateStyle = error
+        ? CONTROL_STATE_STYLE.error
+        : CONTROL_STATE_STYLE.default;
+    const composedTriggerClassName = `${CONTROL_BASE_STYLE} ${stateStyle} justify-between cursor-pointer ${className ?? ''}`.trim();
+    const verticalStyle = DROPDOWN_VERTICAL_STYLE[position.vertical] ?? DROPDOWN_VERTICAL_STYLE.bottom;
+    const horizontalStyle = DROPDOWN_HORIZONTAL_STYLE[position.horizontal] ?? (
+        dropdownAlign === 'right' ? DROPDOWN_HORIZONTAL_STYLE.right : DROPDOWN_HORIZONTAL_STYLE.left
+    );
+    const composedPositionStyle = `${verticalStyle} ${horizontalStyle}`;
+    const displayLeadingIcon = leadingIcon;
 
     // HANDLERS
     const handleToggleOpen = () => {
@@ -503,19 +561,21 @@ const ComboField = ({
         setIsOpen((previousState) => !previousState);
     };
 
-    const handleFilterChange = (event) => {
-        setFilterQuery(event.target.value);
-    };
-
     const handleToggleOption = (optionValue) => {
         if (disabled) {
             return;
         }
 
-        const isAlreadySelected = values.includes(optionValue);
+        if (!multiple) {
+            onChange?.(optionValue);
+            setIsOpen(false);
+            return;
+        }
+
+        const isAlreadySelected = selectedValues.includes(optionValue);
         const updatedValues = isAlreadySelected
-            ? values.filter((currentValue) => currentValue !== optionValue)
-            : [...values, optionValue];
+            ? selectedValues.filter((currentValue) => currentValue !== optionValue)
+            : [...selectedValues, optionValue];
 
         onChange?.(updatedValues);
     };
@@ -526,19 +586,8 @@ const ComboField = ({
             return;
         }
 
-        onChange?.([]);
+        onChange?.(multiple ? [] : null);
     };
-
-    // STYLES
-    const filteredOptions = options.filter((option) =>
-        option.label.toLowerCase().includes(filterQuery.toLowerCase())
-    );
-
-    const stateStyle = error
-        ? CONTROL_STATE_STYLE.error
-        : CONTROL_STATE_STYLE.default;
-    const composedTriggerClassName = `${CONTROL_BASE_STYLE} ${stateStyle} justify-between cursor-pointer ${className ?? ''}`.trim();
-    const positionStyle = DROPDOWN_POSITION_STYLE[position] ?? DROPDOWN_POSITION_STYLE.bottom;
 
     // RENDER
     return (
@@ -556,27 +605,27 @@ const ComboField = ({
                 onClick={handleToggleOpen}
                 className={composedTriggerClassName}
             >
-                <div className="flex items-center gap-1.5 truncate">
-                    {leadingIcon && (
+                <div className="flex items-center gap-2 truncate min-w-0 flex-1">
+                    {displayLeadingIcon && (
                         <span className="text-text-muted shrink-0">
-                            {renderIcon(leadingIcon)}
+                            {renderIcon(displayLeadingIcon)}
                         </span>
                     )}
-                    {values.length === 0 ? (
-                        <span className="text-text-muted">{placeholder}</span>
+                    {selectedValues.length === 0 ? (
+                        <span className="text-text-muted truncate">{placeholder}</span>
                     ) : (
-                        <span className="px-2 py-0.5 rounded text-xs bg-accent text-white font-medium">
-                            {values.length} selected
+                        <span className="px-2 py-1 rounded-full text-xs bg-accent-background text-accent font-semibold shrink-0">
+                            {selectedValues.length} active
                         </span>
                     )}
                 </div>
 
-                <div className="flex items-center gap-1">
-                    {values.length > 0 && (
+                <div className="flex items-center gap-1 shrink-0">
+                    {selectedValues.length > 0 && (
                         <button
                             type="button"
                             onClick={handleClearAll}
-                            className="text-text-muted hover:text-text transition-colors p-0.5 cursor-pointer"
+                            className="text-text-muted hover:text-text transition-colors p-1 cursor-pointer"
                             title="Clear all"
                         >
                             <X className={ICON_STYLE} />
@@ -597,51 +646,74 @@ const ComboField = ({
             {isOpen && (
                 <div
                     ref={dropdownReference}
-                    className={`absolute z-50 w-full left-0 ${positionStyle}`}
+                    className={`absolute z-50 ${composedPositionStyle} min-w-full w-max max-w-[calc(100vw-2rem)] sm:max-w-2xl`}
                 >
-                    <DropdownContainer className="max-h-72 overflow-hidden flex flex-col gap-2">
-                        <div className="flex items-center gap-2 px-2 py-1 bg-surface-hover rounded-md border border-surface-border">
-                            <Search className={`${ICON_STYLE} text-text-muted`} />
-                            <input
-                                type="text"
-                                value={filterQuery}
-                                onChange={handleFilterChange}
-                                placeholder="Type to filter..."
-                                className="w-full bg-transparent text-xs text-text placeholder:text-text-muted outline-none focus:outline-none focus-visible:outline-none"
-                            />
-                        </div>
-
-                        <div className="max-h-48 overflow-y-auto flex flex-col gap-1">
-                            {filteredOptions.length === 0 ? (
-                                <div className="p-2 text-xs text-text-muted text-center">
-                                    No options match filter
-                                </div>
-                            ) : (
-                                filteredOptions.map((option) => {
-                                    const isSelected = values.includes(option.value);
-                                    const itemClassName = isSelected
-                                        ? 'w-full flex items-center justify-between px-3 py-1.5 text-xs bg-accent-background text-accent rounded transition-colors text-left cursor-pointer'
-                                        : 'w-full flex items-center justify-between px-3 py-1.5 text-xs text-text hover:bg-surface-hover rounded transition-colors text-left cursor-pointer';
-
-                                    return (
-                                        <button
-                                            key={option.value}
-                                            type="button"
-                                            onClick={() => handleToggleOption(option.value)}
-                                            className={itemClassName}
-                                        >
-                                            <span className="flex items-center gap-2 truncate">
-                                                {option.icon && renderIcon(option.icon)}
-                                                <span>{option.label}</span>
+                    <DropdownContainer className="p-1 overflow-hidden shadow-2xl border border-surface-border bg-surface flex flex-col">
+                        {/* CATEGORY COLUMNS IN HORIZONTAL WIDTH ( | Category 1 | Category 2 | ... | ) */}
+                        {categorizedGroups.length === 0 ? (
+                            <div className="p-4 text-xs text-text-muted text-center">
+                                No options available
+                            </div>
+                        ) : (
+                            <div className="flex flex-row divide-x divide-surface-border overflow-x-auto max-h-72">
+                                {categorizedGroups.map((group) => (
+                                    <div
+                                        key={group.title}
+                                        className="flex flex-col shrink-0 min-w-28 w-max max-w-xs"
+                                    >
+                                        {/* CATEGORY COLUMN HEADER */}
+                                        <div className="px-3 pt-2 pb-1 flex items-center justify-between shrink-0">
+                                            <span className="font-bold text-xs text-text-muted uppercase tracking-wider select-none whitespace-nowrap">
+                                                {group.title}
                                             </span>
-                                            {isSelected && (
-                                                <Check className={`${ICON_STYLE} text-accent`} />
-                                            )}
-                                        </button>
-                                    );
-                                })
-                            )}
-                        </div>
+                                        </div>
+
+                                        {/* CATEGORY OPTIONS LIST */}
+                                        <div className="p-1 flex flex-col gap-1 overflow-y-auto flex-1">
+                                            {group.options.map((option) => {
+                                                const isSelected = selectedValues.includes(option.value);
+
+                                                return (
+                                                    <button
+                                                        key={option.value}
+                                                        type="button"
+                                                        onClick={() => handleToggleOption(option.value)}
+                                                        className={`w-full h-6 flex items-center justify-between px-2 rounded-md text-xs transition-colors cursor-pointer text-left select-none gap-3 whitespace-nowrap ${
+                                                            isSelected
+                                                                ? 'bg-accent-background text-accent font-semibold'
+                                                                : 'text-text hover:bg-surface-hover'
+                                                        }`}
+                                                    >
+                                                        <div className="flex items-center gap-2 min-w-0">
+                                                            {multiple && (
+                                                                <div
+                                                                    className={`h-4 w-4 rounded border flex items-center justify-center transition-colors shrink-0 ${
+                                                                        isSelected
+                                                                            ? 'bg-accent border-accent text-text-inverted'
+                                                                            : 'border-surface-border bg-surface'
+                                                                    }`}
+                                                                >
+                                                                    {isSelected && (
+                                                                        <Check className="h-3 w-3 stroke-[3]" />
+                                                                    )}
+                                                                </div>
+                                                            )}
+                                                            <span className="whitespace-nowrap" title={option.label}>
+                                                                {option.label}
+                                                            </span>
+                                                        </div>
+
+                                                        {!multiple && isSelected && (
+                                                            <Check className={`${ICON_STYLE} text-accent shrink-0`} />
+                                                        )}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </DropdownContainer>
                 </div>
             )}

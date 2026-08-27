@@ -8,7 +8,7 @@ const NAVIGATION_CONTAINER_STYLE = 'flex flex-col gap-2';
 const NAVIGATION_ICON_STYLE = 'h-5 w-5 shrink-0';
 const NAVIGATION_ITEM_BASE_STYLE = 'h-10 w-10 inline-flex items-center justify-center rounded-md border transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50';
 const NAVIGATION_ITEM_STATE_STYLE = {
-    active: 'bg-accent text-white border-accent hover:bg-accent-hover',
+    active: 'bg-accent text-text-inverted border-accent hover:bg-accent-hover',
     inactive: 'bg-surface text-text-muted border-surface-border hover:text-text hover:bg-surface-hover',
 };
 
@@ -21,14 +21,14 @@ const TOGGLE_STATE_STYLE = {
 const SEGMENT_CONTAINER_STYLE = 'h-8 inline-flex items-center p-1 bg-surface border border-surface-border rounded-md gap-1 box-border';
 const SEGMENT_ITEM_BASE_STYLE = 'h-6 px-2 text-xs font-medium rounded-sm inline-flex items-center justify-center gap-1 transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50';
 const SEGMENT_ITEM_STATE_STYLE = {
-    active: 'bg-accent text-white',
+    active: 'bg-accent text-text-inverted',
     inactive: 'text-text-muted hover:text-text hover:bg-surface-hover',
 };
 
 const VIEW_CONTAINER_STYLE = 'h-8 inline-flex items-center';
-const VIEW_ITEM_BASE_STYLE = 'h-8 px-3 text-sm font-medium inline-flex items-center justify-center gap-2 border border-surface-border transition-colors cursor-pointer first:rounded-l-md last:rounded-r-md -ml-px first:ml-0 disabled:cursor-not-allowed disabled:opacity-50';
+const VIEW_ITEM_BASE_STYLE = 'h-8 w-8 inline-flex items-center justify-center border border-surface-border transition-colors cursor-pointer first:rounded-l-md last:rounded-r-md -ml-px first:ml-0 disabled:cursor-not-allowed disabled:opacity-50';
 const VIEW_ITEM_STATE_STYLE = {
-    active: 'bg-accent text-white border-accent z-10 hover:bg-accent-hover',
+    active: 'bg-accent text-text-inverted border-accent z-10 hover:bg-accent-hover',
     inactive: 'bg-surface text-text hover:bg-surface-hover hover:text-text z-0',
 };
 
@@ -39,7 +39,7 @@ const SWITCH_TRACK_STATE_STYLE = {
     active: 'bg-accent border-accent',
     inactive: 'bg-surface-hover border-surface-border',
 };
-const SWITCH_THUMB_BASE_STYLE = 'w-4 h-4 rounded-full bg-white transition-transform shadow-sm pointer-events-none';
+const SWITCH_THUMB_BASE_STYLE = 'w-4 h-4 rounded-full bg-text-inverted transition-transform shadow-sm pointer-events-none';
 const SWITCH_THUMB_STATE_STYLE = {
     active: 'translate-x-4',
     inactive: 'translate-x-0',
@@ -65,7 +65,7 @@ const NavigationSelection = ({
         onChange?.(optionValue);
     };
 
-    // STYLES
+    // DERIVED VALUES
     const composedContainerClassName = `${NAVIGATION_CONTAINER_STYLE} ${className ?? ''}`.trim();
 
     // RENDER
@@ -118,7 +118,7 @@ const ToggleSelection = ({
         onChange?.(!pressed, event);
     };
 
-    // STYLES
+    // DERIVED VALUES
     const stateStyle = pressed
         ? TOGGLE_STATE_STYLE.active
         : TOGGLE_STATE_STYLE.inactive;
@@ -157,7 +157,7 @@ const SegmentSelection = ({
         onChange?.(optionValue);
     };
 
-    // STYLES
+    // DERIVED VALUES
     const composedContainerClassName = `${SEGMENT_CONTAINER_STYLE} ${className ?? ''}`.trim();
 
     // RENDER
@@ -210,7 +210,7 @@ const ViewSelection = ({
         onChange?.(optionValue);
     };
 
-    // STYLES
+    // DERIVED VALUES
     const composedContainerClassName = `${VIEW_CONTAINER_STYLE} ${className ?? ''}`.trim();
 
     // RENDER
@@ -235,9 +235,10 @@ const ViewSelection = ({
                         disabled={isOptionDisabled}
                         onClick={() => handleChange(option.value)}
                         className={itemClassName}
+                        title={option.title ?? option.label}
+                        aria-label={option.label ?? option.title}
                     >
                         {renderIcon(option.icon)}
-                        {option.label && <span>{option.label}</span>}
                     </button>
                 );
             })}
