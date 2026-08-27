@@ -43,6 +43,7 @@
 
     --color-text: var(--color-zinc-900);
     --color-text-muted: var(--color-zinc-500);
+    --color-text-inverted: var(--color-white);
 
     --color-accent: var(--color-emerald-600);
     --color-accent-hover: var(--color-emerald-700);
@@ -78,6 +79,7 @@
 
         --color-text: var(--color-zinc-50);
         --color-text-muted: var(--color-zinc-400);
+        --color-text-inverted: var(--color-white);
 
         --color-accent: var(--color-emerald-500);
         --color-accent-hover: var(--color-emerald-400);
