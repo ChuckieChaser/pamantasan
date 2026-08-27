@@ -1,6 +1,6 @@
 // --- IMPORTS ---
 import { useState, useEffect } from 'react';
-import { authService } from '../services/authService';
+import { authService } from '../services';
 
 // --- HOOK ---
 const useAuth = () => {
@@ -21,6 +21,17 @@ const useAuth = () => {
     }, []);
 
     // HANDLERS
+    const loginWithEmail = async (email, password) => {
+        setIsLoading(true);
+        try {
+            const authenticatedUser = await authService.loginWithEmail(email, password);
+            setCurrentUser(authenticatedUser);
+            return authenticatedUser;
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
     const loginWithUniversityId = async (universityId, password) => {
         setIsLoading(true);
         try {
@@ -56,6 +67,7 @@ const useAuth = () => {
     return {
         currentUser,
         isLoading,
+        loginWithEmail,
         loginWithUniversityId,
         loginWithGoogle,
         logout,

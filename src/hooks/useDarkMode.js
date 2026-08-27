@@ -1,30 +1,35 @@
 // --- IMPORTS ---
 import { useState, useEffect } from 'react';
+import { THEME_MODES } from '../constants';
+
+// --- CONFIGURATIONS ---
+const STORAGE_KEY = 'theme';
 
 // --- HOOKS ---
 function useDarkMode() {
     const [isDarkMode, setIsDarkMode] = useState(() => {
         if (typeof window === 'undefined') {
-            return false;
+            return true;
         }
 
-        const storedPreference = localStorage.getItem('theme');
-        if (storedPreference) {
-            return storedPreference === 'dark';
+        const storedPreference = localStorage.getItem(STORAGE_KEY);
+
+        if (storedPreference !== null) {
+            return storedPreference === THEME_MODES.DARK.toLowerCase();
         }
 
-        return window.matchMedia('(prefers-color-scheme: dark)').matches;
+        return true;
     });
 
     useEffect(() => {
         const rootElement = document.documentElement;
 
         if (isDarkMode) {
-            rootElement.classList.add('dark');
-            localStorage.setItem('theme', 'dark');
+            rootElement.classList.add(THEME_MODES.DARK.toLowerCase());
+            localStorage.setItem(STORAGE_KEY, THEME_MODES.DARK.toLowerCase());
         } else {
-            rootElement.classList.remove('dark');
-            localStorage.setItem('theme', 'light');
+            rootElement.classList.remove(THEME_MODES.DARK.toLowerCase());
+            localStorage.setItem(STORAGE_KEY, THEME_MODES.LIGHT.toLowerCase());
         }
     }, [isDarkMode]);
 
