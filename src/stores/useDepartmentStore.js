@@ -4,12 +4,13 @@ import {
     DepartmentInsertSchema,
     DepartmentUpdateSchema,
 } from '../schemas';
-import { MOCK_DEPARTMENTS } from '../mocks';
+import { DEFAULT_DEPARTMENTS } from '../constants';
+import { departmentService } from '../services';
 
 // --- STORE DEFINITION ---
 const useDepartmentStore = create((set, get) => ({
     // STATE
-    departments: MOCK_DEPARTMENTS,
+    departments: [...DEFAULT_DEPARTMENTS],
     selectedDepartment: null,
     isLoading: false,
     error: null,
@@ -19,13 +20,46 @@ const useDepartmentStore = create((set, get) => ({
         set({ isLoading: true, error: null });
 
         try {
-            const currentDepartments = get().departments;
-            set({ isLoading: false });
-            return currentDepartments;
+            let liveDepartments = await departmentService.fetchDepartments();
+
+            // Auto-seed missing canonical colleges into PostgreSQL
+            const existingCodes = new Set(liveDepartments.map((d) => d.code));
+            const missingColleges = DEFAULT_DEPARTMENTS.filter((d) => !existingCodes.has(d.code));
+
+            if (missingColleges.length > 0) {
+                for (const missing of missingColleges) {
+                    try {
+                        await departmentService.createDepartment({
+                            name: missing.name,
+                            code: missing.code,
+                        });
+                    } catch {
+                        // Ignore race condition
+                    }
+                }
+                liveDepartments = await departmentService.fetchDepartments();
+            }
+
+            const combinedMap = new Map();
+            DEFAULT_DEPARTMENTS.forEach((dept) => {
+                combinedMap.set(dept.code, dept);
+            });
+            liveDepartments.forEach((dept) => {
+                const existing = combinedMap.get(dept.code);
+                if (existing) {
+                    combinedMap.set(dept.code, { ...existing, ...dept });
+                } else {
+                    combinedMap.set(dept.code || dept.id, dept);
+                }
+            });
+
+            const mergedList = Array.from(combinedMap.values());
+            set({ departments: mergedList, isLoading: false });
+            return mergedList;
         } catch (error) {
             const errorMessage = error?.message ?? 'Failed to fetch departments.';
-            set({ isLoading: false, error: errorMessage });
-            throw error;
+            set({ departments: [...DEFAULT_DEPARTMENTS], isLoading: false, error: errorMessage });
+            return [...DEFAULT_DEPARTMENTS];
         }
     },
 
@@ -33,7 +67,10 @@ const useDepartmentStore = create((set, get) => ({
         set({ isLoading: true, error: null });
 
         try {
-            const department = get().departments.find((item) => item.id === departmentId) ?? null;
+            let department = get().departments.find((item) => item.id === departmentId);
+            if (!department) {
+                department = await departmentService.fetchDepartmentById(departmentId);
+            }
             set({ selectedDepartment: department, isLoading: false });
             return department;
         } catch (error) {
@@ -48,25 +85,16 @@ const useDepartmentStore = create((set, get) => ({
 
         try {
             const validatedData = DepartmentInsertSchema.parse(departmentPayload);
-            const timestamp = new Date().toISOString();
-
-            const newDepartment = {
-                id: validatedData.id ?? `d${Date.now().toString(16).padStart(7, '0')}-0000-4000-8000-000000000000`.slice(0, 36),
+            const created = await departmentService.createDepartment({
                 name: validatedData.name,
                 code: validatedData.code,
-                created_at: timestamp,
-                updated_at: timestamp,
+            });
+
+            const newDepartment = created ?? {
+                id: validatedData.id ?? `dept-${Date.now()}`,
+                name: validatedData.name,
+                code: validatedData.code,
             };
-
-            // Enforce Unique Constraints
-            const existingDepartment = get().departments.find(
-                (item) => item.code.toUpperCase() === newDepartment.code.toUpperCase() ||
-                          item.name.toLowerCase() === newDepartment.name.toLowerCase()
-            );
-
-            if (existingDepartment) {
-                throw new Error(`A department with name "${newDepartment.name}" or code "${newDepartment.code}" already exists.`);
-            }
 
             set((state) => ({
                 departments: [...state.departments, newDepartment],
@@ -86,16 +114,12 @@ const useDepartmentStore = create((set, get) => ({
 
         try {
             const validatedUpdates = DepartmentUpdateSchema.parse(departmentUpdates);
-            const targetDepartment = get().departments.find((item) => item.id === departmentId);
-
-            if (!targetDepartment) {
-                throw new Error(`Department with identifier "${departmentId}" was not found.`);
-            }
+            await departmentService.updateDepartment(departmentId, validatedUpdates);
 
             const updatedDepartment = {
-                ...targetDepartment,
+                ...(get().departments.find((item) => item.id === departmentId) ?? {}),
                 ...validatedUpdates,
-                updated_at: new Date().toISOString(),
+                id: departmentId,
             };
 
             set((state) => ({
@@ -120,6 +144,8 @@ const useDepartmentStore = create((set, get) => ({
         set({ isLoading: true, error: null });
 
         try {
+            await departmentService.deleteDepartment(departmentId);
+
             set((state) => ({
                 departments: state.departments.filter((item) => item.id !== departmentId),
                 selectedDepartment: state.selectedDepartment?.id === departmentId

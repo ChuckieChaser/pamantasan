@@ -39,7 +39,7 @@ function useSmartPosition(
                 ? 'top'
                 : 'bottom';
 
-            let horizontal = 'left';
+            let horizontal;
 
             if (preferredHorizontal === 'right') {
                 horizontal = spaceLeft >= dropdownWidth || spaceLeft > spaceRight

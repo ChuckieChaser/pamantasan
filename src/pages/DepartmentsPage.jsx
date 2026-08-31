@@ -3,9 +3,6 @@ import { useState, useMemo } from 'react';
 import {
     Building2,
     Plus,
-    Edit3,
-    Trash2,
-    Users,
     CheckCircle2,
 } from 'lucide-react';
 import {
@@ -34,7 +31,6 @@ const DEPARTMENT_SORT_OPTIONS = [
 
 // --- COMPONENTS ---
 const DepartmentsPage = ({
-    currentUser = null,
     onSelectDepartment = null,
     className,
     ...props
@@ -78,13 +74,15 @@ const DepartmentsPage = ({
                 memberCount: `${count > 0 ? count : (department.faculty_count ?? 12)} members`,
                 metadata: `${department.code} · ${count > 0 ? count : (department.faculty_count ?? 12)} members`,
                 department: department.name,
-                created_at: department.created_at,
-                updated_at: department.updated_at ?? department.created_at,
-                date: new Date(department.created_at).toLocaleDateString([], {
-                    month: 'short',
-                    day: 'numeric',
-                    year: 'numeric',
-                }),
+                created_at: department.created_at ?? new Date().toISOString(),
+                updated_at: department.updated_at ?? department.created_at ?? new Date().toISOString(),
+                date: department.created_at && !isNaN(new Date(department.created_at).getTime())
+                    ? new Date(department.created_at).toLocaleDateString([], {
+                        month: 'short',
+                        day: 'numeric',
+                        year: 'numeric',
+                    })
+                    : 'Active',
                 badge: department.code,
             };
         });

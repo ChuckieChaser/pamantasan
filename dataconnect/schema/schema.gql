@@ -1,0 +1,117 @@
+type Department @table {
+  name: String!
+  code: String!
+}
+
+type User @table {
+  universityId: String!
+  email: String!
+  role: String!
+  status: String!
+  firstName: String!
+  middleName: String
+  lastName: String!
+  avatarPath: String
+  department: Department!
+}
+
+type UserCredential @table {
+  user: User!
+  passwordHash: String!
+  googleId: String
+}
+
+type UserSetting @table {
+  user: User!
+  theme: String!
+  notification: String!
+}
+
+type UserSession @table {
+  user: User!
+  tokenHash: String!
+  ipAddress: String
+  userAgent: String
+  expiredAt: Timestamp
+}
+
+type Document @table {
+  name: String!
+  uploader: User!
+  isFolder: Boolean!
+  isArchived: Boolean!
+  parent: Document
+  comment: String
+}
+
+type DocumentVersion @table {
+  document: Document!
+  uploader: User!
+  approver: User
+  publisher: User
+  rejecter: User
+  version: Int!
+  path: String!
+  sizeBytes: Int64!
+  mimeType: String!
+  classification: String!
+  changeSummary: String
+  rejectionReason: String
+  summary: String
+  embedding: Vector @col(size: 768)
+  textHash: String
+}
+
+type DocumentShare @table {
+  document: Document!
+  sharer: User!
+  recipient: User
+  department: Department!
+  status: String!
+}
+
+type DocumentRequest @table {
+  requester: User!
+  resolver: User
+  subject: String!
+  status: String!
+}
+
+type DocumentRequestMessage @table {
+  documentRequest: DocumentRequest!
+  user: User
+  message: String!
+}
+
+type DocumentRequestAttachment @table {
+  documentRequest: DocumentRequest!
+  document: Document!
+  attachedBy: User!
+}
+
+type CoordinatorRequest @table {
+  requester: User!
+  reviewer: User
+  action: String!
+  data: String!
+  status: String!
+  rejectionReason: String
+}
+
+type Notification @table {
+  recipient: User!
+  actor: User
+  entityType: String!
+  entityId: UUID!
+  action: String!
+  isRead: Boolean!
+  isEmailed: Boolean!
+}
+
+type AuditLog @table {
+  actor: User
+  entityType: String!
+  entityId: UUID!
+  action: String!
+  data: String!
+}

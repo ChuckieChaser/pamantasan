@@ -1,28 +1,24 @@
 // --- IMPORTS ---
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef } from 'react';
 import {
     Users,
     Plus,
-    Edit3,
-    Trash2,
     Shield,
-    Mail,
     Building2,
-    CheckCircle2,
     Clock,
-    UserCheck,
+    Upload,
 } from 'lucide-react';
 import {
     PageContainer,
     Browser,
     TextField,
     SelectField,
-    RoleBadge,
     Modal,
     UserAvatar,
     useToast,
 } from '../components';
 import { useUserStore, useDepartmentStore } from '../stores';
+import { storageService } from '../services';
 import { USER_ROLES, USER_STATUSES } from '../constants';
 
 // --- CONFIGURATIONS ---
@@ -43,16 +39,15 @@ const USER_SORT_OPTIONS = [
 ];
 
 const ROLE_OPTIONS = [
-    { value: USER_ROLES.MEMBER, label: 'Member' },
-    { value: USER_ROLES.OFFICER, label: 'Officer' },
-    { value: USER_ROLES.DIRECTOR, label: 'Director' },
-    { value: USER_ROLES.COORDINATOR, label: 'Coordinator' },
-    { value: USER_ROLES.ADMINISTRATOR, label: 'Administrator' },
+    { value: USER_ROLES.MEMBER, label: 'Member / Faculty' },
+    { value: USER_ROLES.COORDINATOR, label: 'Department Coordinator' },
+    { value: USER_ROLES.OFFICER, label: 'Department Records Officer' },
+    { value: USER_ROLES.DIRECTOR, label: 'Director / College Dean' },
+    { value: USER_ROLES.ADMINISTRATOR, label: 'Institutional Administrator' },
 ];
 
 // --- COMPONENTS ---
 const UsersPage = ({
-    currentUser = null,
     onSelectUser = null,
     className,
     ...props
@@ -67,6 +62,10 @@ const UsersPage = ({
     const deleteUser = useUserStore((state) => state.deleteUser);
     const departments = useDepartmentStore((state) => state.departments);
 
+    // REFS
+    const addAvatarInputRef = useRef(null);
+    const editAvatarInputRef = useRef(null);
+
     // STATES
     const [selectedUser, setSelectedUser] = useState(null);
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -80,6 +79,8 @@ const UsersPage = ({
     const [formEmail, setFormEmail] = useState('');
     const [formDepartmentId, setFormDepartmentId] = useState('');
     const [formRole, setFormRole] = useState(USER_ROLES.MEMBER);
+    const [formAvatarPath, setFormAvatarPath] = useState(null);
+    const [formAvatarFile, setFormAvatarFile] = useState(null);
     const [formError, setFormError] = useState('');
 
     // DERIVED VALUES
@@ -129,13 +130,15 @@ const UsersPage = ({
                 avatar_path: user.avatar_path ?? null,
                 metadata: `${user.university_id} · ${departmentCode}`,
                 description: `${user.email} — ${user.role} in ${department?.name ?? departmentCode}`,
-                created_at: user.created_at,
-                updated_at: user.updated_at ?? user.created_at,
-                date: new Date(user.created_at).toLocaleDateString([], {
-                    month: 'short',
-                    day: 'numeric',
-                    year: 'numeric',
-                }),
+                created_at: user.created_at ?? null,
+                updated_at: user.updated_at ?? user.created_at ?? null,
+                date: user.created_at && !isNaN(new Date(user.created_at).getTime())
+                    ? new Date(user.created_at).toLocaleDateString([], {
+                        month: 'short',
+                        day: 'numeric',
+                        year: 'numeric',
+                    })
+                    : 'Active Member',
             };
         });
     }, [users, departments]);
@@ -153,6 +156,8 @@ const UsersPage = ({
         setFormEmail('');
         setFormDepartmentId(departments[0]?.id ?? '');
         setFormRole(USER_ROLES.MEMBER);
+        setFormAvatarPath(null);
+        setFormAvatarFile(null);
         setFormError('');
         setIsAddModalOpen(true);
     };
@@ -166,6 +171,8 @@ const UsersPage = ({
         setFormEmail(rawUser.email);
         setFormDepartmentId(rawUser.department_id);
         setFormRole(rawUser.role);
+        setFormAvatarPath(rawUser.avatar_path ?? null);
+        setFormAvatarFile(null);
         setFormError('');
     };
 
@@ -173,10 +180,11 @@ const UsersPage = ({
         setIsAddModalOpen(false);
         setEditingUser(null);
         setDeletingUser(null);
+        setFormAvatarFile(null);
         setFormError('');
     };
 
-    const handleItemAction = (actionKey, item) => {
+    const handleItemAction = async (actionKey, item) => {
         if (actionKey === 'open') {
             handleSelectUser(item);
             return;
@@ -192,6 +200,42 @@ const UsersPage = ({
             setDeletingUser(rawUser);
             return;
         }
+
+        if (actionKey === 'verify') {
+            try {
+                await updateUser(item.id, { status: USER_STATUSES.VERIFIED });
+                showToast({
+                    type: 'success',
+                    title: 'Account Verified',
+                    description: `${item.title} has been granted verified status.`,
+                });
+            } catch (error) {
+                showToast({
+                    type: 'error',
+                    title: 'Status Update Failed',
+                    description: error?.message ?? 'Could not verify account.',
+                });
+            }
+            return;
+        }
+
+        if (actionKey === 'suspend') {
+            try {
+                await updateUser(item.id, { status: USER_STATUSES.SUSPENDED });
+                showToast({
+                    type: 'warning',
+                    title: 'Account Suspended',
+                    description: `${item.title} account has been suspended.`,
+                });
+            } catch (error) {
+                showToast({
+                    type: 'error',
+                    title: 'Status Update Failed',
+                    description: error?.message ?? 'Could not suspend account.',
+                });
+            }
+            return;
+        }
     };
 
     const handleCreateUser = async () => {
@@ -201,6 +245,12 @@ const UsersPage = ({
         }
 
         try {
+            let uploadedAvatarPath = formAvatarPath;
+            if (formAvatarFile) {
+                const uploadResult = await storageService.uploadAvatar(formUniversityId.trim(), formAvatarFile);
+                uploadedAvatarPath = uploadResult.path;
+            }
+
             await createUser({
                 university_id: formUniversityId.trim(),
                 first_name: formFirstName.trim(),
@@ -209,6 +259,7 @@ const UsersPage = ({
                 department_id: formDepartmentId,
                 role: formRole,
                 status: USER_STATUSES.VERIFIED,
+                avatar_path: uploadedAvatarPath,
             });
 
             showToast({
@@ -233,11 +284,18 @@ const UsersPage = ({
         }
 
         try {
+            let uploadedAvatarPath = formAvatarPath;
+            if (formAvatarFile) {
+                const uploadResult = await storageService.uploadAvatar(editingUser.id, formAvatarFile);
+                uploadedAvatarPath = uploadResult.path;
+            }
+
             await updateUser(editingUser.id, {
                 first_name: formFirstName.trim(),
                 last_name: formLastName.trim(),
                 department_id: formDepartmentId,
                 role: formRole,
+                avatar_path: uploadedAvatarPath,
             });
 
             showToast({
@@ -309,16 +367,49 @@ const UsersPage = ({
                                 {formError}
                             </div>
                         )}
+
+                        {/* AVATAR PREVIEW & UPLOAD */}
+                        <div className="flex items-center gap-3 p-3 rounded-lg bg-surface-hover/50 border border-surface-border">
+                            <UserAvatar
+                                src={formAvatarFile ? URL.createObjectURL(formAvatarFile) : formAvatarPath}
+                                name={`${formFirstName || 'New'} ${formLastName || 'User'}`}
+                                size="lg"
+                                className="h-12 w-12 shadow-xs shrink-0"
+                            />
+                            <div className="flex flex-col min-w-0 flex-1">
+                                <span className="font-bold text-sm text-text truncate">
+                                    {formFirstName || 'New'} {formLastName || 'User'}
+                                </span>
+                                <span className="text-xs text-text-muted">
+                                    Auto-generated avatar or custom photo
+                                </span>
+                            </div>
+                            <input
+                                type="file"
+                                ref={addAvatarInputRef}
+                                onChange={(changeEvent) => setFormAvatarFile(changeEvent.target.files?.[0] ?? null)}
+                                accept="image/*"
+                                className="hidden"
+                            />
+                            <button
+                                type="button"
+                                onClick={() => addAvatarInputRef.current?.click()}
+                                className="px-3 py-1.5 rounded-md border border-surface-border bg-surface hover:bg-surface-hover text-xs font-medium text-text inline-flex items-center gap-1.5 cursor-pointer transition-colors"
+                            >
+                                <Upload className="h-3.5 w-3.5" /> Upload Photo
+                            </button>
+                        </div>
+
                         <div className="grid grid-cols-2 gap-3">
                             <TextField
                                 label="First Name"
-                                placeholder="Arthur"
+                                placeholder="Carl"
                                 value={formFirstName}
                                 onChange={(changeEvent) => setFormFirstName(changeEvent.target.value)}
                             />
                             <TextField
                                 label="Last Name"
-                                placeholder="Pendragon"
+                                placeholder="Avecilla"
                                 value={formLastName}
                                 onChange={(changeEvent) => setFormLastName(changeEvent.target.value)}
                             />
@@ -373,12 +464,12 @@ const UsersPage = ({
                         )}
                         <div className="flex items-center gap-3 p-3 rounded-lg bg-surface-hover/50 border border-surface-border">
                             <UserAvatar
-                                src={editingUser.avatar_path}
+                                src={formAvatarFile ? URL.createObjectURL(formAvatarFile) : formAvatarPath}
                                 name={`${formFirstName} ${formLastName}`}
                                 size="lg"
                                 className="h-12 w-12 shadow-xs shrink-0"
                             />
-                            <div className="flex flex-col min-w-0">
+                            <div className="flex flex-col min-w-0 flex-1">
                                 <span className="font-bold text-sm text-text truncate">
                                     {formFirstName || 'User'} {formLastName}
                                 </span>
@@ -386,6 +477,20 @@ const UsersPage = ({
                                     {editingUser.university_id} · {editingUser.email}
                                 </span>
                             </div>
+                            <input
+                                type="file"
+                                ref={editAvatarInputRef}
+                                onChange={(changeEvent) => setFormAvatarFile(changeEvent.target.files?.[0] ?? null)}
+                                accept="image/*"
+                                className="hidden"
+                            />
+                            <button
+                                type="button"
+                                onClick={() => editAvatarInputRef.current?.click()}
+                                className="px-3 py-1.5 rounded-md border border-surface-border bg-surface hover:bg-surface-hover text-xs font-medium text-text inline-flex items-center gap-1.5 cursor-pointer transition-colors"
+                            >
+                                <Upload className="h-3.5 w-3.5" /> Upload Photo
+                            </button>
                         </div>
                         <div className="grid grid-cols-2 gap-3">
                             <TextField

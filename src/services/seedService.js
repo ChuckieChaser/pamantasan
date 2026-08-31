@@ -15,9 +15,9 @@ const CLOUD_SEEDS = [
         universityId: '20-00001',
         email: `20-00001${INSTITUTIONAL_CONFIG.EMAIL_DOMAIN}`,
         password: 'password',
-        displayName: 'Arthur Pendragon',
+        displayName: 'Carl Avecilla',
         role: USER_ROLES.ADMINISTRATOR,
-        department: 'College of Computer Studies',
+        department: 'Records Management Office',
     },
     {
         universityId: '20-00002',
@@ -33,7 +33,7 @@ const CLOUD_SEEDS = [
         password: 'password',
         displayName: 'Diana Prince',
         role: USER_ROLES.DIRECTOR,
-        department: 'College of Computer Studies',
+        department: 'College of Nursing',
     },
     {
         universityId: '20-00004',
@@ -41,7 +41,7 @@ const CLOUD_SEEDS = [
         password: 'password',
         displayName: 'Oliver Queen',
         role: USER_ROLES.OFFICER,
-        department: 'College of Computer Studies',
+        department: 'College of Engineering',
     },
     {
         universityId: '20-00005',
@@ -49,7 +49,7 @@ const CLOUD_SEEDS = [
         password: 'password',
         displayName: 'Marcus Aurelius',
         role: USER_ROLES.MEMBER,
-        department: 'College of Computer Studies',
+        department: 'College of Education',
     },
     {
         universityId: '21-00001',
@@ -57,7 +57,7 @@ const CLOUD_SEEDS = [
         password: 'password',
         displayName: 'Helena Roosevelt',
         role: USER_ROLES.MEMBER,
-        department: 'Human Resources',
+        department: 'College of Arts and Science',
     },
     {
         universityId: '21-00002',
@@ -65,7 +65,15 @@ const CLOUD_SEEDS = [
         password: 'password',
         displayName: 'Henry Wallace',
         role: USER_ROLES.MEMBER,
-        department: 'Human Resources',
+        department: 'College of Business and Accountancy',
+    },
+    {
+        universityId: '21-00003',
+        email: `21-00003${INSTITUTIONAL_CONFIG.EMAIL_DOMAIN}`,
+        password: 'password',
+        displayName: 'Patricia Reyes',
+        role: USER_ROLES.MEMBER,
+        department: 'College of Hospitality Management',
     },
 ];
 
@@ -130,7 +138,7 @@ const seedService = {
                         results.failed += 1;
                         const message = 'Email/Password provider is disabled. Please enable "Email/Password" in Firebase Console under Authentication > Sign-in method.';
                         results.errors.push(message);
-                        throw new Error(message);
+                        throw new Error(message, { cause: error });
                     } else {
                         results.failed += 1;
                         const errorMessage = `[${seed.universityId}] ${error.message}`;

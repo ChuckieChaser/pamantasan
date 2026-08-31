@@ -2,7 +2,6 @@
 import { cloneElement, isValidElement } from 'react';
 import {
     CheckCircle2,
-    AlertTriangle,
     XCircle,
     Info,
     Shield,

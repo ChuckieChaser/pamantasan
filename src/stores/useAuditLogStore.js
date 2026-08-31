@@ -1,16 +1,13 @@
 // --- IMPORTS ---
 import { create } from 'zustand';
-import { AuditLogInsertSchema } from '../schemas';
 import {
-    AUDIT_LOG_ENTITY_TYPES,
-    SYSTEM_ACTIONS,
-} from '../constants';
-import { MOCK_AUDIT_LOGS } from '../mocks';
+    AuditLogInsertSchema,
+} from '../schemas';
 
 // --- STORE DEFINITION ---
 const useAuditLogStore = create((set, get) => ({
     // STATE
-    auditLogs: MOCK_AUDIT_LOGS,
+    auditLogs: [],
     isLoading: false,
     error: null,
 
@@ -23,33 +20,21 @@ const useAuditLogStore = create((set, get) => ({
 
             if (filterOptions.actorId) {
                 resultLogs = resultLogs.filter(
-                    (item) => item.actor_id === filterOptions.actorId
+                    (log) => log.actor_id === filterOptions.actorId
                 );
             }
 
             if (filterOptions.entityType) {
                 resultLogs = resultLogs.filter(
-                    (item) => item.entity_type === filterOptions.entityType
-                );
-            }
-
-            if (filterOptions.entityId) {
-                resultLogs = resultLogs.filter(
-                    (item) => item.entity_id === filterOptions.entityId
+                    (log) => log.entity_type === filterOptions.entityType
                 );
             }
 
             if (filterOptions.action) {
                 resultLogs = resultLogs.filter(
-                    (item) => item.action === filterOptions.action
+                    (log) => log.action === filterOptions.action
                 );
             }
-
-            // Order by created_at DESC
-            resultLogs.sort(
-                (firstItem, secondItem) =>
-                    new Date(secondItem.created_at) - new Date(firstItem.created_at)
-            );
 
             set({ isLoading: false });
             return resultLogs;
@@ -60,31 +45,29 @@ const useAuditLogStore = create((set, get) => ({
         }
     },
 
-    createAuditLog: async (auditPayload) => {
+    createAuditLog: async (logPayload) => {
         set({ isLoading: true, error: null });
 
         try {
-            const validatedData = AuditLogInsertSchema.parse(auditPayload);
-            const timestamp = new Date().toISOString();
-
-            const newLog = {
-                id: validatedData.id ?? `audit-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+            const validatedData = AuditLogInsertSchema.parse(logPayload);
+            const newAuditLog = {
+                id: validatedData.id ?? `audit-${Date.now()}`,
                 actor_id: validatedData.actor_id ?? null,
                 entity_type: validatedData.entity_type,
                 entity_id: validatedData.entity_id,
                 action: validatedData.action,
-                data: validatedData.data,
-                created_at: timestamp,
+                data: validatedData.data ?? {},
+                created_at: new Date().toISOString(),
             };
 
             set((state) => ({
-                auditLogs: [newLog, ...state.auditLogs],
+                auditLogs: [newAuditLog, ...state.auditLogs],
                 isLoading: false,
             }));
 
-            return newLog;
+            return newAuditLog;
         } catch (error) {
-            const errorMessage = error?.message ?? 'Failed to create audit log entry.';
+            const errorMessage = error?.message ?? 'Failed to create audit log.';
             set({ isLoading: false, error: errorMessage });
             throw error;
         }

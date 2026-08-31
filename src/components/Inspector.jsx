@@ -1,5 +1,5 @@
 // --- IMPORTS ---
-import { useState, useMemo, useRef, useEffect } from 'react';
+import { useState, useMemo, useRef } from 'react';
 import {
     FileText,
     Folder,
@@ -33,16 +33,16 @@ import {
     Trash2,
     Info,
     Users,
-    ArrowRight,
     Search,
     X,
+    RotateCcw,
 } from 'lucide-react';
-import { StatusBadge, ClassificationBadge, RoleBadge, Badge } from './Badge';
+import { StatusBadge, ClassificationBadge, RoleBadge } from './Badge';
 import { PrimaryButton, SecondaryButton, DestructiveButton } from './Button';
 import { SegmentSelection } from './Selections';
 import { UserAvatar } from './Avatar';
 import { Modal } from './Modal';
-import { useToast } from './Toast';
+import { useToast } from '../hooks/useToast';
 import {
     useDocumentStore,
     useDocumentRequestStore,
@@ -129,7 +129,6 @@ function getActionDescription(action) {
 const Inspector = ({
     item = null,
     currentUser = null,
-    onClose,
     onAction,
     className,
     ...props
@@ -149,23 +148,25 @@ const Inspector = ({
     const activeUser = currentUser ?? authUser;
 
     const allDocuments = useDocumentStore((state) => state.documents);
-    const allDocumentVersions = useDocumentStore((state) => state.versions);
-    const allDocumentShares = useDocumentStore((state) => state.shares);
-    const allRequestMessages = useDocumentRequestStore((state) => state.messages);
-    const allRequestAttachments = useDocumentRequestStore((state) => state.attachments);
+    const allDocumentVersions = useDocumentStore((state) => state.documentVersions ?? state.versions ?? []);
+    const allDocumentShares = useDocumentStore((state) => state.documentShares ?? state.shares ?? []);
+    const allRequestMessages = useDocumentRequestStore((state) => state.messages ?? state.documentRequestMessages ?? []);
+    const allRequestAttachments = useDocumentRequestStore((state) => state.attachments ?? state.documentRequestAttachments ?? []);
     const addRequestMessage = useDocumentRequestStore((state) => state.addRequestMessage);
-    const attachDocumentToRequest = useDocumentRequestStore((state) => state.attachDocumentToRequest);
+    const attachDocumentToRequest = useDocumentRequestStore((state) => state.attachDocumentToRequest ?? state.addRequestAttachment);
     const allDepartments = useDepartmentStore((state) => state.departments);
     const allUsers = useUserStore((state) => state.users);
     const allAuditLogs = useAuditLogStore((state) => state.auditLogs);
 
-    // AUTO-RESET TAB ON ITEM CHANGE
-    useEffect(() => {
+    // AUTO-RESET TAB ON ITEM CHANGE (Render-time state adjustment)
+    const [previousItemId, setPreviousItemId] = useState(item?.id);
+    if (item?.id !== previousItemId) {
+        setPreviousItemId(item?.id);
         setActiveTab('information');
         setChatInputText('');
         setStagedAttachment(null);
         setIsAttachModalOpen(false);
-    }, [item?.id]);
+    }
 
     // DERIVED VALUES: ENTITY TYPE RESOLUTION
     const isFolder = Boolean(item?.isFolder || item?.is_folder);
@@ -524,7 +525,7 @@ const Inspector = ({
                     <div className="flex items-center gap-2.5 min-w-0">
                         {isUser ? (
                             <UserAvatar
-                                src={item.avatar_path}
+                                src={item.avatar_path ?? item.avatarPath}
                                 name={primaryTitle}
                                 size="sm"
                                 className="h-8 w-8 shadow-xs shrink-0"
@@ -1054,6 +1055,22 @@ const Inspector = ({
                                             <span className="truncate font-medium">By {uploaderName}</span>
                                             <div className="flex items-center gap-2.5 shrink-0">
                                                 <span>{formatBytes(versionItem.size_bytes)}</span>
+                                                {!isCurrent && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() =>
+                                                            handleActionClick(
+                                                                'revert_version',
+                                                                versionItem
+                                                            )
+                                                        }
+                                                        className="px-2 py-0.5 rounded hover:bg-surface-hover text-accent font-semibold inline-flex items-center gap-1 text-[11px] transition-colors cursor-pointer"
+                                                        title={`Revert document to v${versionItem.version}.0`}
+                                                    >
+                                                        <RotateCcw className="h-3 w-3" />
+                                                        <span>Revert</span>
+                                                    </button>
+                                                )}
                                                 <button
                                                     type="button"
                                                     onClick={() =>
@@ -1904,14 +1921,14 @@ function formatBytes(bytes) {
 }
 
 function formatTimestamp(timestampString) {
-    if (!timestampString) {
+    if (!timestampString || timestampString === 'Invalid Date') {
         return null;
     }
 
     try {
         const date = new Date(timestampString);
         if (isNaN(date.getTime())) {
-            return timestampString;
+            return null;
         }
         return date.toLocaleDateString(undefined, {
             year: 'numeric',
@@ -1921,7 +1938,7 @@ function formatTimestamp(timestampString) {
             minute: '2-digit',
         });
     } catch {
-        return timestampString;
+        return null;
     }
 }
 

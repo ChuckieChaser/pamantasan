@@ -1,0 +1,262 @@
+# --- DEPARTMENT QUERIES ---
+query ListDepartments @auth(level: PUBLIC) {
+  departments {
+    id
+    name
+    code
+  }
+}
+
+query GetDepartmentById($id: UUID!) @auth(level: PUBLIC) {
+  department(id: $id) {
+    id
+    name
+    code
+  }
+}
+
+query GetDepartmentByCode($code: String!) @auth(level: PUBLIC) {
+  departments(where: { code: { eq: $code } }) {
+    id
+    name
+    code
+  }
+}
+
+# --- USER QUERIES ---
+query ListUsers @auth(level: PUBLIC) {
+  users {
+    id
+    universityId
+    email
+    role
+    status
+    firstName
+    middleName
+    lastName
+    avatarPath
+    department {
+      id
+      name
+      code
+    }
+  }
+}
+
+query GetUserByUniversityId($universityId: String!) @auth(level: PUBLIC) {
+  users(where: { universityId: { eq: $universityId } }) {
+    id
+    universityId
+    email
+    role
+    status
+    firstName
+    middleName
+    lastName
+    avatarPath
+    department {
+      id
+      name
+      code
+    }
+  }
+}
+
+query GetUserByEmail($email: String!) @auth(level: PUBLIC) {
+  users(where: { email: { eq: $email } }) {
+    id
+    universityId
+    email
+    role
+    status
+    firstName
+    middleName
+    lastName
+    avatarPath
+    department {
+      id
+      name
+      code
+    }
+  }
+}
+
+query GetUserSettings($userId: UUID!) @auth(level: USER) {
+  userSettings(where: { user: { id: { eq: $userId } } }) {
+    id
+    theme
+    notification
+  }
+}
+
+# --- DOCUMENT QUERIES ---
+query ListDocuments($isArchived: Boolean) @auth(level: USER) {
+  documents(where: { isArchived: { eq: $isArchived } }) {
+    id
+    name
+    isFolder
+    isArchived
+    comment
+    parent {
+      id
+      name
+    }
+    uploader {
+      id
+      firstName
+      lastName
+      email
+    }
+  }
+}
+
+query GetDocumentById($id: UUID!) @auth(level: USER) {
+  document(id: $id) {
+    id
+    name
+    isFolder
+    isArchived
+    comment
+    parent {
+      id
+      name
+    }
+    uploader {
+      id
+      firstName
+      lastName
+      email
+    }
+  }
+}
+
+query ListDocumentVersions($documentId: UUID!) @auth(level: USER) {
+  documentVersions(where: { document: { id: { eq: $documentId } } }, orderBy: [{ version: DESC }]) {
+    id
+    version
+    path
+    sizeBytes
+    mimeType
+    classification
+    changeSummary
+    rejectionReason
+    summary
+    textHash
+    uploader {
+      id
+      firstName
+      lastName
+    }
+    approver {
+      id
+      firstName
+      lastName
+    }
+    publisher {
+      id
+      firstName
+      lastName
+    }
+    rejecter {
+      id
+      firstName
+      lastName
+    }
+  }
+}
+
+query ListDocumentShares($documentId: UUID!) @auth(level: USER) {
+  documentShares(where: { document: { id: { eq: $documentId } } }) {
+    id
+    status
+    department {
+      id
+      name
+      code
+    }
+    sharer {
+      id
+      firstName
+      lastName
+    }
+    recipient {
+      id
+      firstName
+      lastName
+    }
+  }
+}
+
+# --- REQUEST QUERIES ---
+query ListDocumentRequests @auth(level: USER) {
+  documentRequests {
+    id
+    subject
+    status
+    requester {
+      id
+      firstName
+      lastName
+      email
+    }
+    resolver {
+      id
+      firstName
+      lastName
+      email
+    }
+  }
+}
+
+query ListCoordinatorRequests @auth(level: USER) {
+  coordinatorRequests {
+    id
+    action
+    data
+    status
+    rejectionReason
+    requester {
+      id
+      firstName
+      lastName
+    }
+    reviewer {
+      id
+      firstName
+      lastName
+    }
+  }
+}
+
+# --- NOTIFICATION & AUDIT LOG QUERIES ---
+query ListNotifications($recipientId: UUID!) @auth(level: USER) {
+  notifications(where: { recipient: { id: { eq: $recipientId } } }) {
+    id
+    entityType
+    entityId
+    action
+    isRead
+    isEmailed
+    actor {
+      id
+      firstName
+      lastName
+    }
+  }
+}
+
+query ListAuditLogs @auth(level: USER) {
+  auditLogs {
+    id
+    entityType
+    entityId
+    action
+    data
+    actor {
+      id
+      firstName
+      lastName
+      email
+    }
+  }
+}

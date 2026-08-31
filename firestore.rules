@@ -1,0 +1,105 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isInstitutionalDomain() {
+      return isAuthenticated() &&
+             request.auth.token.email != null &&
+             request.auth.token.email.matches('.*@plpasig[.]edu[.]ph$');
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        getUserData().role == 'ADMINISTRATOR' ||
+        getUserData().role == 'ADMIN' ||
+        request.auth.token.role == 'ADMINISTRATOR'
+      );
+    }
+
+    // Departments Collection
+    match /departments/{departmentId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // Users Collection
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated() && (isOwner(userId) || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    // User Settings Collection
+    match /userSettings/{userId} {
+      allow read, write: if isOwner(userId) || isAdmin();
+    }
+
+    // Documents Collection
+    match /documents/{documentId} {
+      allow read: if isAuthenticated() && isInstitutionalDomain();
+      allow create: if isAuthenticated() && isInstitutionalDomain();
+      allow update: if isAuthenticated() && isInstitutionalDomain();
+      allow delete: if isAdmin() || (isAuthenticated() && resource.data.uploaderId == request.auth.uid);
+
+      // Document Versions Sub-collection
+      match /versions/{versionId} {
+        allow read: if isAuthenticated() && isInstitutionalDomain();
+        allow create: if isAuthenticated() && isInstitutionalDomain();
+        allow update, delete: if isAdmin();
+      }
+
+      // Document Shares Sub-collection
+      match /shares/{shareId} {
+        allow read: if isAuthenticated() && isInstitutionalDomain();
+        allow create, update: if isAuthenticated() && isInstitutionalDomain();
+        allow delete: if isAdmin();
+      }
+    }
+
+    // Document Requests Collection
+    match /documentRequests/{requestId} {
+      allow read: if isAuthenticated() && isInstitutionalDomain();
+      allow create: if isAuthenticated() && isInstitutionalDomain();
+      allow update: if isAuthenticated() && (
+        resource.data.requesterId == request.auth.uid ||
+        resource.data.resolverId == request.auth.uid ||
+        isAdmin()
+      );
+      allow delete: if isAdmin();
+    }
+
+    // Notifications Collection
+    match /notifications/{notificationId} {
+      allow read: if isAuthenticated() && resource.data.recipientId == request.auth.uid;
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() && resource.data.recipientId == request.auth.uid;
+      allow delete: if isAuthenticated() && resource.data.recipientId == request.auth.uid;
+    }
+
+    // Audit Logs Collection (Immutable write, read restricted to Admin)
+    match /auditLogs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isAuthenticated();
+      allow update, delete: if false; // Immutable audit logs
+    }
+
+    // Default deny all other collections
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

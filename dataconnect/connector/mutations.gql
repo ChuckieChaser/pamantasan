@@ -1,0 +1,225 @@
+# --- DEPARTMENT MUTATIONS ---
+mutation CreateDepartment($name: String!, $code: String!) @auth(level: PUBLIC) {
+  department_insert(data: {
+    name: $name
+    code: $code
+  })
+}
+
+# --- USER MUTATIONS ---
+mutation CreateUser(
+  $universityId: String!
+  $email: String!
+  $role: String!
+  $status: String!
+  $firstName: String!
+  $middleName: String
+  $lastName: String!
+  $avatarPath: String
+  $departmentId: UUID!
+) @auth(level: PUBLIC) {
+  user_insert(data: {
+    universityId: $universityId
+    email: $email
+    role: $role
+    status: $status
+    firstName: $firstName
+    middleName: $middleName
+    lastName: $lastName
+    avatarPath: $avatarPath
+    departmentId: $departmentId
+  })
+}
+
+mutation UpdateUser(
+  $id: UUID!
+  $firstName: String
+  $middleName: String
+  $lastName: String
+  $avatarPath: String
+  $status: String
+  $role: String
+) @auth(level: PUBLIC) {
+  user_update(
+    id: $id
+    data: {
+      firstName: $firstName
+      middleName: $middleName
+      lastName: $lastName
+      avatarPath: $avatarPath
+      status: $status
+      role: $role
+    }
+  )
+}
+
+mutation UpsertUserSetting(
+  $userId: UUID!
+  $theme: String!
+  $notification: String!
+) @auth(level: PUBLIC) {
+  userSetting_insert(data: {
+    userId: $userId
+    theme: $theme
+    notification: $notification
+  })
+}
+
+# --- DOCUMENT MUTATIONS ---
+mutation CreateDocument(
+  $name: String!
+  $uploaderId: UUID!
+  $isFolder: Boolean!
+  $isArchived: Boolean!
+  $parentId: UUID
+  $comment: String
+) @auth(level: PUBLIC) {
+  document_insert(data: {
+    name: $name
+    uploaderId: $uploaderId
+    isFolder: $isFolder
+    isArchived: $isArchived
+    parentId: $parentId
+    comment: $comment
+  })
+}
+
+mutation UpdateDocument(
+  $id: UUID!
+  $name: String
+  $isArchived: Boolean
+  $comment: String
+) @auth(level: PUBLIC) {
+  document_update(
+    id: $id
+    data: {
+      name: $name
+      isArchived: $isArchived
+      comment: $comment
+    }
+  )
+}
+
+mutation CreateDocumentVersion(
+  $documentId: UUID!
+  $uploaderId: UUID!
+  $version: Int!
+  $path: String!
+  $sizeBytes: Int64!
+  $mimeType: String!
+  $classification: String!
+  $changeSummary: String
+  $summary: String
+  $textHash: String
+) @auth(level: PUBLIC) {
+  documentVersion_insert(data: {
+    documentId: $documentId
+    uploaderId: $uploaderId
+    version: $version
+    path: $path
+    sizeBytes: $sizeBytes
+    mimeType: $mimeType
+    classification: $classification
+    changeSummary: $changeSummary
+    summary: $summary
+    textHash: $textHash
+  })
+}
+
+mutation UpdateDocumentVersionStatus(
+  $id: UUID!
+  $approverId: UUID
+  $publisherId: UUID
+  $rejecterId: UUID
+  $rejectionReason: String
+) @auth(level: PUBLIC) {
+  documentVersion_update(
+    id: $id
+    data: {
+      approverId: $approverId
+      publisherId: $publisherId
+      rejecterId: $rejecterId
+      rejectionReason: $rejectionReason
+    }
+  )
+}
+
+mutation CreateDocumentShare(
+  $documentId: UUID!
+  $sharerId: UUID!
+  $recipientId: UUID
+  $departmentId: UUID!
+  $status: String!
+) @auth(level: PUBLIC) {
+  documentShare_insert(data: {
+    documentId: $documentId
+    sharerId: $sharerId
+    recipientId: $recipientId
+    departmentId: $departmentId
+    status: $status
+  })
+}
+
+# --- REQUEST MUTATIONS ---
+mutation CreateDocumentRequest(
+  $requesterId: UUID!
+  $subject: String!
+  $status: String!
+) @auth(level: PUBLIC) {
+  documentRequest_insert(data: {
+    requesterId: $requesterId
+    subject: $subject
+    status: $status
+  })
+}
+
+mutation CreateCoordinatorRequest(
+  $requesterId: UUID!
+  $action: String!
+  $data: String!
+  $status: String!
+) @auth(level: PUBLIC) {
+  coordinatorRequest_insert(data: {
+    requesterId: $requesterId
+    action: $action
+    data: $data
+    status: $status
+  })
+}
+
+# --- NOTIFICATION & AUDIT LOG MUTATIONS ---
+mutation CreateNotification(
+  $recipientId: UUID!
+  $actorId: UUID
+  $entityType: String!
+  $entityId: UUID!
+  $action: String!
+  $isRead: Boolean!
+  $isEmailed: Boolean!
+) @auth(level: PUBLIC) {
+  notification_insert(data: {
+    recipientId: $recipientId
+    actorId: $actorId
+    entityType: $entityType
+    entityId: $entityId
+    action: $action
+    isRead: $isRead
+    isEmailed: $isEmailed
+  })
+}
+
+mutation CreateAuditLog(
+  $actorId: UUID
+  $entityType: String!
+  $entityId: UUID!
+  $action: String!
+  $data: String!
+) @auth(level: PUBLIC) {
+  auditLog_insert(data: {
+    actorId: $actorId
+    entityType: $entityType
+    entityId: $entityId
+    action: $action
+    data: $data
+  })
+}

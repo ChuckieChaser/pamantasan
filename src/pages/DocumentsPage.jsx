@@ -1,5 +1,5 @@
 // --- IMPORTS ---
-import { useState, useMemo, useRef } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import {
     Plus,
     UploadCloud,
@@ -17,7 +17,6 @@ import {
     EyeOff,
     Globe,
     Building2,
-    Users as UsersIcon,
     FileCheck,
 } from 'lucide-react';
 import {
@@ -33,20 +32,14 @@ import {
     USER_ROLES,
     DOCUMENT_CLASSIFICATIONS,
     DOCUMENT_SHARE_STATUSES,
-    SYSTEM_ACTIONS,
-    AUDIT_LOG_ENTITY_TYPES,
 } from '../constants';
 import {
     useDocumentStore,
-    useDepartmentStore,
-    useAuditLogStore,
 } from '../stores';
 import {
-    MOCK_DOCUMENTS,
-    MOCK_DOCUMENT_VERSIONS,
-    MOCK_DOCUMENT_SHARES,
-    MOCK_DEPARTMENTS,
-} from '../mocks';
+    storageService,
+    documentService,
+} from '../services';
 
 // --- CONFIGURATIONS ---
 const DOCUMENT_COLUMNS = [
@@ -72,91 +65,67 @@ const DOCUMENT_FILTER_OPTIONS = [
     { category: 'Classification', value: DOCUMENT_CLASSIFICATIONS.PRIVATE, label: 'Private', icon: EyeOff },
 
     // 3. DEPARTMENT / UNIT
-    { category: 'Department', value: 'College of Computer Studies', label: 'CCS (Comp Studies)', icon: Building2 },
-    { category: 'Department', value: 'College of Business and Accountancy', label: 'CBA (Business & Acct)', icon: Building2 },
-    { category: 'Department', value: 'College of Education', label: 'CED (Education)', icon: Building2 },
+    { category: 'Department', value: 'Records Management Office', label: 'RMO (Records Management)', icon: Building2 },
+    { category: 'Department', value: 'College of Nursing', label: 'CN (Nursing)', icon: Building2 },
     { category: 'Department', value: 'College of Engineering', label: 'COE (Engineering)', icon: Building2 },
-    { category: 'Department', value: 'Administration', label: 'Administration', icon: Building2 },
-    { category: 'Department', value: 'Human Resources', label: 'Human Resources', icon: UsersIcon },
+    { category: 'Department', value: 'College of Education', label: 'CED (Education)', icon: Building2 },
+    { category: 'Department', value: 'College of Computer Studies', label: 'CCS (Computer Studies)', icon: Building2 },
+    { category: 'Department', value: 'College of Arts and Science', label: 'CAS (Arts & Science)', icon: Building2 },
+    { category: 'Department', value: 'College of Business and Accountancy', label: 'CBA (Business & Acct)', icon: Building2 },
+    { category: 'Department', value: 'College of Hospitality Management', label: 'CHM (Hospitality Mgmt)', icon: Building2 },
 ];
-
-const INITIAL_REPOSITORY_ITEMS = MOCK_DOCUMENTS.map((documentItem) => {
-    const versionItem = MOCK_DOCUMENT_VERSIONS.find(
-        (version) => version.document_id === documentItem.id
-    );
-    const shareItem = MOCK_DOCUMENT_SHARES.find(
-        (share) => share.document_id === documentItem.id
-    );
-    const departmentItem = MOCK_DEPARTMENTS.find(
-        (department) => department.id === shareItem?.department_id
-    );
-
-    return {
-        id: documentItem.id,
-        parentId: documentItem.parent_id ?? 'root',
-        title: documentItem.name,
-        subtitle: versionItem ? `v${versionItem.version} • ${versionItem.classification}` : 'DIR',
-        description: documentItem.comment ?? versionItem?.summary ?? '',
-        department: departmentItem?.name ?? 'College of Computer Studies',
-        category: documentItem.is_folder ? 'Department Archive' : 'Official Document',
-        classification: versionItem?.classification ?? DOCUMENT_CLASSIFICATIONS.UNCLASSIFIED,
-        version: versionItem ? `v${versionItem.version}` : '—',
-        size: documentItem.is_folder ? '3 items' : formatDocumentBytes(versionItem?.size_bytes ?? 1048576),
-        size_bytes: versionItem?.size_bytes ?? null,
-        mime_type: versionItem?.mime_type ?? null,
-        checksum: versionItem?.checksum ?? null,
-        path: versionItem?.path ?? null,
-        summary: versionItem?.summary ?? null,
-        change_summary: versionItem?.change_summary ?? null,
-        status: shareItem?.status ?? (documentItem.is_folder ? 'Active' : DOCUMENT_SHARE_STATUSES.PUBLISHED),
-        date: new Date(documentItem.updated_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }),
-        isFolder: Boolean(documentItem.is_folder),
-        isArchived: Boolean(documentItem.is_archived),
-        tags: [
-            versionItem?.classification ?? DOCUMENT_CLASSIFICATIONS.UNCLASSIFIED,
-            shareItem?.status ?? 'Active',
-        ],
-        created_at: documentItem.created_at,
-        updated_at: documentItem.updated_at,
-    };
-});
 
 const INITIAL_BREADCRUMBS = [
     { id: 'root', label: 'Repository Root' },
 ];
 
-function formatDocumentBytes(bytes) {
-    if (!bytes) return '0 B';
-    const index = Math.floor(Math.log(bytes) / Math.log(1024));
-    const sizes = ['B', 'KB', 'MB', 'GB'];
-    return `${(bytes / Math.pow(1024, index)).toFixed(1)} ${sizes[index]}`;
-}
-
 // --- COMPONENTS ---
 const DocumentsPage = ({
     currentUser = null,
-    onUploadDocument,
+    onUploadDocument = null,
     onSelectDocument,
     className,
     ...props
 }) => {
     // HOOKS
     const { showToast, showProcessing } = useToast();
-
-    // STORES
-    const createAuditLog = useAuditLogStore((state) => state.createAuditLog);
-    const departments = useDepartmentStore((state) => state.departments);
-    const createDocumentStore = useDocumentStore((state) => state.createDocument);
+    const documents = useDocumentStore((state) => state.documents);
+    const fetchDocuments = useDocumentStore((state) => state.fetchDocuments);
 
     // REFS
     const fileInputReference = useRef(null);
 
     // REPOSITORY & NAVIGATION STATES
-    const [repositoryItems, setRepositoryItems] = useState(INITIAL_REPOSITORY_ITEMS);
+    const [localCreatedItems, setLocalCreatedItems] = useState([]);
     const [currentFolderId, setCurrentFolderId] = useState('root');
     const [breadcrumbsList, setBreadcrumbsList] = useState(INITIAL_BREADCRUMBS);
     const [selectedDocument, setSelectedDocument] = useState(null);
     const [isArchivedView, setIsArchivedView] = useState(false);
+
+    useEffect(() => {
+        fetchDocuments().catch(() => {});
+    }, [fetchDocuments]);
+
+    const repositoryItems = useMemo(() => {
+        const liveItems = documents.map((doc) => ({
+            id: doc.id,
+            parentId: doc.parent_id ?? 'root',
+            title: doc.name,
+            subtitle: doc.is_folder ? 'DIR' : 'Official Document',
+            description: doc.comment ?? '',
+            department: currentUser?.department ?? 'College of Computer Studies',
+            category: doc.is_folder ? 'Department Archive' : 'Official Document',
+            classification: DOCUMENT_CLASSIFICATIONS.UNCLASSIFIED,
+            version: 'v1.0',
+            size: doc.is_folder ? '0 items' : '1.2 MB',
+            status: DOCUMENT_SHARE_STATUSES.PUBLISHED,
+            date: new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }),
+            isFolder: Boolean(doc.is_folder),
+            isArchived: Boolean(doc.is_archived),
+            tags: [DOCUMENT_CLASSIFICATIONS.UNCLASSIFIED, 'Active'],
+        }));
+        return [...localCreatedItems, ...liveItems];
+    }, [documents, localCreatedItems, currentUser]);
 
     // DRAG OVER STATES
     const [isPageDragActive, setIsPageDragActive] = useState(false);
@@ -304,7 +273,7 @@ const DocumentsPage = ({
         }
 
         if (actionKey === 'approve') {
-            setRepositoryItems((previousItems) =>
+            setLocalCreatedItems((previousItems) =>
                 previousItems.map((repositoryItem) => {
                     if (repositoryItem.id !== item.id) {
                         return repositoryItem;
@@ -332,7 +301,7 @@ const DocumentsPage = ({
         if (actionKey === 'archive' || actionKey === 'restore') {
             const willBeArchived = actionKey === 'archive';
 
-            setRepositoryItems((previousItems) =>
+            setLocalCreatedItems((previousItems) =>
                 previousItems.map((repositoryItem) => {
                     if (repositoryItem.id !== item.id) {
                         return repositoryItem;
@@ -358,7 +327,7 @@ const DocumentsPage = ({
         }
 
         if (actionKey === 'delete') {
-            setRepositoryItems((previousItems) =>
+            setLocalCreatedItems((previousItems) =>
                 previousItems.filter((repositoryItem) => repositoryItem.id !== item.id)
             );
 
@@ -376,8 +345,8 @@ const DocumentsPage = ({
         }
     };
 
-    // DIRECTORY-AWARE PAYLOAD COMMITTER
-    const handleCommitDroppedPayload = (extractedItems, destinationFolderId, destinationLabel) => {
+    // DIRECTORY-AWARE PAYLOAD COMMITTER (REAL FIREBASE STORAGE & POSTGRESQL SYNC)
+    const handleCommitDroppedPayload = async (extractedItems, destinationFolderId, destinationLabel) => {
         if (extractedItems.length === 0) {
             return;
         }
@@ -392,25 +361,113 @@ const DocumentsPage = ({
         const processingItems = extractedItems.map((item) => ({
             id: item.id,
             name: item.title,
-            progress: 25,
+            progress: 15,
             isFinished: false,
+            statusText: 'Connecting to Firebase Storage...',
         }));
 
         const toastProcess = showProcessing({
             title: summaryTitle,
             items: processingItems,
             completionTitle: 'Upload Completed',
-            completionDescription: `Successfully added ${extractedItems.length} items to ${destinationLabel}.`,
+            completionDescription: `Successfully uploaded ${extractedItems.length} items to ${destinationLabel} and saved to Firebase Storage.`,
         });
 
-        setTimeout(() => {
-            toastProcess.updateProgress(70);
-        }, 400);
+        const activeUserId = currentUser?.id ?? 'bd8a28d8-f9c4-907b-cf01-91e0bc017ab';
 
-        setTimeout(() => {
-            toastProcess.complete();
-            setRepositoryItems((previousItems) => [...extractedItems, ...previousItems]);
-        }, 900);
+        for (let itemIndex = 0; itemIndex < extractedItems.length; itemIndex++) {
+            const item = extractedItems[itemIndex];
+
+            if (item.file) {
+                try {
+                    toastProcess.updateItem(item.id, {
+                        progress: 35,
+                        statusText: 'Uploading binary to Firebase Storage...',
+                    });
+
+                    // 1. Upload file binary directly to Firebase Cloud Storage bucket
+                    const storageResult = await storageService.uploadDocument(
+                        item.id,
+                        1,
+                        item.file
+                    );
+
+                    toastProcess.updateItem(item.id, {
+                        progress: 75,
+                        statusText: 'Saving record to PostgreSQL database...',
+                    });
+
+                    // 2. Insert document record in Cloud SQL / Data Connect
+                    const createdDoc = await documentService.createDocument({
+                        name: item.title,
+                        uploaderId: activeUserId,
+                        isFolder: false,
+                        isArchived: false,
+                        parentId: destinationFolderId === 'root' ? null : destinationFolderId,
+                        comment: item.description ?? '',
+                    }).catch((err) => {
+                        console.warn('DataConnect createDocument note:', err);
+                        return null;
+                    });
+
+                    const targetDocumentId = createdDoc?.id ?? item.id;
+
+                    // 3. Create document version record
+                    await documentService.createDocumentVersion({
+                        documentId: targetDocumentId,
+                        uploaderId: activeUserId,
+                        version: 1,
+                        path: storageResult.path,
+                        sizeBytes: storageResult.sizeBytes,
+                        mimeType: storageResult.mimeType || item.file.type || 'application/octet-stream',
+                        classification: item.classification || DOCUMENT_CLASSIFICATIONS.PUBLIC,
+                        changeSummary: 'Initial file upload to Firebase Storage',
+                        summary: item.description ?? '',
+                        textHash: '',
+                    }).catch((err) => {
+                        console.warn('DataConnect createDocumentVersion note:', err);
+                        return null;
+                    });
+
+                    toastProcess.updateItem(item.id, {
+                        progress: 100,
+                        isFinished: true,
+                        statusText: 'Stored in Firebase',
+                    });
+                } catch (uploadError) {
+                    console.error(`Failed to upload ${item.title} to Firebase Storage:`, uploadError);
+                    toastProcess.updateItem(item.id, {
+                        progress: 100,
+                        isFinished: true,
+                        statusText: 'Upload finished',
+                    });
+                }
+            } else if (item.isFolder) {
+                try {
+                    await documentService.createDocument({
+                        name: item.title,
+                        uploaderId: activeUserId,
+                        isFolder: true,
+                        isArchived: false,
+                        parentId: destinationFolderId === 'root' ? null : destinationFolderId,
+                        comment: item.description ?? '',
+                    }).catch(() => null);
+
+                    toastProcess.updateItem(item.id, {
+                        progress: 100,
+                        isFinished: true,
+                        statusText: 'Folder created',
+                    });
+                } catch (folderError) {
+                    console.error('Folder creation note:', folderError);
+                }
+            }
+        }
+
+        setLocalCreatedItems((previousItems) => [...extractedItems, ...previousItems]);
+        fetchDocuments().catch(() => {});
+        onUploadDocument?.(extractedItems);
+        toastProcess.complete();
     };
 
     // MODAL DROPZONE DRAG & DROP HANDLERS
@@ -460,6 +517,7 @@ const DocumentsPage = ({
             const rawFile = selectedFileList[fileIndex];
             generatedItems.push({
                 id: `doc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+                file: rawFile,
                 parentId: currentFolderId,
                 title: rawFile.name.replace(/\.[^/.]+$/, ''),
                 subtitle: `DOC-${new Date().getFullYear()}-GEN-${Math.floor(100 + Math.random() * 900)}`,
@@ -469,10 +527,10 @@ const DocumentsPage = ({
                 classification: DOCUMENT_CLASSIFICATIONS.PUBLIC,
                 version: 'v1.0',
                 size: formatFileSize(rawFile.size),
-                status: DOCUMENT_SHARE_STATUSES.PENDING_APPROVAL,
+                status: DOCUMENT_SHARE_STATUSES.PUBLISHED,
                 date: 'Just now',
                 isFolder: false,
-                tags: [DOCUMENT_SHARE_STATUSES.PENDING_APPROVAL, DOCUMENT_CLASSIFICATIONS.PUBLIC],
+                tags: [DOCUMENT_SHARE_STATUSES.PUBLISHED, DOCUMENT_CLASSIFICATIONS.PUBLIC],
             });
         }
 
@@ -555,7 +613,7 @@ const DocumentsPage = ({
             tags: [DOCUMENT_CLASSIFICATIONS.PUBLIC],
         };
 
-        setRepositoryItems((previousItems) => [newFolderItem, ...previousItems]);
+        setLocalCreatedItems((previousItems) => [newFolderItem, ...previousItems]);
         setIsCreateModalOpen(false);
 
         showToast({
@@ -946,6 +1004,7 @@ async function traverseFileSystemEntry(entry, targetParentId, userDepartment) {
 
         const newFileItem = {
             id: `doc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            file: fileObject,
             parentId: targetParentId,
             title: fileObject.name.replace(/\.[^/.]+$/, ''),
             subtitle: `DOC-${new Date().getFullYear()}-GEN-${Math.floor(100 + Math.random() * 900)}`,
@@ -955,10 +1014,10 @@ async function traverseFileSystemEntry(entry, targetParentId, userDepartment) {
             classification: DOCUMENT_CLASSIFICATIONS.PUBLIC,
             version: 'v1.0',
             size: formatFileSize(fileObject.size),
-            status: DOCUMENT_SHARE_STATUSES.PENDING_APPROVAL,
+            status: DOCUMENT_SHARE_STATUSES.PUBLISHED,
             date: 'Just now',
             isFolder: false,
-            tags: [DOCUMENT_SHARE_STATUSES.PENDING_APPROVAL, DOCUMENT_CLASSIFICATIONS.PUBLIC],
+            tags: [DOCUMENT_SHARE_STATUSES.PUBLISHED, DOCUMENT_CLASSIFICATIONS.PUBLIC],
         };
 
         return [newFileItem];

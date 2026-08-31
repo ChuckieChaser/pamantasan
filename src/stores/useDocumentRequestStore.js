@@ -3,42 +3,44 @@ import { create } from 'zustand';
 import {
     DocumentRequestInsertSchema,
     DocumentRequestUpdateSchema,
-    DocumentRequestMessageInsertSchema,
-    DocumentRequestAttachmentInsertSchema,
 } from '../schemas';
 import { DOCUMENT_REQUEST_STATUSES } from '../constants';
-import {
-    MOCK_DOCUMENT_REQUESTS,
-    MOCK_REQUEST_MESSAGES,
-    MOCK_REQUEST_ATTACHMENTS,
-} from '../mocks';
 
 // --- STORE DEFINITION ---
 const useDocumentRequestStore = create((set, get) => ({
     // STATE
-    requests: MOCK_DOCUMENT_REQUESTS,
-    messages: MOCK_REQUEST_MESSAGES,
-    attachments: MOCK_REQUEST_ATTACHMENTS,
+    documentRequests: [],
+    requests: [],
+    requestMessages: [],
+    messages: [],
+    requestAttachments: [],
+    attachments: [],
     selectedRequest: null,
     isLoading: false,
     error: null,
 
-    // ACTIONS
+    // 1. DOCUMENT REQUESTS ACTIONS
     fetchDocumentRequests: async (filterOptions = {}) => {
         set({ isLoading: true, error: null });
 
         try {
-            let resultRequests = [...get().requests];
+            let resultRequests = [...get().documentRequests];
 
             if (filterOptions.status) {
                 resultRequests = resultRequests.filter(
-                    (item) => item.status === filterOptions.status
+                    (req) => req.status === filterOptions.status
                 );
             }
 
             if (filterOptions.requesterId) {
                 resultRequests = resultRequests.filter(
-                    (item) => item.requester_id === filterOptions.requesterId
+                    (req) => req.requester_id === filterOptions.requesterId
+                );
+            }
+
+            if (filterOptions.resolverId) {
+                resultRequests = resultRequests.filter(
+                    (req) => req.resolver_id === filterOptions.resolverId
                 );
             }
 
@@ -55,22 +57,11 @@ const useDocumentRequestStore = create((set, get) => ({
         set({ isLoading: true, error: null });
 
         try {
-            const request = get().requests.find((item) => item.id === requestId) ?? null;
-            const requestMessages = get().messages.filter(
-                (item) => item.document_request_id === requestId
-            );
-            const requestAttachments = get().attachments.filter(
-                (item) => item.document_request_id === requestId
-            );
-
-            const compositeRequest = request
-                ? { ...request, messages: requestMessages, attachments: requestAttachments }
-                : null;
-
-            set({ selectedRequest: compositeRequest, isLoading: false });
-            return compositeRequest;
+            const request = get().documentRequests.find((item) => item.id === requestId) ?? null;
+            set({ selectedRequest: request, isLoading: false });
+            return request;
         } catch (error) {
-            const errorMessage = error?.message ?? 'Failed to fetch document request.';
+            const errorMessage = error?.message ?? 'Failed to fetch document request by identifier.';
             set({ isLoading: false, error: errorMessage });
             throw error;
         }
@@ -84,19 +75,23 @@ const useDocumentRequestStore = create((set, get) => ({
             const timestamp = new Date().toISOString();
 
             const newRequest = {
-                id: validatedData.id ?? `req-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+                id: validatedData.id ?? `req-${Date.now()}`,
                 requester_id: validatedData.requester_id,
-                resolver_id: null,
+                resolver_id: validatedData.resolver_id ?? null,
                 subject: validatedData.subject,
                 status: validatedData.status ?? DOCUMENT_REQUEST_STATUSES.OPEN,
                 created_at: timestamp,
                 updated_at: timestamp,
             };
 
-            set((state) => ({
-                requests: [newRequest, ...state.requests],
-                isLoading: false,
-            }));
+            set((state) => {
+                const nextList = [newRequest, ...state.documentRequests];
+                return {
+                    documentRequests: nextList,
+                    requests: nextList,
+                    isLoading: false,
+                };
+            });
 
             return newRequest;
         } catch (error) {
@@ -111,10 +106,10 @@ const useDocumentRequestStore = create((set, get) => ({
 
         try {
             const validatedUpdates = DocumentRequestUpdateSchema.parse(requestUpdates);
-            const targetRequest = get().requests.find((item) => item.id === requestId);
+            const targetRequest = get().documentRequests.find((item) => item.id === requestId);
 
             if (!targetRequest) {
-                throw new Error(`Request with identifier "${requestId}" was not found.`);
+                throw new Error(`Document request with identifier "${requestId}" was not found.`);
             }
 
             const updatedRequest = {
@@ -123,15 +118,19 @@ const useDocumentRequestStore = create((set, get) => ({
                 updated_at: new Date().toISOString(),
             };
 
-            set((state) => ({
-                requests: state.requests.map((item) =>
+            set((state) => {
+                const nextList = state.documentRequests.map((item) =>
                     item.id === requestId ? updatedRequest : item
-                ),
-                selectedRequest: state.selectedRequest?.id === requestId
-                    ? { ...state.selectedRequest, ...updatedRequest }
-                    : state.selectedRequest,
-                isLoading: false,
-            }));
+                );
+                return {
+                    documentRequests: nextList,
+                    requests: nextList,
+                    selectedRequest: state.selectedRequest?.id === requestId
+                        ? updatedRequest
+                        : state.selectedRequest,
+                    isLoading: false,
+                };
+            });
 
             return updatedRequest;
         } catch (error) {
@@ -141,132 +140,137 @@ const useDocumentRequestStore = create((set, get) => ({
         }
     },
 
+    // 2. REQUEST MESSAGES ACTIONS
+    fetchMessagesByRequestId: async (requestId) => {
+        set({ isLoading: true, error: null });
+
+        try {
+            const messages = get().requestMessages.filter(
+                (item) => item.request_id === requestId
+            );
+            set({ isLoading: false });
+            return messages;
+        } catch (error) {
+            const errorMessage = error?.message ?? 'Failed to fetch request messages.';
+            set({ isLoading: false, error: errorMessage });
+            throw error;
+        }
+    },
+
     addRequestMessage: async (messagePayload) => {
         set({ isLoading: true, error: null });
 
         try {
-            const validatedData = DocumentRequestMessageInsertSchema.parse(messagePayload);
-            const timestamp = new Date().toISOString();
+            const requestId = messagePayload.document_request_id ?? messagePayload.request_id;
+            const senderId = messagePayload.user_id ?? messagePayload.sender_id;
+            const text = messagePayload.message;
 
             const newMessage = {
-                id: validatedData.id ?? `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-                document_request_id: validatedData.document_request_id,
-                user_id: validatedData.user_id ?? null,
-                message: validatedData.message,
-                created_at: timestamp,
+                id: messagePayload.id ?? `msg-${Date.now()}`,
+                request_id: requestId,
+                document_request_id: requestId,
+                sender_id: senderId,
+                user_id: senderId,
+                message: text,
+                created_at: new Date().toISOString(),
             };
 
-            set((state) => ({
-                messages: [...state.messages, newMessage],
-                selectedRequest: state.selectedRequest?.id === newMessage.document_request_id
-                    ? {
-                          ...state.selectedRequest,
-                          messages: [...(state.selectedRequest.messages ?? []), newMessage],
-                      }
-                    : state.selectedRequest,
-                isLoading: false,
-            }));
+            set((state) => {
+                const nextMessages = [...state.requestMessages, newMessage];
+                return {
+                    requestMessages: nextMessages,
+                    messages: nextMessages,
+                    isLoading: false,
+                };
+            });
 
             return newMessage;
         } catch (error) {
-            const errorMessage = error?.message ?? 'Failed to add message to document request.';
+            const errorMessage = error?.message ?? 'Failed to add request message.';
             set({ isLoading: false, error: errorMessage });
             throw error;
         }
     },
 
-    attachDocumentToRequest: async (attachmentPayload) => {
+    // 3. REQUEST ATTACHMENTS ACTIONS
+    fetchAttachmentsByRequestId: async (requestId) => {
         set({ isLoading: true, error: null });
 
         try {
-            const validatedData = DocumentRequestAttachmentInsertSchema.parse(attachmentPayload);
-            const timestamp = new Date().toISOString();
+            const attachments = get().requestAttachments.filter(
+                (item) => item.request_id === requestId || item.document_request_id === requestId
+            );
+            set({ isLoading: false });
+            return attachments;
+        } catch (error) {
+            const errorMessage = error?.message ?? 'Failed to fetch request attachments.';
+            set({ isLoading: false, error: errorMessage });
+            throw error;
+        }
+    },
+
+    addRequestAttachment: async (attachmentPayload) => {
+        set({ isLoading: true, error: null });
+
+        try {
+            const requestId = attachmentPayload.document_request_id ?? attachmentPayload.request_id;
+            const docId = attachmentPayload.document_id ?? attachmentPayload.id;
+            const attachedById = attachmentPayload.attached_by_id ?? attachmentPayload.user_id;
 
             const newAttachment = {
-                id: validatedData.id ?? `att-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-                document_request_id: validatedData.document_request_id,
-                document_id: validatedData.document_id,
-                attached_by_id: validatedData.attached_by_id,
-                created_at: timestamp,
+                id: attachmentPayload.id ?? `att-${Date.now()}`,
+                request_id: requestId,
+                document_request_id: requestId,
+                document_id: docId,
+                attached_by_id: attachedById,
+                name: attachmentPayload.name ?? 'Attached Document',
+                path: attachmentPayload.path ?? '',
+                size_bytes: attachmentPayload.size_bytes ?? 0,
+                mime_type: attachmentPayload.mime_type ?? 'application/pdf',
+                created_at: new Date().toISOString(),
             };
 
-            set((state) => ({
-                attachments: [...state.attachments, newAttachment],
-                selectedRequest: state.selectedRequest?.id === newAttachment.document_request_id
-                    ? {
-                          ...state.selectedRequest,
-                          attachments: [...(state.selectedRequest.attachments ?? []), newAttachment],
-                      }
-                    : state.selectedRequest,
-                isLoading: false,
-            }));
+            set((state) => {
+                const nextAttachments = [...state.requestAttachments, newAttachment];
+                return {
+                    requestAttachments: nextAttachments,
+                    attachments: nextAttachments,
+                    isLoading: false,
+                };
+            });
 
             return newAttachment;
         } catch (error) {
-            const errorMessage = error?.message ?? 'Failed to attach document to request.';
+            const errorMessage = error?.message ?? 'Failed to add request attachment.';
             set({ isLoading: false, error: errorMessage });
             throw error;
         }
     },
 
-    deleteDocumentRequest: async (requestId) => {
-        set({ isLoading: true, error: null });
-
-        try {
-            set((state) => ({
-                requests: state.requests.filter((item) => item.id !== requestId),
-                messages: state.messages.filter((item) => item.document_request_id !== requestId),
-                attachments: state.attachments.filter((item) => item.document_request_id !== requestId),
-                selectedRequest: state.selectedRequest?.id === requestId
-                    ? null
-                    : state.selectedRequest,
-                isLoading: false,
-            }));
-
-            return true;
-        } catch (error) {
-            const errorMessage = error?.message ?? 'Failed to delete document request.';
-            set({ isLoading: false, error: errorMessage });
-            throw error;
-        }
+    resolveDocumentRequest: async (requestId, resolverId) => {
+        return get().updateDocumentRequest(requestId, {
+            status: DOCUMENT_REQUEST_STATUSES.RESOLVED,
+            resolver_id: resolverId,
+        });
     },
 
-    removeRequestAttachment: async (attachmentId) => {
-        set({ isLoading: true, error: null });
-
-        try {
-            set((state) => ({
-                attachments: state.attachments.filter((item) => item.id !== attachmentId),
-                selectedRequest: state.selectedRequest
-                    ? {
-                          ...state.selectedRequest,
-                          attachments: (state.selectedRequest.attachments ?? []).filter(
-                              (item) => item.id !== attachmentId
-                          ),
-                      }
-                    : state.selectedRequest,
-                isLoading: false,
-            }));
-
-            return true;
-        } catch (error) {
-            const errorMessage = error?.message ?? 'Failed to remove request attachment.';
-            set({ isLoading: false, error: errorMessage });
-            throw error;
-        }
+    rejectDocumentRequest: async (requestId, reason, resolverId) => {
+        return get().updateDocumentRequest(requestId, {
+            status: DOCUMENT_REQUEST_STATUSES.REJECTED,
+            resolver_id: resolverId,
+        });
     },
 
-    setSelectedRequest: (request) => {
-        set({ selectedRequest: request });
+    attachDocumentToRequest: async (attachmentPayload) => {
+        return get().addRequestAttachment(attachmentPayload);
     },
 
-    clearError: () => {
-        set({ error: null });
+    // 4. RESET ACTIONS
+    resetSelectedRequest: () => {
+        set({ selectedRequest: null });
     },
 }));
 
-export {
-    useDocumentRequestStore,
-};
+export { useDocumentRequestStore };
 
 export default useDocumentRequestStore;

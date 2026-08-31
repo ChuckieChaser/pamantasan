@@ -106,6 +106,11 @@ export const NOTIFICATION_SCOPE_LIST = Object.freeze([
 export const DEFAULT_NOTIFICATION_SCOPE = NOTIFICATION_SCOPES.ALL;
 
 // --- 6. DOCUMENT CLASSIFICATIONS (system_document_versions_classification) ---
+export const DOCUMENT_TYPES = Object.freeze({
+    FILE: 'FILE',
+    FOLDER: 'FOLDER',
+});
+
 export const DOCUMENT_CLASSIFICATIONS = Object.freeze({
     UNCLASSIFIED: 'UNCLASSIFIED',
     PUBLIC: 'PUBLIC',
@@ -320,3 +325,15 @@ export const INSTITUTIONAL_CONFIG = Object.freeze({
     MAX_USER_NAME_LENGTH: 100,
     MAX_UNIVERSITY_ID_LENGTH: 20,
 });
+
+// --- 16. INSTITUTIONAL DEPARTMENTS & ACADEMIC COLLEGES ---
+export const DEFAULT_DEPARTMENTS = Object.freeze([
+    { id: 'd1000001-0000-4000-8000-000000000001', code: 'RMO', name: 'Records Management Office' },
+    { id: 'd1000002-0000-4000-8000-000000000002', code: 'CN', name: 'College of Nursing' },
+    { id: 'd1000003-0000-4000-8000-000000000003', code: 'COE', name: 'College of Engineering' },
+    { id: 'd1000004-0000-4000-8000-000000000004', code: 'CED', name: 'College of Education' },
+    { id: 'd1000005-0000-4000-8000-000000000005', code: 'CCS', name: 'College of Computer Studies' },
+    { id: 'd1000006-0000-4000-8000-000000000006', code: 'CAS', name: 'College of Arts and Science' },
+    { id: 'd1000007-0000-4000-8000-000000000007', code: 'CBA', name: 'College of Business and Accountancy' },
+    { id: 'd1000008-0000-4000-8000-000000000008', code: 'CHM', name: 'College of Hospitality Management' },
+]);

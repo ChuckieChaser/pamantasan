@@ -1,5 +1,5 @@
 // --- IMPORTS ---
-import { useState, useEffect, useRef, createContext, useContext } from 'react';
+import { useState, useEffect, useRef, useCallback, createContext } from 'react';
 import {
     CheckCircle2,
     AlertTriangle,
@@ -60,24 +60,26 @@ const AutoDismissToast = ({
     // REFS
     const timerReference = useRef(null);
     const remainingTimeReference = useRef(duration);
-    const startTimeReference = useRef(Date.now());
+    const startTimeReference = useRef(null);
 
     // HANDLERS
-    const handleTriggerDismiss = () => {
+    const handleTriggerDismiss = useCallback(() => {
         if (timerReference.current) {
             clearTimeout(timerReference.current);
         }
 
         onDismiss?.();
-    };
+    }, [onDismiss]);
 
     const handleMouseEnter = () => {
         if (timerReference.current) {
             clearTimeout(timerReference.current);
         }
 
-        const elapsedTime = Date.now() - startTimeReference.current;
-        remainingTimeReference.current = Math.max(0, remainingTimeReference.current - elapsedTime);
+        if (startTimeReference.current) {
+            const elapsedTime = Date.now() - startTimeReference.current;
+            remainingTimeReference.current = Math.max(0, remainingTimeReference.current - elapsedTime);
+        }
         setIsHovered(true);
     };
 
@@ -106,7 +108,7 @@ const AutoDismissToast = ({
                 clearTimeout(timerReference.current);
             }
         };
-    }, [isHovered]);
+    }, [isHovered, handleTriggerDismiss]);
 
     // DERIVED VALUES
     const IconComponent = VARIANT_ICON[variant] ?? VARIANT_ICON.information;
@@ -164,21 +166,6 @@ const ProcessingToast = ({
     // STATES
     const [isMinimized, setIsMinimized] = useState(false);
 
-    // HOOKS
-    useEffect(() => {
-        if (!isAllCompleted) {
-            return;
-        }
-
-        const finishTimer = setTimeout(() => {
-            onFinish?.();
-        }, 500);
-
-        return () => {
-            clearTimeout(finishTimer);
-        };
-    }, [isAllCompleted, onFinish]);
-
     // DERIVED VALUES
     const resolvedItems = items.length > 0
         ? items
@@ -213,6 +200,21 @@ const ProcessingToast = ({
     const effectiveDescription = description ?? `${completedItemsCount} of ${totalItemsCount} completed`;
 
     const isAllCompleted = isFinished || completedItemsCount === totalItemsCount;
+
+    // HOOKS
+    useEffect(() => {
+        if (!isAllCompleted) {
+            return;
+        }
+
+        const finishTimer = setTimeout(() => {
+            onFinish?.();
+        }, 500);
+
+        return () => {
+            clearTimeout(finishTimer);
+        };
+    }, [isAllCompleted, onFinish]);
 
     // HANDLERS
     const handleCardClick = () => {
@@ -428,6 +430,27 @@ const ToastProvider = ({ children }) => {
                         : null
                 );
             },
+            updateItem: (itemId, updates) => {
+                setProcessingToast((currentToast) => {
+                    if (!currentToast) {
+                        return null;
+                    }
+
+                    const updatedItems = currentToast.items.map((subItem) =>
+                        subItem.id === itemId
+                            ? {
+                                  ...subItem,
+                                  ...updates,
+                              }
+                            : subItem
+                    );
+
+                    return {
+                        ...currentToast,
+                        items: updatedItems,
+                    };
+                });
+            },
             updateItemProgress: (itemId, itemProgress, statusText) => {
                 setProcessingToast((currentToast) => {
                     if (!currentToast) {
@@ -536,29 +559,15 @@ const ToastProvider = ({ children }) => {
     );
 };
 
-const useToast = () => {
-    const context = useContext(ToastContext);
-    if (!context) {
-        throw new Error('useToast must be used within a ToastProvider');
-    }
-    return context;
-};
-
 export {
+    ToastContext,
     AutoDismissToast,
     ProcessingToast,
     ToastViewport,
     ToastProvider,
-    useToast,
 };
 
-export default {
-    AutoDismissToast,
-    ProcessingToast,
-    ToastViewport,
-    ToastProvider,
-    useToast,
-};
+export default ToastProvider;
 
 // --- HELPERS ---
 function getItemStageDescription(progress = 0, isFinished = false) {

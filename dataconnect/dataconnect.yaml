@@ -1,0 +1,12 @@
+specVersion: "v1beta"
+serviceId: "pamantasan-records-210fe-service"
+location: "asia-southeast1"
+schema:
+  source: "./schema"
+  datasource:
+    postgresql:
+      database: "pamantasan-records-210fe-database"
+      cloudSql:
+        instanceId: "pamantasan-records-210fe-instance"
+connectorDirs:
+  - "./connector"

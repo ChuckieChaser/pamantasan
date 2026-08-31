@@ -1,5 +1,5 @@
 // --- IMPORTS ---
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
     BrowserRouter,
     Routes,
@@ -38,6 +38,10 @@ import { useAuth } from './hooks';
 import {
     useNotificationStore,
     useCoordinatorRequestStore,
+    useDepartmentStore,
+    useUserStore,
+    useDocumentStore,
+    useDocumentRequestStore,
 } from './stores';
 import { USER_ROLES } from './constants';
 
@@ -62,6 +66,17 @@ const AppContent = () => {
     // STORES
     const notifications = useNotificationStore((state) => state.notifications);
     const unreadNotificationCount = notifications.filter((item) => !item.is_read).length;
+    const fetchDepartments = useDepartmentStore((state) => state.fetchDepartments);
+    const fetchUsers = useUserStore((state) => state.fetchUsers);
+    const fetchDocuments = useDocumentStore((state) => state.fetchDocuments);
+
+    useEffect(() => {
+        if (currentUser) {
+            fetchDepartments().catch(() => {});
+            fetchUsers().catch(() => {});
+            fetchDocuments().catch(() => {});
+        }
+    }, [currentUser, fetchDepartments, fetchUsers, fetchDocuments]);
 
     // WORKSPACE & INSPECTOR STATES
     const [selectedItem, setSelectedItem] = useState(null);
@@ -222,11 +237,41 @@ const AppContent = () => {
     };
 
     const handleDetailAction = async (actionKey, item) => {
+        if (actionKey === 'revert_version') {
+            try {
+                const activeDocId = item?.document_id ?? item?.documentId ?? selectedItem?.id;
+                if (!activeDocId) {
+                    throw new Error('Document identifier not found.');
+                }
+                const reverted = await useDocumentStore.getState().revertDocumentVersion(
+                    activeDocId,
+                    item,
+                    currentUser?.id ?? 'f1000001-0000-4000-8000-000000000001'
+                );
+                showToast({
+                    type: 'success',
+                    title: 'Version Reverted',
+                    description: `Successfully restored version v${item.version}.0 as latest snapshot v${reverted.version}.0.`,
+                });
+            } catch (error) {
+                showToast({
+                    type: 'error',
+                    title: 'Revert Failed',
+                    description: error?.message ?? 'Could not revert document version.',
+                });
+            }
+            return;
+        }
+
         if (actionKey === 'download' || actionKey === 'download_version') {
+            const downloadUrl = item?.path ?? item?.url ?? item?.downloadUrl;
+            if (downloadUrl && downloadUrl.startsWith('http')) {
+                window.open(downloadUrl, '_blank');
+            }
             showToast({
                 type: 'success',
                 title: 'Download Initiated',
-                description: `Downloading ${item?.name ?? item?.title ?? item?.path ?? 'file'}...`,
+                description: `Downloading ${item?.name ?? item?.title ?? item?.path ?? 'document version'}...`,
             });
             return;
         }
@@ -241,11 +286,22 @@ const AppContent = () => {
         }
 
         if (actionKey === 'archive') {
-            showToast({
-                type: 'warning',
-                title: 'Document Archived',
-                description: `${item?.name ?? item?.title} has been moved to archive storage.`,
-            });
+            try {
+                if (item?.id) {
+                    await useDocumentStore.getState().updateDocument(item.id, { is_archived: true });
+                }
+                showToast({
+                    type: 'warning',
+                    title: 'Document Archived',
+                    description: `${item?.name ?? item?.title} has been moved to archive storage.`,
+                });
+            } catch (error) {
+                showToast({
+                    type: 'error',
+                    title: 'Archive Failed',
+                    description: error?.message ?? 'Could not archive document.',
+                });
+            }
             return;
         }
 
@@ -272,28 +328,50 @@ const AppContent = () => {
         }
 
         if (actionKey === 'verify') {
-            showToast({
-                type: 'success',
-                title: 'Account Verified',
-                description: `${item?.first_name ?? ''} ${item?.last_name ?? ''} is now verified.`,
-            });
+            try {
+                if (item?.id) {
+                    await useUserStore.getState().updateUser(item.id, { status: 'VERIFIED' });
+                }
+                showToast({
+                    type: 'success',
+                    title: 'Account Verified',
+                    description: `${item?.first_name ?? item?.name ?? 'User'} is now verified.`,
+                });
+            } catch (error) {
+                showToast({
+                    type: 'error',
+                    title: 'Verification Failed',
+                    description: error?.message ?? 'Could not verify user.',
+                });
+            }
             return;
         }
 
         if (actionKey === 'suspend') {
-            showToast({
-                type: 'warning',
-                title: 'Account Suspended',
-                description: `${item?.first_name ?? ''} ${item?.last_name ?? ''} account suspended.`,
-            });
+            try {
+                if (item?.id) {
+                    await useUserStore.getState().updateUser(item.id, { status: 'SUSPENDED' });
+                }
+                showToast({
+                    type: 'warning',
+                    title: 'Account Suspended',
+                    description: `${item?.first_name ?? item?.name ?? 'User'} account suspended.`,
+                });
+            } catch (error) {
+                showToast({
+                    type: 'error',
+                    title: 'Suspension Failed',
+                    description: error?.message ?? 'Could not suspend user.',
+                });
+            }
             return;
         }
 
         if (actionKey === 'delete') {
             showToast({
                 type: 'error',
-                title: 'Deletion Pending Confirmation',
-                description: `Requested deletion for ${item?.name ?? item?.code}.`,
+                title: 'Deletion Requested',
+                description: `Deletion action triggered for ${item?.name ?? item?.code ?? 'record'}.`,
             });
             return;
         }
@@ -353,6 +431,28 @@ const AppContent = () => {
                 return;
             }
 
+            if (item?.subject) {
+                try {
+                    await useDocumentRequestStore.getState().rejectDocumentRequest(
+                        item.id,
+                        'Declined during review.',
+                        currentUser?.id ?? 'f1000001-0000-4000-8000-000000000001'
+                    );
+                    showToast({
+                        type: 'warning',
+                        title: 'Document Request Rejected',
+                        description: 'Request marked as rejected.',
+                    });
+                } catch (error) {
+                    showToast({
+                        type: 'error',
+                        title: 'Rejection Failed',
+                        description: error?.message ?? 'Could not reject request.',
+                    });
+                }
+                return;
+            }
+
             showToast({
                 type: 'warning',
                 title: 'Request Rejected',
@@ -362,11 +462,25 @@ const AppContent = () => {
         }
 
         if (actionKey === 'resolve') {
-            showToast({
-                type: 'success',
-                title: 'Request Resolved',
-                description: 'Document clearance request marked as resolved.',
-            });
+            try {
+                if (item?.id) {
+                    await useDocumentRequestStore.getState().resolveDocumentRequest(
+                        item.id,
+                        currentUser?.id ?? 'f1000001-0000-4000-8000-000000000001'
+                    );
+                }
+                showToast({
+                    type: 'success',
+                    title: 'Request Resolved',
+                    description: 'Document clearance request marked as resolved.',
+                });
+            } catch (error) {
+                showToast({
+                    type: 'error',
+                    title: 'Resolve Failed',
+                    description: error?.message ?? 'Could not resolve request.',
+                });
+            }
             return;
         }
 
@@ -501,7 +615,6 @@ const AppContent = () => {
                         path="/departments"
                         element={
                             <DepartmentsPage
-                                currentUser={currentUser}
                                 onSelectDepartment={handleSelectActivity}
                             />
                         }
@@ -510,7 +623,6 @@ const AppContent = () => {
                         path="/users"
                         element={
                             <UsersPage
-                                currentUser={currentUser}
                                 onSelectUser={handleSelectActivity}
                             />
                         }

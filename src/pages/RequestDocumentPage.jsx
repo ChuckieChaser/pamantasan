@@ -1,28 +1,22 @@
 // --- IMPORTS ---
 import { useState, useMemo } from 'react';
 import {
-    FilePlus,
-    Send,
     Clock,
     CheckCircle2,
     XCircle,
     Inbox,
-    FileText,
     Plus,
-    MessageSquare,
 } from 'lucide-react';
 import {
     PageContainer,
     Browser,
-    PrimaryButton,
-    SecondaryButton,
     TextField,
     AreaField,
     SelectField,
     Modal,
     useToast,
 } from '../components';
-import { useDocumentRequestStore, useUserStore } from '../stores';
+import { useDocumentRequestStore } from '../stores';
 import { DOCUMENT_REQUEST_STATUSES } from '../constants';
 
 // --- CONFIGURATIONS ---
@@ -69,7 +63,6 @@ const RequestDocumentPage = ({
     const messages = useDocumentRequestStore((state) => state.messages);
     const createDocumentRequest = useDocumentRequestStore((state) => state.createDocumentRequest);
     const addRequestMessage = useDocumentRequestStore((state) => state.addRequestMessage);
-    const users = useUserStore((state) => state.users);
 
     // STATES
     const [selectedRequestItem, setSelectedRequestItem] = useState(null);

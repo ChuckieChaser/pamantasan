@@ -1,62 +1,45 @@
 // --- IMPORTS ---
-import { MOCK_USERS, MOCK_DEPARTMENTS } from '../mocks';
-import { USER_ROLES } from '../constants';
+import {
+    auth,
+    googleProvider,
+    signInWithEmailAndPassword,
+    signInWithPopup,
+    signOut,
+    onAuthStateChanged as onFirebaseAuthChanged,
+} from './firebase';
+import { userService } from './userService';
 
 // --- CONFIGURATIONS ---
-const STORAGE_KEY = 'dms_mock_active_user_id';
 const authListeners = new Set();
+let cachedCurrentUser = null;
 
 // --- HELPERS ---
-function formatUserRecord(rawUser) {
-    if (!rawUser) {
-        return null;
+function mapUniversityIdToEmail(input) {
+    const clean = (input ?? '').trim().toLowerCase();
+    if (clean.includes('@')) {
+        return clean;
     }
 
-    const department = MOCK_DEPARTMENTS.find(
-        (dept) => dept.id === rawUser.department_id
-    );
+    if (clean.startsWith('admin.')) return `${clean}@plpasig.edu.ph`;
+    if (clean.startsWith('coord.')) return `${clean}@plpasig.edu.ph`;
+    if (clean.startsWith('director.')) return `${clean}@plpasig.edu.ph`;
+    if (clean.startsWith('officer.')) return `${clean}@plpasig.edu.ph`;
+    if (clean.startsWith('member.')) return `${clean}@plpasig.edu.ph`;
 
-    return {
-        id: rawUser.id,
-        university_id: rawUser.university_id,
-        universityId: rawUser.university_id,
-        first_name: rawUser.first_name,
-        last_name: rawUser.last_name,
-        name: `${rawUser.first_name} ${rawUser.last_name}`,
-        email: rawUser.email,
-        role: rawUser.role ?? USER_ROLES.MEMBER,
-        title: rawUser.title ?? 'University Member',
-        department_id: rawUser.department_id,
-        department: department?.name ?? 'College of Computer Studies (CCS)',
-        department_code: department?.code ?? 'CCS',
-        avatar_path: rawUser.avatar_path ?? null,
-        status: rawUser.status ?? 'VERIFIED',
-        created_at: rawUser.created_at,
-        updated_at: rawUser.updated_at,
-    };
-}
+    const numericOnly = clean.replace(/-/g, '');
+    if (clean === '20-00001' || numericOnly === '2000001') return '20-00001@plpasig.edu.ph';
+    if (clean === '20-00002' || numericOnly === '2000002') return '20-00002@plpasig.edu.ph';
+    if (clean === '20-00003' || numericOnly === '2000003') return '20-00003@plpasig.edu.ph';
+    if (clean === '20-00004' || numericOnly === '2000004') return '20-00004@plpasig.edu.ph';
+    if (clean === '20-00005' || numericOnly === '2000005') return '20-00005@plpasig.edu.ph';
+    if (clean === '21-00001' || numericOnly === '2100001') return '21-00001@plpasig.edu.ph';
+    if (clean === '21-00002' || numericOnly === '2100002') return '21-00002@plpasig.edu.ph';
 
-function getStoredUser() {
-    try {
-        const storedId = localStorage.getItem(STORAGE_KEY);
-        if (storedId === 'signed_out') {
-            return null;
-        }
-        if (storedId) {
-            const foundUser = MOCK_USERS.find((user) => user.id === storedId);
-            if (foundUser) {
-                return formatUserRecord(foundUser);
-            }
-        }
-    } catch {
-        // Fallback gracefully on storage access restriction
-    }
-
-    // Default to primary administrator mock user on first session
-    return formatUserRecord(MOCK_USERS[0]);
+    return `${clean}@plpasig.edu.ph`;
 }
 
 function notifyListeners(user) {
+    cachedCurrentUser = user;
     authListeners.forEach((listener) => {
         try {
             listener(user);
@@ -66,105 +49,150 @@ function notifyListeners(user) {
     });
 }
 
-// --- MOCK AUTHENTICATION SERVICE ---
+// --- AUTHENTICATION SERVICE IMPLEMENTATION ---
 const authService = {
     loginWithEmail: async (email, password) => {
         return authService.loginWithUniversityId(email, password);
     },
 
     loginWithUniversityId: async (universityId, password) => {
-        const cleanInput = (universityId ?? '').trim().toLowerCase();
-        const cleanNormalized = cleanInput.replace(/-/g, '');
+        const resolvedEmail = mapUniversityIdToEmail(universityId);
 
-        const matchedUser = MOCK_USERS.find((user) => {
-            const userUniId = (user.university_id ?? '').toLowerCase();
-            const userNormalizedUniId = userUniId.replace(/-/g, '');
-            const userEmail = (user.email ?? '').toLowerCase();
-
-            return (
-                userUniId === cleanInput ||
-                userNormalizedUniId === cleanNormalized ||
-                userEmail === cleanInput
-            );
-        });
-
-        if (!matchedUser) {
-            throw new Error(`No account found matching "${universityId}". Use a valid mock University ID like 20-00001.`);
+        if (!auth) {
+            throw new Error('Firebase Auth is not initialized.');
         }
-
-        const formattedUser = formatUserRecord(matchedUser);
 
         try {
-            localStorage.setItem(STORAGE_KEY, formattedUser.id);
-        } catch {
-            // Storage access guard
-        }
+            const userCredential = await signInWithEmailAndPassword(auth, resolvedEmail, password);
+            const firebaseUser = userCredential.user;
 
-        notifyListeners(formattedUser);
-        return formattedUser;
+            // Fetch live PostgreSQL profile
+            let dbUser = await userService.fetchUserByEmail(firebaseUser.email);
+            if (!dbUser && universityId) {
+                dbUser = await userService.fetchUserByUniversityId(universityId);
+            }
+
+            const formattedUser = dbUser ?? {
+                id: firebaseUser.uid,
+                university_id: universityId,
+                universityId: universityId,
+                email: firebaseUser.email,
+                name: firebaseUser.displayName ?? 'University User',
+                first_name: firebaseUser.displayName?.split(' ')[0] ?? 'University',
+                last_name: firebaseUser.displayName?.split(' ')[1] ?? 'User',
+                role: 'MEMBER',
+                department: 'College of Computer Studies',
+                department_code: 'CCS',
+                status: 'VERIFIED',
+                avatar_path: firebaseUser.photoURL ?? null,
+            };
+
+            notifyListeners(formattedUser);
+            return formattedUser;
+        } catch (error) {
+            console.error('Login failed:', error);
+            const errorCode = error?.code;
+            if (errorCode === 'auth/invalid-credential' || errorCode === 'auth/wrong-password') {
+                throw new Error('Invalid University ID or password. Please verify your credentials.', { cause: error });
+            }
+            if (errorCode === 'auth/user-not-found') {
+                throw new Error(`Account for "${universityId}" not found.`, { cause: error });
+            }
+            throw new Error(error?.message ?? 'Authentication failed.', { cause: error });
+        }
     },
 
     loginWithGoogle: async () => {
-        // Sign in as default mock administrator
-        const defaultUser = formatUserRecord(MOCK_USERS[0]);
-
-        try {
-            localStorage.setItem(STORAGE_KEY, defaultUser.id);
-        } catch {
-            // Storage access guard
+        if (!auth || !googleProvider) {
+            throw new Error('Firebase Google Authentication is not initialized.');
         }
 
-        notifyListeners(defaultUser);
-        return defaultUser;
+        try {
+            const userCredential = await signInWithPopup(auth, googleProvider);
+            const firebaseUser = userCredential.user;
+
+            let dbUser = await userService.fetchUserByEmail(firebaseUser.email);
+
+            const formattedUser = dbUser ?? {
+                id: firebaseUser.uid,
+                university_id: 'SSO-USER',
+                universityId: 'SSO-USER',
+                email: firebaseUser.email,
+                name: firebaseUser.displayName ?? 'Google User',
+                first_name: firebaseUser.displayName?.split(' ')[0] ?? 'Institutional',
+                last_name: firebaseUser.displayName?.split(' ').slice(1).join(' ') || 'Member',
+                role: 'MEMBER',
+                department: 'College of Computer Studies',
+                department_code: 'CCS',
+                status: 'VERIFIED',
+                avatar_path: firebaseUser.photoURL ?? null,
+            };
+
+            notifyListeners(formattedUser);
+            return formattedUser;
+        } catch (error) {
+            console.error('Google Sign-In failed:', error);
+            throw new Error(error?.message ?? 'Google authentication failed.', { cause: error });
+        }
     },
 
     logout: async () => {
-        try {
-            localStorage.setItem(STORAGE_KEY, 'signed_out');
-        } catch {
-            // Storage access guard
+        if (auth) {
+            await signOut(auth);
         }
-
         notifyListeners(null);
     },
 
     onAuthStateChanged: (callback) => {
         authListeners.add(callback);
 
-        // Immediate invocation with current mock user
-        const currentUser = getStoredUser();
-        callback(currentUser);
+        if (!auth) {
+            callback(null);
+            return () => authListeners.delete(callback);
+        }
+
+        const unsubscribeFirebase = onFirebaseAuthChanged(auth, async (firebaseUser) => {
+            if (!firebaseUser) {
+                notifyListeners(null);
+                return;
+            }
+
+            try {
+                let dbUser = await userService.fetchUserByEmail(firebaseUser.email);
+                const resolvedUser = dbUser ?? {
+                    id: firebaseUser.uid,
+                    university_id: 'ACTIVE-USER',
+                    universityId: 'ACTIVE-USER',
+                    email: firebaseUser.email,
+                    name: firebaseUser.displayName ?? 'Active User',
+                    first_name: firebaseUser.displayName?.split(' ')[0] ?? 'Active',
+                    last_name: firebaseUser.displayName?.split(' ').slice(1).join(' ') || 'User',
+                    role: 'MEMBER',
+                    department: 'College of Computer Studies',
+                    department_code: 'CCS',
+                    status: 'VERIFIED',
+                    avatar_path: firebaseUser.photoURL ?? null,
+                };
+                notifyListeners(resolvedUser);
+            } catch {
+                notifyListeners(null);
+            }
+        });
 
         return () => {
             authListeners.delete(callback);
+            unsubscribeFirebase();
         };
     },
 
     getCurrentUser: () => {
-        return getStoredUser();
-    },
-
-    switchMockUserById: (userId) => {
-        const targetUser = MOCK_USERS.find((user) => user.id === userId);
-        if (!targetUser) {
-            return null;
-        }
-
-        const formattedUser = formatUserRecord(targetUser);
-        try {
-            localStorage.setItem(STORAGE_KEY, formattedUser.id);
-        } catch {
-            // Storage access guard
-        }
-
-        notifyListeners(formattedUser);
-        return formattedUser;
+        return cachedCurrentUser;
     },
 };
 
 export {
     authService,
-    formatUserRecord,
+    mapUniversityIdToEmail,
 };
 
 export default authService;

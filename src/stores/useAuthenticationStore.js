@@ -1,10 +1,6 @@
 // --- IMPORTS ---
 import { create } from 'zustand';
 import { authService } from '../services';
-import {
-    UserSchema,
-    UserSettingSchema,
-} from '../schemas';
 
 // --- STORE DEFINITION ---
 const useAuthenticationStore = create((set, get) => ({
@@ -98,6 +94,14 @@ const useAuthenticationStore = create((set, get) => ({
 
     setCurrentUser: (user) => {
         set({ currentUser: user });
+    },
+
+    updateProfile: (profileUpdates) => {
+        set((state) => ({
+            currentUser: state.currentUser
+                ? { ...state.currentUser, ...profileUpdates }
+                : profileUpdates,
+        }));
     },
 
     setUserSettings: (settings) => {

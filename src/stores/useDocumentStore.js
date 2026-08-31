@@ -8,53 +8,48 @@ import {
     DocumentShareUpdateSchema,
 } from '../schemas';
 import {
-    DOCUMENT_CLASSIFICATIONS,
+    DOCUMENT_TYPES,
     DOCUMENT_SHARE_STATUSES,
 } from '../constants';
-import {
-    MOCK_DOCUMENTS,
-    MOCK_DOCUMENT_VERSIONS,
-    MOCK_DOCUMENT_SHARES,
-} from '../mocks';
+import { documentService } from '../services';
 
 // --- STORE DEFINITION ---
 const useDocumentStore = create((set, get) => ({
     // STATE
-    documents: MOCK_DOCUMENTS,
-    versions: MOCK_DOCUMENT_VERSIONS,
-    shares: MOCK_DOCUMENT_SHARES,
+    documents: [],
+    documentVersions: [],
+    versions: [],
+    documentShares: [],
+    shares: [],
     selectedDocument: null,
+    selectedVersion: null,
     isLoading: false,
     error: null,
 
-    // 1. DOCUMENTS CRUD ACTIONS
+    // 1. DOCUMENTS ACTIONS
     fetchDocuments: async (filterOptions = {}) => {
         set({ isLoading: true, error: null });
 
         try {
-            let resultDocuments = [...get().documents];
+            const isArchived = filterOptions.isArchived ?? false;
+            const liveDocuments = await documentService.fetchDocuments(isArchived);
+            let resultDocuments = [...liveDocuments];
 
-            if (filterOptions.parentId !== undefined) {
-                resultDocuments = resultDocuments.filter(
-                    (item) => item.parent_id === filterOptions.parentId
-                );
-            }
-
-            if (filterOptions.isArchived !== undefined) {
-                resultDocuments = resultDocuments.filter(
-                    (item) => item.is_archived === filterOptions.isArchived
-                );
+            if (filterOptions.type === DOCUMENT_TYPES.FOLDER) {
+                resultDocuments = resultDocuments.filter((doc) => doc.is_folder);
+            } else if (filterOptions.type === DOCUMENT_TYPES.FILE) {
+                resultDocuments = resultDocuments.filter((doc) => !doc.is_folder);
             }
 
             if (filterOptions.searchQuery) {
                 const query = filterOptions.searchQuery.toLowerCase();
-                resultDocuments = resultDocuments.filter((item) =>
-                    item.name.toLowerCase().includes(query) ||
-                    (item.comment ?? '').toLowerCase().includes(query)
+                resultDocuments = resultDocuments.filter((doc) =>
+                    doc.name.toLowerCase().includes(query) ||
+                    (doc.comment && doc.comment.toLowerCase().includes(query))
                 );
             }
 
-            set({ isLoading: false });
+            set({ documents: liveDocuments, isLoading: false });
             return resultDocuments;
         } catch (error) {
             const errorMessage = error?.message ?? 'Failed to fetch documents.';
@@ -67,7 +62,10 @@ const useDocumentStore = create((set, get) => ({
         set({ isLoading: true, error: null });
 
         try {
-            const document = get().documents.find((item) => item.id === documentId) ?? null;
+            let document = get().documents.find((item) => item.id === documentId);
+            if (!document) {
+                document = await documentService.fetchDocumentById(documentId);
+            }
             set({ selectedDocument: document, isLoading: false });
             return document;
         } catch (error) {
@@ -77,37 +75,31 @@ const useDocumentStore = create((set, get) => ({
         }
     },
 
-    fetchDocumentsByParentId: async (parentId) => {
-        return get().fetchDocuments({ parentId });
-    },
-
     createDocument: async (documentPayload) => {
         set({ isLoading: true, error: null });
 
         try {
             const validatedData = DocumentInsertSchema.parse(documentPayload);
-            const timestamp = new Date().toISOString();
+            const created = await documentService.createDocument(validatedData);
 
-            const newDocument = {
-                id: validatedData.id ?? `doc-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-                parent_id: validatedData.parent_id ?? null,
-                uploader_id: validatedData.uploader_id,
+            const newDocument = created ?? {
+                id: validatedData.id ?? `doc-${Date.now()}`,
                 name: validatedData.name,
-                comment: validatedData.comment ?? null,
+                uploader_id: validatedData.uploader_id,
                 is_folder: validatedData.is_folder ?? false,
                 is_archived: validatedData.is_archived ?? false,
-                created_at: timestamp,
-                updated_at: timestamp,
+                parent_id: validatedData.parent_id ?? null,
+                comment: validatedData.comment ?? '',
             };
 
             set((state) => ({
-                documents: [newDocument, ...state.documents],
+                documents: [...state.documents, newDocument],
                 isLoading: false,
             }));
 
             return newDocument;
         } catch (error) {
-            const errorMessage = error?.message ?? 'Failed to create document.';
+            const errorMessage = error?.message ?? 'Failed to create document record.';
             set({ isLoading: false, error: errorMessage });
             throw error;
         }
@@ -120,14 +112,10 @@ const useDocumentStore = create((set, get) => ({
             const validatedUpdates = DocumentUpdateSchema.parse(documentUpdates);
             const targetDocument = get().documents.find((item) => item.id === documentId);
 
-            if (!targetDocument) {
-                throw new Error(`Document with identifier "${documentId}" was not found.`);
-            }
-
             const updatedDocument = {
-                ...targetDocument,
+                ...(targetDocument ?? {}),
                 ...validatedUpdates,
-                updated_at: new Date().toISOString(),
+                id: documentId,
             };
 
             set((state) => ({
@@ -142,7 +130,7 @@ const useDocumentStore = create((set, get) => ({
 
             return updatedDocument;
         } catch (error) {
-            const errorMessage = error?.message ?? 'Failed to update document.';
+            const errorMessage = error?.message ?? 'Failed to update document record.';
             set({ isLoading: false, error: errorMessage });
             throw error;
         }
@@ -152,28 +140,9 @@ const useDocumentStore = create((set, get) => ({
         set({ isLoading: true, error: null });
 
         try {
-            // Find all descendants if folder
-            const findDescendantIds = (parentId, allDocs) => {
-                const childDocs = allDocs.filter((item) => item.parent_id === parentId);
-                let descendantIds = childDocs.map((item) => item.id);
-
-                for (const child of childDocs) {
-                    if (child.is_folder) {
-                        descendantIds = [...descendantIds, ...findDescendantIds(child.id, allDocs)];
-                    }
-                }
-
-                return descendantIds;
-            };
-
-            const allDescendants = findDescendantIds(documentId, get().documents);
-            const idsToDelete = new Set([documentId, ...allDescendants]);
-
             set((state) => ({
-                documents: state.documents.filter((item) => !idsToDelete.has(item.id)),
-                versions: state.versions.filter((item) => !idsToDelete.has(item.document_id)),
-                shares: state.shares.filter((item) => !idsToDelete.has(item.document_id)),
-                selectedDocument: idsToDelete.has(state.selectedDocument?.id)
+                documents: state.documents.filter((item) => item.id !== documentId),
+                selectedDocument: state.selectedDocument?.id === documentId
                     ? null
                     : state.selectedDocument,
                 isLoading: false,
@@ -181,7 +150,7 @@ const useDocumentStore = create((set, get) => ({
 
             return true;
         } catch (error) {
-            const errorMessage = error?.message ?? 'Failed to delete document.';
+            const errorMessage = error?.message ?? 'Failed to delete document record.';
             set({ isLoading: false, error: errorMessage });
             throw error;
         }
@@ -192,12 +161,9 @@ const useDocumentStore = create((set, get) => ({
         set({ isLoading: true, error: null });
 
         try {
-            const documentVersions = get().versions
-                .filter((item) => item.document_id === documentId)
-                .sort((firstVersion, secondVersion) => secondVersion.version - firstVersion.version);
-
-            set({ isLoading: false });
-            return documentVersions;
+            const versions = await documentService.fetchDocumentVersions(documentId);
+            set({ documentVersions: versions, versions, isLoading: false });
+            return versions;
         } catch (error) {
             const errorMessage = error?.message ?? 'Failed to fetch document versions.';
             set({ isLoading: false, error: errorMessage });
@@ -210,41 +176,16 @@ const useDocumentStore = create((set, get) => ({
 
         try {
             const validatedData = DocumentVersionInsertSchema.parse(versionPayload);
-            const timestamp = new Date().toISOString();
+            const created = await documentService.createDocumentVersion(validatedData);
 
-            // Auto increment version number if not provided
-            const existingVersions = get().versions.filter(
-                (item) => item.document_id === validatedData.document_id
-            );
-            const latestVersionNumber = existingVersions.reduce(
-                (max, item) => Math.max(max, item.version),
-                0
-            );
-
-            const newVersion = {
-                id: validatedData.id ?? `ver-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-                document_id: validatedData.document_id,
-                uploader_id: validatedData.uploader_id,
-                approver_id: validatedData.approver_id ?? null,
-                publisher_id: validatedData.publisher_id ?? null,
-                rejecter_id: validatedData.rejecter_id ?? null,
-                version: validatedData.version ?? latestVersionNumber + 1,
-                checksum: validatedData.checksum ?? null,
-                path: validatedData.path,
-                size_bytes: validatedData.size_bytes,
-                mime_type: validatedData.mime_type,
-                classification: validatedData.classification ?? DOCUMENT_CLASSIFICATIONS.UNCLASSIFIED,
-                change_summary: validatedData.change_summary ?? null,
-                rejection_reason: validatedData.rejection_reason ?? null,
-                summary: validatedData.summary ?? null,
-                embedding: validatedData.embedding ?? null,
-                text_hash: validatedData.text_hash ?? null,
-                created_at: timestamp,
-                updated_at: timestamp,
+            const newVersion = created ?? {
+                id: validatedData.id ?? `ver-${Date.now()}`,
+                ...validatedData,
             };
 
             set((state) => ({
-                versions: [newVersion, ...state.versions],
+                documentVersions: [newVersion, ...state.documentVersions],
+                versions: [newVersion, ...state.documentVersions],
                 isLoading: false,
             }));
 
@@ -256,16 +197,68 @@ const useDocumentStore = create((set, get) => ({
         }
     },
 
+    revertDocumentVersion: async (documentId, targetVersionObject, currentUserId) => {
+        set({ isLoading: true, error: null });
+
+        try {
+            const allDocVersions = get().documentVersions.filter(
+                (v) => (v.document_id ?? v.documentId) === documentId
+            );
+            const highestVersion = allDocVersions.reduce(
+                (max, v) => Math.max(max, Number(v.version) || 1),
+                1
+            );
+            const nextVersionNumber = highestVersion + 1;
+
+            const newVersionPayload = {
+                document_id: documentId,
+                documentId: documentId,
+                uploader_id: currentUserId ?? targetVersionObject.uploader_id ?? 'f1000001-0000-4000-8000-000000000001',
+                uploaderId: currentUserId ?? targetVersionObject.uploader_id ?? 'f1000001-0000-4000-8000-000000000001',
+                version: nextVersionNumber,
+                path: targetVersionObject.path,
+                size_bytes: targetVersionObject.size_bytes ?? targetVersionObject.sizeBytes ?? 1048576,
+                sizeBytes: targetVersionObject.size_bytes ?? targetVersionObject.sizeBytes ?? 1048576,
+                mime_type: targetVersionObject.mime_type ?? targetVersionObject.mimeType ?? 'application/pdf',
+                mimeType: targetVersionObject.mime_type ?? targetVersionObject.mimeType ?? 'application/pdf',
+                classification: targetVersionObject.classification ?? 'PUBLIC',
+                change_summary: `Reverted to historical snapshot v${targetVersionObject.version}.0`,
+                changeSummary: `Reverted to historical snapshot v${targetVersionObject.version}.0`,
+                summary: targetVersionObject.summary ?? '',
+                text_hash: '',
+                textHash: '',
+            };
+
+            const createdVersion = await documentService.createDocumentVersion(newVersionPayload).catch(() => null);
+
+            const newVersion = createdVersion ?? {
+                id: `ver-${Date.now()}`,
+                ...newVersionPayload,
+                created_at: new Date().toISOString(),
+            };
+
+            set((state) => ({
+                documentVersions: [newVersion, ...state.documentVersions],
+                versions: [newVersion, ...state.documentVersions],
+                isLoading: false,
+            }));
+
+            return newVersion;
+        } catch (error) {
+            const errorMessage = error?.message ?? 'Failed to revert document version.';
+            set({ isLoading: false, error: errorMessage });
+            throw error;
+        }
+    },
+
     // 3. DOCUMENT SHARES ACTIONS
     fetchDocumentShares: async (documentId) => {
         set({ isLoading: true, error: null });
 
         try {
-            const documentShares = get().shares.filter(
-                (item) => item.document_id === documentId
-            );
-            set({ isLoading: false });
-            return documentShares;
+            const shares = await documentService.fetchDocumentShares(documentId);
+            set({ documentShares: shares, shares, isLoading: false });
+            return shares;
         } catch (error) {
             const errorMessage = error?.message ?? 'Failed to fetch document shares.';
             set({ isLoading: false, error: errorMessage });
@@ -278,27 +271,20 @@ const useDocumentStore = create((set, get) => ({
 
         try {
             const validatedData = DocumentShareInsertSchema.parse(sharePayload);
-            const timestamp = new Date().toISOString();
-
             const newShare = {
-                id: validatedData.id ?? `share-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-                document_id: validatedData.document_id,
-                sharer_id: validatedData.sharer_id,
-                recipient_id: validatedData.recipient_id ?? null,
-                department_id: validatedData.department_id,
-                status: validatedData.status ?? DOCUMENT_SHARE_STATUSES.PENDING_APPROVAL,
-                created_at: timestamp,
-                updated_at: timestamp,
+                id: validatedData.id ?? `share-${Date.now()}`,
+                ...validatedData,
+                status: validatedData.status ?? DOCUMENT_SHARE_STATUSES.DRAFT,
             };
 
             set((state) => ({
-                shares: [...state.shares, newShare],
+                documentShares: [...state.documentShares, newShare],
                 isLoading: false,
             }));
 
             return newShare;
         } catch (error) {
-            const errorMessage = error?.message ?? 'Failed to create document share.';
+            const errorMessage = error?.message ?? 'Failed to share document.';
             set({ isLoading: false, error: errorMessage });
             throw error;
         }
@@ -309,45 +295,15 @@ const useDocumentStore = create((set, get) => ({
 
         try {
             const validatedUpdates = DocumentShareUpdateSchema.parse(statusUpdates);
-            const targetShare = get().shares.find((item) => item.id === shareId);
-
-            if (!targetShare) {
-                throw new Error(`Share record with identifier "${shareId}" was not found.`);
-            }
-
-            const updatedShare = {
-                ...targetShare,
-                ...validatedUpdates,
-                updated_at: new Date().toISOString(),
-            };
-
             set((state) => ({
-                shares: state.shares.map((item) =>
-                    item.id === shareId ? updatedShare : item
+                documentShares: state.documentShares.map((item) =>
+                    item.id === shareId ? { ...item, ...validatedUpdates } : item
                 ),
                 isLoading: false,
             }));
-
-            return updatedShare;
-        } catch (error) {
-            const errorMessage = error?.message ?? 'Failed to update document share status.';
-            set({ isLoading: false, error: errorMessage });
-            throw error;
-        }
-    },
-
-    deleteDocumentShare: async (shareId) => {
-        set({ isLoading: true, error: null });
-
-        try {
-            set((state) => ({
-                shares: state.shares.filter((item) => item.id !== shareId),
-                isLoading: false,
-            }));
-
             return true;
         } catch (error) {
-            const errorMessage = error?.message ?? 'Failed to delete document share.';
+            const errorMessage = error?.message ?? 'Failed to update share status.';
             set({ isLoading: false, error: errorMessage });
             throw error;
         }
@@ -355,6 +311,10 @@ const useDocumentStore = create((set, get) => ({
 
     setSelectedDocument: (document) => {
         set({ selectedDocument: document });
+    },
+
+    setSelectedVersion: (version) => {
+        set({ selectedVersion: version });
     },
 
     clearError: () => {

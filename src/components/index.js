@@ -11,4 +11,5 @@ export * from './Avatar';
 export * from './AccessDenied';
 export * from './ProtectedRoute';
 export * from './PublicOnlyRoute';
+export { useToast } from '../hooks/useToast';
 export { default as Inspector, default as DetailPanel } from './Inspector';

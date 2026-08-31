@@ -88,7 +88,7 @@ export const DepartmentUpdateSchema = DepartmentInsertSchema.partial();
 export const UserSchema = z.object({
     id: UuidSchema,
     university_id: UniversityIdSchema,
-    department_id: UuidSchema,
+    department_id: z.string().min(1, 'Department is required'),
     role: UserRoleSchema,
     email: InstitutionalEmailSchema,
     avatar_path: z.string().nullable().optional(),
@@ -344,6 +344,17 @@ export const CoordinatorRequestInsertSchema = CoordinatorRequestSchema.omit({
 });
 
 export const CoordinatorRequestUpdateSchema = CoordinatorRequestInsertSchema.partial();
+
+export const CoordinatorRequestReviewSchema = z.object({
+    status: CoordinatorRequestStatusSchema,
+    rejection_reason: z.string().nullable().optional(),
+    reviewer_id: UuidSchema.nullable().optional(),
+});
+
+export {
+    DocumentRequestMessageInsertSchema as RequestMessageInsertSchema,
+    DocumentRequestAttachmentInsertSchema as RequestAttachmentInsertSchema,
+};
 
 // --- 14. NOTIFICATIONS SCHEMA (notifications) ---
 

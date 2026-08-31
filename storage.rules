@@ -1,0 +1,56 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isInstitutionalDomain() {
+      return isAuthenticated() &&
+             request.auth.token.email != null &&
+             request.auth.token.email.matches('.*@plpasig[.]edu[.]ph$');
+    }
+
+    function isValidFileSize() {
+      return request.resource.size <= 50 * 1024 * 1024; // 50 MB max
+    }
+
+    function isValidImage() {
+      return request.resource.contentType.matches('image/(jpeg|png|webp|svg[+]xml|gif)');
+    }
+
+    function isValidDocument() {
+      return request.resource.contentType.matches('application/pdf') ||
+             request.resource.contentType.matches('application/msword') ||
+             request.resource.contentType.matches('application/vnd.openxmlformats-officedocument.wordprocessingml.document') ||
+             request.resource.contentType.matches('application/vnd.ms-excel') ||
+             request.resource.contentType.matches('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') ||
+             request.resource.contentType.matches('image/(jpeg|png|webp)');
+    }
+
+    // User Avatar Icons: avatars/{userId}/{fileName}
+    match /avatars/{userId}/{fileName} {
+      allow read: if true;
+      allow write: if isValidFileSize();
+    }
+
+    // System Documents: documents/{allPaths=**}
+    match /documents/{allPaths=**} {
+      allow read: if true;
+      allow write: if isValidFileSize();
+      allow delete: if isAuthenticated();
+    }
+
+    // Default fallback
+    match /{allPaths=**} {
+      allow read, write: if isValidFileSize();
+    }
+  }
+}

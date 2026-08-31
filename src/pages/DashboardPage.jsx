@@ -12,9 +12,6 @@ import {
     CardContainer,
     PrimaryButton,
     SecondaryButton,
-    SuccessBadge,
-    WarningBadge,
-    InformationBadge,
     RoleBadge,
 } from '../components';
 import {
@@ -71,28 +68,35 @@ const METRIC_THEMES = {
 const DashboardPage = ({
     currentUser = null,
     onNavigate = null,
+    onUploadDocument = null,
+    onRequestDocument = null,
+    onSelectActivity = null,
     className,
     ...props
 }) => {
     // STORES
-    const documents = useDocumentStore((state) => state.documents);
-    const departments = useDepartmentStore((state) => state.departments);
-    const requests = useDocumentRequestStore((state) => state.requests);
-    const auditLogs = useAuditLogStore((state) => state.auditLogs);
-    const users = useUserStore((state) => state.users);
+    const documents = useDocumentStore((state) => state.documents ?? []);
+    const departments = useDepartmentStore((state) => state.departments ?? []);
+    const requests = useDocumentRequestStore((state) => state.requests ?? state.documentRequests ?? []);
+    const auditLogs = useAuditLogStore((state) => state.auditLogs ?? []);
+    const users = useUserStore((state) => state.users ?? []);
 
     // DERIVED METRICS
     const dynamicMetrics = useMemo(() => {
-        const totalDocsCount = documents.filter((item) => !item.is_folder).length;
-        const pendingRequestsCount = requests.filter((item) => item.status === 'OPEN').length;
-        const totalUnitsCount = departments.length;
+        const safeDocs = Array.isArray(documents) ? documents : [];
+        const safeRequests = Array.isArray(requests) ? requests : [];
+        const safeDepts = Array.isArray(departments) ? departments : [];
+
+        const totalDocsCount = safeDocs.filter((item) => !item.is_folder).length;
+        const pendingRequestsCount = safeRequests.filter((item) => item.status === 'OPEN').length;
+        const totalUnitsCount = safeDepts.length;
 
         return [
             {
                 id: 'metric-docs',
                 label: 'Total Documents',
                 value: totalDocsCount.toString(),
-                change: `${documents.length} repository nodes`,
+                change: `${safeDocs.length} repository nodes`,
                 icon: FileText,
                 trend: 'positive',
             },
@@ -124,11 +128,15 @@ const DashboardPage = ({
     }, [documents, requests, departments]);
 
     const formattedActivities = useMemo(() => {
-        return auditLogs.slice(0, 5).map((log) => {
-            const actor = users.find((item) => item.id === log.actor_id);
+        const safeAuditLogs = Array.isArray(auditLogs) ? auditLogs : [];
+        const safeUsers = Array.isArray(users) ? users : [];
+        const safeDepts = Array.isArray(departments) ? departments : [];
+
+        return safeAuditLogs.slice(0, 5).map((log) => {
+            const actor = safeUsers.find((item) => item.id === log.actor_id);
             const actorName = actor ? `${actor.first_name} ${actor.last_name}` : 'Institutional System';
             const actorRole = actor?.role ?? USER_ROLES.MEMBER;
-            const actorDepartment = departments.find((item) => item.id === actor?.department_id)?.name ?? 'Central Administration';
+            const actorDepartment = safeDepts.find((item) => item.id === actor?.department_id)?.name ?? 'Central Administration';
             const actionFormatted = log.action?.replace(/_/g, ' ');
 
             return {
@@ -175,13 +183,13 @@ const DashboardPage = ({
 
                 <div className="flex items-center gap-3 shrink-0">
                     <SecondaryButton
-                        onClick={() => onNavigate?.('request_document')}
+                        onClick={() => (onRequestDocument ? onRequestDocument() : onNavigate?.('request_document'))}
                         size="md"
                     >
                         Request Document
                     </SecondaryButton>
                     <PrimaryButton
-                        onClick={() => onNavigate?.('documents')}
+                        onClick={() => (onUploadDocument ? onUploadDocument() : onNavigate?.('documents'))}
                         size="md"
                     >
                         Browse Repository
@@ -246,7 +254,8 @@ const DashboardPage = ({
                             formattedActivities.map((activity) => (
                                 <div
                                     key={activity.id}
-                                    className="py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 first:pt-0 last:pb-0 hover:bg-surface-hover/50 px-2 rounded-md transition-colors"
+                                    onClick={() => onSelectActivity?.(activity)}
+                                    className="py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 first:pt-0 last:pb-0 hover:bg-surface-hover/50 px-2 rounded-md transition-colors cursor-pointer"
                                 >
                                     <div className="flex flex-col gap-1">
                                         <span className="text-xs font-semibold text-text capitalize">

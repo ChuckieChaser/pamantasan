@@ -11,16 +11,18 @@ import {
     Settings,
     Shield,
     CheckCircle2,
-    Clock,
-    FileText,
     Building2,
     Sun,
-    Moon,
     Laptop,
     Key,
     Lock,
     Mail,
     HardDrive,
+    Camera,
+    Edit3,
+    Save,
+    Loader2,
+    Upload,
 } from 'lucide-react';
 import logoImage from '../assets/logo.jpg';
 import {
@@ -30,17 +32,19 @@ import {
     SwitchSelection,
     SearchField,
     CardContainer,
-    PrimaryButton,
     SecondaryButton,
+    TextField,
     RoleBadge,
     SuccessBadge,
     WarningBadge,
     InformationBadge,
     Modal,
     UserAvatar,
+    useToast,
 } from '../components';
 import { useClickOutside } from '../hooks';
-import { useNotificationStore } from '../stores';
+import { useNotificationStore, useUserStore, useAuthenticationStore } from '../stores';
+import { storageService } from '../services';
 import { USER_ROLES, USER_STATUSES } from '../constants';
 
 // --- CONFIGURATIONS ---
@@ -104,18 +108,17 @@ const MainLayout = ({
     searchQuery = '',
     searchPlaceholder = 'Search documents, records...',
     showSearch = true,
-    notificationCount = 3,
-    hasUnreadNotifications = true,
     isDetailPanelOpen = undefined,
     detailPanelTitle = 'Details',
     detailPanelContent = null,
     showSidebar = true,
     showTopBar = true,
     showDetailPanel = true,
+    notificationCount = 0,
+    hasUnreadNotifications = false,
     onSearchChange,
     onSearchClear,
     onNavigationChange,
-    onNotificationClick,
     onAccountClick,
     onSettingsClick,
     onToggleDetailPanel,
@@ -149,11 +152,23 @@ const MainLayout = ({
     });
     const [notificationScope, setNotificationScope] = useState('ALL');
     const [isEmailDigestEnabled, setIsEmailDigestEnabled] = useState(true);
+    const [isCompactModeEnabled, setIsCompactModeEnabled] = useState(false);
     // NOTIFICATION STORE
     const notifications = useNotificationStore((state) => state.notifications);
     const markNotificationAsRead = useNotificationStore((state) => state.markNotificationAsRead);
     const markAllNotificationsAsRead = useNotificationStore((state) => state.markAllNotificationsAsRead);
-    const unreadNotificationsCount = notifications.filter((item) => !item.is_read).length;
+    const storeUnreadCount = notifications.filter((item) => !item.is_read).length;
+    const unreadNotificationsCount = notificationCount > 0 ? notificationCount : storeUnreadCount;
+    const hasUnread = hasUnreadNotifications || unreadNotificationsCount > 0;
+
+    // PROFILE EDITING STATES
+    const [isEditingProfile, setIsEditingProfile] = useState(false);
+    const [profileFirstName, setProfileFirstName] = useState('');
+    const [profileMiddleName, setProfileMiddleName] = useState('');
+    const [profileLastName, setProfileLastName] = useState('');
+    const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
+    const avatarInputReference = useRef(null);
+    const { showToast } = useToast();
 
     // REFS FOR POPUP DISMISSAL
     const accountReference = useRef(null);
@@ -215,12 +230,98 @@ const MainLayout = ({
 
     const handleOpenAccountModal = (event) => {
         setIsAccountPanelOpen(false);
+        setProfileFirstName(currentUser?.first_name ?? currentUser?.firstName ?? 'Carl');
+        setProfileMiddleName(currentUser?.middle_name ?? currentUser?.middleName ?? '');
+        setProfileLastName(currentUser?.last_name ?? currentUser?.lastName ?? 'Avecilla');
+        setIsEditingProfile(false);
         setIsAccountModalOpen(true);
         onAccountClick?.(event);
     };
 
+    const handleTriggerAvatarUpload = () => {
+        avatarInputReference.current?.click();
+    };
+
+    const handleAvatarFileChange = async (changeEvent) => {
+        const file = changeEvent.target.files?.[0];
+        if (!file) {
+            return;
+        }
+
+        const activeId = currentUser?.id ?? 'f1000001-0000-4000-8000-000000000001';
+        setIsUploadingAvatar(true);
+
+        try {
+            const uploadResult = await storageService.uploadAvatar(activeId, file);
+            const storagePointer = uploadResult.path;
+            await useUserStore.getState().updateUser(activeId, {
+                avatar_path: storagePointer,
+            });
+            useAuthenticationStore.getState().updateProfile({
+                avatar_path: storagePointer,
+                avatarPath: storagePointer,
+            });
+            showToast({
+                type: 'success',
+                title: 'Avatar Updated',
+                description: 'Profile avatar has been uploaded and stored in Firebase Storage.',
+            });
+        } catch (error) {
+            console.error('Avatar upload error:', error);
+            showToast({
+                type: 'error',
+                title: 'Avatar Upload Failed',
+                description: error?.message ?? 'Could not upload avatar.',
+            });
+        } finally {
+            setIsUploadingAvatar(false);
+        }
+    };
+
+    const handleSaveProfile = async () => {
+        if (!profileFirstName.trim() || !profileLastName.trim()) {
+            showToast({
+                type: 'error',
+                title: 'Validation Error',
+                description: 'First name and last name are required.',
+            });
+            return;
+        }
+
+        try {
+            const activeId = currentUser?.id ?? 'f1000001-0000-4000-8000-000000000001';
+            await useUserStore.getState().updateUser(activeId, {
+                first_name: profileFirstName.trim(),
+                middle_name: profileMiddleName.trim() || null,
+                last_name: profileLastName.trim(),
+            });
+            useAuthenticationStore.getState().updateProfile({
+                first_name: profileFirstName.trim(),
+                firstName: profileFirstName.trim(),
+                middle_name: profileMiddleName.trim() || null,
+                middleName: profileMiddleName.trim() || null,
+                last_name: profileLastName.trim(),
+                lastName: profileLastName.trim(),
+                name: `${profileFirstName.trim()} ${profileLastName.trim()}`,
+            });
+            setIsEditingProfile(false);
+            showToast({
+                type: 'success',
+                title: 'Profile Updated',
+                description: 'Your legal name has been successfully updated.',
+            });
+        } catch (error) {
+            showToast({
+                type: 'error',
+                title: 'Update Failed',
+                description: error?.message ?? 'Could not update profile.',
+            });
+        }
+    };
+
     const handleCloseAccountModal = () => {
         setIsAccountModalOpen(false);
+        setIsEditingProfile(false);
     };
 
     const handleOpenSettingsModal = (event) => {
@@ -277,15 +378,15 @@ const MainLayout = ({
         ? isDetailPanelOpen
         : internalDetailPanelOpen;
 
-    const isNotificationActive = isNotificationPanelOpen;
+    const isNotificationActive = isNotificationPanelOpen || hasUnread;
 
-    const userName = currentUser?.name ?? `${currentUser?.first_name ?? 'Arthur'} ${currentUser?.last_name ?? 'Pendragon'}`;
-    const userFirstName = currentUser?.first_name ?? 'Arthur';
+    const userName = currentUser?.name ?? `${currentUser?.first_name ?? 'Carl'} ${currentUser?.last_name ?? 'Avecilla'}`;
+    const userFirstName = currentUser?.first_name ?? 'Carl';
     const userMiddleName = currentUser?.middle_name ?? null;
-    const userLastName = currentUser?.last_name ?? 'Pendragon';
+    const userLastName = currentUser?.last_name ?? 'Avecilla';
     const userUniversityId = currentUser?.university_id ?? currentUser?.universityId ?? '20-00001';
-    const userEmail = currentUser?.email ?? 'admin.ccs@plpasig.edu.ph';
-    const userDepartment = currentUser?.department ?? 'College of Computer Studies (CCS)';
+    const userEmail = currentUser?.email ?? 'admin.rmo@plpasig.edu.ph';
+    const userDepartment = currentUser?.department ?? 'Records Management Office (RMO)';
     const userRole = (currentUser?.role ?? USER_ROLES.ADMINISTRATOR).toLowerCase();
     const userStatus = currentUser?.status ?? USER_STATUSES.VERIFIED;
 
@@ -601,26 +702,66 @@ const MainLayout = ({
                 </aside>
             )}
 
-            {/* 4. ACCOUNT PROFILE OVERVIEW MODAL */}
+            {/* 4. ACCOUNT PROFILE OVERVIEW / EDIT MODAL */}
             <Modal
                 isOpen={isAccountModalOpen}
                 onClose={handleCloseAccountModal}
-                title="Account Profile"
-                description="Official university credentials and profile identity"
+                title={isEditingProfile ? 'Edit Account Profile' : 'Account Profile'}
+                description={isEditingProfile ? 'Update legal identity information' : 'Official university credentials and profile identity'}
                 size="lg"
+                primaryAction={
+                    isEditingProfile
+                        ? {
+                              label: 'Save Profile Changes',
+                              leadingIcon: Save,
+                              onClick: handleSaveProfile,
+                          }
+                        : {
+                              label: 'Edit Profile',
+                              leadingIcon: Edit3,
+                              onClick: () => setIsEditingProfile(true),
+                          }
+                }
                 secondaryAction={{
-                    label: 'Close',
-                    onClick: handleCloseAccountModal,
+                    label: isEditingProfile ? 'Cancel' : 'Close',
+                    onClick: isEditingProfile ? () => setIsEditingProfile(false) : handleCloseAccountModal,
                 }}
             >
-                {/* USER HERO PROFILE CARD */}
+                {/* HIDDEN AVATAR FILE INPUT */}
+                <input
+                    type="file"
+                    ref={avatarInputReference}
+                    onChange={handleAvatarFileChange}
+                    accept="image/*"
+                    className="hidden"
+                />
+
+                {/* USER HERO PROFILE CARD WITH INTERACTIVE AVATAR UPLOAD */}
                 <div className="p-5 rounded-xl bg-surface-hover/50 border border-surface-border flex flex-col sm:flex-row items-center sm:items-start gap-4">
-                    <UserAvatar
-                        src={currentUser?.avatar_path}
-                        name={userName}
-                        size="xl"
-                        className="h-16 w-16 shadow-sm border-2 border-accent shrink-0"
-                    />
+                    <div className="relative group shrink-0">
+                        <UserAvatar
+                            src={currentUser?.avatar_path}
+                            name={userName}
+                            size="xl"
+                            className="h-16 w-16 shadow-sm border-2 border-accent"
+                        />
+                        <button
+                            type="button"
+                            onClick={handleTriggerAvatarUpload}
+                            disabled={isUploadingAvatar}
+                            className="absolute inset-0 bg-black/60 rounded-full flex flex-col items-center justify-center text-text-inverted opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer disabled:opacity-50"
+                            title="Upload New Avatar to Firebase Storage"
+                        >
+                            {isUploadingAvatar ? (
+                                <Loader2 className="h-5 w-5 animate-spin" />
+                            ) : (
+                                <>
+                                    <Camera className="h-5 w-5" />
+                                    <span className="text-[9px] font-bold mt-0.5">Upload</span>
+                                </>
+                            )}
+                        </button>
+                    </div>
 
                     <div className="flex flex-col items-center sm:items-start gap-1 flex-1 min-w-0">
                         <div className="flex flex-col sm:flex-row sm:items-center gap-2">
@@ -638,7 +779,7 @@ const MainLayout = ({
                             <span>{userEmail}</span>
                         </div>
 
-                        <div className="pt-2">
+                        <div className="pt-2 flex items-center gap-2">
                             {userStatus === 'VERIFIED' ? (
                                 <SuccessBadge label="Verified Account" />
                             ) : userStatus === 'SUSPENDED' ? (
@@ -646,80 +787,114 @@ const MainLayout = ({
                             ) : (
                                 <InformationBadge label={userStatus} />
                             )}
+                            <button
+                                type="button"
+                                onClick={handleTriggerAvatarUpload}
+                                className="text-xs text-accent hover:underline font-medium inline-flex items-center gap-1 cursor-pointer"
+                            >
+                                <Upload className="h-3.5 w-3.5" /> Change Photo
+                            </button>
                         </div>
                     </div>
                 </div>
 
-                {/* 2-COLUMN INSTITUTIONAL DETAILS GRID */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                    <div className="p-3 rounded-lg bg-surface border border-surface-border flex items-start gap-3">
-                        <div className="p-2 rounded-md bg-accent-background text-accent shrink-0 mt-1">
-                            <Key className="h-4 w-4" />
+                {isEditingProfile ? (
+                    <div className="flex flex-col gap-3 pt-2">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <TextField
+                                label="First Name"
+                                value={profileFirstName}
+                                onChange={(event) => setProfileFirstName(event.target.value)}
+                                placeholder="Given name"
+                                required
+                            />
+                            <TextField
+                                label="Middle Name (Optional)"
+                                value={profileMiddleName}
+                                onChange={(event) => setProfileMiddleName(event.target.value)}
+                                placeholder="Middle name"
+                            />
                         </div>
-                        <div className="flex flex-col min-w-0 flex-1 gap-1">
-                            <span className="text-text-muted font-medium">University ID</span>
-                            <span className="font-semibold text-text truncate">{userUniversityId}</span>
-                            <span className="text-text-muted">Official Identifier</span>
-                        </div>
+                        <TextField
+                            label="Last Name"
+                            value={profileLastName}
+                            onChange={(event) => setProfileLastName(event.target.value)}
+                            placeholder="Family name"
+                            required
+                        />
                     </div>
+                ) : (
+                    /* 2-COLUMN INSTITUTIONAL DETAILS GRID */
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                        <div className="p-3 rounded-lg bg-surface border border-surface-border flex items-start gap-3">
+                            <div className="p-2 rounded-md bg-accent-background text-accent shrink-0 mt-1">
+                                <Key className="h-4 w-4" />
+                            </div>
+                            <div className="flex flex-col min-w-0 flex-1 gap-1">
+                                <span className="text-text-muted font-medium">University ID</span>
+                                <span className="font-semibold text-text truncate">{userUniversityId}</span>
+                                <span className="text-text-muted">Official Identifier</span>
+                            </div>
+                        </div>
 
-                    <div className="p-3 rounded-lg bg-surface border border-surface-border flex items-start gap-3">
-                        <div className="p-2 rounded-md bg-accent-background text-accent shrink-0 mt-1">
-                            <Building2 className="h-4 w-4" />
+                        <div className="p-3 rounded-lg bg-surface border border-surface-border flex items-start gap-3">
+                            <div className="p-2 rounded-md bg-accent-background text-accent shrink-0 mt-1">
+                                <Building2 className="h-4 w-4" />
+                            </div>
+                            <div className="flex flex-col min-w-0 flex-1 gap-1">
+                                <span className="text-text-muted font-medium">Assigned Department</span>
+                                <span className="font-semibold text-text truncate">{userDepartment}</span>
+                                <span className="text-text-muted">Academic Unit</span>
+                            </div>
                         </div>
-                        <div className="flex flex-col min-w-0 flex-1 gap-1">
-                            <span className="text-text-muted font-medium">Assigned Department</span>
-                            <span className="font-semibold text-text truncate">{userDepartment}</span>
-                            <span className="text-text-muted">Academic Unit</span>
-                        </div>
-                    </div>
 
-                    <div className="p-3 rounded-lg bg-surface border border-surface-border flex items-start gap-3">
-                        <div className="p-2 rounded-md bg-accent-background text-accent shrink-0 mt-1">
-                            <User className="h-4 w-4" />
+                        <div className="p-3 rounded-lg bg-surface border border-surface-border flex items-start gap-3">
+                            <div className="p-2 rounded-md bg-accent-background text-accent shrink-0 mt-1">
+                                <User className="h-4 w-4" />
+                            </div>
+                            <div className="flex flex-col min-w-0 flex-1 gap-1">
+                                <span className="text-text-muted font-medium">Full Legal Name</span>
+                                <span className="font-semibold text-text truncate">
+                                    {userFirstName} {userMiddleName ? `${userMiddleName} ` : ''}{userLastName}
+                                </span>
+                                <span className="text-text-muted">Primary Record Name</span>
+                            </div>
                         </div>
-                        <div className="flex flex-col min-w-0 flex-1 gap-1">
-                            <span className="text-text-muted font-medium">Full Legal Name</span>
-                            <span className="font-semibold text-text truncate">
-                                {userFirstName} {userMiddleName ? `${userMiddleName} ` : ''}{userLastName}
-                            </span>
-                            <span className="text-text-muted">Primary Record Name</span>
-                        </div>
-                    </div>
 
-                    <div className="p-3 rounded-lg bg-surface border border-surface-border flex items-start gap-3">
-                        <div className="p-2 rounded-md bg-accent-background text-accent shrink-0 mt-1">
-                            <Mail className="h-4 w-4" />
+                        <div className="p-3 rounded-lg bg-surface border border-surface-border flex items-start gap-3">
+                            <div className="p-2 rounded-md bg-accent-background text-accent shrink-0 mt-1">
+                                <Mail className="h-4 w-4" />
+                            </div>
+                            <div className="flex flex-col min-w-0 flex-1 gap-1">
+                                <span className="text-text-muted font-medium">University Email</span>
+                                <span className="font-semibold text-text truncate">{userEmail}</span>
+                                <span className="text-text-muted">Official Mailbox</span>
+                            </div>
                         </div>
-                        <div className="flex flex-col min-w-0 flex-1 gap-1">
-                            <span className="text-text-muted font-medium">University Email</span>
-                            <span className="font-semibold text-text truncate">{userEmail}</span>
-                            <span className="text-text-muted">Official Mailbox</span>
-                        </div>
-                    </div>
 
-                    <div className="p-3 rounded-lg bg-surface border border-surface-border flex items-start gap-3">
-                        <div className="p-2 rounded-md bg-accent-background text-accent shrink-0 mt-1">
-                            <Shield className="h-4 w-4" />
+                        <div className="p-3 rounded-lg bg-surface border border-surface-border flex items-start gap-3">
+                            <div className="p-2 rounded-md bg-accent-background text-accent shrink-0 mt-1">
+                                <Shield className="h-4 w-4" />
+                            </div>
+                            <div className="flex flex-col min-w-0 flex-1 gap-1">
+                                <span className="text-text-muted font-medium">Authentication Method</span>
+                                <span className="font-semibold text-text truncate">University SSO / Password</span>
+                                <span className="text-text-muted">Security Standard</span>
+                            </div>
                         </div>
-                        <div className="flex flex-col min-w-0 flex-1 gap-1">
-                            <span className="text-text-muted font-medium">Authentication Method</span>
-                            <span className="font-semibold text-text truncate">University SSO / Password</span>
-                            <span className="text-text-muted">Security Standard</span>
-                        </div>
-                    </div>
 
-                    <div className="p-3 rounded-lg bg-surface border border-surface-border flex items-start gap-3">
-                        <div className="p-2 rounded-md bg-accent-background text-accent shrink-0 mt-1">
-                            <CheckCircle2 className="h-4 w-4" />
-                        </div>
-                        <div className="flex flex-col min-w-0 flex-1 gap-1">
-                            <span className="text-text-muted font-medium">Access Status</span>
-                            <span className="font-semibold text-accent truncate">{userStatus}</span>
-                            <span className="text-text-muted">Institutional Clearance</span>
+                        <div className="p-3 rounded-lg bg-surface border border-surface-border flex items-start gap-3">
+                            <div className="p-2 rounded-md bg-accent-background text-accent shrink-0 mt-1">
+                                <CheckCircle2 className="h-4 w-4" />
+                            </div>
+                            <div className="flex flex-col min-w-0 flex-1 gap-1">
+                                <span className="text-text-muted font-medium">Access Status</span>
+                                <span className="font-semibold text-accent truncate">{userStatus}</span>
+                                <span className="text-text-muted">Institutional Clearance</span>
+                            </div>
                         </div>
                     </div>
-                </div>
+                )}
             </Modal>
 
             {/* 5. SYSTEM SETTINGS 2-PANE MODAL */}
