@@ -49,7 +49,7 @@ async function runHealthCheck() {
 
         // Test Query A: ListDepartments
         try {
-            const deptQueryRef = queryRef(dataConnect, 'ListDepartments');
+            const deptQueryRef = queryRef(dataConnect, 'FetchDepartments');
             const deptResult = await executeQuery(deptQueryRef);
             const departments = deptResult?.data?.departments || [];
             console.log(`[PASS] Data Connect PostgreSQL Departments: ${departments.length} found`);
@@ -63,7 +63,7 @@ async function runHealthCheck() {
 
         // Test Query B: ListUsers
         try {
-            const userQueryRef = queryRef(dataConnect, 'ListUsers');
+            const userQueryRef = queryRef(dataConnect, 'FetchUsers');
             const userResult = await executeQuery(userQueryRef);
             const users = userResult?.data?.users || [];
             console.log(`[PASS] Data Connect PostgreSQL Users: ${users.length} accounts found`);

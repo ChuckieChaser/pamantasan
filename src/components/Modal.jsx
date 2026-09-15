@@ -1,8 +1,11 @@
 // --- IMPORTS ---
-import { useEffect, useRef, cloneElement, isValidElement } from 'react';
+import { isValidElement, useRef } from 'react';
 import { X } from 'lucide-react';
-import { CardContainer } from './Container';
-import { PrimaryButton, SecondaryButton, DestructiveButton } from './Button';
+import { useKeyPress } from '../hooks';
+import { Button } from './Button';
+import { Container } from './Container';
+import { renderIcon } from './common';
+
 
 // --- CONFIGURATIONS ---
 const ICON_STYLE = 'h-5 w-5 shrink-0';
@@ -11,65 +14,82 @@ const CLOSE_ICON_STYLE = 'h-4 w-4 shrink-0';
 const BASE_BACKDROP_STYLE = 'fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto select-none';
 
 const SIZE_STYLE = {
-    sm: 'max-w-md',
-    md: 'max-w-lg',
-    lg: 'max-w-2xl',
-    xl: 'max-w-4xl',
+    sm:   'max-w-md',
+    md:   'max-w-lg',
+    lg:   'max-w-2xl',
+    xl:   'max-w-4xl',
     full: 'max-w-5xl',
 };
 
 const ICON_CONTAINER_STYLE = {
-    accent: 'p-2 rounded-lg bg-accent-background text-accent shrink-0 mt-1',
-    destructive: 'p-2 rounded-lg bg-error-background text-error shrink-0 mt-1',
-    danger: 'p-2 rounded-lg bg-error-background text-error shrink-0 mt-1',
-    warning: 'p-2 rounded-lg bg-warning-background text-warning shrink-0 mt-1',
+    accent:      'p-2 rounded-lg bg-accent-background text-accent shrink-0',
+    destructive: 'p-2 rounded-lg bg-error-background text-error shrink-0',
+    warning:     'p-2 rounded-lg bg-warning-background text-warning shrink-0',
+    information: 'p-2 rounded-lg bg-information-background text-information shrink-0',
 };
 
+const CALLOUT_CONTAINER_STYLE = {
+    accent:      'bg-accent-background border-accent-border text-accent',
+    destructive: 'bg-error-background border-error-border text-error',
+    warning:     'bg-warning-background border-warning-border text-warning',
+    information: 'bg-information-background border-information-border text-information',
+    neutral:     'bg-surface-hover border-surface-border text-text-muted',
+};
+
+
 // --- COMPONENTS ---
+const ModalCallout = ({
+    variant = 'neutral',
+    className = '',
+    children,
+    ...props
+}) => {
+    const variantStyle = CALLOUT_CONTAINER_STYLE[variant] ?? CALLOUT_CONTAINER_STYLE.neutral;
+
+    return (
+        <div
+            className={`p-3 rounded-md border text-xs leading-relaxed select-text ${variantStyle} ${className}`.trim()}
+            {...props}
+        >
+            {children}
+        </div>
+    );
+};
+
 const Modal = ({
     isOpen = false,
+    variant = 'accent',
+    size = 'md',
     title,
     description,
+    callout = null,
+    calloutVariant = null,
     icon,
-    size = 'md',
-    variant = 'accent',
+    confirmLabel = 'Confirm',
+    cancelLabel = 'Cancel',
     primaryAction = null,
     secondaryAction = null,
     actions = null,
+    isConfirmLoading = false,
+    isConfirmDisabled = false,
+    hasCloseButton = true,
+    shouldCloseOnBackdrop = true,
     onConfirm = null,
-    confirmLabel = 'Confirm',
-    confirmLoading = false,
-    confirmDisabled = false,
     onCancel = null,
-    cancelLabel = 'Cancel',
-    showCloseButton = true,
-    closeOnBackdrop = true,
     onClose,
     className,
     children,
     ...props
 }) => {
     // REFS
-    const modalCardReference = useRef(null);
+    const modalRef = useRef(null);
 
     // HOOKS
-    useEffect(() => {
-        if (!isOpen) {
-            return;
+    useKeyPress('Escape', (event) => {
+        if (isOpen) {
+            onClose?.(event);
         }
-
-        const handleKeyDown = (keyboardEvent) => {
-            if (keyboardEvent.key === 'Escape') {
-                onClose?.(keyboardEvent);
-            }
-        };
-
-        window.addEventListener('keydown', handleKeyDown);
-
-        return () => {
-            window.removeEventListener('keydown', handleKeyDown);
-        };
-    }, [isOpen, onClose]);
+    });
 
     // GUARD CLAUSES
     if (!isOpen) {
@@ -78,11 +98,11 @@ const Modal = ({
 
     // HANDLERS
     const handleBackdropClick = (event) => {
-        if (!closeOnBackdrop) {
+        if (!shouldCloseOnBackdrop) {
             return;
         }
 
-        if (modalCardReference.current && !modalCardReference.current.contains(event.target)) {
+        if (event.target === event.currentTarget) {
             onClose?.(event);
         }
     };
@@ -93,27 +113,31 @@ const Modal = ({
 
     // DERIVED VALUES
     const sizeStyle = SIZE_STYLE[size] ?? SIZE_STYLE.md;
-    const isDestructive = variant === 'destructive' || variant === 'danger' || primaryAction?.variant === 'destructive';
+    const isDestructive = variant === 'destructive' || primaryAction?.variant === 'destructive';
     const iconContainerStyle = isDestructive
         ? ICON_CONTAINER_STYLE.destructive
         : (ICON_CONTAINER_STYLE[variant] ?? ICON_CONTAINER_STYLE.accent);
 
-    const hasHeader = Boolean(title || description || icon || showCloseButton);
+    const effectiveCalloutVariant = calloutVariant ?? (isDestructive ? 'destructive' : variant);
+
+    const hasHeader = Boolean(title || icon || hasCloseButton);
 
     const effectivePrimaryAction = primaryAction ?? (onConfirm ? {
-        label: confirmLabel,
-        onClick: onConfirm,
-        loading: confirmLoading,
-        disabled: confirmDisabled,
-        variant: isDestructive ? 'destructive' : 'primary',
+        label:       confirmLabel,
+        onClick:     onConfirm,
+        isLoading:   isConfirmLoading,
+        isDisabled:  isConfirmDisabled,
+        variant:     isDestructive ? 'destructive' : 'primary',
     } : null);
 
     const effectiveSecondaryAction = secondaryAction ?? (onClose || onCancel ? {
-        label: cancelLabel,
+        label:   cancelLabel,
         onClick: onCancel ?? onClose,
+        variant: 'secondary',
     } : null);
 
     const hasFooter = Boolean(actions || effectivePrimaryAction || effectiveSecondaryAction);
+    const renderedIcon = renderIcon(icon, ICON_STYLE);
 
     // RENDER
     return (
@@ -125,38 +149,34 @@ const Modal = ({
             {...props}
         >
             <div
-                ref={modalCardReference}
+                ref={modalRef}
                 className={`w-full ${sizeStyle} ${className ?? ''}`.trim()}
             >
-                <CardContainer className="p-6 gap-6 bg-surface border-surface-border shadow-2xl flex flex-col animate-toast-in select-text">
-                    {/* MODAL HEADER */}
+                <Container
+                    variant="panel"
+                    className="p-6 gap-5 shadow-2xl flex flex-col animate-toast-in select-text"
+                >
+                    {/* MODAL HEADER: [ icon ] [ header ] */}
                     {hasHeader && (
-                        <div className="flex items-start justify-between gap-4 border-b border-surface-border pb-4 shrink-0">
-                            <div className="flex items-start gap-3">
-                                {icon && (
+                        <div className="flex items-center justify-between gap-4 border-b border-surface-border pb-4 shrink-0">
+                            <div className="flex items-center gap-3">
+                                {renderedIcon && (
                                     <div className={iconContainerStyle}>
-                                        {renderIcon(icon)}
+                                        {renderedIcon}
                                     </div>
                                 )}
-                                <div className="flex flex-col gap-1">
-                                    {title && (
-                                        <h2 className="text-base font-bold text-text font-serif">
-                                            {title}
-                                        </h2>
-                                    )}
-                                    {description && (
-                                        <p className="text-xs text-text-muted leading-relaxed">
-                                            {description}
-                                        </p>
-                                    )}
-                                </div>
+                                {title && (
+                                    <h2 className="text-base font-bold text-text font-serif">
+                                        {title}
+                                    </h2>
+                                )}
                             </div>
 
-                            {showCloseButton && (
+                            {hasCloseButton && (
                                 <button
                                     type="button"
                                     onClick={handleCloseClick}
-                                    className="h-8 w-8 rounded-md flex items-center justify-center text-text-muted hover:text-text hover:bg-surface-hover transition-colors cursor-pointer shrink-0"
+                                    className="h-7 w-7 rounded-md flex items-center justify-center text-text-muted hover:text-text hover:bg-surface-hover transition-colors cursor-pointer shrink-0"
                                     title="Close modal"
                                     aria-label="Close modal"
                                 >
@@ -166,12 +186,24 @@ const Modal = ({
                         </div>
                     )}
 
-                    {/* MODAL BODY */}
-                    <div className="flex flex-col gap-4 text-text min-h-0 overflow-y-auto">
+                    {/* MODAL BODY: [ message ] -> [ optional semantically colored variant box ] -> children */}
+                    <div className="flex flex-col gap-3.5 text-text min-h-0 overflow-y-auto">
+                        {description && (
+                            <p className="text-xs text-text-muted leading-relaxed">
+                                {description}
+                            </p>
+                        )}
+
+                        {callout && (
+                            <ModalCallout variant={effectiveCalloutVariant}>
+                                {callout}
+                            </ModalCallout>
+                        )}
+
                         {children}
                     </div>
 
-                    {/* MODAL FOOTER */}
+                    {/* MODAL FOOTER: [ actions 1 ] [ action 2 ] ... (right aligned) */}
                     {hasFooter && (
                         <div className="flex items-center justify-end gap-3 border-t border-surface-border pt-4 shrink-0">
                             {actions ? (
@@ -182,65 +214,40 @@ const Modal = ({
                                         isValidElement(effectiveSecondaryAction) ? (
                                             effectiveSecondaryAction
                                         ) : (
-                                            <SecondaryButton
+                                            <Button
+                                                variant={effectiveSecondaryAction.variant ?? 'secondary'}
                                                 onClick={effectiveSecondaryAction.onClick}
-                                                disabled={effectiveSecondaryAction.disabled}
+                                                isDisabled={effectiveSecondaryAction.isDisabled ?? effectiveSecondaryAction.disabled}
                                                 leadingIcon={effectiveSecondaryAction.leadingIcon}
-                                            >
-                                                {effectiveSecondaryAction.label ?? 'Cancel'}
-                                            </SecondaryButton>
+                                                label={effectiveSecondaryAction.label ?? 'Cancel'}
+                                            />
                                         )
                                     )}
                                     {effectivePrimaryAction && (
                                         isValidElement(effectivePrimaryAction) ? (
                                             effectivePrimaryAction
-                                        ) : isDestructive ? (
-                                            <DestructiveButton
-                                                onClick={effectivePrimaryAction.onClick}
-                                                disabled={effectivePrimaryAction.disabled}
-                                                loading={effectivePrimaryAction.loading}
-                                                leadingIcon={effectivePrimaryAction.leadingIcon}
-                                            >
-                                                {effectivePrimaryAction.label ?? 'Confirm'}
-                                            </DestructiveButton>
                                         ) : (
-                                            <PrimaryButton
+                                            <Button
+                                                variant={effectivePrimaryAction.variant ?? (isDestructive ? 'destructive' : 'primary')}
                                                 onClick={effectivePrimaryAction.onClick}
-                                                disabled={effectivePrimaryAction.disabled}
-                                                loading={effectivePrimaryAction.loading}
+                                                isDisabled={effectivePrimaryAction.isDisabled ?? effectivePrimaryAction.disabled}
+                                                isLoading={effectivePrimaryAction.isLoading ?? effectivePrimaryAction.loading}
                                                 leadingIcon={effectivePrimaryAction.leadingIcon}
-                                            >
-                                                {effectivePrimaryAction.label ?? 'Confirm'}
-                                            </PrimaryButton>
+                                                label={effectivePrimaryAction.label ?? 'Confirm'}
+                                            />
                                         )
                                     )}
                                 </>
                             )}
                         </div>
                     )}
-                </CardContainer>
+                </Container>
             </div>
         </div>
     );
 };
 
-export {
-    Modal,
-};
 
-export default Modal;
+// --- EXPORTS ---
+export { Modal, ModalCallout };
 
-// --- HELPERS ---
-function renderIcon(icon) {
-    if (!icon) {
-        return null;
-    }
-
-    if (isValidElement(icon)) {
-        const iconClassName = `${ICON_STYLE} ${icon.props.className ?? ''}`.trim();
-        return cloneElement(icon, { className: iconClassName });
-    }
-
-    const IconComponent = icon;
-    return <IconComponent className={ICON_STYLE} />;
-}

@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS documents (
     comment TEXT NULL,
     is_folder BOOLEAN NOT NULL DEFAULT FALSE,
     is_archived BOOLEAN NOT NULL DEFAULT FALSE,
+    directly_archived BOOLEAN NOT NULL DEFAULT FALSE,
 
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -105,6 +106,9 @@ ON documents(parent_id);
 
 CREATE INDEX IF NOT EXISTS idx_documents_is_archived
 ON documents(is_archived);
+
+CREATE INDEX IF NOT EXISTS idx_documents_directly_archived
+ON documents(directly_archived);
 
 CREATE INDEX IF NOT EXISTS idx_document_versions_document_id
 ON document_versions(document_id);

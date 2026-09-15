@@ -1,320 +1,862 @@
 // --- IMPORTS ---
 import { create } from 'zustand';
-import {
-    DocumentInsertSchema,
-    DocumentUpdateSchema,
-    DocumentVersionInsertSchema,
-    DocumentShareInsertSchema,
-    DocumentShareUpdateSchema,
-} from '../schemas';
-import {
-    DOCUMENT_TYPES,
-    DOCUMENT_SHARE_STATUSES,
-} from '../constants';
+
+import { mutationSchema } from '../schemas';
 import { documentService } from '../services';
 
-// --- STORE DEFINITION ---
+
+// --- CONFIGURATIONS ---
+// Cleanup legacy client-side directly-archived key if it exists
+try {
+    localStorage.removeItem('pamantasan_directly_archived_ids');
+} catch {}
+
+const isAncestorArchived = (doc, allDocs = []) => {
+    let parentId = doc.parentId ?? doc.parentFolderId;
+    while (parentId && parentId !== 'root') {
+        const parent = allDocs.find((d) => d.id === parentId);
+        if (!parent) break;
+        if (parent.isArchived) return true;
+        parentId = parent.parentId ?? parent.parentFolderId;
+    }
+    return false;
+};
+
+const annotateDirectlyArchived = (docs = []) => {
+    return docs.map((doc) => {
+        if (!doc.isArchived) {
+            return { ...doc, directlyArchived: false };
+        }
+        // Prioritize native database field, fallback to ancestor hierarchy check if unmigrated
+        if (typeof doc.directlyArchived === 'boolean') {
+            return doc;
+        }
+        return { ...doc, directlyArchived: !isAncestorArchived(doc, docs) };
+    });
+};
+
+
+// --- STORE ---
 const useDocumentStore = create((set, get) => ({
-    // STATE
+    // STATES
     documents: [],
-    documentVersions: [],
-    versions: [],
-    documentShares: [],
-    shares: [],
     selectedDocument: null,
+    documentVersions: [],
     selectedVersion: null,
+    documentShares: [],
+    departmentDocumentShares: [],
+    recipientDocumentShares: [],
+    selectedDocumentShare: null,
+    documentRequests: [],
+    requesterDocumentRequests: [],
+    selectedDocumentRequest: null,
+    documentRequestMessages: [],
+    documentRequestAttachments: [],
     isLoading: false,
     error: null,
 
-    // 1. DOCUMENTS ACTIONS
-    fetchDocuments: async (filterOptions = {}) => {
+    // DOCUMENTS
+    fetchDocuments: async (isArchived = null) => {
         set({ isLoading: true, error: null });
 
         try {
-            const isArchived = filterOptions.isArchived ?? false;
-            const liveDocuments = await documentService.fetchDocuments(isArchived);
-            let resultDocuments = [...liveDocuments];
+            const [documents, versions] = await Promise.all([
+                documentService.fetchDocuments(isArchived),
+                documentService.fetchAllDocumentVersions().catch(() => []),
+            ]);
+            const annotated = annotateDirectlyArchived(documents);
+            set({ documents: annotated, documentVersions: versions, isLoading: false, error: null });
 
-            if (filterOptions.type === DOCUMENT_TYPES.FOLDER) {
-                resultDocuments = resultDocuments.filter((doc) => doc.is_folder);
-            } else if (filterOptions.type === DOCUMENT_TYPES.FILE) {
-                resultDocuments = resultDocuments.filter((doc) => !doc.is_folder);
-            }
-
-            if (filterOptions.searchQuery) {
-                const query = filterOptions.searchQuery.toLowerCase();
-                resultDocuments = resultDocuments.filter((doc) =>
-                    doc.name.toLowerCase().includes(query) ||
-                    (doc.comment && doc.comment.toLowerCase().includes(query))
-                );
-            }
-
-            set({ documents: liveDocuments, isLoading: false });
-            return resultDocuments;
+            return annotated;
         } catch (error) {
-            const errorMessage = error?.message ?? 'Failed to fetch documents.';
-            set({ isLoading: false, error: errorMessage });
-            throw error;
+            const message = error?.message ?? 'Failed to fetch documents.';
+            set({ isLoading: false, error: message });
+
+            return [];
         }
     },
 
-    fetchDocumentById: async (documentId) => {
+    fetchDocumentById: async (id) => {
         set({ isLoading: true, error: null });
 
         try {
-            let document = get().documents.find((item) => item.id === documentId);
+            let document = get().documents.find((item) => item.id === id);
+
             if (!document) {
-                document = await documentService.fetchDocumentById(documentId);
+                document = await documentService.fetchDocumentById(id);
             }
-            set({ selectedDocument: document, isLoading: false });
+
+            set({ selectedDocument: document, isLoading: false, error: null });
+
             return document;
         } catch (error) {
-            const errorMessage = error?.message ?? 'Failed to fetch document by identifier.';
-            set({ isLoading: false, error: errorMessage });
-            throw error;
+            const message = error?.message ?? `Failed to fetch document with ID "${id}".`;
+            set({ isLoading: false, error: message });
+
+            return null;
         }
     },
 
-    createDocument: async (documentPayload) => {
+    insertDocument: async (payload) => {
         set({ isLoading: true, error: null });
 
         try {
-            const validatedData = DocumentInsertSchema.parse(documentPayload);
-            const created = await documentService.createDocument(validatedData);
-
-            const newDocument = created ?? {
-                id: validatedData.id ?? `doc-${Date.now()}`,
-                name: validatedData.name,
-                uploader_id: validatedData.uploader_id,
-                is_folder: validatedData.is_folder ?? false,
-                is_archived: validatedData.is_archived ?? false,
-                parent_id: validatedData.parent_id ?? null,
-                comment: validatedData.comment ?? '',
-            };
+            const validatedPayload = mutationSchema.InsertDocumentSchema.parse(payload);
+            const newDocument = await documentService.insertDocument(validatedPayload);
 
             set((state) => ({
                 documents: [...state.documents, newDocument],
                 isLoading: false,
+                error: null,
             }));
 
             return newDocument;
         } catch (error) {
-            const errorMessage = error?.message ?? 'Failed to create document record.';
-            set({ isLoading: false, error: errorMessage });
+            const message = error?.errors?.[0]?.message ?? error?.message ?? 'Failed to insert document.';
+            set({ isLoading: false, error: message });
+            
             throw error;
         }
     },
 
-    updateDocument: async (documentId, documentUpdates) => {
+    updateDocument: async (id, payload) => {
         set({ isLoading: true, error: null });
 
         try {
-            const validatedUpdates = DocumentUpdateSchema.parse(documentUpdates);
-            const targetDocument = get().documents.find((item) => item.id === documentId);
+            const timestamp = new Date().toISOString();
+            const existingDoc = get().documents.find((item) => item?.id === id);
+            const payloadWithDates = {
+                ...payload,
+                updatedAt: payload?.updatedAt || timestamp,
+            };
+            const validatedPayload = mutationSchema.UpdateDocumentSchema.parse(payloadWithDates);
+            const result = await documentService.updateDocument(id, validatedPayload);
 
             const updatedDocument = {
-                ...(targetDocument ?? {}),
-                ...validatedUpdates,
-                id: documentId,
+                ...existingDoc,
+                ...validatedPayload,
+                ...result,
+                id: id,
+                updatedAt: result?.updatedAt ?? validatedPayload.updatedAt ?? timestamp,
             };
 
             set((state) => ({
                 documents: state.documents.map((item) =>
-                    item.id === documentId ? updatedDocument : item
+                    item.id === id ? updatedDocument : item
                 ),
-                selectedDocument: state.selectedDocument?.id === documentId
+                selectedDocument: state.selectedDocument?.id === id
                     ? updatedDocument
                     : state.selectedDocument,
                 isLoading: false,
+                error: null,
             }));
 
             return updatedDocument;
         } catch (error) {
-            const errorMessage = error?.message ?? 'Failed to update document record.';
-            set({ isLoading: false, error: errorMessage });
+            const message = error?.errors?.[0]?.message ?? error?.message ?? 'Failed to update document.';
+            set({ isLoading: false, error: message });
+
             throw error;
         }
     },
 
-    deleteDocument: async (documentId) => {
+    archiveDocument: async (id, isArchived) => {
         set({ isLoading: true, error: null });
 
         try {
+            const allDocs = get().documents;
+            const targetIds = await documentService.archiveDocumentRecursive(id, isArchived, allDocs);
+            const timestamp = new Date().toISOString();
+
+            set((state) => {
+                const updatedDocs = state.documents.map((doc) => {
+                    if (!targetIds.includes(doc.id)) return doc;
+                    const isDirect = isArchived ? (doc.id === id || Boolean(doc.isArchived && doc.directlyArchived)) : false;
+                    return {
+                        ...doc,
+                        isArchived: isArchived,
+                        directlyArchived: isDirect,
+                        updatedAt: timestamp,
+                    };
+                });
+
+                const updatedSelected = state.selectedDocument && targetIds.includes(state.selectedDocument.id)
+                    ? {
+                          ...state.selectedDocument,
+                          isArchived: isArchived,
+                          directlyArchived: isArchived
+                              ? (state.selectedDocument.id === id || Boolean(state.selectedDocument.isArchived && state.selectedDocument.directlyArchived))
+                              : false,
+                          updatedAt: timestamp,
+                      }
+                    : state.selectedDocument;
+
+                return {
+                    documents: updatedDocs,
+                    selectedDocument: updatedSelected,
+                    isLoading: false,
+                    error: null,
+                };
+            });
+
+            return targetIds;
+        } catch (error) {
+            const message = error?.message ?? 'Failed to archive document.';
+            set({ isLoading: false, error: message });
+
+            throw error;
+        }
+    },
+
+    deleteDocument: async (id) => {
+        set({ isLoading: true, error: null });
+
+        try {
+            const allDocs = get().documents;
+            const targetIds = await documentService.deleteDocumentRecursive(id, allDocs);
+
             set((state) => ({
-                documents: state.documents.filter((item) => item.id !== documentId),
-                selectedDocument: state.selectedDocument?.id === documentId
+                documents: state.documents.filter((item) => !targetIds.includes(item.id)),
+                documentVersions: state.documentVersions.filter(
+                    (v) => !targetIds.includes(v.document?.id ?? v.documentId)
+                ),
+                selectedDocument: state.selectedDocument && targetIds.includes(state.selectedDocument.id)
                     ? null
                     : state.selectedDocument,
                 isLoading: false,
+                error: null,
             }));
 
             return true;
         } catch (error) {
-            const errorMessage = error?.message ?? 'Failed to delete document record.';
-            set({ isLoading: false, error: errorMessage });
+            const message = error?.message ?? 'Failed to delete document.';
+            set({ isLoading: false, error: message });
+
             throw error;
         }
     },
 
-    // 2. DOCUMENT VERSIONS ACTIONS
+    // VERSIONS
+    fetchAllDocumentVersions: async () => {
+        try {
+            const versions = await documentService.fetchAllDocumentVersions();
+            set({ documentVersions: versions });
+            return versions;
+        } catch (error) {
+            console.warn('Failed to fetch all document versions:', error);
+            return [];
+        }
+    },
+
     fetchDocumentVersions: async (documentId) => {
         set({ isLoading: true, error: null });
 
         try {
             const versions = await documentService.fetchDocumentVersions(documentId);
-            set({ documentVersions: versions, versions, isLoading: false });
+            set((state) => {
+                const otherVersions = state.documentVersions.filter(
+                    (v) => (v.document?.id ?? v.documentId) !== documentId
+                );
+                return {
+                    documentVersions: [...versions, ...otherVersions],
+                    isLoading: false,
+                    error: null,
+                };
+            });
+
             return versions;
         } catch (error) {
-            const errorMessage = error?.message ?? 'Failed to fetch document versions.';
-            set({ isLoading: false, error: errorMessage });
-            throw error;
+            const message = error?.message ?? `Failed to fetch versions for document "${documentId}".`;
+            set({ isLoading: false, error: message });
+
+            return [];
         }
     },
 
-    createDocumentVersion: async (versionPayload) => {
+    fetchDocumentVersionById: async (id) => {
         set({ isLoading: true, error: null });
 
         try {
-            const validatedData = DocumentVersionInsertSchema.parse(versionPayload);
-            const created = await documentService.createDocumentVersion(validatedData);
+            let version = get().documentVersions.find((item) => item.id === id);
 
-            const newVersion = created ?? {
-                id: validatedData.id ?? `ver-${Date.now()}`,
-                ...validatedData,
+            if (!version) {
+                version = await documentService.fetchDocumentVersionById(id);
+            }
+
+            set({ selectedVersion: version, isLoading: false, error: null });
+
+            return version;
+        } catch (error) {
+            const message = error?.message ?? `Failed to fetch document version with ID "${id}".`;
+            set({ isLoading: false, error: message });
+
+            return null;
+        }
+    },
+
+    insertDocumentVersion: async (payload) => {
+        set({ isLoading: true, error: null });
+
+        try {
+            const timestamp = new Date().toISOString();
+            const payloadWithDates = {
+                createdAt: timestamp,
+                updatedAt: timestamp,
+                ...payload,
             };
+            const validatedPayload = mutationSchema.InsertDocumentVersionSchema.parse(payloadWithDates);
+            const newVersion = await documentService.insertDocumentVersion(validatedPayload);
+
+            const docId = validatedPayload.documentId;
+            if (docId) {
+                await documentService.updateDocument(docId, { updatedAt: timestamp }).catch(() => null);
+            }
 
             set((state) => ({
                 documentVersions: [newVersion, ...state.documentVersions],
-                versions: [newVersion, ...state.documentVersions],
+                documents: docId
+                    ? state.documents.map((d) => (d.id === docId ? { ...d, updatedAt: timestamp } : d))
+                    : state.documents,
+                selectedDocument: (docId && state.selectedDocument?.id === docId)
+                    ? { ...state.selectedDocument, updatedAt: timestamp }
+                    : state.selectedDocument,
                 isLoading: false,
+                error: null,
             }));
 
             return newVersion;
         } catch (error) {
-            const errorMessage = error?.message ?? 'Failed to create document version.';
-            set({ isLoading: false, error: errorMessage });
+            const message = error?.errors?.[0]?.message ?? error?.message ?? 'Failed to insert document version.';
+            set({ isLoading: false, error: message });
+
             throw error;
         }
     },
 
-    revertDocumentVersion: async (documentId, targetVersionObject, currentUserId) => {
+    updateDocumentVersion: async (id, payload) => {
         set({ isLoading: true, error: null });
 
         try {
-            const allDocVersions = get().documentVersions.filter(
-                (v) => (v.document_id ?? v.documentId) === documentId
-            );
-            const highestVersion = allDocVersions.reduce(
-                (max, v) => Math.max(max, Number(v.version) || 1),
-                1
-            );
-            const nextVersionNumber = highestVersion + 1;
-
-            const newVersionPayload = {
-                document_id: documentId,
-                documentId: documentId,
-                uploader_id: currentUserId ?? targetVersionObject.uploader_id ?? 'f1000001-0000-4000-8000-000000000001',
-                uploaderId: currentUserId ?? targetVersionObject.uploader_id ?? 'f1000001-0000-4000-8000-000000000001',
-                version: nextVersionNumber,
-                path: targetVersionObject.path,
-                size_bytes: targetVersionObject.size_bytes ?? targetVersionObject.sizeBytes ?? 1048576,
-                sizeBytes: targetVersionObject.size_bytes ?? targetVersionObject.sizeBytes ?? 1048576,
-                mime_type: targetVersionObject.mime_type ?? targetVersionObject.mimeType ?? 'application/pdf',
-                mimeType: targetVersionObject.mime_type ?? targetVersionObject.mimeType ?? 'application/pdf',
-                classification: targetVersionObject.classification ?? 'PUBLIC',
-                change_summary: `Reverted to historical snapshot v${targetVersionObject.version}.0`,
-                changeSummary: `Reverted to historical snapshot v${targetVersionObject.version}.0`,
-                summary: targetVersionObject.summary ?? '',
-                text_hash: '',
-                textHash: '',
+            const timestamp = new Date().toISOString();
+            const payloadWithDates = {
+                updatedAt: timestamp,
+                ...payload,
             };
+            const validatedPayload = mutationSchema.UpdateDocumentVersionSchema.parse(payloadWithDates);
+            const updatedVersion = await documentService.updateDocumentVersion(id, validatedPayload);
 
-            const createdVersion = await documentService.createDocumentVersion(newVersionPayload).catch(() => null);
+            const docId = updatedVersion?.documentId ?? updatedVersion?.document?.id;
+            if (docId) {
+                await documentService.updateDocument(docId, { updatedAt: timestamp }).catch(() => null);
+            }
 
-            const newVersion = createdVersion ?? {
-                id: `ver-${Date.now()}`,
-                ...newVersionPayload,
-                created_at: new Date().toISOString(),
-            };
+            set((state) => ({
+                documentVersions: state.documentVersions.map((item) =>
+                    item.id === id ? updatedVersion : item
+                ),
+                documents: docId
+                    ? state.documents.map((d) => (d.id === docId ? { ...d, updatedAt: timestamp } : d))
+                    : state.documents,
+                selectedDocument: (docId && state.selectedDocument?.id === docId)
+                    ? { ...state.selectedDocument, updatedAt: timestamp }
+                    : state.selectedDocument,
+                selectedVersion: state.selectedVersion?.id === id
+                    ? updatedVersion
+                    : state.selectedVersion,
+                isLoading: false,
+                error: null,
+            }));
+
+            return updatedVersion;
+        } catch (error) {
+            const message = error?.errors?.[0]?.message ?? error?.message ?? 'Failed to update document version.';
+            set({ isLoading: false, error: message });
+
+            throw error;
+        }
+    },
+
+    deleteDocumentVersion: async (id) => {
+        set({ isLoading: true, error: null });
+
+        try {
+            const isDeleted = await documentService.deleteDocumentVersion(id);
+
+            if (isDeleted) {
+                set((state) => ({
+                    documentVersions: state.documentVersions.filter((item) => item.id !== id),
+                    selectedVersion: state.selectedVersion?.id === id
+                        ? null
+                        : state.selectedVersion,
+                    isLoading: false,
+                    error: null,
+                }));
+            } else {
+                set({ isLoading: false });
+            }
+
+            return isDeleted;
+        } catch (error) {
+            const message = error?.message ?? 'Failed to delete document version.';
+            set({ isLoading: false, error: message });
+
+            throw error;
+        }
+    },
+
+    revertDocumentVersion: async (documentId, targetVersion, uploaderId) => {
+        set({ isLoading: true, error: null });
+
+        try {
+            const timestamp = new Date().toISOString();
+            const newVersion = await documentService.revertDocumentVersion(documentId, targetVersion, uploaderId);
 
             set((state) => ({
                 documentVersions: [newVersion, ...state.documentVersions],
-                versions: [newVersion, ...state.documentVersions],
+                documents: state.documents.map((d) =>
+                    d.id === documentId ? { ...d, updatedAt: timestamp } : d
+                ),
+                selectedDocument: state.selectedDocument?.id === documentId
+                    ? { ...state.selectedDocument, updatedAt: timestamp }
+                    : state.selectedDocument,
                 isLoading: false,
+                error: null,
             }));
 
             return newVersion;
         } catch (error) {
-            const errorMessage = error?.message ?? 'Failed to revert document version.';
-            set({ isLoading: false, error: errorMessage });
+            const message = error?.message ?? 'Failed to revert document version.';
+            set({ isLoading: false, error: message });
+
             throw error;
         }
     },
 
-    // 3. DOCUMENT SHARES ACTIONS
+    // SHARES
     fetchDocumentShares: async (documentId) => {
         set({ isLoading: true, error: null });
 
         try {
             const shares = await documentService.fetchDocumentShares(documentId);
-            set({ documentShares: shares, shares, isLoading: false });
+            set({ documentShares: shares, isLoading: false, error: null });
+
             return shares;
         } catch (error) {
-            const errorMessage = error?.message ?? 'Failed to fetch document shares.';
-            set({ isLoading: false, error: errorMessage });
-            throw error;
+            const message = error?.message ?? `Failed to fetch shares for document "${documentId}".`;
+            set({ isLoading: false, error: message });
+
+            return [];
         }
     },
 
-    createDocumentShare: async (sharePayload) => {
+    fetchDocumentSharesByDepartmentId: async (departmentId) => {
         set({ isLoading: true, error: null });
 
         try {
-            const validatedData = DocumentShareInsertSchema.parse(sharePayload);
-            const newShare = {
-                id: validatedData.id ?? `share-${Date.now()}`,
-                ...validatedData,
-                status: validatedData.status ?? DOCUMENT_SHARE_STATUSES.DRAFT,
-            };
+            const shares = await documentService.fetchDocumentSharesByDepartmentId(departmentId);
+            set({ departmentDocumentShares: shares, isLoading: false, error: null });
+
+            return shares;
+        } catch (error) {
+            const message = error?.message ?? `Failed to fetch shares for department "${departmentId}".`;
+            set({ isLoading: false, error: message });
+
+            return [];
+        }
+    },
+
+    fetchDocumentSharesByRecipientId: async (recipientId) => {
+        set({ isLoading: true, error: null });
+
+        try {
+            const shares = await documentService.fetchDocumentSharesByRecipientId(recipientId);
+            set({ recipientDocumentShares: shares, isLoading: false, error: null });
+
+            return shares;
+        } catch (error) {
+            const message = error?.message ?? `Failed to fetch shares for recipient "${recipientId}".`;
+            set({ isLoading: false, error: message });
+
+            return [];
+        }
+    },
+
+    fetchDocumentShareById: async (id) => {
+        set({ isLoading: true, error: null });
+
+        try {
+            let share = get().documentShares.find((item) => item.id === id);
+
+            if (!share) {
+                share = await documentService.fetchDocumentShareById(id);
+            }
+
+            set({ selectedDocumentShare: share, isLoading: false, error: null });
+
+            return share;
+        } catch (error) {
+            const message = error?.message ?? `Failed to fetch document share with ID "${id}".`;
+            set({ isLoading: false, error: message });
+
+            return null;
+        }
+    },
+
+    insertDocumentShare: async (payload) => {
+        set({ isLoading: true, error: null });
+
+        try {
+            const validatedPayload = mutationSchema.InsertDocumentShareSchema.parse(payload);
+            const newShare = await documentService.insertDocumentShare(validatedPayload);
 
             set((state) => ({
                 documentShares: [...state.documentShares, newShare],
                 isLoading: false,
+                error: null,
             }));
 
             return newShare;
         } catch (error) {
-            const errorMessage = error?.message ?? 'Failed to share document.';
-            set({ isLoading: false, error: errorMessage });
+            const message = error?.errors?.[0]?.message ?? error?.message ?? 'Failed to insert document share.';
+            set({ isLoading: false, error: message });
+
             throw error;
         }
     },
 
-    updateDocumentShareStatus: async (shareId, statusUpdates) => {
+    updateDocumentShare: async (id, payload) => {
         set({ isLoading: true, error: null });
 
         try {
-            const validatedUpdates = DocumentShareUpdateSchema.parse(statusUpdates);
+            const validatedPayload = mutationSchema.UpdateDocumentShareSchema.parse(payload);
+            const updatedShare = await documentService.updateDocumentShare(id, validatedPayload);
+
             set((state) => ({
                 documentShares: state.documentShares.map((item) =>
-                    item.id === shareId ? { ...item, ...validatedUpdates } : item
+                    item.id === id ? updatedShare : item
                 ),
                 isLoading: false,
+                error: null,
             }));
-            return true;
+
+            return updatedShare;
         } catch (error) {
-            const errorMessage = error?.message ?? 'Failed to update share status.';
-            set({ isLoading: false, error: errorMessage });
+            const message = error?.errors?.[0]?.message ?? error?.message ?? 'Failed to update document share.';
+            set({ isLoading: false, error: message });
+
             throw error;
         }
     },
 
+    deleteDocumentShare: async (id) => {
+        set({ isLoading: true, error: null });
+
+        try {
+            const isDeleted = await documentService.deleteDocumentShare(id);
+
+            if (isDeleted) {
+                set((state) => ({
+                    documentShares: state.documentShares.filter((item) => item.id !== id),
+                    isLoading: false,
+                    error: null,
+                }));
+            } else {
+                set({ isLoading: false });
+            }
+
+            return isDeleted;
+        } catch (error) {
+            const message = error?.message ?? 'Failed to delete document share.';
+            set({ isLoading: false, error: message });
+
+            throw error;
+        }
+    },
+
+    // REQUESTS
+    fetchDocumentRequests: async () => {
+        set({ isLoading: true, error: null });
+
+        try {
+            const requests = await documentService.fetchDocumentRequests();
+            set({ documentRequests: requests, isLoading: false, error: null });
+
+            return requests;
+        } catch (error) {
+            const message = error?.message ?? 'Failed to fetch document requests.';
+            set({ isLoading: false, error: message });
+
+            return [];
+        }
+    },
+
+    fetchDocumentRequestsByRequesterId: async (requesterId) => {
+        set({ isLoading: true, error: null });
+
+        try {
+            const requests = await documentService.fetchDocumentRequestsByRequesterId(requesterId);
+            set({ requesterDocumentRequests: requests, isLoading: false, error: null });
+
+            return requests;
+        } catch (error) {
+            const message = error?.message ?? `Failed to fetch document requests for requester "${requesterId}".`;
+            set({ isLoading: false, error: message });
+
+            return [];
+        }
+    },
+
+    fetchDocumentRequestById: async (id) => {
+        set({ isLoading: true, error: null });
+
+        try {
+            let request = get().documentRequests.find((item) => item.id === id);
+
+            if (!request) {
+                request = await documentService.fetchDocumentRequestById(id);
+            }
+
+            set({ selectedDocumentRequest: request, isLoading: false, error: null });
+
+            return request;
+        } catch (error) {
+            const message = error?.message ?? `Failed to fetch document request with ID "${id}".`;
+            set({ isLoading: false, error: message });
+
+            return null;
+        }
+    },
+
+    insertDocumentRequest: async (payload) => {
+        set({ isLoading: true, error: null });
+
+        try {
+            const validatedPayload = mutationSchema.InsertDocumentRequestSchema.parse(payload);
+            const newRequest = await documentService.insertDocumentRequest(validatedPayload);
+
+            set((state) => ({
+                documentRequests: [newRequest, ...state.documentRequests],
+                isLoading: false,
+                error: null,
+            }));
+
+            return newRequest;
+        } catch (error) {
+            const message = error?.errors?.[0]?.message ?? error?.message ?? 'Failed to insert document request.';
+            set({ isLoading: false, error: message });
+
+            throw error;
+        }
+    },
+
+    updateDocumentRequest: async (id, payload) => {
+        set({ isLoading: true, error: null });
+
+        try {
+            const validatedPayload = mutationSchema.UpdateDocumentRequestSchema.parse(payload);
+            const updatedRequest = await documentService.updateDocumentRequest(id, validatedPayload);
+
+            set((state) => ({
+                documentRequests: state.documentRequests.map((item) =>
+                    item.id === id ? updatedRequest : item
+                ),
+                selectedDocumentRequest: state.selectedDocumentRequest?.id === id
+                    ? updatedRequest
+                    : state.selectedDocumentRequest,
+                isLoading: false,
+                error: null,
+            }));
+
+            return updatedRequest;
+        } catch (error) {
+            const message = error?.errors?.[0]?.message ?? error?.message ?? 'Failed to update document request.';
+            set({ isLoading: false, error: message });
+
+            throw error;
+        }
+    },
+
+    deleteDocumentRequest: async (id) => {
+        set({ isLoading: true, error: null });
+
+        try {
+            const isDeleted = await documentService.deleteDocumentRequest(id);
+
+            if (isDeleted) {
+                set((state) => ({
+                    documentRequests: state.documentRequests.filter((item) => item.id !== id),
+                    selectedDocumentRequest: state.selectedDocumentRequest?.id === id
+                        ? null
+                        : state.selectedDocumentRequest,
+                    isLoading: false,
+                    error: null,
+                }));
+            } else {
+                set({ isLoading: false });
+            }
+
+            return isDeleted;
+        } catch (error) {
+            const message = error?.message ?? 'Failed to delete document request.';
+            set({ isLoading: false, error: message });
+
+            throw error;
+        }
+    },
+
+    // MESSAGES
+    fetchDocumentRequestMessages: async (documentRequestId) => {
+        set({ isLoading: true, error: null });
+
+        try {
+            const messages = await documentService.fetchDocumentRequestMessages(documentRequestId);
+            set({ documentRequestMessages: messages, isLoading: false, error: null });
+
+            return messages;
+        } catch (error) {
+            const message = error?.message ?? `Failed to fetch messages for request "${documentRequestId}".`;
+            set({ isLoading: false, error: message });
+
+            return [];
+        }
+    },
+
+    insertDocumentRequestMessage: async (payload) => {
+        set({ isLoading: true, error: null });
+
+        try {
+            const validatedPayload = mutationSchema.InsertDocumentRequestMessageSchema.parse({
+                documentRequestId: payload.documentRequestId,
+                userId: payload.userId,
+                message: payload.message,
+                createdAt: payload.createdAt,
+            });
+            const newMessage = await documentService.insertDocumentRequestMessage(validatedPayload);
+
+            set((state) => ({
+                documentRequestMessages: [...state.documentRequestMessages, newMessage],
+                isLoading: false,
+                error: null,
+            }));
+
+            return newMessage;
+        } catch (error) {
+            const message = error?.errors?.[0]?.message ?? error?.message ?? 'Failed to insert document request message.';
+            set({ isLoading: false, error: message });
+
+            throw error;
+        }
+    },
+
+    deleteDocumentRequestMessage: async (id) => {
+        set({ isLoading: true, error: null });
+
+        try {
+            const isDeleted = await documentService.deleteDocumentRequestMessage(id);
+
+            if (isDeleted) {
+                set((state) => ({
+                    documentRequestMessages: state.documentRequestMessages.filter((item) => item.id !== id),
+                    isLoading: false,
+                    error: null,
+                }));
+            } else {
+                set({ isLoading: false });
+            }
+
+            return isDeleted;
+        } catch (error) {
+            const message = error?.message ?? 'Failed to delete document request message.';
+            set({ isLoading: false, error: message });
+
+            throw error;
+        }
+    },
+
+    // ATTACHMENTS
+    fetchDocumentRequestAttachments: async (documentRequestId) => {
+        set({ isLoading: true, error: null });
+
+        try {
+            const attachments = await documentService.fetchDocumentRequestAttachments(documentRequestId);
+            set({ documentRequestAttachments: attachments, isLoading: false, error: null });
+
+            return attachments;
+        } catch (error) {
+            const message = error?.message ?? `Failed to fetch attachments for request "${documentRequestId}".`;
+            set({ isLoading: false, error: message });
+
+            return [];
+        }
+    },
+
+    insertDocumentRequestAttachment: async (payload) => {
+        set({ isLoading: true, error: null });
+
+        try {
+            const validatedPayload = mutationSchema.InsertDocumentRequestAttachmentSchema.parse({
+                documentRequestId: payload.documentRequestId,
+                documentId: payload.documentId,
+                attachedById: payload.attachedById,
+                createdAt: payload.createdAt,
+            });
+            const newAttachment = await documentService.insertDocumentRequestAttachment(validatedPayload);
+
+            set((state) => ({
+                documentRequestAttachments: [...state.documentRequestAttachments, newAttachment],
+                isLoading: false,
+                error: null,
+            }));
+
+            return newAttachment;
+        } catch (error) {
+            const message = error?.errors?.[0]?.message ?? error?.message ?? 'Failed to insert document request attachment.';
+            set({ isLoading: false, error: message });
+
+            throw error;
+        }
+    },
+
+    deleteDocumentRequestAttachment: async (id) => {
+        set({ isLoading: true, error: null });
+
+        try {
+            const isDeleted = await documentService.deleteDocumentRequestAttachment(id);
+
+            if (isDeleted) {
+                set((state) => ({
+                    documentRequestAttachments: state.documentRequestAttachments.filter((item) => item.id !== id),
+                    isLoading: false,
+                    error: null,
+                }));
+            } else {
+                set({ isLoading: false });
+            }
+
+            return isDeleted;
+        } catch (error) {
+            const message = error?.message ?? 'Failed to delete document request attachment.';
+            set({ isLoading: false, error: message });
+
+            throw error;
+        }
+    },
+
+    // CONTROLS
     setSelectedDocument: (document) => {
         set({ selectedDocument: document });
     },
 
+    setSelectedDocumentShare: (share) => {
+        set({ selectedDocumentShare: share });
+    },
+
     setSelectedVersion: (version) => {
         set({ selectedVersion: version });
+    },
+
+    setSelectedDocumentRequest: (request) => {
+        set({ selectedDocumentRequest: request });
     },
 
     clearError: () => {
@@ -322,8 +864,6 @@ const useDocumentStore = create((set, get) => ({
     },
 }));
 
-export {
-    useDocumentStore,
-};
 
-export default useDocumentStore;
+// --- EXPORTS ---
+export { useDocumentStore };

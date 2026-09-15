@@ -15,58 +15,88 @@ import {
     Users,
     Building2,
     Inbox,
+    AlertTriangle,
+    Archive,
 } from 'lucide-react';
 import {
     LoginPage,
     ForgotPasswordPage,
     DashboardPage,
     DocumentsPage,
-    RequestDocumentPage,
+    ArchivesPage,
     UsersPage,
     DepartmentsPage,
     RequestsPage,
+    OnboardingPage,
 } from './pages';
 import { MainLayout } from './layouts';
 import {
     Inspector,
+    Modal,
     ToastProvider,
     ProtectedRoute,
-    PublicOnlyRoute,
-    useToast,
+    PublicRoute,
 } from './components';
-import { useAuth } from './hooks';
+import { useAuth, useToast, useInactivityTimeout } from './hooks';
 import {
-    useNotificationStore,
-    useCoordinatorRequestStore,
+    useCoordinatorStore,
     useDepartmentStore,
-    useUserStore,
     useDocumentStore,
-    useDocumentRequestStore,
+    useNotificationStore,
+    useUserStore,
 } from './stores';
-import { USER_ROLES } from './constants';
+import { authService, storageService } from './services';
+import { constants } from './constants';
 
-// --- MODULE-LEVEL CONSTANTS ---
+
+// --- CONFIGURATIONS ---
 const PAGE_TITLES = {
     dashboard: 'Dashboard',
     documents: 'Manage Documents',
+    archives: 'Manage Archives',
     request_document: 'Manage Document Requests',
     departments: 'Manage Departments',
     users: 'Manage Users',
     requests: 'Manage Requests',
 };
 
+
 // --- COMPONENTS ---
 const AppContent = () => {
+    // STATES: WORKSPACE & INSPECTOR
+    const [selectedItem, setSelectedItem] = useState(null);
+    const [isDetailPanelOpen, setIsDetailPanelOpen] = useState(false);
+    const [inspectorTab, setInspectorTab] = useState('information');
+    const [restoreConflictModalItem, setRestoreConflictModalItem] = useState(null);
+
     // HOOKS
     const location = useLocation();
     const navigate = useNavigate();
-    const { showToast } = useToast();
-    const { currentUser, isLoading, loginWithUniversityId, loginWithGoogle, logout } = useAuth();
+    const { showToast, showProcessing } = useToast();
+    const {
+        currentUser,
+        isLoading,
+        initializeAuthListener,
+        loginWithUniversityId,
+        loginWithGoogle,
+        logout,
+    } = useAuth();
+
+    // LISTENERS
+    useEffect(() => {
+        const unsubscribe = initializeAuthListener();
+
+        return () => {
+            unsubscribe?.();
+        };
+    }, [initializeAuthListener]);
 
     // STORES
     const notifications = useNotificationStore((state) => state.notifications);
-    const unreadNotificationCount = notifications.filter((item) => !item.is_read).length;
+    const unreadNotificationCount = notifications.filter((item) => !item.isRead).length;
+    const departments = useDepartmentStore((state) => state.departments);
     const fetchDepartments = useDepartmentStore((state) => state.fetchDepartments);
+    const users = useUserStore((state) => state.users);
     const fetchUsers = useUserStore((state) => state.fetchUsers);
     const fetchDocuments = useDocumentStore((state) => state.fetchDocuments);
 
@@ -78,15 +108,98 @@ const AppContent = () => {
         }
     }, [currentUser, fetchDepartments, fetchUsers, fetchDocuments]);
 
-    // WORKSPACE & INSPECTOR STATES
-    const [selectedItem, setSelectedItem] = useState(null);
-    const [isDetailPanelOpen, setIsDetailPanelOpen] = useState(false);
+    // REACTIVE SYNC FOR SELECTED ITEM WHEN STORE DEPARTMENTS UPDATE
+    useEffect(() => {
+        if (!selectedItem?.id) {
+            return;
+        }
 
-    // DERIVED VALUES: CURRENT NAVIGATION KEY
+        const matchingDepartment = departments.find((dept) => dept?.id === selectedItem.id);
+        if (matchingDepartment) {
+            setSelectedItem((previous) => {
+                if (!previous) {
+                    return previous;
+                }
+
+                if (
+                    previous.name === matchingDepartment.name &&
+                    previous.code === matchingDepartment.code &&
+                    previous.updatedAt === matchingDepartment.updatedAt
+                ) {
+                    return previous;
+                }
+
+                return {
+                    ...previous,
+                    ...matchingDepartment,
+                    title: matchingDepartment.name,
+                    name: matchingDepartment.name,
+                    code: matchingDepartment.code,
+                    subtitle: matchingDepartment.code,
+                    createdAt: matchingDepartment.createdAt ?? previous.createdAt,
+                    updatedAt: matchingDepartment.updatedAt ?? previous.updatedAt,
+                };
+            });
+        }
+    }, [departments, selectedItem?.id]);
+
+    // REACTIVE SYNC FOR SELECTED ITEM WHEN STORE USERS UPDATE
+    useEffect(() => {
+        if (!selectedItem?.id) {
+            return;
+        }
+
+        const matchingUser = users.find((user) => user?.id === selectedItem.id);
+        if (matchingUser) {
+            setSelectedItem((previous) => {
+                if (!previous) {
+                    return previous;
+                }
+
+                const firstName = matchingUser.firstName ?? previous.firstName ?? '';
+                const lastName = matchingUser.lastName ?? previous.lastName ?? '';
+                const fullName = `${firstName} ${lastName}`.trim() || previous.title || previous.name;
+
+                if (
+                    previous.firstName === matchingUser.firstName &&
+                    previous.lastName === matchingUser.lastName &&
+                    previous.role === matchingUser.role &&
+                    previous.status === matchingUser.status &&
+                    previous.departmentId === matchingUser.departmentId &&
+                    previous.updatedAt === matchingUser.updatedAt
+                ) {
+                    return previous;
+                }
+
+                return {
+                    ...previous,
+                    ...matchingUser,
+                    title: fullName,
+                    name: fullName,
+                    firstName,
+                    lastName,
+                    middleName: matchingUser.middleName ?? previous.middleName ?? null,
+                    universityId: matchingUser.universityId ?? previous.universityId,
+                    email: matchingUser.email ?? previous.email,
+                    role: matchingUser.role ?? previous.role,
+                    status: matchingUser.status ?? previous.status,
+                    departmentId: matchingUser.departmentId ?? previous.departmentId,
+                    avatarPath: matchingUser.avatarPath ?? previous.avatarPath ?? null,
+                    createdAt: matchingUser.createdAt ?? previous.createdAt,
+                    updatedAt: matchingUser.updatedAt ?? previous.updatedAt,
+                };
+            });
+        }
+    }, [users, selectedItem?.id]);
+
+    // DERIVED VALUES: NAVIGATION & PERMISSIONS
     const activeNavigationKey = useMemo(() => {
         const path = location.pathname;
         if (path.startsWith('/documents')) {
             return 'documents';
+        }
+        if (path.startsWith('/archives')) {
+            return 'archives';
         }
         if (path.startsWith('/request-document')) {
             return 'request_document';
@@ -103,9 +216,9 @@ const AppContent = () => {
         return 'dashboard';
     }, [location.pathname]);
 
-    const userRole = currentUser?.role ?? USER_ROLES.MEMBER;
-    const isAdmin = userRole === USER_ROLES.ADMINISTRATOR;
-    const isCoordinator = userRole === USER_ROLES.COORDINATOR;
+    const userRole = currentUser?.role ?? constants.USERS_ROLE.MEMBER;
+    const isAdmin = userRole === constants.USERS_ROLE.ADMINISTRATOR;
+    const isCoordinator = userRole === constants.USERS_ROLE.COORDINATOR;
     const canRequestDocument = !isAdmin && !isCoordinator;
     const pageTitle = PAGE_TITLES[activeNavigationKey] ?? 'Dashboard';
 
@@ -124,6 +237,13 @@ const AppContent = () => {
                 label: 'Documents',
                 title: 'Manage Documents',
                 icon: Files,
+            },
+            {
+                key: 'archives',
+                value: 'archives',
+                label: 'Archives',
+                title: 'Archived Documents',
+                icon: Archive,
             },
         ];
 
@@ -173,22 +293,58 @@ const AppContent = () => {
     // HANDLERS
     const handleLoginSuccess = async ({ universityId, email, password }) => {
         const identifier = universityId ?? email;
-        const authenticatedUser = await loginWithUniversityId(identifier, password);
-        showToast({
-            title: 'Authentication Successful',
-            description: `Welcome to Pamantasan Records, ${authenticatedUser.name ?? authenticatedUser.email}.`,
-            variant: 'success',
-        });
+        const minDelay = new Promise((resolve) => setTimeout(resolve, 400));
+        const [authenticatedUser] = await Promise.all([
+            loginWithUniversityId(identifier, password),
+            minDelay,
+        ]);
+
+        if (authenticatedUser?.status === constants.USERS_STATUS.PENDING_PASSWORD) {
+            navigate('/onboarding');
+            return;
+        }
+        if (authenticatedUser?.status === constants.USERS_STATUS.PENDING_SSO) {
+            if (!authService.hasSkippedSSOOnboarding(authenticatedUser.id)) {
+                navigate('/onboarding');
+                return;
+            }
+        }
+
+        // Prefetch records before navigating so dashboard loads populated
+        await Promise.allSettled([
+            fetchDepartments(),
+            fetchUsers(),
+            fetchDocuments(),
+        ]);
+
         navigate('/dashboard');
     };
 
     const handleGoogleLogin = async () => {
-        const authenticatedUser = await loginWithGoogle();
-        showToast({
-            title: 'Google SSO Verified',
-            description: `Signed in with ${authenticatedUser.email}.`,
-            variant: 'success',
-        });
+        const minDelay = new Promise((resolve) => setTimeout(resolve, 400));
+        const [authenticatedUser] = await Promise.all([
+            loginWithGoogle(),
+            minDelay,
+        ]);
+
+        if (authenticatedUser?.status === constants.USERS_STATUS.PENDING_PASSWORD) {
+            navigate('/onboarding');
+            return;
+        }
+        if (authenticatedUser?.status === constants.USERS_STATUS.PENDING_SSO) {
+            if (!authService.hasSkippedSSOOnboarding(authenticatedUser.id)) {
+                navigate('/onboarding');
+                return;
+            }
+        }
+
+        // Prefetch records before navigating
+        await Promise.allSettled([
+            fetchDepartments(),
+            fetchUsers(),
+            fetchDocuments(),
+        ]);
+
         navigate('/dashboard');
     };
 
@@ -198,22 +354,29 @@ const AppContent = () => {
             setSelectedItem(null);
             setIsDetailPanelOpen(false);
             navigate('/login');
-            showToast({
-                title: 'Signed Out',
-                description: 'You have been safely signed out.',
-                variant: 'information',
-            });
         } catch (error) {
-            showToast({
-                title: 'Sign Out Error',
-                description: error?.message || 'Failed to sign out.',
-                variant: 'error',
-            });
+            console.error('Sign out error:', error);
         }
     };
 
+    const handleInactivityLogout = async () => {
+        showToast({
+            title: 'Session Expired',
+            description: 'You have been automatically logged out due to 10 minutes of inactivity.',
+            variant: 'warning',
+        });
+        await handleSignOut();
+    };
+
+    useInactivityTimeout({
+        timeoutMs: 10 * 60 * 1000,
+        onTimeout: handleInactivityLogout,
+        enabled: Boolean(currentUser?.id),
+    });
+
     const handleNavigationChange = (navigationKey) => {
         setSelectedItem(null);
+        setInspectorTab('information');
         const targetPath =
             navigationKey === 'request_document'
                 ? '/request-document'
@@ -229,8 +392,15 @@ const AppContent = () => {
         setIsDetailPanelOpen(false);
     };
 
-    const handleSelectActivity = (activityItem) => {
+    const handleSelectActivity = (activityItem, targetTab = null) => {
         setSelectedItem(activityItem);
+        if (targetTab) {
+            setInspectorTab(targetTab);
+        } else if (activityItem?._targetTab) {
+            setInspectorTab(activityItem._targetTab);
+        } else {
+            setInspectorTab('information');
+        }
         if (activityItem) {
             setIsDetailPanelOpen(true);
         }
@@ -239,14 +409,17 @@ const AppContent = () => {
     const handleDetailAction = async (actionKey, item) => {
         if (actionKey === 'revert_version') {
             try {
-                const activeDocId = item?.document_id ?? item?.documentId ?? selectedItem?.id;
+                const activeDocId = item?.documentId ?? item?.document?.id ?? selectedItem?.id;
                 if (!activeDocId) {
                     throw new Error('Document identifier not found.');
+                }
+                if (!currentUser?.id) {
+                    throw new Error('Authentication required to revert version.');
                 }
                 const reverted = await useDocumentStore.getState().revertDocumentVersion(
                     activeDocId,
                     item,
-                    currentUser?.id ?? 'f1000001-0000-4000-8000-000000000001'
+                    currentUser.id
                 );
                 showToast({
                     type: 'success',
@@ -264,15 +437,29 @@ const AppContent = () => {
         }
 
         if (actionKey === 'download' || actionKey === 'download_version') {
-            const downloadUrl = item?.path ?? item?.url ?? item?.downloadUrl;
-            if (downloadUrl && downloadUrl.startsWith('http')) {
-                window.open(downloadUrl, '_blank');
+            const fileName = item?.name || item?.title || item?.document?.name || (item?.path ? item.path.split('/').pop() : 'document');
+            try {
+                if (item?.isFolder) {
+                    await storageService.downloadFolder(
+                        item,
+                        useDocumentStore.getState().documents,
+                        useDocumentStore.getState().documentVersions
+                    );
+                } else {
+                    const rawPath = item?.path ?? item?.url ?? item?.downloadUrl;
+                    await storageService.downloadDocument(
+                        rawPath,
+                        fileName
+                    );
+                }
+            } catch (err) {
+                console.error('Failed to download item:', err);
+                showToast({
+                    type: 'error',
+                    title: 'Download Failed',
+                    description: err?.message || 'Could not download item.',
+                });
             }
-            showToast({
-                type: 'success',
-                title: 'Download Initiated',
-                description: `Downloading ${item?.name ?? item?.title ?? item?.path ?? 'document version'}...`,
-            });
             return;
         }
 
@@ -286,22 +473,33 @@ const AppContent = () => {
         }
 
         if (actionKey === 'archive') {
-            try {
-                if (item?.id) {
-                    await useDocumentStore.getState().updateDocument(item.id, { is_archived: true });
-                }
-                showToast({
-                    type: 'warning',
-                    title: 'Document Archived',
-                    description: `${item?.name ?? item?.title} has been moved to archive storage.`,
-                });
-            } catch (error) {
-                showToast({
-                    type: 'error',
-                    title: 'Archive Failed',
-                    description: error?.message ?? 'Could not archive document.',
-                });
+            if (item?.isArchived) {
+                handleConfirmRestoreDirectly(item);
+                return;
             }
+            if (location.pathname !== '/documents') {
+                navigate('/documents');
+                setTimeout(() => {
+                    window.dispatchEvent(new CustomEvent('pamantasan:archive-document', { detail: item }));
+                }, 100);
+            } else {
+                window.dispatchEvent(new CustomEvent('pamantasan:archive-document', { detail: item }));
+            }
+            return;
+        }
+
+        if (actionKey === 'restore') {
+            const allDocs = useDocumentStore.getState().documents || [];
+            const targetParentId = item?.parentId && item.parentId !== 'root' ? item.parentId : null;
+            const parentDoc = targetParentId ? allDocs.find((d) => d.id === targetParentId) : null;
+
+            // CHILD RESTORE GUARD: If parent folder is archived, prompt modal
+            if (parentDoc && parentDoc.isArchived) {
+                setRestoreConflictModalItem({ item, parentFolder: parentDoc });
+                return;
+            }
+
+            await performRestoreItem(item);
             return;
         }
 
@@ -310,15 +508,71 @@ const AppContent = () => {
                 navigate('/requests');
                 return;
             }
-            showToast({
-                type: 'information',
-                title: 'Record Opened',
-                description: `Viewing ${item?.name ?? item?.title}.`,
-            });
+            if (item?.isFolder) {
+                if (item?.isArchived) {
+                    showToast({
+                        type: 'warning',
+                        title: 'Archived Folder',
+                        description: 'Cannot browse contents of an archived folder. Restore the folder to view its contents.',
+                    });
+                    return;
+                }
+                setSelectedItem(item);
+                window.dispatchEvent(new CustomEvent('pamantasan:open-folder', { detail: item }));
+                return;
+            }
+            if (item?.isArchived) {
+                showToast({
+                    type: 'warning',
+                    title: 'Archived Document',
+                    description: 'Cannot view an archived document.',
+                });
+                return;
+            }
+            setSelectedItem(item);
+            window.dispatchEvent(new CustomEvent('pamantasan:open-file', { detail: item }));
+            return;
+        }
+
+        if (actionKey === 'edit_department_success') {
+            if (selectedItem && item && selectedItem.id === item.id) {
+                setSelectedItem((prev) => ({
+                    ...prev,
+                    ...item,
+                    code: item.code,
+                    title: item.name,
+                    name: item.name,
+                    subtitle: item.code,
+                }));
+            }
+            return;
+        }
+
+        if (actionKey === 'edit_user_success' || actionKey === 'suspend_user_success') {
+            if (selectedItem && item && selectedItem.id === item.id) {
+                const firstName = item.firstName ?? selectedItem.firstName ?? '';
+                const lastName = item.lastName ?? selectedItem.lastName ?? '';
+                const fullName = `${firstName} ${lastName}`.trim() || item.name || item.title;
+                setSelectedItem((prev) => ({
+                    ...prev,
+                    ...item,
+                    title: fullName,
+                    name: fullName,
+                }));
+            }
+            return;
+        }
+
+        if (actionKey === 'delete_department_success') {
+            setSelectedItem(null);
+            setIsDetailPanelOpen(false);
             return;
         }
 
         if (actionKey === 'edit') {
+            if (item?.code && !item?.universityId && !item?.size && !item?.sizeBytes) {
+                return;
+            }
             showToast({
                 type: 'information',
                 title: 'Edit Form',
@@ -330,12 +584,12 @@ const AppContent = () => {
         if (actionKey === 'verify') {
             try {
                 if (item?.id) {
-                    await useUserStore.getState().updateUser(item.id, { status: 'VERIFIED' });
+                    await useUserStore.getState().updateUser(item.id, { status: constants.USERS_STATUS.VERIFIED });
                 }
                 showToast({
                     type: 'success',
                     title: 'Account Verified',
-                    description: `${item?.first_name ?? item?.name ?? 'User'} is now verified.`,
+                    description: `${item?.firstName ?? item?.name ?? 'User'} is now verified.`,
                 });
             } catch (error) {
                 showToast({
@@ -348,26 +602,15 @@ const AppContent = () => {
         }
 
         if (actionKey === 'suspend') {
-            try {
-                if (item?.id) {
-                    await useUserStore.getState().updateUser(item.id, { status: 'SUSPENDED' });
-                }
-                showToast({
-                    type: 'warning',
-                    title: 'Account Suspended',
-                    description: `${item?.first_name ?? item?.name ?? 'User'} account suspended.`,
-                });
-            } catch (error) {
-                showToast({
-                    type: 'error',
-                    title: 'Suspension Failed',
-                    description: error?.message ?? 'Could not suspend user.',
-                });
-            }
+            window.dispatchEvent(new CustomEvent('pamantasan:suspend-user', { detail: item }));
             return;
         }
 
         if (actionKey === 'delete') {
+            if (item?.code && !item?.universityId && !item?.size && !item?.sizeBytes) {
+                window.dispatchEvent(new CustomEvent('pamantasan:delete-department', { detail: item }));
+                return;
+            }
             showToast({
                 type: 'error',
                 title: 'Deletion Requested',
@@ -378,10 +621,16 @@ const AppContent = () => {
 
         if (actionKey === 'approve') {
             if (item?.action && item?.data) {
+                if (!currentUser?.id) {
+                    throw new Error('Authentication required to approve request.');
+                }
                 try {
-                    const approved = await useCoordinatorRequestStore.getState().approveCoordinatorRequest(
+                    const approved = await useCoordinatorStore.getState().updateCoordinatorRequest(
                         item.id,
-                        currentUser?.id ?? 'f1000001-0000-4000-8000-000000000001'
+                        {
+                            reviewerId: currentUser.id,
+                            status: constants.COORDINATOR_REQUESTS_STATUS.APPROVED,
+                        }
                     );
                     setSelectedItem(approved);
                     showToast({
@@ -409,11 +658,17 @@ const AppContent = () => {
 
         if (actionKey === 'reject') {
             if (item?.action && item?.data) {
+                if (!currentUser?.id) {
+                    throw new Error('Authentication required to reject request.');
+                }
                 try {
-                    const rejected = await useCoordinatorRequestStore.getState().rejectCoordinatorRequest(
+                    const rejected = await useCoordinatorStore.getState().updateCoordinatorRequest(
                         item.id,
-                        'Declined by administrator during record review.',
-                        currentUser?.id ?? 'f1000001-0000-4000-8000-000000000001'
+                        {
+                            reviewerId: currentUser.id,
+                            status: constants.COORDINATOR_REQUESTS_STATUS.REJECTED,
+                            rejectionReason: 'Declined by administrator during record review.',
+                        }
                     );
                     setSelectedItem(rejected);
                     showToast({
@@ -433,10 +688,11 @@ const AppContent = () => {
 
             if (item?.subject) {
                 try {
-                    await useDocumentRequestStore.getState().rejectDocumentRequest(
+                    await useDocumentStore.getState().updateDocumentRequest(
                         item.id,
-                        'Declined during review.',
-                        currentUser?.id ?? 'f1000001-0000-4000-8000-000000000001'
+                        {
+                            status: constants.DOCUMENT_REQUESTS_STATUS.REJECTED,
+                        }
                     );
                     showToast({
                         type: 'warning',
@@ -464,9 +720,11 @@ const AppContent = () => {
         if (actionKey === 'resolve') {
             try {
                 if (item?.id) {
-                    await useDocumentRequestStore.getState().resolveDocumentRequest(
+                    await useDocumentStore.getState().updateDocumentRequest(
                         item.id,
-                        currentUser?.id ?? 'f1000001-0000-4000-8000-000000000001'
+                        {
+                            status: constants.DOCUMENT_REQUESTS_STATUS.RESOLVED,
+                        }
                     );
                 }
                 showToast({
@@ -493,24 +751,78 @@ const AppContent = () => {
         }
     };
 
+
+
+    const performRestoreItem = async (item) => {
+        try {
+            if (item?.id) {
+                await useDocumentStore.getState().archiveDocument(item.id, false);
+            }
+            setSelectedItem((prev) => (prev ? { ...prev, isArchived: false } : null));
+            showToast({
+                type: 'success',
+                title: item?.isFolder ? 'Folder Restored' : 'Document Restored',
+                description: `${item?.name ?? item?.title} restored to active repository.`,
+            });
+        } catch (error) {
+            showToast({
+                type: 'error',
+                title: 'Restore Failed',
+                description: error?.message ?? 'Could not update archive state.',
+            });
+        }
+    };
+
+    const handleRestoreWithParent = async (item, parentFolder) => {
+        try {
+            const allDocs = useDocumentStore.getState().documents || [];
+            let curr = parentFolder;
+            const chain = [];
+            while (curr && curr.isArchived) {
+                chain.unshift(curr);
+                const pId = curr.parentId ?? curr.parentFolderId;
+                if (!pId || pId === 'root') break;
+                curr = allDocs.find((d) => d.id === pId);
+            }
+
+            for (const folder of chain) {
+                await useDocumentStore.getState().archiveDocument(folder.id, false);
+            }
+            if (item?.id) {
+                await useDocumentStore.getState().archiveDocument(item.id, false);
+            }
+
+            setSelectedItem((prev) => (prev ? { ...prev, isArchived: false } : null));
+            showToast({
+                type: 'success',
+                title: 'Items Restored',
+                description: `"${parentFolder.name || parentFolder.title}" and "${item?.name ?? item?.title}" restored to active repository.`,
+            });
+        } catch (error) {
+            showToast({
+                type: 'error',
+                title: 'Restore Failed',
+                description: error?.message ?? 'Could not restore items.',
+            });
+        }
+    };
+
     const handleUploadDocument = () => {
-        showToast({
-            title: 'Upload Document',
-            description: 'Document upload flow will be configured next.',
-            variant: 'information',
-        });
+        navigate('/documents');
     };
 
     const handleRequestDocument = () => {
         navigate('/request-document');
     };
 
+    // RENDER
     return (
+        <>
         <Routes>
             {/* 1. PUBLIC-ONLY ROUTES (LOGGED IN USERS AUTO-REDIRECT TO /dashboard) */}
             <Route
                 element={
-                    <PublicOnlyRoute
+                    <PublicRoute
                         currentUser={currentUser}
                         isLoading={isLoading}
                     />
@@ -532,7 +844,31 @@ const AppContent = () => {
                 />
             </Route>
 
-            {/* 2. AUTHENTICATED PROTECTED SHELL (REQUIRES LOGGED IN USER) */}
+            {/* 2. ONBOARDING ROUTE (REQUIRES AUTH, ACCESSIBLE IN PENDING STATUS) */}
+            <Route
+                path="/onboarding"
+                element={
+                    <ProtectedRoute
+                        currentUser={currentUser}
+                        isLoading={isLoading}
+                        allowPending={true}
+                    >
+                        <OnboardingPage
+                            currentUser={currentUser}
+                            onComplete={async () => {
+                                await Promise.allSettled([
+                                    fetchDepartments(),
+                                    fetchUsers(),
+                                    fetchDocuments(),
+                                ]);
+                                navigate('/dashboard', { replace: true });
+                            }}
+                        />
+                    </ProtectedRoute>
+                }
+            />
+
+            {/* 3. AUTHENTICATED PROTECTED SHELL (REQUIRES LOGGED IN USER) */}
             <Route
                 element={
                     <ProtectedRoute
@@ -553,6 +889,7 @@ const AppContent = () => {
                                 <Inspector
                                     item={selectedItem}
                                     currentUser={currentUser}
+                                    targetTab={inspectorTab}
                                     onClose={handleCloseDetailPanel}
                                     onAction={handleDetailAction}
                                 />
@@ -592,11 +929,21 @@ const AppContent = () => {
                     }
                 />
                 <Route
-                    path="/request-document"
+                    path="/archives"
                     element={
-                        <RequestDocumentPage
+                        <ArchivesPage
                             currentUser={currentUser}
                             onSelectDocument={handleSelectActivity}
+                        />
+                    }
+                />
+                <Route
+                    path="/request-document"
+                    element={
+                        <RequestsPage
+                            currentUser={currentUser}
+                            initialTab="document"
+                            onSelectRequest={handleSelectActivity}
                         />
                     }
                 />
@@ -606,7 +953,7 @@ const AppContent = () => {
                     element={
                         <ProtectedRoute
                             currentUser={currentUser}
-                            allowedRoles={[USER_ROLES.ADMINISTRATOR, USER_ROLES.COORDINATOR]}
+                            allowedRoles={[constants.USERS_ROLE.ADMINISTRATOR, constants.USERS_ROLE.COORDINATOR]}
                             requiredRoleLabel="Administrator or Coordinator"
                         />
                     }
@@ -632,6 +979,7 @@ const AppContent = () => {
                         element={
                             <RequestsPage
                                 currentUser={currentUser}
+                                initialTab="coordinator"
                                 onSelectRequest={handleSelectActivity}
                             />
                         }
@@ -642,15 +990,42 @@ const AppContent = () => {
                 <Route path="*" element={<Navigate to="/dashboard" replace />} />
             </Route>
         </Routes>
+
+        {restoreConflictModalItem && (
+            <Modal
+                isOpen={Boolean(restoreConflictModalItem)}
+                onClose={() => setRestoreConflictModalItem(null)}
+                title="Archived Parent Folder Conflict"
+                description={`The original parent folder "${restoreConflictModalItem.parentFolder?.name || restoreConflictModalItem.parentFolder?.title || 'Parent Folder'}" is currently archived. To unarchive this item, its parent folder must also be restored.`}
+                icon={AlertTriangle}
+                variant="warning"
+                size="sm"
+                callout={`Restoring "${restoreConflictModalItem.item?.name || restoreConflictModalItem.item?.title}" will restore parent folder "${restoreConflictModalItem.parentFolder?.name || restoreConflictModalItem.parentFolder?.title}" first into its original repository location.`}
+                calloutVariant="warning"
+                onConfirm={async () => {
+                    const { item, parentFolder } = restoreConflictModalItem;
+                    setRestoreConflictModalItem(null);
+                    await handleRestoreWithParent(item, parentFolder);
+                }}
+                confirmLabel="Unarchive Parent & File"
+                cancelLabel="Cancel"
+            />
+        )}
+        </>
     );
 };
 
-export default function App() {
+const App = () => {
     return (
-        <ToastProvider>
-            <BrowserRouter>
+        <BrowserRouter>
+            <ToastProvider>
                 <AppContent />
-            </BrowserRouter>
-        </ToastProvider>
+            </ToastProvider>
+        </BrowserRouter>
     );
-}
+};
+
+
+// --- EXPORTS ---
+export { App };
+export default App;

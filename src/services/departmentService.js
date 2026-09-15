@@ -1,17 +1,16 @@
 // --- IMPORTS ---
 import { dataConnectService } from './dataConnectService';
 
-// --- SERVICE IMPLEMENTATION ---
+
+// --- SERVICES ---
 const departmentService = {
+    // CORE
     fetchDepartments: async () => {
         try {
-            const data = await dataConnectService.executeQuery('ListDepartments');
+            const data = await dataConnectService.executeQuery('FetchDepartments');
             const departments = data?.departments ?? [];
-            return departments.map((dept) => ({
-                id: dept.id,
-                name: dept.name,
-                code: dept.code,
-            }));
+
+            return departments.map(formatLiveDepartment).filter(Boolean);
         } catch (error) {
             console.error('Failed to fetch departments from Firebase Data Connect:', error);
             return [];
@@ -20,50 +19,105 @@ const departmentService = {
 
     fetchDepartmentById: async (id) => {
         try {
-            const data = await dataConnectService.executeQuery('GetDepartmentById', { id });
-            return data?.department ?? null;
+            const data = await dataConnectService.executeQuery('FetchDepartmentById', { id: id });
+            const departments = data?.departments ?? [];
+
+            return departments.length > 0 ? formatLiveDepartment(departments[0]) : null;
         } catch (error) {
-            console.error(`Failed to fetch department with id "${id}":`, error);
+            console.error(`Failed to fetch department with ID "${id}":`, error);
             return null;
         }
     },
 
     fetchDepartmentByCode: async (code) => {
         try {
-            const data = await dataConnectService.executeQuery('GetDepartmentByCode', { code });
+            const data = await dataConnectService.executeQuery('FetchDepartmentByCode', { code: code });
             const departments = data?.departments ?? [];
-            return departments[0] ?? null;
+
+            return departments.length > 0 ? formatLiveDepartment(departments[0]) : null;
         } catch (error) {
             console.error(`Failed to fetch department with code "${code}":`, error);
             return null;
         }
     },
 
-    createDepartment: async (payload) => {
-        const data = await dataConnectService.executeMutation('CreateDepartment', {
+    insertDepartment: async (payload) => {
+        const timestamp = payload.createdAt || new Date().toISOString();
+        const updatedTimestamp = payload.updatedAt || timestamp;
+        const data = await dataConnectService.executeMutation('InsertDepartment', {
             name: payload.name,
             code: payload.code,
+            createdAt: timestamp,
+            updatedAt: updatedTimestamp,
         });
-        return data?.department_insert ?? null;
+
+        const raw = data?.department_insert ?? data?.departments_insert;
+        const formatted = formatLiveDepartment(raw);
+
+        return {
+            id: formatted?.id ?? (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `dept-${Date.now()}`),
+            name: payload.name,
+            code: payload.code,
+            createdAt: timestamp,
+            updatedAt: updatedTimestamp,
+        };
     },
 
     updateDepartment: async (id, payload) => {
+        const timestamp = payload.updatedAt || new Date().toISOString();
+        let existing = null;
+        try {
+            existing = await departmentService.fetchDepartmentById(id);
+        } catch (e) {
+            console.warn('fetchDepartmentById failed during updateDepartment merge:', e);
+        }
+
+        const name = payload.name ?? existing?.name;
+        const code = payload.code ?? existing?.code;
+
         const data = await dataConnectService.executeMutation('UpdateDepartment', {
-            id,
-            name: payload.name,
-            code: payload.code,
+            id: id,
+            name: name,
+            code: code,
+            updatedAt: timestamp,
         });
-        return data?.department_update ?? null;
+
+        const raw = data?.department_update ?? data?.departments_update;
+        const formatted = formatLiveDepartment(raw);
+
+        return {
+            ...(existing || {}),
+            id: formatted?.id ?? id,
+            name: name,
+            code: code,
+            createdAt: existing?.createdAt,
+            updatedAt: timestamp,
+        };
     },
 
     deleteDepartment: async (id) => {
-        const data = await dataConnectService.executeMutation('DeleteDepartment', { id });
-        return Boolean(data?.department_delete);
+        const data = await dataConnectService.executeMutation('DeleteDepartment', { id: id });
+        return Boolean(data?.department_delete ?? data?.departments_delete);
     },
 };
 
-export {
-    departmentService,
-};
 
-export default departmentService;
+// --- HELPERS ---
+function formatLiveDepartment(rawDepartment) {
+    if (!rawDepartment) {
+        return null;
+    }
+
+    return {
+        id: rawDepartment.id ?? rawDepartment.key?.id,
+        name: rawDepartment.name,
+        code: rawDepartment.code,
+        createdAt: rawDepartment.createdAt,
+        updatedAt: rawDepartment.updatedAt,
+    };
+}
+
+
+// --- EXPORTS ---
+export { departmentService };
+

@@ -1,88 +1,100 @@
-// --- IMPORTS ---
 import { create } from 'zustand';
-import {
-    UserInsertSchema,
-    UserUpdateSchema,
-    UserSettingUpdateSchema,
-    UserSessionInsertSchema,
-} from '../schemas';
-import {
-    DEFAULT_THEME_MODE,
-    DEFAULT_NOTIFICATION_SCOPE,
-} from '../constants';
-import { userService } from '../services';
-import { useAuthenticationStore } from './useAuthenticationStore';
 
-// --- STORE DEFINITION ---
+import { mutationSchema } from '../schemas';
+import { userService } from '../services';
+import { useAuthStore } from './useAuthStore';
+
+
+// --- STORAGE HELPERS ---
+const USER_PREV_STATUS_KEY = 'pamantasan_user_prev_status';
+
+function savePreviousStatus(userId, status) {
+    if (!userId || !status || status === 'SUSPENDED') return;
+    try {
+        const stored = JSON.parse(localStorage.getItem(USER_PREV_STATUS_KEY) || '{}');
+        stored[userId] = status;
+        localStorage.setItem(USER_PREV_STATUS_KEY, JSON.stringify(stored));
+    } catch {
+        // Ignore storage error
+    }
+}
+
+function getStoredPreviousStatus(userId) {
+    if (!userId) return null;
+    try {
+        const stored = JSON.parse(localStorage.getItem(USER_PREV_STATUS_KEY) || '{}');
+        return stored[userId] || null;
+    } catch {
+        return null;
+    }
+}
+
+
+// --- STORE ---
 const useUserStore = create((set, get) => ({
-    // STATE
+    // STATES
     users: [],
-    userSettings: [],
-    userSessions: [],
     selectedUser: null,
+    userCredentials: null,
+    userSettings: null,
+    userSessions: [],
     isLoading: false,
     error: null,
 
-    // 1. USERS CRUD ACTIONS
-    fetchUsers: async (filterOptions = {}) => {
+    // PREVIOUS STATUS
+    getPreviousStatus: (userId) => {
+        const stored = getStoredPreviousStatus(userId);
+        if (stored) return stored;
+        const user = get().users.find((item) => item?.id === userId);
+        if (user?.status && user.status !== 'SUSPENDED') {
+            return user.status;
+        }
+        return 'PENDING_PASSWORD';
+    },
+
+    // USERS
+    fetchUsers: async () => {
         set({ isLoading: true, error: null });
 
         try {
-            const liveUsers = await userService.fetchUsers();
-            let resultUsers = [...liveUsers];
+            const users = await userService.fetchUsers();
+            let resolvedUsers = (users || []).filter(Boolean);
 
-            if (filterOptions.departmentId) {
-                resultUsers = resultUsers.filter(
-                    (user) => user.department_id === filterOptions.departmentId
-                );
+            const currentUser = useAuthStore.getState().currentUser;
+            if (currentUser && !resolvedUsers.some((u) => u.id === currentUser.id || u.universityId === currentUser.universityId)) {
+                resolvedUsers = [currentUser, ...resolvedUsers];
             }
 
-            if (filterOptions.role) {
-                resultUsers = resultUsers.filter(
-                    (user) => user.role === filterOptions.role
-                );
-            }
+            set({ users: resolvedUsers, isLoading: false, error: null });
 
-            if (filterOptions.status) {
-                resultUsers = resultUsers.filter(
-                    (user) => user.status === filterOptions.status
-                );
-            }
-
-            if (filterOptions.searchQuery) {
-                const query = filterOptions.searchQuery.toLowerCase();
-                resultUsers = resultUsers.filter((user) =>
-                    user.first_name.toLowerCase().includes(query) ||
-                    user.last_name.toLowerCase().includes(query) ||
-                    user.university_id.toLowerCase().includes(query) ||
-                    user.email.toLowerCase().includes(query)
-                );
-            }
-
-            set({ users: liveUsers, isLoading: false });
-            return resultUsers;
+            return resolvedUsers;
         } catch (error) {
-            const errorMessage = error?.message ?? 'Failed to fetch users.';
-            set({ isLoading: false, error: errorMessage });
-            throw error;
+            const currentUser = useAuthStore.getState().currentUser;
+            const fallbackUsers = currentUser ? [currentUser] : [];
+            set({ users: fallbackUsers, isLoading: false, error: null });
+
+            return fallbackUsers;
         }
     },
 
-    fetchUserById: async (userId) => {
+    fetchUserById: async (id) => {
         set({ isLoading: true, error: null });
 
         try {
-            let user = get().users.find((item) => item.id === userId) ?? null;
+            let user = get().users.find((item) => item.id === id);
+
             if (!user) {
-                const allUsers = await userService.fetchUsers();
-                user = allUsers.find((item) => item.id === userId) ?? null;
+                user = await userService.fetchUserById(id);
             }
-            set({ selectedUser: user, isLoading: false });
+
+            set({ selectedUser: user, isLoading: false, error: null });
+
             return user;
         } catch (error) {
-            const errorMessage = error?.message ?? 'Failed to fetch user by identifier.';
-            set({ isLoading: false, error: errorMessage });
-            throw error;
+            const message = error?.message ?? `Failed to fetch user with ID "${id}".`;
+            set({ isLoading: false, error: message });
+
+            return null;
         }
     },
 
@@ -90,198 +102,410 @@ const useUserStore = create((set, get) => ({
         set({ isLoading: true, error: null });
 
         try {
-            let user = get().users.find((item) => item.university_id === universityId) ?? null;
+            let user = get().users.find((item) => item.universityId === universityId);
+
             if (!user) {
                 user = await userService.fetchUserByUniversityId(universityId);
             }
-            set({ selectedUser: user, isLoading: false });
+
+            set({ selectedUser: user, isLoading: false, error: null });
+
             return user;
         } catch (error) {
-            const errorMessage = error?.message ?? 'Failed to fetch user by University ID.';
-            set({ isLoading: false, error: errorMessage });
-            throw error;
-        }
-    },
+            const message = error?.message ?? `Failed to fetch user with university ID "${universityId}".`;
+            set({ isLoading: false, error: message });
 
-    createUser: async (userPayload) => {
-        set({ isLoading: true, error: null });
-
-        try {
-            const validatedData = UserInsertSchema.parse(userPayload);
-            const created = await userService.createUser(validatedData);
-
-            const newUser = created ?? {
-                id: validatedData.id ?? `user-${Date.now()}`,
-                university_id: validatedData.university_id,
-                universityId: validatedData.university_id,
-                first_name: validatedData.first_name,
-                last_name: validatedData.last_name,
-                middle_name: validatedData.middle_name ?? null,
-                name: `${validatedData.first_name} ${validatedData.last_name}`,
-                email: validatedData.email,
-                role: validatedData.role ?? 'MEMBER',
-                status: validatedData.status ?? 'VERIFIED',
-                department_id: validatedData.department_id,
-                avatar_path: validatedData.avatar_path ?? null,
-            };
-
-            set((state) => ({
-                users: [...state.users, newUser],
-                isLoading: false,
-            }));
-
-            return newUser;
-        } catch (error) {
-            const errorMessage =
-                error?.issues?.[0]?.message ??
-                error?.errors?.[0]?.message ??
-                error?.message ??
-                'Failed to create user account.';
-            set({ isLoading: false, error: errorMessage });
-            throw new Error(errorMessage, { cause: error });
-        }
-    },
-
-    updateUser: async (userId, userUpdates) => {
-        set({ isLoading: true, error: null });
-
-        try {
-            const validatedUpdates = UserUpdateSchema.parse(userUpdates);
-            await userService.updateUser(userId, validatedUpdates);
-
-            const updatedUser = {
-                ...(get().users.find((item) => item.id === userId) ?? {}),
-                ...validatedUpdates,
-                id: userId,
-            };
-
-            set((state) => ({
-                users: state.users.map((item) =>
-                    item.id === userId ? updatedUser : item
-                ),
-                selectedUser: state.selectedUser?.id === userId
-                    ? updatedUser
-                    : state.selectedUser,
-                isLoading: false,
-            }));
-
-            // Sync with current authenticated user session if editing own account
-            const authUser = useAuthenticationStore.getState().currentUser;
-            if (authUser?.id === userId || authUser?.university_id === updatedUser.university_id) {
-                useAuthenticationStore.getState().updateProfile({
-                    ...updatedUser,
-                    avatar_path: updatedUser.avatar_path,
-                    avatarPath: updatedUser.avatar_path,
-                });
-            }
-
-            return updatedUser;
-        } catch (error) {
-            const errorMessage =
-                error?.issues?.[0]?.message ??
-                error?.errors?.[0]?.message ??
-                error?.message ??
-                'Failed to update user account.';
-            set({ isLoading: false, error: errorMessage });
-            throw new Error(errorMessage, { cause: error });
-        }
-    },
-
-    deleteUser: async (userId) => {
-        set({ isLoading: true, error: null });
-
-        try {
-            await userService.deleteUser(userId);
-
-            set((state) => ({
-                users: state.users.filter((item) => item.id !== userId),
-                selectedUser: state.selectedUser?.id === userId
-                    ? null
-                    : state.selectedUser,
-                isLoading: false,
-            }));
-
-            return true;
-        } catch (error) {
-            const errorMessage = error?.message ?? 'Failed to delete user account.';
-            set({ isLoading: false, error: errorMessage });
-            throw error;
-        }
-    },
-
-    // 2. USER SETTINGS ACTIONS
-    fetchUserSettings: async (userId) => {
-        set({ isLoading: true, error: null });
-
-        try {
-            let settings = get().userSettings.find((item) => item.user_id === userId);
-            if (!settings) {
-                settings = {
-                    user_id: userId,
-                    theme: DEFAULT_THEME_MODE,
-                    notification: DEFAULT_NOTIFICATION_SCOPE,
-                };
-            }
-            set({ isLoading: false });
-            return settings;
-        } catch (error) {
-            const errorMessage = error?.message ?? 'Failed to fetch user settings.';
-            set({ isLoading: false, error: errorMessage });
-            throw error;
-        }
-    },
-
-    updateUserSettings: async (userId, settingUpdates) => {
-        set({ isLoading: true, error: null });
-
-        try {
-            const validatedUpdates = UserSettingUpdateSchema.parse(settingUpdates);
-            const currentSettings = get().userSettings.find((item) => item.user_id === userId);
-
-            const updatedSettings = {
-                ...(currentSettings ?? { user_id: userId, theme: DEFAULT_THEME_MODE, notification: DEFAULT_NOTIFICATION_SCOPE }),
-                ...validatedUpdates,
-                user_id: userId,
-                updated_at: new Date().toISOString(),
-            };
-
-            set((state) => ({
-                userSettings: [
-                    ...state.userSettings.filter((item) => item.user_id !== userId),
-                    updatedSettings,
-                ],
-                isLoading: false,
-            }));
-
-            return updatedSettings;
-        } catch (error) {
-            const errorMessage = error?.message ?? 'Failed to update user settings.';
-            set({ isLoading: false, error: errorMessage });
-            throw error;
-        }
-    },
-
-    // 3. USER SESSIONS ACTIONS
-    recordUserSession: async (sessionPayload) => {
-        try {
-            const validatedSession = UserSessionInsertSchema.parse(sessionPayload);
-            const newSession = {
-                id: `sess-${Date.now()}`,
-                ...validatedSession,
-                created_at: new Date().toISOString(),
-            };
-
-            set((state) => ({
-                userSessions: [...state.userSessions, newSession],
-            }));
-
-            return newSession;
-        } catch (error) {
-            console.warn('Session recording notice:', error);
             return null;
         }
     },
 
+    fetchUserByEmail: async (email) => {
+        set({ isLoading: true, error: null });
+
+        try {
+            let user = get().users.find((item) => item.email?.toLowerCase() === email?.toLowerCase());
+
+            if (!user) {
+                user = await userService.fetchUserByEmail(email);
+            }
+
+            set({ selectedUser: user, isLoading: false, error: null });
+
+            return user;
+        } catch (error) {
+            const message = error?.message ?? `Failed to fetch user with email "${email}".`;
+            set({ isLoading: false, error: message });
+
+            return null;
+        }
+    },
+
+    insertUser: async (payload) => {
+        set({ isLoading: true, error: null });
+
+        try {
+            const timestamp = new Date().toISOString();
+            const payloadWithDates = {
+                createdAt: timestamp,
+                updatedAt: timestamp,
+                ...payload,
+            };
+            const validatedPayload = mutationSchema.InsertUserSchema.parse(payloadWithDates);
+            const result = await userService.insertUser(validatedPayload);
+
+            const definedResult = Object.fromEntries(
+                Object.entries(result || {}).filter(([_, v]) => v !== undefined)
+            );
+
+            const newUser = {
+                id: result?.id ?? (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `user-${Date.now()}`),
+                ...validatedPayload,
+                ...definedResult,
+            };
+
+            savePreviousStatus(newUser.id, newUser.status || 'PENDING_PASSWORD');
+
+            set((state) => ({
+                users: [...state.users.filter(Boolean), newUser],
+                isLoading: false,
+                error: null,
+            }));
+
+            get().fetchUsers().catch(() => {});
+
+            return newUser;
+        } catch (error) {
+            const message = error?.errors?.[0]?.message ?? error?.message ?? 'Failed to insert user.';
+            set({ isLoading: false, error: message });
+
+            throw error;
+        }
+    },
+
+    updateUser: async (id, payload) => {
+        set({ isLoading: true, error: null });
+
+        try {
+            const timestamp = new Date().toISOString();
+            const payloadWithUpdate = {
+                ...payload,
+                updatedAt: payload?.updatedAt ?? timestamp,
+            };
+            const validatedPayload = mutationSchema.UpdateUserSchema.parse(payloadWithUpdate);
+            const existingUser = get().users.find((item) => item?.id === id) ?? {};
+
+            // Record previous status before suspension
+            if (validatedPayload.status === 'SUSPENDED') {
+                if (existingUser?.status && existingUser.status !== 'SUSPENDED') {
+                    savePreviousStatus(id, existingUser.status);
+                }
+            } else if (validatedPayload.status) {
+                savePreviousStatus(id, validatedPayload.status);
+            }
+
+            // Self-suspension guard: Admins cannot suspend themselves
+            if (validatedPayload.status === 'SUSPENDED') {
+                try {
+                    const { useAuthStore } = await import('./useAuthStore');
+                    const authUser = useAuthStore.getState().currentUser;
+                    if (authUser && (authUser.id === id || (existingUser?.universityId && authUser.universityId === existingUser.universityId))) {
+                        const message = 'Administrators cannot suspend their own account. Another administrator must perform this action.';
+                        set({ isLoading: false, error: message });
+                        throw new Error(message);
+                    }
+                } catch (err) {
+                    if (err.message?.includes('cannot suspend their own account')) {
+                        throw err;
+                    }
+                }
+            }
+
+            const result = await userService.updateUser(id, validatedPayload);
+
+            const cleanResult = Object.fromEntries(
+                Object.entries(result || {}).filter(([_, v]) => v !== undefined)
+            );
+            const cleanPayload = Object.fromEntries(
+                Object.entries(validatedPayload || {}).filter(([_, v]) => v !== undefined)
+            );
+
+            const mergedUser = {
+                ...existingUser,
+                ...cleanPayload,
+                ...cleanResult,
+                id: id,
+                updatedAt: validatedPayload.updatedAt ?? timestamp,
+            };
+
+            set((state) => ({
+                users: state.users.map((item) =>
+                    item?.id === id ? mergedUser : item
+                ),
+                selectedUser: state.selectedUser?.id === id
+                    ? mergedUser
+                    : state.selectedUser,
+                isLoading: false,
+                error: null,
+            }));
+
+            try {
+                const { useAuthStore } = await import('./useAuthStore');
+                const authUser = useAuthStore.getState().currentUser;
+                if (authUser && (authUser.id === id || authUser.universityId === mergedUser.universityId)) {
+                    useAuthStore.setState({ currentUser: { ...authUser, ...mergedUser } });
+                }
+            } catch (authErr) {
+                console.warn('Failed to sync updated user with auth store:', authErr);
+            }
+
+            get().fetchUsers().catch(() => {});
+
+            return mergedUser;
+        } catch (error) {
+            const message = error?.errors?.[0]?.message ?? error?.message ?? 'Failed to update user.';
+            set({ isLoading: false, error: message });
+
+            throw error;
+        }
+    },
+
+    deleteUser: async (id) => {
+        set({ isLoading: true, error: null });
+
+        try {
+            const isDeleted = await userService.deleteUser(id);
+
+            if (isDeleted) {
+                set((state) => ({
+                    users: state.users.filter((item) => item.id !== id),
+                    selectedUser: state.selectedUser?.id === id
+                        ? null
+                        : state.selectedUser,
+                    isLoading: false,
+                    error: null,
+                }));
+            } else {
+                set({ isLoading: false });
+            }
+
+            return isDeleted;
+        } catch (error) {
+            const message = error?.message ?? 'Failed to delete user.';
+            set({ isLoading: false, error: message });
+
+            throw error;
+        }
+    },
+
+    // CREDENTIALS
+    fetchUserCredentialsByUserId: async (userId) => {
+        set({ isLoading: true, error: null });
+
+        try {
+            const credentials = await userService.fetchUserCredentialsByUserId(userId);
+            set({ userCredentials: credentials, isLoading: false, error: null });
+
+            return credentials;
+        } catch (error) {
+            const message = error?.message ?? `Failed to fetch credentials for user "${userId}".`;
+            set({ isLoading: false, error: message });
+
+            return null;
+        }
+    },
+
+    insertUserCredential: async (payload) => {
+        set({ isLoading: true, error: null });
+
+        try {
+            const validatedPayload = mutationSchema.InsertUserCredentialSchema.parse(payload);
+            const newCredential = await userService.insertUserCredential(validatedPayload);
+
+            set({ userCredentials: newCredential, isLoading: false, error: null });
+            return newCredential;
+        } catch (error) {
+            const message = error?.errors?.[0]?.message ?? error?.message ?? 'Failed to insert user credential.';
+            set({ isLoading: false, error: message });
+
+            throw error;
+        }
+    },
+
+    updateUserCredential: async (userId, payload) => {
+        set({ isLoading: true, error: null });
+
+        try {
+            const validatedPayload = mutationSchema.UpdateUserCredentialSchema.parse(payload);
+            const updatedCredential = await userService.updateUserCredential(userId, validatedPayload);
+
+            set({ userCredentials: updatedCredential, isLoading: false, error: null });
+            return updatedCredential;
+        } catch (error) {
+            const message = error?.errors?.[0]?.message ?? error?.message ?? 'Failed to update user credential.';
+            set({ isLoading: false, error: message });
+
+            throw error;
+        }
+    },
+
+    deleteUserCredential: async (userId) => {
+        set({ isLoading: true, error: null });
+
+        try {
+            const isDeleted = await userService.deleteUserCredential(userId);
+
+            if (isDeleted) {
+                set({ userCredentials: null, isLoading: false, error: null });
+            } else {
+                set({ isLoading: false });
+            }
+
+            return isDeleted;
+        } catch (error) {
+            const message = error?.message ?? 'Failed to delete user credential.';
+            set({ isLoading: false, error: message });
+
+            throw error;
+        }
+    },
+
+    // SETTINGS
+    fetchUserSettingsByUserId: async (userId) => {
+        set({ isLoading: true, error: null });
+
+        try {
+            const settings = await userService.fetchUserSettingsByUserId(userId);
+            set({ userSettings: settings, isLoading: false, error: null });
+
+            return settings;
+        } catch (error) {
+            const message = error?.message ?? `Failed to fetch settings for user "${userId}".`;
+            set({ isLoading: false, error: message });
+
+            return null;
+        }
+    },
+
+    insertUserSetting: async (payload) => {
+        set({ isLoading: true, error: null });
+
+        try {
+            const validatedPayload = mutationSchema.InsertUserSettingSchema.parse(payload);
+            const newSetting = await userService.insertUserSetting(validatedPayload);
+
+            set({ userSettings: newSetting, isLoading: false, error: null });
+            return newSetting;
+        } catch (error) {
+            const message = error?.errors?.[0]?.message ?? error?.message ?? 'Failed to insert user setting.';
+            set({ isLoading: false, error: message });
+
+            throw error;
+        }
+    },
+
+    updateUserSetting: async (userId, payload) => {
+        set({ isLoading: true, error: null });
+
+        try {
+            const validatedPayload = mutationSchema.UpdateUserSettingSchema.parse(payload);
+            const updatedSetting = await userService.updateUserSetting(userId, validatedPayload);
+
+            set({ userSettings: updatedSetting, isLoading: false, error: null });
+            return updatedSetting;
+        } catch (error) {
+            const message = error?.errors?.[0]?.message ?? error?.message ?? 'Failed to update user setting.';
+            set({ isLoading: false, error: message });
+
+            throw error;
+        }
+    },
+
+    deleteUserSetting: async (userId) => {
+        set({ isLoading: true, error: null });
+
+        try {
+            const isDeleted = await userService.deleteUserSetting(userId);
+
+            if (isDeleted) {
+                set({ userSettings: null, isLoading: false, error: null });
+            } else {
+                set({ isLoading: false });
+            }
+
+            return isDeleted;
+        } catch (error) {
+            const message = error?.message ?? 'Failed to delete user setting.';
+            set({ isLoading: false, error: message });
+
+            throw error;
+        }
+    },
+
+    // SESSIONS
+    fetchUserSessionsByUserId: async (userId) => {
+        set({ isLoading: true, error: null });
+
+        try {
+            const sessions = await userService.fetchUserSessionsByUserId(userId);
+            set({ userSessions: sessions, isLoading: false, error: null });
+
+            return sessions;
+        } catch (error) {
+            const message = error?.message ?? `Failed to fetch sessions for user "${userId}".`;
+            set({ isLoading: false, error: message });
+
+            return [];
+        }
+    },
+
+    insertUserSession: async (payload) => {
+        set({ isLoading: true, error: null });
+
+        try {
+            const validatedPayload = mutationSchema.InsertUserSessionSchema.parse(payload);
+            const newSession = await userService.insertUserSession(validatedPayload);
+
+            set((state) => ({
+                userSessions: [...state.userSessions, newSession],
+                isLoading: false,
+                error: null,
+            }));
+
+            return newSession;
+        } catch (error) {
+            const message = error?.errors?.[0]?.message ?? error?.message ?? 'Failed to insert user session.';
+            set({ isLoading: false, error: message });
+
+            throw error;
+        }
+    },
+
+    deleteUserSession: async (id) => {
+        set({ isLoading: true, error: null });
+
+        try {
+            const isDeleted = await userService.deleteUserSession(id);
+
+            if (isDeleted) {
+                set((state) => ({
+                    userSessions: state.userSessions.filter((item) => item.id !== id),
+                    isLoading: false,
+                    error: null,
+                }));
+            } else {
+                set({ isLoading: false });
+            }
+
+            return isDeleted;
+        } catch (error) {
+            const message = error?.message ?? 'Failed to delete user session.';
+            set({ isLoading: false, error: message });
+            
+            throw error;
+        }
+    },
+
+    // CONTROLS
     setSelectedUser: (user) => {
         set({ selectedUser: user });
     },
@@ -291,8 +515,6 @@ const useUserStore = create((set, get) => ({
     },
 }));
 
-export {
-    useUserStore,
-};
 
-export default useUserStore;
+// --- EXPORTS ---
+export { useUserStore };

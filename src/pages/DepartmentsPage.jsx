@@ -1,25 +1,26 @@
 // --- IMPORTS ---
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
     Building2,
     Plus,
     CheckCircle2,
+    Trash2,
 } from 'lucide-react';
 import {
-    PageContainer,
     Browser,
-    TextField,
+    Container,
     Modal,
-    useToast,
+    TextField,
 } from '../components';
 import { useDepartmentStore, useUserStore } from '../stores';
+import { useToast } from '../hooks';
 
 // --- CONFIGURATIONS ---
 const DEPARTMENT_COLUMNS = [
     { key: 'code', label: 'Code' },
-    { key: 'title', label: 'Department / College Name' },
+    { key: 'title', label: 'Name' },
     { key: 'memberCount', label: 'Faculty & Staff' },
-    { key: 'date', label: 'Established' },
+    { key: 'date', label: 'Created At' },
 ];
 
 const DEPARTMENT_SORT_OPTIONS = [
@@ -35,15 +36,30 @@ const DepartmentsPage = ({
     className,
     ...props
 }) => {
-    // HOOKS
-    const { showToast } = useToast();
-
     // STORES
     const departments = useDepartmentStore((state) => state.departments);
-    const createDepartment = useDepartmentStore((state) => state.createDepartment);
+    const fetchDepartments = useDepartmentStore((state) => state.fetchDepartments);
+    const insertDepartment = useDepartmentStore((state) => state.insertDepartment);
     const updateDepartment = useDepartmentStore((state) => state.updateDepartment);
     const deleteDepartment = useDepartmentStore((state) => state.deleteDepartment);
     const users = useUserStore((state) => state.users);
+
+    // EFFECTS
+    useEffect(() => {
+        fetchDepartments();
+    }, [fetchDepartments]);
+
+    // LISTEN FOR EXTERNAL DELETE TRIGGER (E.G. FROM INSPECTOR QUICK ACTION)
+    useEffect(() => {
+        const handleDeleteDeptEvent = (event) => {
+            if (event.detail) {
+                const targetDept = departments.find((d) => d?.id === event.detail.id) ?? event.detail;
+                setDeletingDepartment(targetDept);
+            }
+        };
+        window.addEventListener('pamantasan:delete-department', handleDeleteDeptEvent);
+        return () => window.removeEventListener('pamantasan:delete-department', handleDeleteDeptEvent);
+    }, [departments]);
 
     // STATES
     const [selectedDepartment, setSelectedDepartment] = useState(null);
@@ -51,74 +67,59 @@ const DepartmentsPage = ({
     const [editingDepartment, setEditingDepartment] = useState(null);
     const [deletingDepartment, setDeletingDepartment] = useState(null);
 
-    // FORM STATES
+    const [isCreatingDepartment, setIsCreatingDepartment] = useState(false);
+    const [isUpdatingDepartment, setIsUpdatingDepartment] = useState(false);
+    const [isDeletingDepartmentLoading, setIsDeletingDepartmentLoading] = useState(false);
+
     const [formCode, setFormCode] = useState('');
     const [formName, setFormName] = useState('');
-    const [formError, setFormError] = useState('');
+    const [formErrors, setFormErrors] = useState({});
+    const [editFormErrors, setEditFormErrors] = useState({});
 
-    // DERIVED VALUES
-    const formattedDepartmentData = useMemo(() => {
-        return departments.map((department) => {
-            const count = users.filter((user) => user.department_id === department.id).length;
-            return {
-                ...department,
-                id: department.id,
-                code: department.code,
-                title: department.name,
-                name: department.name,
-                subtitle: department.code,
-                description: department.description ?? `${department.name} collegiate department and academic operations.`,
-                division: department.division ?? 'Academic Division',
-                department_head: department.department_head ?? 'Office of the Dean',
-                faculty_count: department.faculty_count ?? (count > 0 ? count : 12),
-                memberCount: `${count > 0 ? count : (department.faculty_count ?? 12)} members`,
-                metadata: `${department.code} · ${count > 0 ? count : (department.faculty_count ?? 12)} members`,
-                department: department.name,
-                created_at: department.created_at ?? new Date().toISOString(),
-                updated_at: department.updated_at ?? department.created_at ?? new Date().toISOString(),
-                date: department.created_at && !isNaN(new Date(department.created_at).getTime())
-                    ? new Date(department.created_at).toLocaleDateString([], {
-                        month: 'short',
-                        day: 'numeric',
-                        year: 'numeric',
-                    })
-                    : 'Active',
-                badge: department.code,
-            };
-        });
-    }, [departments, users]);
+    // HOOKS
+    const { showToast } = useToast();
 
     // HANDLERS
-    const handleSelectDepartment = (item) => {
-        setSelectedDepartment(item);
-        onSelectDepartment?.(item);
+    const handleSelectDepartment = (item, targetTab = 'information') => {
+        const itemWithTab = item ? { ...item, _targetTab: targetTab } : null;
+        setSelectedDepartment(itemWithTab);
+        onSelectDepartment?.(itemWithTab, targetTab);
     };
 
     const handleOpenAddModal = () => {
         setFormCode('');
         setFormName('');
-        setFormError('');
+        setFormErrors({});
         setIsAddModalOpen(true);
     };
 
     const handleOpenEditModal = (departmentItem) => {
-        const rawDepartment = departments.find((department) => department.id === departmentItem.id) ?? departmentItem;
+        const rawDepartment = departments.find((department) => department?.id === departmentItem.id) ?? departmentItem;
         setEditingDepartment(rawDepartment);
         setFormCode(rawDepartment.code);
         setFormName(rawDepartment.name);
-        setFormError('');
+        setEditFormErrors({});
     };
 
     const handleCloseModals = () => {
+        if (isCreatingDepartment || isUpdatingDepartment || isDeletingDepartmentLoading) {
+            return;
+        }
         setIsAddModalOpen(false);
         setEditingDepartment(null);
         setDeletingDepartment(null);
-        setFormError('');
+        setFormErrors({});
+        setEditFormErrors({});
     };
 
     const handleItemAction = (actionKey, item) => {
-        if (actionKey === 'open') {
-            handleSelectDepartment(item);
+        if (actionKey === 'open' || actionKey === 'view_information') {
+            handleSelectDepartment(item, 'information');
+            return;
+        }
+
+        if (actionKey === 'view_faculty') {
+            handleSelectDepartment(item, 'faculty');
             return;
         }
 
@@ -128,23 +129,33 @@ const DepartmentsPage = ({
         }
 
         if (actionKey === 'delete') {
-            const rawDepartment = departments.find((department) => department.id === item.id) ?? item;
+            const rawDepartment = departments.find((department) => department?.id === item.id) ?? item;
             setDeletingDepartment(rawDepartment);
             return;
         }
     };
 
     const handleCreateDepartment = async () => {
-        if (!formCode.trim() || !formName.trim()) {
-            setFormError('Department code and name are both required.');
+        const errors = {};
+        if (!formCode.trim()) errors.code = 'Code is required.';
+        if (!formName.trim()) errors.name = 'Name is required.';
+
+        if (Object.keys(errors).length > 0) {
+            setFormErrors(errors);
             return;
         }
 
+        setIsCreatingDepartment(true);
+        setFormErrors({});
         try {
-            await createDepartment({
-                code: formCode.trim().toUpperCase(),
-                name: formName.trim(),
-            });
+            const minTimer = new Promise((resolve) => setTimeout(resolve, 500));
+            await Promise.all([
+                insertDepartment({
+                    code: formCode.trim().toUpperCase(),
+                    name: formName.trim(),
+                }),
+                minTimer,
+            ]);
 
             showToast({
                 type: 'success',
@@ -153,7 +164,9 @@ const DepartmentsPage = ({
             });
             handleCloseModals();
         } catch (error) {
-            setFormError(error?.message ?? 'Failed to create department.');
+            setFormErrors({ code: error?.message ?? 'Failed to create department.' });
+        } finally {
+            setIsCreatingDepartment(false);
         }
     };
 
@@ -162,16 +175,39 @@ const DepartmentsPage = ({
             return;
         }
 
-        if (!formCode.trim() || !formName.trim()) {
-            setFormError('Department code and name are both required.');
+        const errors = {};
+        if (!formCode.trim()) errors.code = 'Code is required.';
+        if (!formName.trim()) errors.name = 'Name is required.';
+
+        if (Object.keys(errors).length > 0) {
+            setEditFormErrors(errors);
             return;
         }
 
+        setIsUpdatingDepartment(true);
+        setEditFormErrors({});
         try {
-            await updateDepartment(editingDepartment.id, {
-                code: formCode.trim().toUpperCase(),
-                name: formName.trim(),
-            });
+            const minTimer = new Promise((resolve) => setTimeout(resolve, 500));
+            const [updated] = await Promise.all([
+                updateDepartment(editingDepartment.id, {
+                    code: formCode.trim().toUpperCase(),
+                    name: formName.trim(),
+                }),
+                minTimer,
+            ]);
+
+            if (selectedDepartment?.id === editingDepartment.id) {
+                const refreshed = {
+                    ...selectedDepartment,
+                    ...updated,
+                    code: updated.code,
+                    title: updated.name,
+                    name: updated.name,
+                    updatedAt: updated.updatedAt,
+                };
+                setSelectedDepartment(refreshed);
+                onSelectDepartment?.(refreshed);
+            }
 
             showToast({
                 type: 'success',
@@ -180,17 +216,48 @@ const DepartmentsPage = ({
             });
             handleCloseModals();
         } catch (error) {
-            setFormError(error?.message ?? 'Failed to update department.');
+            setEditFormErrors({ code: error?.message ?? 'Failed to update department.' });
+        } finally {
+            setIsUpdatingDepartment(false);
         }
     };
+
+    const deletingDeptAssignedUsers = useMemo(() => {
+        if (!deletingDepartment) return 0;
+        return (users || []).filter(
+            (u) =>
+                u.departmentId === deletingDepartment.id ||
+                u.department === deletingDepartment.name ||
+                u.department === `${deletingDepartment.code} — ${deletingDepartment.name}` ||
+                u.department === deletingDepartment.code
+        ).length;
+    }, [deletingDepartment, users]);
 
     const handleDeleteDepartment = async () => {
         if (!deletingDepartment) {
             return;
         }
 
+        if (deletingDeptAssignedUsers > 0) {
+            showToast({
+                type: 'error',
+                title: 'Cannot Delete Department',
+                description: `This department has ${deletingDeptAssignedUsers} active member(s). Reassign or remove them first.`,
+            });
+            return;
+        }
+
+        setIsDeletingDepartmentLoading(true);
         try {
-            await deleteDepartment(deletingDepartment.id);
+            const minTimer = new Promise((resolve) => setTimeout(resolve, 500));
+            await Promise.all([
+                deleteDepartment(deletingDepartment.id),
+                minTimer,
+            ]);
+            if (selectedDepartment?.id === deletingDepartment.id) {
+                setSelectedDepartment(null);
+                onSelectDepartment?.(null);
+            }
             showToast({
                 type: 'success',
                 title: 'Department Removed',
@@ -203,20 +270,73 @@ const DepartmentsPage = ({
                 title: 'Deletion Failed',
                 description: error?.message ?? 'Could not delete department.',
             });
+        } finally {
+            setIsDeletingDepartmentLoading(false);
         }
     };
 
+    // DERIVED VALUES
+    const activeSelectedDepartment = useMemo(() => {
+        if (!selectedDepartment?.id) return null;
+        const matched = departments.find((d) => d?.id === selectedDepartment.id);
+        if (!matched) return selectedDepartment;
+        return {
+            ...selectedDepartment,
+            code: matched.code,
+            name: matched.name,
+            title: matched.name,
+            subtitle: matched.code,
+            createdAt: matched.createdAt,
+            updatedAt: matched.updatedAt,
+        };
+    }, [departments, selectedDepartment]);
+
+    const formattedDepartmentData = useMemo(() => {
+        return departments.filter(Boolean).map((department) => {
+            const count = users.filter((user) =>
+                user?.departmentId === department.id ||
+                user?.department === department.name
+            ).length;
+            const createdAtDate = department.createdAt || new Date().toISOString();
+            const updatedAtDate = department.updatedAt || createdAtDate;
+            return {
+                id: department.id,
+                code: department.code ?? '',
+                title: department.name ?? department.code ?? 'Unnamed Department',
+                name: department.name ?? department.code ?? 'Unnamed Department',
+                subtitle: department.code ?? '',
+                memberCount: `${count} personnel`,
+                metadata: `${department.code ?? ''} · ${count} personnel`,
+                createdAt: createdAtDate,
+                updatedAt: updatedAtDate,
+                date: createdAtDate && !isNaN(new Date(createdAtDate).getTime())
+                    ? new Date(createdAtDate).toLocaleDateString([], {
+                        month: 'short',
+                        day: 'numeric',
+                        year: 'numeric',
+                    })
+                    : 'Active',
+                badge: department.code ?? '',
+            };
+        });
+    }, [departments, users]);
+
+    // RENDER
     return (
-        <PageContainer className={`flex flex-col gap-6 ${className ?? ''}`} {...props}>
+        <Container
+            variant="page"
+            className={`flex flex-col gap-6 ${className ?? ''}`}
+            {...props}
+        >
             <Browser
                 resourceName="departments"
                 title="Manage Departments"
-                description="Configure collegiate divisions, departments, and academic office codes."
+                description="Configure institutional departments and academic office codes."
                 data={formattedDepartmentData}
                 columns={DEPARTMENT_COLUMNS}
                 sortOptions={DEPARTMENT_SORT_OPTIONS}
-                selectedItem={selectedDepartment}
-                addItemLabel="Add Department"
+                selectedItem={activeSelectedDepartment}
+                addItemLabel="New Department"
                 addItemIcon={Plus}
                 searchPlaceholder="Search departments by code or name..."
                 onAddItem={handleOpenAddModal}
@@ -230,30 +350,40 @@ const DepartmentsPage = ({
                 <Modal
                     isOpen={isAddModalOpen}
                     onClose={handleCloseModals}
-                    title="Add New Department"
-                    description="Create an institutional department code and division title."
+                    title="New Department"
+                    description="Create an institutional department code and name."
+                    icon={Building2}
+                    callout="Departments organize institutional faculty, academic document shares, and university workflows."
+                    calloutVariant="neutral"
                     onConfirm={handleCreateDepartment}
-                    confirmLabel="Create Department"
+                    confirmLabel={isCreatingDepartment ? 'Creating Department...' : 'Create Department'}
                     cancelLabel="Cancel"
+                    isConfirmLoading={isCreatingDepartment}
+                    isConfirmDisabled={isCreatingDepartment}
                 >
                     <div className="flex flex-col gap-4 py-2">
-                        {formError && (
-                            <div className="p-3 rounded-lg bg-error-background border border-error-border text-xs text-error">
-                                {formError}
-                            </div>
-                        )}
                         <TextField
-                            label="Department Code"
-                            placeholder="e.g. CCS, HR, CAS"
+                            label="Code"
+                            placeholder="Enter your department code"
                             value={formCode}
-                            onChange={(changeEvent) => setFormCode(changeEvent.target.value.toUpperCase())}
-                            helper="Standard uppercase institutional abbreviation."
+                            onChange={(changeEvent) => {
+                                setFormCode(changeEvent.target.value.toUpperCase());
+                                if (formErrors.code) setFormErrors((prev) => ({ ...prev, code: undefined }));
+                            }}
+                            helperText="Uppercase code."
+                            required
+                            error={formErrors.code}
                         />
                         <TextField
-                            label="Department Full Name"
-                            placeholder="e.g. College of Computer Studies"
+                            label="Name"
+                            placeholder="Enter your department name"
                             value={formName}
-                            onChange={(changeEvent) => setFormName(changeEvent.target.value)}
+                            onChange={(changeEvent) => {
+                                setFormName(changeEvent.target.value);
+                                if (formErrors.name) setFormErrors((prev) => ({ ...prev, name: undefined }));
+                            }}
+                            required
+                            error={formErrors.name}
                         />
                     </div>
                 </Modal>
@@ -266,27 +396,37 @@ const DepartmentsPage = ({
                     onClose={handleCloseModals}
                     title="Edit Department"
                     description={`Update records for ${editingDepartment.code}.`}
+                    icon={Building2}
+                    callout="Modifying department properties will update associated faculty rosters and access rules."
+                    calloutVariant="neutral"
                     onConfirm={handleUpdateDepartment}
-                    confirmLabel="Save Changes"
+                    confirmLabel={isUpdatingDepartment ? 'Saving Changes...' : 'Save Changes'}
                     cancelLabel="Cancel"
+                    isConfirmLoading={isUpdatingDepartment}
+                    isConfirmDisabled={isUpdatingDepartment}
                 >
                     <div className="flex flex-col gap-4 py-2">
-                        {formError && (
-                            <div className="p-3 rounded-lg bg-error-background border border-error-border text-xs text-error">
-                                {formError}
-                            </div>
-                        )}
                         <TextField
-                            label="Department Code"
-                            placeholder="e.g. CCS, HR"
+                            label="Code"
+                            placeholder="Enter your department code"
                             value={formCode}
-                            onChange={(changeEvent) => setFormCode(changeEvent.target.value.toUpperCase())}
+                            onChange={(changeEvent) => {
+                                setFormCode(changeEvent.target.value.toUpperCase());
+                                if (editFormErrors.code) setEditFormErrors((prev) => ({ ...prev, code: undefined }));
+                            }}
+                            required
+                            error={editFormErrors.code}
                         />
                         <TextField
-                            label="Department Full Name"
-                            placeholder="e.g. College of Computer Studies"
+                            label="Name"
+                            placeholder="Enter your department name"
                             value={formName}
-                            onChange={(changeEvent) => setFormName(changeEvent.target.value)}
+                            onChange={(changeEvent) => {
+                                setFormName(changeEvent.target.value);
+                                if (editFormErrors.name) setEditFormErrors((prev) => ({ ...prev, name: undefined }));
+                            }}
+                            required
+                            error={editFormErrors.name}
                         />
                     </div>
                 </Modal>
@@ -298,15 +438,36 @@ const DepartmentsPage = ({
                     isOpen={Boolean(deletingDepartment)}
                     onClose={handleCloseModals}
                     title="Delete Department"
-                    description={`Are you sure you want to delete "${deletingDepartment.name}" (${deletingDepartment.code})? This action cannot be undone.`}
+                    description={
+                        deletingDeptAssignedUsers > 0
+                            ? `Cannot delete "${deletingDepartment.name}" (${deletingDepartment.code}) because ${deletingDeptAssignedUsers} user(s) are currently assigned to this department.`
+                            : `Are you sure you want to delete "${deletingDepartment.name}" (${deletingDepartment.code})? This action cannot be undone.`
+                    }
+                    icon={Trash2}
+                    callout={
+                        deletingDeptAssignedUsers > 0
+                            ? `Safety Guard: You must reassign or remove all ${deletingDeptAssignedUsers} member(s) before this department can be deleted.`
+                            : 'This action cannot be undone and will permanently remove this department record.'
+                    }
+                    calloutVariant="destructive"
                     onConfirm={handleDeleteDepartment}
-                    confirmLabel="Delete Department"
+                    confirmLabel={
+                        deletingDeptAssignedUsers > 0
+                            ? 'Deletion Blocked'
+                            : isDeletingDepartmentLoading
+                            ? 'Deleting Department...'
+                            : 'Delete Department'
+                    }
                     cancelLabel="Cancel"
                     variant="destructive"
+                    isConfirmLoading={isDeletingDepartmentLoading}
+                    isConfirmDisabled={isDeletingDepartmentLoading || deletingDeptAssignedUsers > 0}
                 />
             )}
-        </PageContainer>
+        </Container>
     );
 };
 
+// --- EXPORTS ---
+export { DepartmentsPage };
 export default DepartmentsPage;

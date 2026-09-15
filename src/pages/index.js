@@ -1,31 +1,10 @@
-// --- IMPORTS & EXPORTS ---
-import LoginPage from './LoginPage';
-import ForgotPasswordPage from './ForgotPasswordPage';
-import DashboardPage from './DashboardPage';
-import DocumentsPage from './DocumentsPage';
-import DepartmentsPage from './DepartmentsPage';
-import UsersPage from './UsersPage';
-import RequestDocumentPage from './RequestDocumentPage';
-import RequestsPage from './RequestsPage';
-
-export {
-    LoginPage,
-    ForgotPasswordPage,
-    DashboardPage,
-    DocumentsPage,
-    DepartmentsPage,
-    UsersPage,
-    RequestDocumentPage,
-    RequestsPage,
-};
-
-export default {
-    LoginPage,
-    ForgotPasswordPage,
-    DashboardPage,
-    DocumentsPage,
-    DepartmentsPage,
-    UsersPage,
-    RequestDocumentPage,
-    RequestsPage,
-};
+// --- EXPORTS ---
+export { LoginPage } from './LoginPage';
+export { ForgotPasswordPage } from './ForgotPasswordPage';
+export { DashboardPage } from './DashboardPage';
+export { DocumentsPage } from './DocumentsPage';
+export { DepartmentsPage } from './DepartmentsPage';
+export { UsersPage } from './UsersPage';
+export { RequestsPage } from './RequestsPage';
+export { OnboardingPage } from './OnboardingPage';
+export { ArchivesPage } from './ArchivesPage';

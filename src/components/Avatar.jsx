@@ -1,112 +1,172 @@
 // --- IMPORTS ---
-import { useState, useEffect } from 'react';
-import placeholderImage from '../assets/placeholder.png';
+import { useEffect, useState } from 'react';
 import { storageService } from '../services';
 
-// --- MODULE-LEVEL CONSTANTS ---
+
+// --- CONFIGURATIONS ---
+const BASE_STYLE = 'rounded-full object-cover bg-surface border border-surface-border shrink-0 overflow-hidden select-none';
+
 const SIZE_STYLE = {
-    xs: 'h-6 w-6 text-[10px]',
-    sm: 'h-8 w-8 text-xs',
-    md: 'h-10 w-10 text-sm',
-    lg: 'h-12 w-12 text-base',
-    xl: 'h-16 w-16 text-lg',
-    '2xl': 'h-20 w-20 text-xl',
+    small:      'h-5 w-5 text-xs',
+    medium:     'h-7 w-7 text-xs',
+    large:      'h-9 w-9 text-sm',
+    extraLarge: 'h-12 w-12 text-base',
 };
 
-const BASE_CONTAINER_STYLE =
-    'rounded-full object-cover bg-surface border border-surface-border shrink-0 overflow-hidden shadow-xs select-none';
+const FALLBACK_AVATAR = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%239ca3af"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>';
 
-function getInitialsAvatarUrl(name) {
-    const trimmedName = (name ?? '').trim() || 'User';
-    return `https://ui-avatars.com/api/?name=${encodeURIComponent(trimmedName)}&background=0f5132&color=ffffff&bold=true&format=svg`;
-}
 
-// --- COMPONENT DEFINITION ---
-function UserAvatar({
-    src = null,
-    name = '',
-    alt = '',
-    size = 'md',
-    className = '',
-    ...props
-}) {
-    // 4. GUARD CLAUSES / STATES
-    const isDirectUrl = Boolean(
-        src &&
-        (src.startsWith('http://') ||
-         src.startsWith('https://') ||
-         src.startsWith('data:') ||
-         src.startsWith('blob:'))
-    );
+// --- HELPERS ---
+export function resolveUserAvatar(user, currentUser = null) {
+    if (!user) return null;
+    if (typeof user === 'string') return user;
 
-    const [storageUrl, setStorageUrl] = useState(null);
-    const [hasLoadError, setHasLoadError] = useState(false);
-    const [previousSource, setPreviousSource] = useState(src);
+    const targetId = user.id || user.userId;
+    const isCurrentUser = Boolean(targetId && currentUser?.id && targetId === currentUser.id);
 
-    if (src !== previousSource) {
-        setPreviousSource(src);
-        setStorageUrl(null);
-        setHasLoadError(false);
+    // 1. Resolve avatar preference (local override, user's saved setting, or default SYSTEM)
+    const avatarPref = (typeof localStorage !== 'undefined' && targetId
+        ? localStorage.getItem(`pamantasan_avatar_source_${targetId}`)
+        : null) ?? user.userSettings?.avatar ?? (isCurrentUser ? currentUser?.userSettings?.avatar : null) ?? 'SYSTEM';
+
+    // 2. Resolve Google photo URL (local cache, user property, or current user property)
+    const googlePhoto = (typeof localStorage !== 'undefined' && targetId
+        ? localStorage.getItem(`pamantasan_google_photo_url_${targetId}`)
+        : null) ?? user.googlePhotoUrl ?? (isCurrentUser ? currentUser?.googlePhotoUrl : null);
+
+    if (avatarPref === 'GOOGLE' && googlePhoto) {
+        return googlePhoto;
     }
 
+    return user.avatarPath ?? user.avatar ?? null;
+}
+
+
+// --- COMPONENTS ---
+const Avatar = ({
+    size = 'medium',
+    src = null,
+    user = null,
+    alt = '',
+    className,
+    ...props
+}) => {
+    // REACTIVE LISTENER FOR AVATAR SWITCHES
+    const [avatarVersion, setAvatarVersion] = useState(0);
+    useEffect(() => {
+        const handler = () => setAvatarVersion((v) => v + 1);
+        window.addEventListener('pamantasan-avatar-changed', handler);
+        return () => window.removeEventListener('pamantasan-avatar-changed', handler);
+    }, []);
+
+    // RESOLVE EFFECTIVE SOURCE
+    const effectiveTargetSrc = user ? resolveUserAvatar(user) : src;
+
+    const isDirectUrl = Boolean(
+        effectiveTargetSrc &&
+        (effectiveTargetSrc.startsWith('http://') ||
+         effectiveTargetSrc.startsWith('https://') ||
+         effectiveTargetSrc.startsWith('data:') ||
+         effectiveTargetSrc.startsWith('blob:'))
+    );
+
+    const isPlaceholderPath = !effectiveTargetSrc ||
+        effectiveTargetSrc === 'avatars/placeholder.png' ||
+        effectiveTargetSrc === '/avatars/placeholder.png' ||
+        effectiveTargetSrc === 'placeholder.png' ||
+        effectiveTargetSrc === '/placeholder.png' ||
+        effectiveTargetSrc === 'avatars/defaultAvatar.png' ||
+        effectiveTargetSrc === '/avatars/defaultAvatar.png';
+
+    const [resolvedUrl, setResolvedUrl] = useState(isDirectUrl ? effectiveTargetSrc : null);
+    const [hasLoadError, setHasLoadError] = useState(false);
+
+    // HOOKS
     useEffect(() => {
         let isCancelled = false;
 
-        if (!src || isDirectUrl) {
+        if (isDirectUrl) {
+            setResolvedUrl(effectiveTargetSrc);
+            setHasLoadError(false);
             return;
         }
 
-        // Resolve Firebase Storage pointer path asynchronously
-        storageService
-            .getFileDownloadUrl(src)
-            .then((downloadUrl) => {
-                if (!isCancelled) {
-                    if (downloadUrl) {
-                        setStorageUrl(downloadUrl);
-                    } else {
-                        setHasLoadError(true);
+        if (!isPlaceholderPath && effectiveTargetSrc) {
+            storageService
+                .getFileDownloadUrl(effectiveTargetSrc)
+                .then((downloadUrl) => {
+                    if (!isCancelled) {
+                        if (downloadUrl) {
+                            setResolvedUrl(downloadUrl);
+                            setHasLoadError(false);
+                        } else {
+                            // If user custom avatar not found, fallback to cloud default placeholder
+                            storageService.getDefaultAvatarUrl().then((defaultUrl) => {
+                                if (!isCancelled && defaultUrl) {
+                                    setResolvedUrl(defaultUrl);
+                                }
+                            });
+                        }
                     }
-                }
-            })
-            .catch(() => {
-                if (!isCancelled) {
-                    setHasLoadError(true);
-                }
-            });
+                })
+                .catch(() => {
+                    if (!isCancelled) {
+                        storageService.getDefaultAvatarUrl().then((defaultUrl) => {
+                            if (!isCancelled && defaultUrl) {
+                                setResolvedUrl(defaultUrl);
+                            }
+                        });
+                    }
+                });
+        } else {
+            storageService
+                .getDefaultAvatarUrl()
+                .then((defaultUrl) => {
+                    if (!isCancelled && defaultUrl) {
+                        setResolvedUrl(defaultUrl);
+                        setHasLoadError(false);
+                    }
+                })
+                .catch(() => {});
+        }
 
         return () => {
             isCancelled = true;
         };
-    }, [src, isDirectUrl]);
+    }, [effectiveTargetSrc, isDirectUrl, isPlaceholderPath, avatarVersion]);
 
-    // 5. HANDLERS
+    // HANDLERS
     const handleImageError = () => {
-        setHasLoadError(true);
+        if (!hasLoadError) {
+            setHasLoadError(true);
+            storageService.getDefaultAvatarUrl().then((defaultUrl) => {
+                if (defaultUrl && defaultUrl !== resolvedUrl) {
+                    setResolvedUrl(defaultUrl);
+                    setHasLoadError(false);
+                }
+            }).catch(() => {});
+        }
     };
 
-    // 6. DERIVED VALUES
-    const sizeStyle = SIZE_STYLE[size] ?? SIZE_STYLE.md;
-    const autoAvatarUrl = getInitialsAvatarUrl(name || alt);
-    const activeUrl = isDirectUrl ? src : storageUrl;
-    const effectiveSource = !activeUrl || hasLoadError ? (hasLoadError && !activeUrl ? placeholderImage : autoAvatarUrl) : activeUrl;
-    const effectiveAlt = alt || name || 'User avatar';
+    // DERIVED VALUES
+    const sizeStyle = SIZE_STYLE[size] ?? SIZE_STYLE.medium;
+    const composedClassName = `${BASE_STYLE} ${sizeStyle} ${className ?? ''}`.trim();
+    const effectiveAlt = alt || 'User avatar';
+    const effectiveSource = (!hasLoadError && resolvedUrl) ? resolvedUrl : FALLBACK_AVATAR;
 
-    // 7. RETURN
+    // RENDER
     return (
         <img
             src={effectiveSource}
             alt={effectiveAlt}
             onError={handleImageError}
-            className={`${BASE_CONTAINER_STYLE} ${sizeStyle} ${className}`}
+            className={composedClassName}
             {...props}
         />
     );
-}
-
-export {
-    UserAvatar,
-    UserAvatar as Avatar,
 };
 
-export default UserAvatar;
 
+// --- EXPORTS ---
+export { Avatar };
+export default Avatar;

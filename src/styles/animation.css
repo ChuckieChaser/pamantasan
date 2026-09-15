@@ -40,7 +40,7 @@
 }
 
 .animate-toast-progress {
-    animation: toast-progress-shrink 5000ms linear forwards;
+    animation: toast-progress-shrink var(--toast-duration, 5000ms) linear forwards;
 }
 
 .pause-animation {

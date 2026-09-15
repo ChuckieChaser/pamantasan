@@ -1,77 +1,40 @@
 // --- IMPORTS ---
-import { useState, useEffect } from 'react';
-import { authService } from '../services';
+import { useAuthStore } from '../stores';
+
 
 // --- HOOK ---
 const useAuth = () => {
     // STATES
-    const [currentUser, setCurrentUser] = useState(null);
-    const [isLoading, setIsLoading] = useState(true);
+    const currentUser = useAuthStore((state) => state.currentUser);
+    const isLoading = useAuthStore((state) => state.isLoading);
+    const error = useAuthStore((state) => state.error);
 
-    // HOOKS
-    useEffect(() => {
-        const unsubscribe = authService.onAuthStateChanged((user) => {
-            setCurrentUser(user);
-            setIsLoading(false);
-        });
+    // CORE
+    const loginWithUniversityId = useAuthStore((state) => state.loginWithUniversityId);
+    const loginWithGoogle = useAuthStore((state) => state.loginWithGoogle);
+    const requestPasswordReset = useAuthStore((state) => state.requestPasswordReset);
+    const logout = useAuthStore((state) => state.logout);
 
-        return () => {
-            unsubscribe();
-        };
-    }, []);
+    // LISTENERS
+    const initializeAuthListener = useAuthStore((state) => state.initializeAuthListener);
 
-    // HANDLERS
-    const loginWithEmail = async (email, password) => {
-        setIsLoading(true);
-        try {
-            const authenticatedUser = await authService.loginWithEmail(email, password);
-            setCurrentUser(authenticatedUser);
-            return authenticatedUser;
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
-    const loginWithUniversityId = async (universityId, password) => {
-        setIsLoading(true);
-        try {
-            const authenticatedUser = await authService.loginWithUniversityId(universityId, password);
-            setCurrentUser(authenticatedUser);
-            return authenticatedUser;
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
-    const loginWithGoogle = async () => {
-        setIsLoading(true);
-        try {
-            const authenticatedUser = await authService.loginWithGoogle();
-            setCurrentUser(authenticatedUser);
-            return authenticatedUser;
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
-    const logout = async () => {
-        setIsLoading(true);
-        try {
-            await authService.logout();
-            setCurrentUser(null);
-        } finally {
-            setIsLoading(false);
-        }
-    };
+    // CONTROLS
+    const clearError = useAuthStore((state) => state.clearError);
 
     return {
         currentUser,
         isLoading,
-        loginWithEmail,
+        error,
         loginWithUniversityId,
         loginWithGoogle,
+        requestPasswordReset,
         logout,
+        initializeAuthListener,
+        clearError,
     };
 };
 
-export default useAuth;
+
+// --- EXPORTS ---
+export { useAuth };
+

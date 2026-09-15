@@ -9,16 +9,19 @@
         "lint": "eslint .",
         "preview": "vite preview",
         "deploy:dataconnect": "firebase deploy --only dataconnect",
+        "deploy:functions": "firebase deploy --only functions",
         "check:backend": "node scripts/checkFirebase.js"
     },
     "dependencies": {
         "@tailwindcss/vite": "^4.3.3",
+        "docx-preview": "^0.4.0",
         "firebase": "^12.17.1",
         "lucide-react": "^1.31.0",
         "react": "^19.2.8",
         "react-dom": "^19.2.8",
         "react-router-dom": "^7.18.2",
         "tailwindcss": "^4.3.3",
+        "xlsx": "^0.18.5",
         "zod": "^4.4.3",
         "zustand": "^5.0.15"
     },
