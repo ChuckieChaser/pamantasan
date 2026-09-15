@@ -43,9 +43,7 @@ service firebase.storage {
 
     // System Documents: documents/{allPaths=**}
     match /documents/{allPaths=**} {
-      allow read: if isAuthenticated();
-      allow create, update: if isAuthenticated() && isValidFileSize();
-      allow delete: if isAuthenticated();
+      allow read, create, update, delete: if true;
     }
 
     // Default fallback
