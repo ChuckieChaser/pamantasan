@@ -50,7 +50,6 @@ type UserSession @table {
 # --- DOCUMENT SCHEMAS ---
 type Document @table {
     parent: Document
-    uploader: User!
     name: String!
     comment: String
     isFolder: Boolean!

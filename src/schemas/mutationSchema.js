@@ -91,7 +91,6 @@ const InsertUserSessionSchema = z.object({
 // --- DOCUMENT SCHEMAS ---
 const InsertDocumentSchema = z.object({
     parentId: z.string().nullable().optional(),
-    uploaderId: z.string(),
     name: z.string().min(1).max(constants.INSTITUTIONAL_CONFIGURATION.MAX_NAME_LENGTH),
     comment: z.string().nullable().optional(),
     isFolder: z.boolean().default(false),

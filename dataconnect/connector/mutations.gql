@@ -217,7 +217,6 @@ mutation DeleteUserSession(
 # --- DOCUMENT MUTATIONS ---
 mutation InsertDocument(
     $parentId: UUID
-    $uploaderId: UUID!
     $name: String!
     $comment: String
     $isFolder: Boolean!
@@ -229,7 +228,6 @@ mutation InsertDocument(
     document_insert(
         data: {
             parentId: $parentId
-            uploaderId: $uploaderId
             name: $name
             comment: $comment
             isFolder: $isFolder

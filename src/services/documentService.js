@@ -44,7 +44,6 @@ const documentService = {
         const updatedTimestamp = payload.updatedAt || timestamp;
         const data = await dataConnectService.executeMutation('InsertDocument', {
             parentId: payload.parentId ?? null,
-            uploaderId: payload.uploaderId,
             name: payload.name,
             comment: payload.comment ?? null,
             isFolder: payload.isFolder ?? false,
@@ -60,7 +59,6 @@ const documentService = {
         return {
             id: formatted?.id ?? (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `doc-${Date.now()}`),
             parentId: payload.parentId ?? null,
-            uploaderId: payload.uploaderId,
             name: payload.name,
             comment: payload.comment ?? null,
             isFolder: Boolean(payload.isFolder),
@@ -577,7 +575,6 @@ function formatLiveDocument(rawDocument) {
         id: rawDocument.id,
         parent: rawDocument.parent,
         parentId: parentId,
-        uploader: rawDocument.uploader,
         name: rawDocument.name,
         comment: rawDocument.comment,
         isFolder: Boolean(rawDocument.isFolder),

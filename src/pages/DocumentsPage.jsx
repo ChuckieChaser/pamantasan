@@ -932,7 +932,6 @@ const DocumentsPage = ({
                             } else if (activeUserId) {
                                 const createdFolder = await documentService.insertDocument({
                                     name: folderName,
-                                    uploaderId: activeUserId,
                                     isFolder: true,
                                     isArchived: false,
                                     parentId: currentParent,
@@ -1040,7 +1039,6 @@ const DocumentsPage = ({
                     if (activeUserId) {
                         createdDoc = await documentService.insertDocument({
                             name: item.fileName || item.title,
-                            uploaderId: activeUserId,
                             isFolder: false,
                             isArchived: false,
                             parentId: targetParentId,
@@ -1292,7 +1290,6 @@ const DocumentsPage = ({
             if (activeUserId) {
                 await documentService.insertDocument({
                     name: uniqueFolderName,
-                    uploaderId: activeUserId,
                     isFolder: true,
                     isArchived: false,
                     parentId: targetParentId,

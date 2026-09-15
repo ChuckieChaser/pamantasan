@@ -1219,6 +1219,31 @@ const Inspector = ({
                                                 />
                                             </div>
                                         )}
+
+                                        {(() => {
+                                            const docVersions = allDocumentVersions.filter(
+                                                (v) => (v.document?.id ?? v.documentId) === item.id
+                                            );
+                                            const earliestVer = [...docVersions].sort(
+                                                (a, b) => (a.version ?? 0) - (b.version ?? 0)
+                                            )[0];
+                                            const uploader = earliestVer?.uploader;
+                                            if (!uploader) return null;
+                                            const uploaderName = `${uploader.firstName ?? ''} ${uploader.lastName ?? ''}`.trim() || uploader.email || '—';
+                                            return (
+                                                <div className={PROPERTY_ROW_STYLE}>
+                                                    <span className={PROPERTY_LABEL_STYLE}>
+                                                        <User className={ICON_STYLE} /> Uploader
+                                                    </span>
+                                                    <span
+                                                        className={PROPERTY_VALUE_STYLE}
+                                                        title={uploaderName}
+                                                    >
+                                                        {uploaderName}
+                                                    </span>
+                                                </div>
+                                            );
+                                        })()}
                                     </>
                                 )}
 
