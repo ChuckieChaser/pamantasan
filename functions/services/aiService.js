@@ -7,7 +7,7 @@ const VERTEX_LOCATION = process.env.VERTEX_AI_LOCATION || 'us-central1';
 const DEFAULT_STORAGE_BUCKET = process.env.STORAGE_BUCKET_NAME || 'pamantasan-records-210fe.firebasestorage.app';
 
 // Model cascade: Try Gemini 2.0 Flash first; fallback to Gemini 1.5 Flash if 503 capacity unavailable
-const MODEL_CANDIDATES = ['gemini-3.8-flash', 'gemini-3.7-flash'];
+const MODEL_CANDIDATES = ['gemini-2.0-flash-001', 'gemini-1.5-flash-002'];
 
 // Lazy-loaded Vertex AI client instance
 let vertexAIClient = null;
@@ -86,7 +86,7 @@ function safeParseJSON(rawText) {
  * Initializes and returns a Vertex AI generative model instance for a specified model alias.
  * Gracefully handles missing package if dependency is not yet installed.
  */
-function getGenerativeModel(modelName = 'gemini-3.8-flash') {
+function getGenerativeModel(modelName = 'gemini-2.0-flash-001') {
     if (generativeModelCache.has(modelName)) {
         return generativeModelCache.get(modelName);
     }

@@ -1488,11 +1488,11 @@ const Inspector = ({
                                             </span>
                                         </div>
 
-                                        {(versionItem.summary || versionItem.changeSummary) && (
+                                        {versionItem.changeSummary && (
                                             <div className={`${CALLOUT_BOX_STYLE} flex items-start gap-2.5 py-2 px-2.5`}>
                                                 <Sparkles className="h-4 w-4 text-text-muted shrink-0 mt-0.5" />
                                                 <span className="leading-relaxed text-xs">
-                                                    {versionItem.summary || versionItem.changeSummary}
+                                                    {versionItem.changeSummary}
                                                 </span>
                                             </div>
                                         )}
