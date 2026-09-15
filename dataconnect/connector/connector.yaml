@@ -1,5 +1,5 @@
-connectorId: "default"
+connectorId: 'default'
 generate:
-  javascriptSdk:
-    outputDir: "../../src/generated/dataconnect"
-    package: "@pamantasan/dataconnect"
+    javascriptSdk:
+        outputDir: '../../src/generated/dataconnect'
+        package: '@pamantasan/dataconnect'

@@ -1,225 +1,608 @@
 # --- DEPARTMENT MUTATIONS ---
-mutation CreateDepartment($name: String!, $code: String!) @auth(level: PUBLIC) {
-  department_insert(data: {
-    name: $name
-    code: $code
-  })
+mutation InsertDepartment(
+    $name: String!
+    $code: String!
+    $createdAt: Timestamp
+    $updatedAt: Timestamp
+) @auth(level: USER) {
+    department_insert(
+        data: {
+            name: $name
+            code: $code
+            createdAt: $createdAt
+            updatedAt: $updatedAt
+        }
+    )
 }
 
+mutation UpdateDepartment(
+    $id: UUID!
+    $name: String
+    $code: String
+    $updatedAt: Timestamp
+) @auth(level: USER) {
+    department_update(
+        id: $id
+        data: {
+            name: $name
+            code: $code
+            updatedAt: $updatedAt
+        }
+    )
+}
+
+mutation DeleteDepartment(
+    $id: UUID!
+) @auth(level: USER) {
+    department_delete(id: $id)
+}
+
+
 # --- USER MUTATIONS ---
-mutation CreateUser(
-  $universityId: String!
-  $email: String!
-  $role: String!
-  $status: String!
-  $firstName: String!
-  $middleName: String
-  $lastName: String!
-  $avatarPath: String
-  $departmentId: UUID!
-) @auth(level: PUBLIC) {
-  user_insert(data: {
-    universityId: $universityId
-    email: $email
-    role: $role
-    status: $status
-    firstName: $firstName
-    middleName: $middleName
-    lastName: $lastName
-    avatarPath: $avatarPath
-    departmentId: $departmentId
-  })
+mutation InsertUser(
+    $universityId: String!
+    $departmentId: UUID!
+    $role: String!
+    $email: String!
+    $avatarPath: String
+    $firstName: String!
+    $middleName: String
+    $lastName: String!
+    $status: String!
+    $createdAt: Timestamp
+    $updatedAt: Timestamp
+) @auth(level: USER) {
+    user_insert(
+        data: {
+            universityId: $universityId
+            departmentId: $departmentId
+            role: $role
+            email: $email
+            avatarPath: $avatarPath
+            firstName: $firstName
+            middleName: $middleName
+            lastName: $lastName
+            status: $status
+            createdAt: $createdAt
+            updatedAt: $updatedAt
+        }
+    )
 }
 
 mutation UpdateUser(
-  $id: UUID!
-  $firstName: String
-  $middleName: String
-  $lastName: String
-  $avatarPath: String
-  $status: String
-  $role: String
-) @auth(level: PUBLIC) {
-  user_update(
-    id: $id
-    data: {
-      firstName: $firstName
-      middleName: $middleName
-      lastName: $lastName
-      avatarPath: $avatarPath
-      status: $status
-      role: $role
-    }
-  )
+    $id: UUID!
+    $departmentId: UUID
+    $role: String
+    $email: String
+    $avatarPath: String
+    $firstName: String
+    $middleName: String
+    $lastName: String
+    $status: String
+    $updatedAt: Timestamp
+) @auth(level: USER) {
+    user_update(
+        id: $id
+        data: {
+            departmentId: $departmentId
+            role: $role
+            email: $email
+            avatarPath: $avatarPath
+            firstName: $firstName
+            middleName: $middleName
+            lastName: $lastName
+            status: $status
+            updatedAt: $updatedAt
+        }
+    )
 }
 
-mutation UpsertUserSetting(
-  $userId: UUID!
-  $theme: String!
-  $notification: String!
-) @auth(level: PUBLIC) {
-  userSetting_insert(data: {
-    userId: $userId
-    theme: $theme
-    notification: $notification
-  })
+mutation DeleteUser(
+    $id: UUID!
+) @auth(level: USER) {
+    user_delete(id: $id)
 }
+
+mutation InsertUserCredential(
+    $userId: UUID!
+    $passwordHash: String!
+    $googleId: String
+    $createdAt: Timestamp
+    $updatedAt: Timestamp
+) @auth(level: USER) {
+    userCredential_insert(
+        data: {
+            userId: $userId
+            passwordHash: $passwordHash
+            googleId: $googleId
+            createdAt: $createdAt
+            updatedAt: $updatedAt
+        }
+    )
+}
+
+mutation UpdateUserCredential(
+    $userId: UUID!
+    $passwordHash: String
+    $googleId: String
+    $updatedAt: Timestamp
+) @auth(level: USER) {
+    userCredential_update(
+        key: { userId: $userId }
+        data: {
+            passwordHash: $passwordHash
+            googleId: $googleId
+            updatedAt: $updatedAt
+        }
+    )
+}
+
+mutation DeleteUserCredential(
+    $userId: UUID!
+) @auth(level: USER) {
+    userCredential_delete(key: { userId: $userId })
+}
+
+mutation InsertUserSetting(
+    $userId: UUID!
+    $theme: String!
+    $notification: String!
+    $createdAt: Timestamp
+    $updatedAt: Timestamp
+) @auth(level: USER) {
+    userSetting_insert(
+        data: {
+            userId: $userId
+            theme: $theme
+            notification: $notification
+            createdAt: $createdAt
+            updatedAt: $updatedAt
+        }
+    )
+}
+
+mutation UpdateUserSetting(
+    $userId: UUID!
+    $theme: String
+    $notification: String
+    $updatedAt: Timestamp
+) @auth(level: USER) {
+    userSetting_update(
+        key: { userId: $userId }
+        data: {
+            theme: $theme
+            notification: $notification
+            updatedAt: $updatedAt
+        }
+    )
+}
+
+mutation DeleteUserSetting(
+    $userId: UUID!
+) @auth(level: USER) {
+    userSetting_delete(key: { userId: $userId })
+}
+
+mutation InsertUserSession(
+    $userId: UUID!
+    $tokenHash: String!
+    $ipAddress: String
+    $userAgent: String
+    $createdAt: Timestamp
+    $expiredAt: Timestamp
+) @auth(level: USER) {
+    userSession_insert(
+        data: {
+            userId: $userId
+            tokenHash: $tokenHash
+            ipAddress: $ipAddress
+            userAgent: $userAgent
+            createdAt: $createdAt
+            expiredAt: $expiredAt
+        }
+    )
+}
+
+mutation DeleteUserSession(
+    $id: UUID!
+) @auth(level: USER) {
+    userSession_delete(id: $id)
+}
+
 
 # --- DOCUMENT MUTATIONS ---
-mutation CreateDocument(
-  $name: String!
-  $uploaderId: UUID!
-  $isFolder: Boolean!
-  $isArchived: Boolean!
-  $parentId: UUID
-  $comment: String
-) @auth(level: PUBLIC) {
-  document_insert(data: {
-    name: $name
-    uploaderId: $uploaderId
-    isFolder: $isFolder
-    isArchived: $isArchived
-    parentId: $parentId
-    comment: $comment
-  })
+mutation InsertDocument(
+    $parentId: UUID
+    $uploaderId: UUID!
+    $name: String!
+    $comment: String
+    $isFolder: Boolean!
+    $isArchived: Boolean!
+    $createdAt: Timestamp
+    $updatedAt: Timestamp
+) @auth(level: USER) {
+    document_insert(
+        data: {
+            parentId: $parentId
+            uploaderId: $uploaderId
+            name: $name
+            comment: $comment
+            isFolder: $isFolder
+            isArchived: $isArchived
+            createdAt: $createdAt
+            updatedAt: $updatedAt
+        }
+    )
 }
 
 mutation UpdateDocument(
-  $id: UUID!
-  $name: String
-  $isArchived: Boolean
-  $comment: String
-) @auth(level: PUBLIC) {
-  document_update(
-    id: $id
-    data: {
-      name: $name
-      isArchived: $isArchived
-      comment: $comment
-    }
-  )
+    $id: UUID!
+    $parentId: UUID
+    $name: String
+    $comment: String
+    $isFolder: Boolean
+    $isArchived: Boolean
+    $updatedAt: Timestamp
+) @auth(level: USER) {
+    document_update(
+        id: $id
+        data: {
+            parentId: $parentId
+            name: $name
+            comment: $comment
+            isFolder: $isFolder
+            isArchived: $isArchived
+            updatedAt: $updatedAt
+        }
+    )
 }
 
-mutation CreateDocumentVersion(
-  $documentId: UUID!
-  $uploaderId: UUID!
-  $version: Int!
-  $path: String!
-  $sizeBytes: Int64!
-  $mimeType: String!
-  $classification: String!
-  $changeSummary: String
-  $summary: String
-  $textHash: String
-) @auth(level: PUBLIC) {
-  documentVersion_insert(data: {
-    documentId: $documentId
-    uploaderId: $uploaderId
-    version: $version
-    path: $path
-    sizeBytes: $sizeBytes
-    mimeType: $mimeType
-    classification: $classification
-    changeSummary: $changeSummary
-    summary: $summary
-    textHash: $textHash
-  })
+mutation DeleteDocument(
+    $id: UUID!
+) @auth(level: USER) {
+    document_delete(id: $id)
 }
 
-mutation UpdateDocumentVersionStatus(
-  $id: UUID!
-  $approverId: UUID
-  $publisherId: UUID
-  $rejecterId: UUID
-  $rejectionReason: String
-) @auth(level: PUBLIC) {
-  documentVersion_update(
-    id: $id
-    data: {
-      approverId: $approverId
-      publisherId: $publisherId
-      rejecterId: $rejecterId
-      rejectionReason: $rejectionReason
-    }
-  )
+mutation InsertDocumentVersion(
+    $documentId: UUID!
+    $uploaderId: UUID!
+    $approverId: UUID
+    $publisherId: UUID
+    $rejecterId: UUID
+    $version: Int!
+    $checksum: String
+    $path: String!
+    $sizeBytes: Int64!
+    $mimeType: String!
+    $classification: String!
+    $changeSummary: String
+    $rejectionReason: String
+    $summary: String
+    $textHash: String
+    $createdAt: Timestamp
+    $updatedAt: Timestamp
+) @auth(level: USER) {
+    documentVersion_insert(
+        data: {
+            documentId: $documentId
+            uploaderId: $uploaderId
+            approverId: $approverId
+            publisherId: $publisherId
+            rejecterId: $rejecterId
+            version: $version
+            checksum: $checksum
+            path: $path
+            sizeBytes: $sizeBytes
+            mimeType: $mimeType
+            classification: $classification
+            changeSummary: $changeSummary
+            rejectionReason: $rejectionReason
+            summary: $summary
+            textHash: $textHash
+            createdAt: $createdAt
+            updatedAt: $updatedAt
+        }
+    )
 }
 
-mutation CreateDocumentShare(
-  $documentId: UUID!
-  $sharerId: UUID!
-  $recipientId: UUID
-  $departmentId: UUID!
-  $status: String!
-) @auth(level: PUBLIC) {
-  documentShare_insert(data: {
-    documentId: $documentId
-    sharerId: $sharerId
-    recipientId: $recipientId
-    departmentId: $departmentId
-    status: $status
-  })
+mutation UpdateDocumentVersion(
+    $id: UUID!
+    $approverId: UUID
+    $publisherId: UUID
+    $rejecterId: UUID
+    $checksum: String
+    $path: String
+    $sizeBytes: Int64
+    $mimeType: String
+    $classification: String
+    $changeSummary: String
+    $rejectionReason: String
+    $summary: String
+    $textHash: String
+    $updatedAt: Timestamp
+) @auth(level: USER) {
+    documentVersion_update(
+        id: $id
+        data: {
+            approverId: $approverId
+            publisherId: $publisherId
+            rejecterId: $rejecterId
+            checksum: $checksum
+            path: $path
+            sizeBytes: $sizeBytes
+            mimeType: $mimeType
+            classification: $classification
+            changeSummary: $changeSummary
+            rejectionReason: $rejectionReason
+            summary: $summary
+            textHash: $textHash
+            updatedAt: $updatedAt
+        }
+    )
 }
 
-# --- REQUEST MUTATIONS ---
-mutation CreateDocumentRequest(
-  $requesterId: UUID!
-  $subject: String!
-  $status: String!
-) @auth(level: PUBLIC) {
-  documentRequest_insert(data: {
-    requesterId: $requesterId
-    subject: $subject
-    status: $status
-  })
+mutation DeleteDocumentVersion(
+    $id: UUID!
+) @auth(level: USER) {
+    documentVersion_delete(id: $id)
 }
 
-mutation CreateCoordinatorRequest(
-  $requesterId: UUID!
-  $action: String!
-  $data: String!
-  $status: String!
-) @auth(level: PUBLIC) {
-  coordinatorRequest_insert(data: {
-    requesterId: $requesterId
-    action: $action
-    data: $data
-    status: $status
-  })
+mutation InsertDocumentShare(
+    $documentId: UUID!
+    $sharerId: UUID!
+    $recipientId: UUID
+    $departmentId: UUID!
+    $status: String!
+    $createdAt: Timestamp
+    $updatedAt: Timestamp
+) @auth(level: USER) {
+    documentShare_insert(
+        data: {
+            documentId: $documentId
+            sharerId: $sharerId
+            recipientId: $recipientId
+            departmentId: $departmentId
+            status: $status
+            createdAt: $createdAt
+            updatedAt: $updatedAt
+        }
+    )
 }
 
-# --- NOTIFICATION & AUDIT LOG MUTATIONS ---
-mutation CreateNotification(
-  $recipientId: UUID!
-  $actorId: UUID
-  $entityType: String!
-  $entityId: UUID!
-  $action: String!
-  $isRead: Boolean!
-  $isEmailed: Boolean!
-) @auth(level: PUBLIC) {
-  notification_insert(data: {
-    recipientId: $recipientId
-    actorId: $actorId
-    entityType: $entityType
-    entityId: $entityId
-    action: $action
-    isRead: $isRead
-    isEmailed: $isEmailed
-  })
+mutation UpdateDocumentShare(
+    $id: UUID!
+    $recipientId: UUID
+    $departmentId: UUID
+    $status: String
+    $updatedAt: Timestamp
+) @auth(level: USER) {
+    documentShare_update(
+        id: $id
+        data: {
+            recipientId: $recipientId
+            departmentId: $departmentId
+            status: $status
+            updatedAt: $updatedAt
+        }
+    )
 }
 
-mutation CreateAuditLog(
-  $actorId: UUID
-  $entityType: String!
-  $entityId: UUID!
-  $action: String!
-  $data: String!
-) @auth(level: PUBLIC) {
-  auditLog_insert(data: {
-    actorId: $actorId
-    entityType: $entityType
-    entityId: $entityId
-    action: $action
-    data: $data
-  })
+mutation DeleteDocumentShare(
+    $id: UUID!
+) @auth(level: USER) {
+    documentShare_delete(id: $id)
+}
+
+mutation InsertDocumentRequest(
+    $requesterId: UUID!
+    $resolverId: UUID
+    $subject: String!
+    $status: String!
+    $createdAt: Timestamp
+    $updatedAt: Timestamp
+) @auth(level: USER) {
+    documentRequest_insert(
+        data: {
+            requesterId: $requesterId
+            resolverId: $resolverId
+            subject: $subject
+            status: $status
+            createdAt: $createdAt
+            updatedAt: $updatedAt
+        }
+    )
+}
+
+mutation UpdateDocumentRequest(
+    $id: UUID!
+    $resolverId: UUID
+    $subject: String
+    $status: String
+    $updatedAt: Timestamp
+) @auth(level: USER) {
+    documentRequest_update(
+        id: $id
+        data: {
+            resolverId: $resolverId
+            subject: $subject
+            status: $status
+            updatedAt: $updatedAt
+        }
+    )
+}
+
+mutation DeleteDocumentRequest(
+    $id: UUID!
+) @auth(level: USER) {
+    documentRequest_delete(id: $id)
+}
+
+mutation InsertDocumentRequestMessage(
+    $documentRequestId: UUID!
+    $userId: UUID
+    $message: String!
+    $createdAt: Timestamp
+) @auth(level: USER) {
+    documentRequestMessage_insert(
+        data: {
+            documentRequestId: $documentRequestId
+            userId: $userId
+            message: $message
+            createdAt: $createdAt
+        }
+    )
+}
+
+mutation DeleteDocumentRequestMessage(
+    $id: UUID!
+) @auth(level: USER) {
+    documentRequestMessage_delete(id: $id)
+}
+
+mutation InsertDocumentRequestAttachment(
+    $documentRequestId: UUID!
+    $documentId: UUID!
+    $attachedById: UUID!
+    $createdAt: Timestamp
+) @auth(level: USER) {
+    documentRequestAttachment_insert(
+        data: {
+            documentRequestId: $documentRequestId
+            documentId: $documentId
+            attachedById: $attachedById
+            createdAt: $createdAt
+        }
+    )
+}
+
+mutation DeleteDocumentRequestAttachment(
+    $id: UUID!
+) @auth(level: USER) {
+    documentRequestAttachment_delete(id: $id)
+}
+
+
+# --- COORDINATOR REQUEST MUTATIONS ---
+mutation InsertCoordinatorRequest(
+    $requesterId: UUID!
+    $reviewerId: UUID
+    $action: String!
+    $data: String!
+    $status: String!
+    $rejectionReason: String
+    $createdAt: Timestamp
+    $updatedAt: Timestamp
+) @auth(level: USER) {
+    coordinatorRequest_insert(
+        data: {
+            requesterId: $requesterId
+            reviewerId: $reviewerId
+            action: $action
+            data: $data
+            status: $status
+            rejectionReason: $rejectionReason
+            createdAt: $createdAt
+            updatedAt: $updatedAt
+        }
+    )
+}
+
+mutation UpdateCoordinatorRequest(
+    $id: UUID!
+    $reviewerId: UUID
+    $action: String
+    $data: String
+    $status: String
+    $rejectionReason: String
+    $updatedAt: Timestamp
+) @auth(level: USER) {
+    coordinatorRequest_update(
+        id: $id
+        data: {
+            reviewerId: $reviewerId
+            action: $action
+            data: $data
+            status: $status
+            rejectionReason: $rejectionReason
+            updatedAt: $updatedAt
+        }
+    )
+}
+
+mutation DeleteCoordinatorRequest(
+    $id: UUID!
+) @auth(level: USER) {
+    coordinatorRequest_delete(id: $id)
+}
+
+
+# --- NOTIFICATION MUTATIONS ---
+mutation InsertNotification(
+    $recipientId: UUID!
+    $actorId: UUID
+    $entityType: String!
+    $entityId: UUID!
+    $action: String!
+    $isRead: Boolean!
+    $isEmailed: Boolean!
+    $createdAt: Timestamp
+    $updatedAt: Timestamp
+) @auth(level: USER) {
+    notification_insert(
+        data: {
+            recipientId: $recipientId
+            actorId: $actorId
+            entityType: $entityType
+            entityId: $entityId
+            action: $action
+            isRead: $isRead
+            isEmailed: $isEmailed
+            createdAt: $createdAt
+            updatedAt: $updatedAt
+        }
+    )
+}
+
+mutation UpdateNotification(
+    $id: UUID!
+    $isRead: Boolean
+    $isEmailed: Boolean
+    $updatedAt: Timestamp
+) @auth(level: USER) {
+    notification_update(
+        id: $id
+        data: {
+            isRead: $isRead
+            isEmailed: $isEmailed
+            updatedAt: $updatedAt
+        }
+    )
+}
+
+mutation DeleteNotification(
+    $id: UUID!
+) @auth(level: USER) {
+    notification_delete(id: $id)
+}
+
+
+# --- AUDIT LOG MUTATIONS ---
+mutation InsertAuditLog(
+    $actorId: UUID
+    $entityType: String!
+    $entityId: UUID!
+    $action: String!
+    $data: String!
+    $createdAt: Timestamp
+) @auth(level: USER) {
+    auditLog_insert(
+        data: {
+            actorId: $actorId
+            entityType: $entityType
+            entityId: $entityId
+            action: $action
+            data: $data
+            createdAt: $createdAt
+        }
+    )
 }

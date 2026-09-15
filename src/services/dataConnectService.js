@@ -2,19 +2,12 @@
 import { queryRef, mutationRef, executeQuery, executeMutation } from 'firebase/data-connect';
 import { dataConnect } from './firebase';
 
+
 // --- CONFIGURATIONS ---
-const OPERATION_TIMEOUT_MILLISECONDS = 15000;
+const OPERATION_TIMEOUT_MILLISECONDS = 15_000;
 
-// --- HELPERS ---
-function createTimeoutPromise(milliseconds, operationName) {
-    return new Promise((_, reject) => {
-        setTimeout(() => {
-            reject(new Error(`Firebase Data Connect operation "${operationName}" timed out after ${milliseconds}ms.`));
-        }, milliseconds);
-    });
-}
 
-// --- SERVICE IMPLEMENTATION ---
+// --- SERVICES ---
 const dataConnectService = {
     executeQuery: async (queryName, variables = {}) => {
         if (!dataConnect) {
@@ -22,14 +15,13 @@ const dataConnectService = {
         }
 
         const queryReference = queryRef(dataConnect, queryName, variables);
-        const executionPromise = executeQuery(queryReference);
+        const response = await executeWithTimeout(
+            executeQuery(queryReference),
+            OPERATION_TIMEOUT_MILLISECONDS,
+            queryName
+        );
 
-        const response = await Promise.race([
-            executionPromise,
-            createTimeoutPromise(OPERATION_TIMEOUT_MILLISECONDS, queryName),
-        ]);
-
-        return response?.data ?? null;
+        return response.data;
     },
 
     executeMutation: async (mutationName, variables = {}) => {
@@ -38,19 +30,32 @@ const dataConnectService = {
         }
 
         const mutationReference = mutationRef(dataConnect, mutationName, variables);
-        const executionPromise = executeMutation(mutationReference);
+        const response = await executeWithTimeout(
+            executeMutation(mutationReference),
+            OPERATION_TIMEOUT_MILLISECONDS,
+            mutationName
+        );
 
-        const response = await Promise.race([
-            executionPromise,
-            createTimeoutPromise(OPERATION_TIMEOUT_MILLISECONDS, mutationName),
-        ]);
-
-        return response?.data ?? null;
+        return response.data;
     },
 };
 
-export {
-    dataConnectService,
-};
 
-export default dataConnectService;
+// --- HELPERS ---
+function executeWithTimeout(promise, milliseconds, operationName) {
+    let timeoutId;
+
+    const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => {
+            reject(new Error(`Firebase Data Connect operation "${operationName}" timed out after ${milliseconds}ms.`));
+        }, milliseconds);
+    });
+
+    return Promise.race([promise, timeoutPromise]).finally(() => {
+        clearTimeout(timeoutId);
+    });
+}
+
+
+// --- EXPORTS ---
+export { dataConnectService };

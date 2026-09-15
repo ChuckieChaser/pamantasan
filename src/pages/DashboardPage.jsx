@@ -9,19 +9,17 @@ import {
     Activity,
 } from 'lucide-react';
 import {
-    CardContainer,
-    PrimaryButton,
-    SecondaryButton,
-    RoleBadge,
+    Badge,
+    Button,
+    Container,
 } from '../components';
 import {
     useDocumentStore,
     useDepartmentStore,
-    useDocumentRequestStore,
-    useAuditLogStore,
+    useAuditStore,
     useUserStore,
 } from '../stores';
-import { USER_ROLES } from '../constants';
+import { constants } from '../constants';
 
 // --- CONFIGURATIONS ---
 const UPCOMING_DEADLINES = [
@@ -77,11 +75,11 @@ const DashboardPage = ({
     // STORES
     const documents = useDocumentStore((state) => state.documents ?? []);
     const departments = useDepartmentStore((state) => state.departments ?? []);
-    const requests = useDocumentRequestStore((state) => state.requests ?? state.documentRequests ?? []);
-    const auditLogs = useAuditLogStore((state) => state.auditLogs ?? []);
+    const requests = useDocumentStore((state) => state.documentRequests ?? []);
+    const auditLogs = useAuditStore((state) => state.auditLogs ?? []);
     const users = useUserStore((state) => state.users ?? []);
 
-    // DERIVED METRICS
+    // DERIVED VALUES
     const dynamicMetrics = useMemo(() => {
         const safeDocs = Array.isArray(documents) ? documents : [];
         const safeRequests = Array.isArray(requests) ? requests : [];
@@ -135,7 +133,7 @@ const DashboardPage = ({
         return safeAuditLogs.slice(0, 5).map((log) => {
             const actor = safeUsers.find((item) => item.id === log.actor_id);
             const actorName = actor ? `${actor.first_name} ${actor.last_name}` : 'Institutional System';
-            const actorRole = actor?.role ?? USER_ROLES.MEMBER;
+            const actorRole = actor?.role ?? constants.USERS_ROLE.MEMBER;
             const actorDepartment = safeDepts.find((item) => item.id === actor?.department_id)?.name ?? 'Central Administration';
             const actionFormatted = log.action?.replace(/_/g, ' ');
 
@@ -160,13 +158,17 @@ const DashboardPage = ({
         });
     }, [auditLogs, users, departments]);
 
+    // RENDER
     return (
         <div className={`flex flex-col gap-6 w-full ${className ?? ''}`} {...props}>
-            {/* 1. WELCOME BANNER */}
-            <CardContainer className="relative overflow-hidden bg-gradient-to-r from-accent/20 via-surface to-surface border border-surface-border p-6 sm:p-8 rounded-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+            {/* WELCOME BANNER */}
+            <Container
+                variant="card"
+                className="relative overflow-hidden bg-gradient-to-r from-accent/20 via-surface to-surface border border-surface-border p-6 sm:p-8 rounded-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-6"
+            >
                 <div className="flex flex-col gap-2 max-w-2xl">
                     <div className="flex items-center gap-2">
-                        <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-accent text-text-inverted tracking-wide uppercase">
+                        <span className="px-3 py-1 rounded-full text-xs font-semibold bg-accent text-text-inverted tracking-wide uppercase">
                             Academic Year 2026–2027
                         </span>
                         <span className="text-xs text-text-muted">
@@ -182,30 +184,29 @@ const DashboardPage = ({
                 </div>
 
                 <div className="flex items-center gap-3 shrink-0">
-                    <SecondaryButton
+                    <Button
+                        variant="secondary"
+                        label="Request Document"
                         onClick={() => (onRequestDocument ? onRequestDocument() : onNavigate?.('request_document'))}
-                        size="md"
-                    >
-                        Request Document
-                    </SecondaryButton>
-                    <PrimaryButton
+                    />
+                    <Button
+                        variant="primary"
+                        label="Browse Repository"
                         onClick={() => (onUploadDocument ? onUploadDocument() : onNavigate?.('documents'))}
-                        size="md"
-                    >
-                        Browse Repository
-                    </PrimaryButton>
+                    />
                 </div>
-            </CardContainer>
+            </Container>
 
-            {/* 2. STATS & METRICS GRID */}
+            {/* STATS & METRICS GRID */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 {dynamicMetrics.map((metric) => {
                     const IconComponent = metric.icon;
                     const theme = METRIC_THEMES[metric.trend] ?? METRIC_THEMES.neutral;
 
                     return (
-                        <CardContainer
+                        <Container
                             key={metric.id}
+                            variant="card"
                             className={`p-5 flex flex-col gap-4 bg-surface border border-surface-border transition-colors rounded-xl ${theme.container}`}
                         >
                             <div className="flex items-center justify-between">
@@ -224,15 +225,18 @@ const DashboardPage = ({
                                     {metric.change}
                                 </span>
                             </div>
-                        </CardContainer>
+                        </Container>
                     );
                 })}
             </div>
 
-            {/* 3. TWO-COLUMN SPLIT: RECENT ACTIVITY & DEADLINES */}
+            {/* TWO-COLUMN SPLIT: RECENT ACTIVITY & DEADLINES */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 {/* LEFT 2 COLS: RECENT REPOSITORY ACTIVITY */}
-                <CardContainer className="lg:col-span-2 p-6 flex flex-col gap-4 bg-surface border border-surface-border rounded-xl">
+                <Container
+                    variant="card"
+                    className="lg:col-span-2 p-6 flex flex-col gap-4 bg-surface border border-surface-border rounded-xl"
+                >
                     <div className="flex items-center justify-between border-b border-surface-border pb-3">
                         <div className="flex items-center gap-2">
                             <Activity className="h-4 w-4 text-accent" />
@@ -255,7 +259,7 @@ const DashboardPage = ({
                                 <div
                                     key={activity.id}
                                     onClick={() => onSelectActivity?.(activity)}
-                                    className="py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 first:pt-0 last:pb-0 hover:bg-surface-hover/50 px-2 rounded-md transition-colors cursor-pointer"
+                                    className="py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 first:pt-0 last:pb-0 hover:bg-surface-hover/50 px-2 rounded-md transition-colors cursor-pointer"
                                 >
                                     <div className="flex flex-col gap-1">
                                         <span className="text-xs font-semibold text-text capitalize">
@@ -268,7 +272,10 @@ const DashboardPage = ({
                                         </div>
                                     </div>
                                     <div className="flex items-center gap-3 shrink-0">
-                                        <RoleBadge role={activity.role} size="sm" />
+                                        <Badge
+                                            variant="neutral"
+                                            label={activity.role}
+                                        />
                                         <span className="text-xs text-text-muted">
                                             {activity.timestamp}
                                         </span>
@@ -277,10 +284,13 @@ const DashboardPage = ({
                             ))
                         )}
                     </div>
-                </CardContainer>
+                </Container>
 
                 {/* RIGHT 1 COL: UPCOMING ACADEMIC DEADLINES */}
-                <CardContainer className="p-6 flex flex-col gap-4 bg-surface border border-surface-border rounded-xl">
+                <Container
+                    variant="card"
+                    className="p-6 flex flex-col gap-4 bg-surface border border-surface-border rounded-xl"
+                >
                     <div className="flex items-center justify-between border-b border-surface-border pb-3">
                         <div className="flex items-center gap-2">
                             <Calendar className="h-4 w-4 text-accent" />
@@ -295,7 +305,7 @@ const DashboardPage = ({
                         {UPCOMING_DEADLINES.map((deadline) => (
                             <div
                                 key={deadline.id}
-                                className="p-3 rounded-lg border border-surface-border bg-surface-hover/30 flex flex-col gap-1.5"
+                                className="p-3 rounded-lg border border-surface-border bg-surface-hover/30 flex flex-col gap-2"
                             >
                                 <span className="text-xs font-semibold text-text">
                                     {deadline.title}
@@ -309,10 +319,12 @@ const DashboardPage = ({
                             </div>
                         ))}
                     </div>
-                </CardContainer>
+                </Container>
             </div>
         </div>
     );
 };
 
+// --- EXPORTS ---
+export { DashboardPage };
 export default DashboardPage;

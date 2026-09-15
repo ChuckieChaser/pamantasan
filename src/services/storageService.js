@@ -2,80 +2,19 @@
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { storage } from './firebase';
 
-// --- MODULE-LEVEL CACHE ---
+
+// --- CONFIGURATIONS ---
 const URL_CACHE = new Map();
 
-// --- SERVICE IMPLEMENTATION ---
+
+// --- SERVICES ---
 const storageService = {
-    uploadAvatar: async (userId, file) => {
-        const fileExtension = file.name.split('.').pop() || 'png';
-        const sanitizedFileName = `avatar_${Date.now()}.${fileExtension}`;
-
-        if (storage) {
-            try {
-                const avatarStorageReference = ref(storage, `avatars/${userId}/${sanitizedFileName}`);
-                const uploadResult = await uploadBytes(avatarStorageReference, file, {
-                    contentType: file.type,
-                    customMetadata: {
-                        uploaderId: userId,
-                        uploadedAt: new Date().toISOString(),
-                    },
-                });
-
-                const downloadUrl = await getDownloadURL(uploadResult.ref);
-                return {
-                    path: avatarStorageReference.fullPath,
-                    downloadUrl,
-                };
-            } catch (error) {
-                console.warn('Firebase Storage direct upload notice, using persistent base64 representation:', error);
-            }
-        }
-
-        // Graceful fallback for local development or storage policy propagation
-        const dataUrl = await new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve(reader.result);
-            reader.onerror = reject;
-            reader.readAsDataURL(file);
-        });
-
-        return {
-            path: `avatars/${userId}/${sanitizedFileName}`,
-            downloadUrl: dataUrl,
-        };
-    },
-
-    uploadDocument: async (documentId, versionNumber, file) => {
-        if (!storage) {
-            throw new Error('Firebase Storage is not initialized.');
-        }
-
-        const sanitizedFileName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-        const documentStorageReference = ref(
-            storage,
-            `documents/${documentId}/v${versionNumber}_${sanitizedFileName}`
-        );
-
-        const uploadResult = await uploadBytes(documentStorageReference, file, {
-            contentType: file.type,
-            customMetadata: {
-                documentId,
-                version: String(versionNumber),
-                uploadedAt: new Date().toISOString(),
-            },
-        });
-
-        const downloadUrl = await getDownloadURL(uploadResult.ref);
-        return {
-            path: documentStorageReference.fullPath,
-            downloadUrl,
-            sizeBytes: file.size,
-            mimeType: file.type,
-        };
-    },
-
+    // DOCUMENTS
     getFileDownloadUrl: async (storagePath) => {
+        return storageService.fetchDocument(storagePath);
+    },
+
+    fetchDocument: async (storagePath) => {
         if (!storagePath) {
             return null;
         }
@@ -89,7 +28,7 @@ const storageService = {
             return storagePath;
         }
 
-        const cleanPath = storagePath.replace(/^gs:\/\/[^/]+\//, '');
+        const cleanPath = cleanStoragePath(storagePath);
 
         if (URL_CACHE.has(cleanPath)) {
             return URL_CACHE.get(cleanPath);
@@ -103,31 +42,149 @@ const storageService = {
             const fileReference = ref(storage, cleanPath);
             const downloadUrl = await getDownloadURL(fileReference);
             URL_CACHE.set(cleanPath, downloadUrl);
+
             return downloadUrl;
         } catch (error) {
-            console.warn(`Failed to resolve download URL for storage pointer "${cleanPath}":`, error);
+            console.error(`Failed to resolve download URL for "${cleanPath}":`, error);
             return null;
         }
     },
 
-    deleteFile: async (storagePath) => {
+    uploadDocument: async (documentId, file, versionNumber = 1) => {
+        if (!storage) {
+            throw new Error('Firebase Storage is not initialized.');
+        }
+
+        if (!documentId || !file) {
+            throw new Error('Document ID and file binary are required for upload.');
+        }
+
+        const sanitizedFileName = sanitizeFileName(file.name);
+        const storagePath = `documents/${documentId}/v${versionNumber}_${sanitizedFileName}`;
+        const storageReference = ref(storage, storagePath);
+
+        const uploadResult = await uploadBytes(storageReference, file, {
+            contentType: file.type,
+            customMetadata: {
+                documentId: documentId,
+                version: String(versionNumber),
+                uploadedAt: new Date().toISOString(),
+            },
+        });
+
+        const downloadUrl = await getDownloadURL(uploadResult.ref);
+        URL_CACHE.set(storageReference.fullPath, downloadUrl);
+
+        return {
+            path: storageReference.fullPath,
+            downloadUrl: downloadUrl,
+            sizeBytes: file.size,
+            mimeType: file.type,
+        };
+    },
+
+    downloadDocument: async (storagePath, fileName) => {
+        const downloadUrl = await storageService.fetchDocument(storagePath);
+        if (!downloadUrl) {
+            return null;
+        }
+
+        if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+            try {
+                const response = await fetch(downloadUrl);
+                const blob = await response.blob();
+                const blobUrl = window.URL.createObjectURL(blob);
+                const anchor = document.createElement('a');
+
+                anchor.href = blobUrl;
+                anchor.download = fileName || storagePath.split('/').pop() || 'download';
+                
+                document.body.appendChild(anchor);
+                anchor.click();
+                
+                document.body.removeChild(anchor);
+                window.URL.revokeObjectURL(blobUrl);
+            } catch (error) {
+                console.error('Direct download failed, opening in new tab:', error);
+                window.open(downloadUrl, '_blank');
+            }
+        }
+
+        return downloadUrl;
+    },
+
+    deleteDocument: async (storagePath) => {
         if (!storage || !storagePath) {
             return false;
         }
 
+        const cleanPath = cleanStoragePath(storagePath);
+
         try {
-            const fileReference = ref(storage, storagePath);
+            const fileReference = ref(storage, cleanPath);
             await deleteObject(fileReference);
+            URL_CACHE.delete(cleanPath);
+
             return true;
         } catch (error) {
-            console.warn(`Failed to delete file at "${storagePath}":`, error);
+            console.error(`Failed to delete document at "${cleanPath}":`, error);
             return false;
         }
     },
+
+    // AVATARS
+    uploadAvatar: async (userId, file) => {
+        if (!storage) {
+            throw new Error('Firebase Storage is not initialized.');
+        }
+
+        if (!userId || !file) {
+            throw new Error('User ID and avatar file are required for upload.');
+        }
+
+        const fileExtension = file.name ? file.name.split('.').pop() : 'png';
+        const sanitizedFileName = `avatar_${Date.now()}.${fileExtension}`;
+        const storagePath = `avatars/${userId}/${sanitizedFileName}`;
+        const storageReference = ref(storage, storagePath);
+
+        const uploadResult = await uploadBytes(storageReference, file, {
+            contentType: file.type,
+            customMetadata: {
+                uploaderId: userId,
+                uploadedAt: new Date().toISOString(),
+            },
+        });
+
+        const downloadUrl = await getDownloadURL(uploadResult.ref);
+        URL_CACHE.set(storageReference.fullPath, downloadUrl);
+
+        return {
+            path: storageReference.fullPath,
+            downloadUrl: downloadUrl,
+            sizeBytes: file.size,
+            mimeType: file.type,
+        };
+    },
 };
 
-export {
-    storageService,
-};
 
-export default storageService;
+// --- HELPERS ---
+function cleanStoragePath(storagePath) {
+    if (!storagePath) {
+        return '';
+    }
+
+    return storagePath.replace(/^gs:\/\/[^/]+\//, '');
+}
+
+function sanitizeFileName(fileName) {
+    if (!fileName) {
+        return `file_${Date.now()}`;
+    }
+
+    return fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+}
+
+
+// --- EXPORTS ---
+export { storageService };

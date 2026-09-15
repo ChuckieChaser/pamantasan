@@ -1,22 +1,9 @@
-// --- IMPORTS & EXPORTS ---
-import useAuth from './useAuth';
-import useClickOutside from './useClickOutside';
-import useDarkMode from './useDarkMode';
-import useDoubleClick from './useDoubleClick';
-import useSmartPosition from './useSmartPosition';
-
-export {
-    useAuth,
-    useClickOutside,
-    useDarkMode,
-    useDoubleClick,
-    useSmartPosition,
-};
-
-export default {
-    useAuth,
-    useClickOutside,
-    useDarkMode,
-    useDoubleClick,
-    useSmartPosition,
-};
+// --- EXPORTS ---
+export { useAuth } from './useAuth';
+export { useClickOutside } from './useClickOutside';
+export { useDarkMode } from './useDarkMode';
+export { useDebounce } from './useDebounce';
+export { useDoubleClick } from './useDoubleClick';
+export { useKeyPress } from './useKeyPress';
+export { useSmartPosition } from './useSmartPosition';
+export { useToast } from './useToast';

@@ -1,46 +1,56 @@
 // --- IMPORTS ---
 import { useRef, useEffect, useCallback } from 'react';
 
+
 // --- CONFIGURATIONS ---
-const DEFAULT_LATENCY_MILLISECONDS = 250;
+const DEFAULT_DELAY_MS = 250;
 
-// --- HOOKS ---
-const useDoubleClick = ({
-    onClick,
-    onDoubleClick,
-    latency = DEFAULT_LATENCY_MILLISECONDS,
-} = {}) => {
+
+// --- HOOK ---
+const useDoubleClick = ({ onClick, onDoubleClick, delay = DEFAULT_DELAY_MS } = {}) => {
     // REFS
-    const clickTimeoutReference = useRef(null);
+    const timerRef = useRef(null);
+    const onClickRef = useRef(onClick);
+    const onDoubleClickRef = useRef(onDoubleClick);
 
-    // CLEANUP TIMER ON COMPONENT UNMOUNT
+    useEffect(() => {
+        onClickRef.current = onClick;
+        onDoubleClickRef.current = onDoubleClick;
+    }, [onClick, onDoubleClick]);
+
+    // CLEANUP
     useEffect(() => {
         return () => {
-            if (clickTimeoutReference.current !== null) {
-                clearTimeout(clickTimeoutReference.current);
+            if (timerRef.current !== null) {
+                clearTimeout(timerRef.current);
             }
         };
     }, []);
 
-    // HANDLER
+    // CONTROLS
     const handleClick = useCallback(
-        (item, clickEvent) => {
-            if (clickTimeoutReference.current !== null) {
-                clearTimeout(clickTimeoutReference.current);
-                clickTimeoutReference.current = null;
-                onDoubleClick?.(item, clickEvent);
+        (item, event) => {
+            if (timerRef.current !== null) {
+                clearTimeout(timerRef.current);
+
+                timerRef.current = null;
+                onDoubleClickRef.current?.(item, event);
+                
                 return;
             }
 
-            clickTimeoutReference.current = setTimeout(() => {
-                clickTimeoutReference.current = null;
-                onClick?.(item, clickEvent);
-            }, latency);
+            timerRef.current = setTimeout(() => {
+                timerRef.current = null;
+                onClickRef.current?.(item, event);
+            }, delay);
         },
-        [onClick, onDoubleClick, latency],
+        [delay],
     );
 
     return handleClick;
 };
 
-export default useDoubleClick;
+
+// --- EXPORTS ---
+export { useDoubleClick };
+

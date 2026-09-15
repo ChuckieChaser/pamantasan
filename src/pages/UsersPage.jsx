@@ -9,17 +9,18 @@ import {
     Upload,
 } from 'lucide-react';
 import {
-    PageContainer,
+    Avatar,
     Browser,
-    TextField,
-    SelectField,
+    Container,
     Modal,
-    UserAvatar,
-    useToast,
+    SelectField,
+    TextField,
 } from '../components';
+import { useToast } from '../hooks';
 import { useUserStore, useDepartmentStore } from '../stores';
 import { storageService } from '../services';
-import { USER_ROLES, USER_STATUSES } from '../constants';
+import { constants } from '../constants';
+
 
 // --- CONFIGURATIONS ---
 const USER_COLUMNS = [
@@ -39,12 +40,13 @@ const USER_SORT_OPTIONS = [
 ];
 
 const ROLE_OPTIONS = [
-    { value: USER_ROLES.MEMBER, label: 'Member / Faculty' },
-    { value: USER_ROLES.COORDINATOR, label: 'Department Coordinator' },
-    { value: USER_ROLES.OFFICER, label: 'Department Records Officer' },
-    { value: USER_ROLES.DIRECTOR, label: 'Director / College Dean' },
-    { value: USER_ROLES.ADMINISTRATOR, label: 'Institutional Administrator' },
+    { value: constants.USERS_ROLE.MEMBER, label: 'Member / Faculty' },
+    { value: constants.USERS_ROLE.COORDINATOR, label: 'Department Coordinator' },
+    { value: constants.USERS_ROLE.OFFICER, label: 'Department Records Officer' },
+    { value: constants.USERS_ROLE.DIRECTOR, label: 'Director / College Dean' },
+    { value: constants.USERS_ROLE.ADMINISTRATOR, label: 'Institutional Administrator' },
 ];
+
 
 // --- COMPONENTS ---
 const UsersPage = ({
@@ -52,16 +54,6 @@ const UsersPage = ({
     className,
     ...props
 }) => {
-    // HOOKS
-    const { showToast } = useToast();
-
-    // STORES
-    const users = useUserStore((state) => state.users);
-    const createUser = useUserStore((state) => state.createUser);
-    const updateUser = useUserStore((state) => state.updateUser);
-    const deleteUser = useUserStore((state) => state.deleteUser);
-    const departments = useDepartmentStore((state) => state.departments);
-
     // REFS
     const addAvatarInputRef = useRef(null);
     const editAvatarInputRef = useRef(null);
@@ -78,70 +70,20 @@ const UsersPage = ({
     const [formLastName, setFormLastName] = useState('');
     const [formEmail, setFormEmail] = useState('');
     const [formDepartmentId, setFormDepartmentId] = useState('');
-    const [formRole, setFormRole] = useState(USER_ROLES.MEMBER);
+    const [formRole, setFormRole] = useState(constants.USERS_ROLE.MEMBER);
     const [formAvatarPath, setFormAvatarPath] = useState(null);
     const [formAvatarFile, setFormAvatarFile] = useState(null);
     const [formError, setFormError] = useState('');
 
-    // DERIVED VALUES
-    const departmentFormOptions = useMemo(() => {
-        return departments.map((department) => ({ value: department.id, label: `${department.code} — ${department.name}` }));
-    }, [departments]);
+    // HOOKS
+    const { showToast } = useToast();
 
-    const userFilterOptions = useMemo(() => {
-        const roleFilters = ROLE_OPTIONS.map((option) => ({
-            category: 'Institutional Role',
-            value: option.value,
-            label: option.label,
-            icon: Shield,
-        }));
-
-        const departmentFilters = departments.map((department) => ({
-            category: 'Department',
-            value: department.code,
-            label: `${department.code} (${department.name})`,
-            icon: Building2,
-        }));
-
-        return [...roleFilters, ...departmentFilters];
-    }, [departments]);
-
-    const formattedUserData = useMemo(() => {
-        return users.map((user) => {
-            const department = departments.find((dept) => dept.id === user.department_id);
-            const departmentCode = department?.code ?? 'Central';
-            const fullName = `${user.first_name} ${user.last_name}`;
-
-            return {
-                ...user,
-                id: user.id,
-                title: fullName,
-                name: fullName,
-                first_name: user.first_name,
-                middle_name: user.middle_name ?? null,
-                last_name: user.last_name,
-                university_id: user.university_id,
-                email: user.email,
-                role: user.role,
-                department: department?.name ?? departmentCode,
-                department_code: departmentCode,
-                department_id: user.department_id,
-                status: user.status,
-                avatar_path: user.avatar_path ?? null,
-                metadata: `${user.university_id} · ${departmentCode}`,
-                description: `${user.email} — ${user.role} in ${department?.name ?? departmentCode}`,
-                created_at: user.created_at ?? null,
-                updated_at: user.updated_at ?? user.created_at ?? null,
-                date: user.created_at && !isNaN(new Date(user.created_at).getTime())
-                    ? new Date(user.created_at).toLocaleDateString([], {
-                        month: 'short',
-                        day: 'numeric',
-                        year: 'numeric',
-                    })
-                    : 'Active Member',
-            };
-        });
-    }, [users, departments]);
+    // STORES
+    const users = useUserStore((state) => state.users);
+    const insertUser = useUserStore((state) => state.insertUser);
+    const updateUser = useUserStore((state) => state.updateUser);
+    const deleteUser = useUserStore((state) => state.deleteUser);
+    const departments = useDepartmentStore((state) => state.departments);
 
     // HANDLERS
     const handleSelectUser = (item) => {
@@ -155,7 +97,7 @@ const UsersPage = ({
         setFormLastName('');
         setFormEmail('');
         setFormDepartmentId(departments[0]?.id ?? '');
-        setFormRole(USER_ROLES.MEMBER);
+        setFormRole(constants.USERS_ROLE.MEMBER);
         setFormAvatarPath(null);
         setFormAvatarFile(null);
         setFormError('');
@@ -165,13 +107,13 @@ const UsersPage = ({
     const handleOpenEditModal = (userItem) => {
         const rawUser = users.find((user) => user.id === userItem.id) ?? userItem;
         setEditingUser(rawUser);
-        setFormUniversityId(rawUser.university_id);
-        setFormFirstName(rawUser.first_name);
-        setFormLastName(rawUser.last_name);
-        setFormEmail(rawUser.email);
-        setFormDepartmentId(rawUser.department_id);
-        setFormRole(rawUser.role);
-        setFormAvatarPath(rawUser.avatar_path ?? null);
+        setFormUniversityId(rawUser.university_id ?? rawUser.universityId ?? '');
+        setFormFirstName(rawUser.first_name ?? rawUser.firstName ?? '');
+        setFormLastName(rawUser.last_name ?? rawUser.lastName ?? '');
+        setFormEmail(rawUser.email ?? '');
+        setFormDepartmentId(rawUser.department_id ?? rawUser.departmentId ?? '');
+        setFormRole(rawUser.role ?? constants.USERS_ROLE.MEMBER);
+        setFormAvatarPath(rawUser.avatar_path ?? rawUser.avatarPath ?? null);
         setFormAvatarFile(null);
         setFormError('');
     };
@@ -203,7 +145,7 @@ const UsersPage = ({
 
         if (actionKey === 'verify') {
             try {
-                await updateUser(item.id, { status: USER_STATUSES.VERIFIED });
+                await updateUser(item.id, { status: constants.USERS_STATUS.VERIFIED });
                 showToast({
                     type: 'success',
                     title: 'Account Verified',
@@ -221,7 +163,7 @@ const UsersPage = ({
 
         if (actionKey === 'suspend') {
             try {
-                await updateUser(item.id, { status: USER_STATUSES.SUSPENDED });
+                await updateUser(item.id, { status: constants.USERS_STATUS.SUSPENDED });
                 showToast({
                     type: 'warning',
                     title: 'Account Suspended',
@@ -251,15 +193,15 @@ const UsersPage = ({
                 uploadedAvatarPath = uploadResult.path;
             }
 
-            await createUser({
-                university_id: formUniversityId.trim(),
-                first_name: formFirstName.trim(),
-                last_name: formLastName.trim(),
+            await insertUser({
+                universityId: formUniversityId.trim(),
+                firstName: formFirstName.trim(),
+                lastName: formLastName.trim(),
                 email: formEmail.trim().toLowerCase(),
-                department_id: formDepartmentId,
+                departmentId: formDepartmentId,
                 role: formRole,
-                status: USER_STATUSES.VERIFIED,
-                avatar_path: uploadedAvatarPath,
+                status: constants.USERS_STATUS.VERIFIED,
+                avatarPath: uploadedAvatarPath,
             });
 
             showToast({
@@ -291,17 +233,17 @@ const UsersPage = ({
             }
 
             await updateUser(editingUser.id, {
-                first_name: formFirstName.trim(),
-                last_name: formLastName.trim(),
-                department_id: formDepartmentId,
+                firstName: formFirstName.trim(),
+                lastName: formLastName.trim(),
+                departmentId: formDepartmentId,
                 role: formRole,
-                avatar_path: uploadedAvatarPath,
+                avatarPath: uploadedAvatarPath,
             });
 
             showToast({
                 type: 'success',
                 title: 'User Updated',
-                description: `Updated profile for ${editingUser.university_id}.`,
+                description: `Updated profile for ${editingUser.university_id ?? editingUser.universityId}.`,
             });
             handleCloseModals();
         } catch (error) {
@@ -319,7 +261,7 @@ const UsersPage = ({
             showToast({
                 type: 'success',
                 title: 'User Deleted',
-                description: `User ${deletingUser.university_id} has been removed.`,
+                description: `User ${deletingUser.university_id ?? deletingUser.universityId} has been removed.`,
             });
             handleCloseModals();
         } catch (error) {
@@ -331,8 +273,77 @@ const UsersPage = ({
         }
     };
 
+    // DERIVED VALUES
+    const departmentFormOptions = useMemo(() => {
+        return departments.map((department) => ({
+            value: department.id,
+            label: `${department.code} — ${department.name}`,
+        }));
+    }, [departments]);
+
+    const userFilterOptions = useMemo(() => {
+        const roleFilters = ROLE_OPTIONS.map((option) => ({
+            category: 'Institutional Role',
+            value: option.value,
+            label: option.label,
+            icon: Shield,
+        }));
+
+        const departmentFilters = departments.map((department) => ({
+            category: 'Department',
+            value: department.code,
+            label: `${department.code} (${department.name})`,
+            icon: Building2,
+        }));
+
+        return [...roleFilters, ...departmentFilters];
+    }, [departments]);
+
+    const formattedUserData = useMemo(() => {
+        return (users || []).filter(Boolean).map((user) => {
+            const userDeptId = user.department_id ?? user.departmentId ?? user.department?.id;
+            const department = departments?.find((dept) => dept?.id === userDeptId) ?? user.department;
+            const departmentCode = department?.code ?? 'Central';
+            const userFirstName = user.first_name ?? user.firstName ?? '';
+            const userLastName = user.last_name ?? user.lastName ?? '';
+            const fullName = `${userFirstName} ${userLastName}`.trim();
+            const universityId = user.university_id ?? user.universityId ?? '';
+            const createdAt = user.created_at ?? user.createdAt;
+
+            return {
+                ...user,
+                id: user.id,
+                title: fullName,
+                name: fullName,
+                first_name: userFirstName,
+                middle_name: user.middle_name ?? user.middleName ?? null,
+                last_name: userLastName,
+                university_id: universityId,
+                email: user.email,
+                role: user.role,
+                department: department?.name ?? departmentCode,
+                department_code: departmentCode,
+                department_id: userDeptId,
+                status: user.status,
+                avatar_path: user.avatar_path ?? user.avatarPath ?? null,
+                metadata: `${universityId} · ${departmentCode}`,
+                description: `${user.email} — ${user.role} in ${department?.name ?? departmentCode}`,
+                created_at: createdAt ?? null,
+                updated_at: user.updated_at ?? user.updatedAt ?? createdAt ?? null,
+                date: createdAt && !isNaN(new Date(createdAt).getTime())
+                    ? new Date(createdAt).toLocaleDateString([], {
+                        month: 'short',
+                        day: 'numeric',
+                        year: 'numeric',
+                    })
+                    : 'Active Member',
+            };
+        });
+    }, [users, departments]);
+
+    // RENDER
     return (
-        <PageContainer className={`flex flex-col gap-6 ${className ?? ''}`} {...props}>
+        <Container variant="page" className={`flex flex-col gap-6 ${className ?? ''}`} {...props}>
             <Browser
                 resourceName="users"
                 title="Manage Users"
@@ -370,10 +381,10 @@ const UsersPage = ({
 
                         {/* AVATAR PREVIEW & UPLOAD */}
                         <div className="flex items-center gap-3 p-3 rounded-lg bg-surface-hover/50 border border-surface-border">
-                            <UserAvatar
+                            <Avatar
                                 src={formAvatarFile ? URL.createObjectURL(formAvatarFile) : formAvatarPath}
-                                name={`${formFirstName || 'New'} ${formLastName || 'User'}`}
-                                size="lg"
+                                alt={`${formFirstName || 'New'} ${formLastName || 'User'}`}
+                                size="large"
                                 className="h-12 w-12 shadow-xs shrink-0"
                             />
                             <div className="flex flex-col min-w-0 flex-1">
@@ -394,9 +405,9 @@ const UsersPage = ({
                             <button
                                 type="button"
                                 onClick={() => addAvatarInputRef.current?.click()}
-                                className="px-3 py-1.5 rounded-md border border-surface-border bg-surface hover:bg-surface-hover text-xs font-medium text-text inline-flex items-center gap-1.5 cursor-pointer transition-colors"
+                                className="px-3 py-2 rounded-md border border-surface-border bg-surface hover:bg-surface-hover text-xs font-medium text-text inline-flex items-center gap-2 cursor-pointer transition-colors"
                             >
-                                <Upload className="h-3.5 w-3.5" /> Upload Photo
+                                <Upload className="h-4 w-4" /> Upload Photo
                             </button>
                         </div>
 
@@ -451,7 +462,7 @@ const UsersPage = ({
                     isOpen={Boolean(editingUser)}
                     onClose={handleCloseModals}
                     title="Edit User Details"
-                    description={`Update profile for ${editingUser.university_id}.`}
+                    description={`Update profile for ${editingUser.university_id ?? editingUser.universityId}.`}
                     onConfirm={handleUpdateUser}
                     confirmLabel="Save Changes"
                     cancelLabel="Cancel"
@@ -463,10 +474,10 @@ const UsersPage = ({
                             </div>
                         )}
                         <div className="flex items-center gap-3 p-3 rounded-lg bg-surface-hover/50 border border-surface-border">
-                            <UserAvatar
+                            <Avatar
                                 src={formAvatarFile ? URL.createObjectURL(formAvatarFile) : formAvatarPath}
-                                name={`${formFirstName} ${formLastName}`}
-                                size="lg"
+                                alt={`${formFirstName} ${formLastName}`}
+                                size="large"
                                 className="h-12 w-12 shadow-xs shrink-0"
                             />
                             <div className="flex flex-col min-w-0 flex-1">
@@ -474,7 +485,7 @@ const UsersPage = ({
                                     {formFirstName || 'User'} {formLastName}
                                 </span>
                                 <span className="text-xs text-text-muted truncate">
-                                    {editingUser.university_id} · {editingUser.email}
+                                    {editingUser.university_id ?? editingUser.universityId} · {editingUser.email}
                                 </span>
                             </div>
                             <input
@@ -487,9 +498,9 @@ const UsersPage = ({
                             <button
                                 type="button"
                                 onClick={() => editAvatarInputRef.current?.click()}
-                                className="px-3 py-1.5 rounded-md border border-surface-border bg-surface hover:bg-surface-hover text-xs font-medium text-text inline-flex items-center gap-1.5 cursor-pointer transition-colors"
+                                className="px-3 py-2 rounded-md border border-surface-border bg-surface hover:bg-surface-hover text-xs font-medium text-text inline-flex items-center gap-2 cursor-pointer transition-colors"
                             >
-                                <Upload className="h-3.5 w-3.5" /> Upload Photo
+                                <Upload className="h-4 w-4" /> Upload Photo
                             </button>
                         </div>
                         <div className="grid grid-cols-2 gap-3">
@@ -528,15 +539,18 @@ const UsersPage = ({
                     isOpen={Boolean(deletingUser)}
                     onClose={handleCloseModals}
                     title="Delete User"
-                    description={`Are you sure you want to delete ${deletingUser.first_name} ${deletingUser.last_name} (${deletingUser.university_id})? This will also remove all associated sessions.`}
+                    description={`Are you sure you want to delete ${deletingUser.first_name ?? deletingUser.firstName} ${deletingUser.last_name ?? deletingUser.lastName} (${deletingUser.university_id ?? deletingUser.universityId})? This will also remove all associated sessions.`}
                     onConfirm={handleDeleteUser}
                     confirmLabel="Delete User"
                     cancelLabel="Cancel"
                     variant="destructive"
                 />
             )}
-        </PageContainer>
+        </Container>
     );
 };
 
+
+// --- EXPORTS ---
+export { UsersPage };
 export default UsersPage;

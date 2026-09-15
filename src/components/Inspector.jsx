@@ -1,131 +1,98 @@
 // --- IMPORTS ---
-import { useState, useMemo, useRef } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import {
-    FileText,
-    Folder,
-    User,
-    Building2,
-    Clock,
-    Calendar,
-    CheckCircle2,
-    XCircle,
-    Copy,
-    Check,
-    Hash,
-    HardDrive,
-    FileType,
-    Shield,
-    FolderTree,
-    Share2,
-    Download,
-    MessageSquare,
-    Send,
-    Inbox,
-    Layers,
-    UserCheck,
-    Tag,
-    Paperclip,
+    AlertCircle,
     Archive,
+    Building2,
+    Calendar,
+    Check,
+    CheckCircle2,
+    Clock,
+    Copy,
+    Download,
     Edit3,
     FileCheck,
-    AlertCircle,
-    UserX,
-    Trash2,
+    FileText,
+    FileType,
+    Folder,
+    FolderTree,
+    HardDrive,
+    Hash,
+    Inbox,
     Info,
-    Users,
-    Search,
-    X,
+    Layers,
+    MessageSquare,
+    Paperclip,
     RotateCcw,
+    Search,
+    Send,
+    Share2,
+    Shield,
+    Tag,
+    Trash2,
+    User,
+    UserCheck,
+    Users,
+    UserX,
+    X,
+    XCircle,
 } from 'lucide-react';
-import { StatusBadge, ClassificationBadge, RoleBadge } from './Badge';
-import { PrimaryButton, SecondaryButton, DestructiveButton } from './Button';
-import { SegmentSelection } from './Selections';
-import { UserAvatar } from './Avatar';
-import { Modal } from './Modal';
-import { useToast } from '../hooks/useToast';
+import { useAuth, useToast } from '../hooks';
 import {
-    useDocumentStore,
-    useDocumentRequestStore,
+    useAuditStore,
     useDepartmentStore,
+    useDocumentStore,
     useUserStore,
-    useAuditLogStore,
 } from '../stores';
-import { useAuth } from '../hooks';
+import { Avatar } from './Avatar';
+import { Badge } from './Badge';
+import { Button } from './Button';
+import { Modal } from './Modal';
+import { SegmentSelection } from './Selections';
+
 
 // --- CONFIGURATIONS ---
-const SECTION_TITLE_STYLE =
-    'text-xs font-semibold uppercase tracking-wider text-text-muted select-none';
+const SECTION_TITLE_STYLE = 'text-xs font-semibold uppercase tracking-wider text-text-muted select-none';
+const PROPERTY_ROW_STYLE = 'flex items-center justify-between gap-3 py-2 border-b border-surface-border text-xs';
+const PROPERTY_LABEL_STYLE = 'text-text-muted flex items-center gap-2 shrink-0 font-medium';
+const PROPERTY_VALUE_STYLE = 'font-medium text-text text-right break-words select-text';
+const CALLOUT_BOX_STYLE = 'p-3 rounded-md bg-surface-hover border border-surface-border text-xs text-text leading-relaxed select-text';
+const ERROR_CALLOUT_STYLE = 'p-3 rounded-md bg-error-background border border-error-border text-xs text-error leading-relaxed select-text';
+const ICON_STYLE = 'h-4 w-4 shrink-0 text-text-muted';
 
-const PROPERTY_ROW_STYLE =
-    'flex items-center justify-between gap-3 py-2 border-b border-surface-border/60 text-xs';
+const CLASSIFICATION_BADGE_VARIANT = {
+    PUBLIC:       'success',
+    OFFICIAL:     'neutral',
+    INTERNAL:     'neutral',
+    CONFIDENTIAL: 'warning',
+    RESTRICTED:   'error',
+};
 
-const PROPERTY_LABEL_STYLE =
-    'text-text-muted flex items-center gap-2 shrink-0 font-medium';
+const ROLE_BADGE_VARIANT = {
+    ADMINISTRATOR: 'error',
+    COORDINATOR:   'information',
+    FACULTY:       'neutral',
+    MEMBER:        'neutral',
+    STUDENT:       'neutral',
+};
 
-const PROPERTY_VALUE_STYLE =
-    'font-medium text-text text-right break-words select-text';
+const STATUS_BADGE_VARIANT = {
+    APPROVED:  'success',
+    VERIFIED:  'success',
+    ACTIVE:    'success',
+    RESOLVED:  'success',
+    COMPLETED: 'success',
+    PENDING:   'warning',
+    SUBMITTED: 'warning',
+    OPEN:      'warning',
+    REJECTED:  'error',
+    SUSPENDED: 'error',
+    ARCHIVED:  'error',
+    CANCELLED: 'error',
+};
 
-const CALLOUT_BOX_STYLE =
-    'p-3 rounded-md bg-surface-hover/60 border border-surface-border text-xs text-text leading-relaxed select-text';
 
-const ERROR_CALLOUT_STYLE =
-    'p-3 rounded-md bg-error-background border border-error-border text-xs text-error leading-relaxed select-text';
-
-const ICON_STYLE = 'h-3.5 w-3.5 shrink-0 text-text-muted';
-
-function getActionLabel(action) {
-    switch (action) {
-        case 'USER_CREATE':
-            return 'Provision New User Account';
-        case 'USER_UPDATE':
-            return 'Update User Account Profile';
-        case 'USER_SUSPEND':
-            return 'Account Administrative Suspension';
-        case 'DEPARTMENT_CREATE':
-            return 'Establish New Department';
-        case 'DEPARTMENT_UPDATE':
-            return 'Update Department Information';
-        case 'DOCUMENT_UPLOAD':
-            return 'Upload & Register Document';
-        case 'DOCUMENT_SHARE':
-            return 'Grant Department Access Share';
-        case 'DOCUMENT_ARCHIVE':
-            return 'Transfer Document to Archive';
-        case 'DOCUMENT_DELETE':
-            return 'Permanent Document Deletion';
-        case 'DOCUMENT_ATTACH':
-            return 'Attach Document File';
-        default:
-            return action ?? 'Coordinator Request';
-    }
-}
-
-function getActionDescription(action) {
-    switch (action) {
-        case 'USER_CREATE':
-            return 'Coordinator submitted candidate user data for administrative authorization and account creation.';
-        case 'USER_UPDATE':
-            return 'Coordinator requested modifications to user designation, title, or department assignment.';
-        case 'USER_SUSPEND':
-            return 'Coordinator initiated an administrative suspension request for user credentials.';
-        case 'DEPARTMENT_CREATE':
-            return 'Coordinator proposed establishing a new collegiate department or administrative unit.';
-        case 'DEPARTMENT_UPDATE':
-            return 'Coordinator submitted changes to departmental structure, naming, or unit assignment.';
-        case 'DOCUMENT_UPLOAD':
-            return 'Coordinator uploaded a document file requiring administrative verification before institutional publication.';
-        case 'DOCUMENT_SHARE':
-            return 'Coordinator requested cross-departmental sharing permissions for an official document.';
-        case 'DOCUMENT_ARCHIVE':
-            return 'Coordinator submitted a request to transfer an active document into cold vault archives.';
-        case 'DOCUMENT_DELETE':
-            return 'Coordinator requested permanent deletion of a document from institutional records.';
-        default:
-            return 'Coordinator action submitted for administrative review and execution.';
-    }
-}
-
-// --- COMPONENT ---
+// --- COMPONENTS ---
 const Inspector = ({
     item = null,
     currentUser = null,
@@ -133,6 +100,9 @@ const Inspector = ({
     className,
     ...props
 }) => {
+    // REFS
+    const chatEndReference = useRef(null);
+
     // STATES
     const [activeTab, setActiveTab] = useState('information');
     const [copiedPropertyKey, setCopiedPropertyKey] = useState(null);
@@ -140,26 +110,8 @@ const Inspector = ({
     const [stagedAttachment, setStagedAttachment] = useState(null);
     const [isAttachModalOpen, setIsAttachModalOpen] = useState(false);
     const [attachSearchTerm, setAttachSearchTerm] = useState('');
-    const chatEndReference = useRef(null);
-
-    // STORES & HOOKS
-    const { showToast } = useToast();
-    const { user: authUser } = useAuth();
-    const activeUser = currentUser ?? authUser;
-
-    const allDocuments = useDocumentStore((state) => state.documents);
-    const allDocumentVersions = useDocumentStore((state) => state.documentVersions ?? state.versions ?? []);
-    const allDocumentShares = useDocumentStore((state) => state.documentShares ?? state.shares ?? []);
-    const allRequestMessages = useDocumentRequestStore((state) => state.messages ?? state.documentRequestMessages ?? []);
-    const allRequestAttachments = useDocumentRequestStore((state) => state.attachments ?? state.documentRequestAttachments ?? []);
-    const addRequestMessage = useDocumentRequestStore((state) => state.addRequestMessage);
-    const attachDocumentToRequest = useDocumentRequestStore((state) => state.attachDocumentToRequest ?? state.addRequestAttachment);
-    const allDepartments = useDepartmentStore((state) => state.departments);
-    const allUsers = useUserStore((state) => state.users);
-    const allAuditLogs = useAuditLogStore((state) => state.auditLogs);
-
-    // AUTO-RESET TAB ON ITEM CHANGE (Render-time state adjustment)
     const [previousItemId, setPreviousItemId] = useState(item?.id);
+
     if (item?.id !== previousItemId) {
         setPreviousItemId(item?.id);
         setActiveTab('information');
@@ -168,7 +120,23 @@ const Inspector = ({
         setIsAttachModalOpen(false);
     }
 
-    // DERIVED VALUES: ENTITY TYPE RESOLUTION
+    // HOOKS
+    const { showToast } = useToast();
+    const { currentUser: authUser } = useAuth();
+    const activeUser = currentUser ?? authUser;
+
+    const allDocuments = useDocumentStore((state) => state.documents);
+    const allDocumentVersions = useDocumentStore((state) => state.documentVersions ?? state.versions ?? []);
+    const allDocumentShares = useDocumentStore((state) => state.documentShares ?? state.shares ?? []);
+    const allRequestMessages = useDocumentStore((state) => state.documentRequestMessages ?? []);
+    const allRequestAttachments = useDocumentStore((state) => state.documentRequestAttachments ?? []);
+    const addRequestMessage = useDocumentStore((state) => state.insertDocumentRequestMessage);
+    const attachDocumentToRequest = useDocumentStore((state) => state.insertDocumentRequestAttachment);
+    const allDepartments = useDepartmentStore((state) => state.departments);
+    const allUsers = useUserStore((state) => state.users);
+    const allAuditLogs = useAuditStore((state) => state.auditLogs);
+
+    // DERIVED VALUES
     const isFolder = Boolean(item?.isFolder || item?.is_folder);
     const isDocument = Boolean(
         !isFolder &&
@@ -190,7 +158,6 @@ const Inspector = ({
     );
     const isDocumentRequest = Boolean(item?.subject && !isCoordinatorRequest);
 
-    // 1. DOCUMENT VERSIONS HISTORY
     const documentVersions = useMemo(() => {
         if (!item || !isDocument) {
             return [];
@@ -208,23 +175,20 @@ const Inspector = ({
 
         return [
             {
-                id: `ver-${item.id}`,
-                document_id: item.id,
-                version: item.version ? parseInt(String(item.version).replace(/\D/g, '')) || 1 : 1,
-                size_bytes: item.size_bytes ?? 1048576,
+                id:             `ver-${item.id}`,
+                document_id:    item.id,
+                version:        item.version ? parseInt(String(item.version).replace(/\D/g, '')) || 1 : 1,
+                size_bytes:     item.size_bytes ?? 1048576,
                 classification: item.classification ?? 'PUBLIC',
                 change_summary: item.change_summary ?? 'Initial document release.',
-                summary: item.summary ?? item.description ?? '',
-                checksum:
-                    item.checksum ??
-                    'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
-                path: item.path ?? `/records/${item.name ?? item.title ?? 'document.pdf'}`,
-                created_at: item.created_at ?? new Date().toISOString(),
+                summary:        item.summary ?? item.description ?? '',
+                checksum:       item.checksum ?? 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+                path:           item.path ?? `/records/${item.name ?? item.title ?? 'document.pdf'}`,
+                created_at:     item.created_at ?? new Date().toISOString(),
             },
         ];
     }, [item, isDocument, allDocumentVersions]);
 
-    // 2. DOCUMENT SHARES & PERMISSIONS
     const documentShares = useMemo(() => {
         if (!item || !isDocument) {
             return [];
@@ -233,7 +197,6 @@ const Inspector = ({
         return allDocumentShares.filter((share) => share.document_id === item.id);
     }, [item, isDocument, allDocumentShares]);
 
-    // 3. FOLDER CONTENTS
     const folderContents = useMemo(() => {
         if (!item || !isFolder) {
             return [];
@@ -242,7 +205,6 @@ const Inspector = ({
         return allDocuments.filter((doc) => doc.parent_id === item.id);
     }, [item, isFolder, allDocuments]);
 
-    // 4. USER AUDIT ACTIVITY
     const userActivities = useMemo(() => {
         if (!item || !isUser) {
             return [];
@@ -251,7 +213,6 @@ const Inspector = ({
         return allAuditLogs.filter((log) => log.actor_id === item.id);
     }, [item, isUser, allAuditLogs]);
 
-    // 5. DEPARTMENT FACULTY ROSTER
     const departmentFaculty = useMemo(() => {
         if (!item || !isDepartment) {
             return [];
@@ -260,7 +221,6 @@ const Inspector = ({
         return allUsers.filter((userItem) => userItem.department_id === item.id);
     }, [item, isDepartment, allUsers]);
 
-    // 6. DOCUMENT REQUEST MESSAGES & ATTACHMENTS
     const requestMessages = useMemo(() => {
         if (!item || !isDocumentRequest) {
             return [];
@@ -300,48 +260,47 @@ const Inspector = ({
         return item.attachments ?? [];
     }, [item, isDocumentRequest, allRequestAttachments]);
 
-    // 7. DYNAMIC TAB OPTIONS PER ENTITY
     const tabOptions = useMemo(() => {
         if (isDocument) {
             return [
                 { value: 'information', label: 'Information', icon: Info },
-                { value: 'versions', label: `Versions (${documentVersions.length})`, icon: Layers },
-                { value: 'shares', label: `Shares (${documentShares.length})`, icon: Share2 },
+                { value: 'versions',    label: `Versions (${documentVersions.length})`, icon: Layers },
+                { value: 'shares',      label: `Shares (${documentShares.length})`, icon: Share2 },
             ];
         }
 
         if (isFolder) {
             return [
                 { value: 'information', label: 'Information', icon: Info },
-                { value: 'contents', label: `Contents (${folderContents.length})`, icon: Folder },
+                { value: 'contents',    label: `Contents (${folderContents.length})`, icon: Folder },
             ];
         }
 
         if (isUser) {
             return [
                 { value: 'information', label: 'Profile', icon: User },
-                { value: 'activity', label: `Activity (${userActivities.length})`, icon: Clock },
+                { value: 'activity',    label: `Activity (${userActivities.length})`, icon: Clock },
             ];
         }
 
         if (isDepartment) {
             return [
                 { value: 'information', label: 'Information', icon: Building2 },
-                { value: 'roster', label: `Faculty (${departmentFaculty.length})`, icon: Users },
+                { value: 'roster',      label: `Faculty (${departmentFaculty.length})`, icon: Users },
             ];
         }
 
         if (isCoordinatorRequest) {
             return [
                 { value: 'information', label: 'Information', icon: Info },
-                { value: 'payload', label: 'Payload', icon: Layers },
+                { value: 'payload',     label: 'Payload', icon: Layers },
             ];
         }
 
         if (isDocumentRequest) {
             return [
                 { value: 'information', label: 'Information', icon: Info },
-                { value: 'messages', label: `Discussion (${requestMessages.length})`, icon: MessageSquare },
+                { value: 'messages',    label: `Discussion (${requestMessages.length})`, icon: MessageSquare },
                 { value: 'attachments', label: `Attachments (${requestAttachments.length})`, icon: Paperclip },
             ];
         }
@@ -363,7 +322,6 @@ const Inspector = ({
         requestAttachments.length,
     ]);
 
-    // 8. ATTACHABLE DOCUMENTS FOR DISCUSSION THREADS
     const attachableDocuments = useMemo(() => {
         return allDocuments
             .filter((doc) => !doc.is_folder && !doc.is_archived)
@@ -388,9 +346,9 @@ const Inspector = ({
         navigator.clipboard.writeText(textToCopy);
         setCopiedPropertyKey(propertyKey);
         showToast({
-            type: 'information',
-            title: 'Copied to Clipboard',
+            title:       'Copied to Clipboard',
             description: `${textToCopy} copied.`,
+            variant:     'information',
         });
 
         setTimeout(() => {
@@ -419,8 +377,8 @@ const Inspector = ({
     const handleSelectDocumentToAttach = (selectedDocument) => {
         setStagedAttachment({
             document_id: selectedDocument.id,
-            name: selectedDocument.name,
-            size_bytes: selectedDocument.size_bytes,
+            name:        selectedDocument.name,
+            size_bytes:  selectedDocument.size_bytes,
         });
         setIsAttachModalOpen(false);
         setAttachSearchTerm('');
@@ -445,47 +403,47 @@ const Inspector = ({
             if (stagedAttachment) {
                 await attachDocumentToRequest({
                     document_request_id: item.id,
-                    document_id: stagedAttachment.document_id,
-                    attached_by_id: activeUserId,
+                    document_id:         stagedAttachment.document_id,
+                    attached_by_id:      activeUserId,
                 });
             }
 
             await addRequestMessage({
                 document_request_id: item.id,
-                user_id: activeUserId,
-                message: messageText,
+                user_id:             activeUserId,
+                message:             messageText,
             });
 
             setChatInputText('');
             setStagedAttachment(null);
             showToast({
-                type: 'success',
-                title: 'Message Sent',
+                title:       'Message Sent',
                 description: stagedAttachment
                     ? 'Message and attached file posted to discussion thread.'
                     : 'Your reply has been posted to the discussion thread.',
+                variant:     'success',
             });
             setTimeout(() => {
                 chatEndReference.current?.scrollIntoView({ behavior: 'smooth' });
             }, 100);
         } catch (error) {
             showToast({
-                type: 'error',
-                title: 'Message Failed',
+                title:       'Message Failed',
                 description: error?.message ?? 'Could not post message.',
+                variant:     'error',
             });
         }
     };
 
-    // GUARD: EMPTY STATE
+    // GUARD CLAUSES
     if (!item) {
         return (
             <div
-                className={`h-full flex flex-col items-center justify-center p-8 text-center text-text-muted gap-3 select-none ${className ?? ''}`}
+                className={`h-full flex flex-col items-center justify-center p-8 text-center text-text-muted gap-3 select-none ${className ?? ''}`.trim()}
                 {...props}
             >
-                <div className="p-3.5 rounded-lg bg-surface-hover border border-surface-border text-text-muted">
-                    <Layers className="h-7 w-7 stroke-[1.5]" />
+                <div className="p-3 rounded-lg bg-surface-hover border border-surface-border text-text-muted">
+                    <Layers className="h-8 w-8" />
                 </div>
                 <div className="flex flex-col gap-1">
                     <span className="font-semibold text-sm text-text">
@@ -499,7 +457,7 @@ const Inspector = ({
         );
     }
 
-    // FORMATTED VALUES
+    // DERIVED VALUES
     const primaryTitle = item.title ?? item.name ?? item.subject ?? 'Record Details';
     const primarySubtitle =
         item.code ??
@@ -514,21 +472,20 @@ const Inspector = ({
     const checksum = item.checksum ?? null;
     const storagePath = item.path ?? null;
 
+    // RENDER
     return (
         <div
-            className={`flex flex-col h-full text-text select-text ${className ?? ''}`}
+            className={`flex flex-col h-full text-text select-text ${className ?? ''}`.trim()}
             {...props}
         >
-            {/* 1. MINIMALIST FLUSH HEADER */}
             <div className="flex flex-col gap-3 pb-3 border-b border-surface-border shrink-0">
                 <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="flex items-center gap-3 min-w-0">
                         {isUser ? (
-                            <UserAvatar
+                            <Avatar
                                 src={item.avatar_path ?? item.avatarPath}
-                                name={primaryTitle}
-                                size="sm"
-                                className="h-8 w-8 shadow-xs shrink-0"
+                                alt={primaryTitle}
+                                size="medium"
                             />
                         ) : (
                             <div className="p-2 rounded-md bg-accent-background text-accent shrink-0 border border-accent-border">
@@ -569,13 +526,22 @@ const Inspector = ({
                         </div>
                     </div>
 
-                    <div className="shrink-0 flex items-center gap-1.5">
+                    <div className="shrink-0 flex items-center gap-2">
                         {item.classification && item.classification !== '—' ? (
-                            <ClassificationBadge classification={item.classification} />
+                            <Badge
+                                variant={CLASSIFICATION_BADGE_VARIANT[item.classification] ?? 'neutral'}
+                                label={item.classification}
+                            />
                         ) : item.role ? (
-                            <RoleBadge role={item.role} />
+                            <Badge
+                                variant={ROLE_BADGE_VARIANT[item.role] ?? 'neutral'}
+                                label={item.role}
+                            />
                         ) : item.status ? (
-                            <StatusBadge status={item.status} />
+                            <Badge
+                                variant={STATUS_BADGE_VARIANT[item.status] ?? 'neutral'}
+                                label={item.status}
+                            />
                         ) : null}
                     </div>
                 </div>
@@ -587,21 +553,17 @@ const Inspector = ({
                     {primaryTitle}
                 </h2>
 
-                {/* 2. UNIFIED SEGMENTED TAB SELECTOR */}
                 <SegmentSelection
                     value={activeTab}
                     options={tabOptions}
                     onChange={setActiveTab}
-                    className="w-full justify-stretch [&>button]:flex-1 mt-0.5"
+                    className="w-full justify-stretch [&>button]:flex-1 mt-1"
                 />
             </div>
 
-            {/* 3. SCROLLABLE MINIMALIST CONTENT BODY */}
-            <div className="flex-1 overflow-y-auto py-3.5 flex flex-col gap-4 pr-0.5">
-                {/* TAB 1: INFORMATION */}
+            <div className="flex-1 overflow-y-auto py-4 flex flex-col gap-4">
                 {activeTab === 'information' && (
                     <div className="flex flex-col gap-4">
-                        {/* SPECIFIC NAMED FIELD CALLOUTS (EXCLUDING COORDINATOR REQUEST DESCRIPTIONS AS THEY BELONG IN PAYLOAD) */}
                         {!isCoordinatorRequest &&
                             (item.summary ||
                                 item.change_summary ||
@@ -610,9 +572,8 @@ const Inspector = ({
                                 item.comment ||
                                 item.rejection_reason) && (
                                 <div className="flex flex-col gap-4">
-                                    {/* SUMMARY */}
                                     {item.summary && (
-                                        <div className="flex flex-col gap-2.5">
+                                        <div className="flex flex-col gap-2">
                                             <span className={SECTION_TITLE_STYLE}>Summary</span>
                                             <div className={CALLOUT_BOX_STYLE}>
                                                 {item.summary}
@@ -620,9 +581,8 @@ const Inspector = ({
                                         </div>
                                     )}
 
-                                    {/* CHANGE SUMMARY */}
                                     {item.change_summary && (
-                                        <div className="flex flex-col gap-2.5">
+                                        <div className="flex flex-col gap-2">
                                             <span className={SECTION_TITLE_STYLE}>Change Summary</span>
                                             <div className={CALLOUT_BOX_STYLE}>
                                                 {item.change_summary}
@@ -630,9 +590,8 @@ const Inspector = ({
                                         </div>
                                     )}
 
-                                    {/* PURPOSE (NO DUPLICATION WITH DESCRIPTION) */}
                                     {item.purpose && (
-                                        <div className="flex flex-col gap-2.5">
+                                        <div className="flex flex-col gap-2">
                                             <span className={SECTION_TITLE_STYLE}>Purpose</span>
                                             <div className={CALLOUT_BOX_STYLE}>
                                                 {item.purpose}
@@ -640,9 +599,8 @@ const Inspector = ({
                                         </div>
                                     )}
 
-                                    {/* DESCRIPTION (ONLY IF NO PURPOSE TO PREVENT REPETITION) */}
                                     {item.description && !item.purpose && !item.summary && (
-                                        <div className="flex flex-col gap-2.5">
+                                        <div className="flex flex-col gap-2">
                                             <span className={SECTION_TITLE_STYLE}>Description</span>
                                             <div className={CALLOUT_BOX_STYLE}>
                                                 {item.description}
@@ -650,9 +608,8 @@ const Inspector = ({
                                         </div>
                                     )}
 
-                                    {/* INTERNAL NOTES / COMMENT */}
                                     {item.comment && !item.description && !item.summary && !item.purpose && (
-                                        <div className="flex flex-col gap-2.5">
+                                        <div className="flex flex-col gap-2">
                                             <span className={SECTION_TITLE_STYLE}>Internal Notes</span>
                                             <div className={CALLOUT_BOX_STYLE}>
                                                 {item.comment}
@@ -660,15 +617,14 @@ const Inspector = ({
                                         </div>
                                     )}
 
-                                    {/* REJECTION REASON */}
                                     {item.rejection_reason && (
-                                        <div className="flex flex-col gap-2.5">
+                                        <div className="flex flex-col gap-2">
                                             <span className="text-xs font-semibold uppercase tracking-wider text-error select-none">
                                                 Rejection Reason
                                             </span>
                                             <div className={ERROR_CALLOUT_STYLE}>
-                                                <div className="flex items-center gap-1.5 font-bold mb-1">
-                                                    <AlertCircle className="h-3.5 w-3.5" /> Rejection Reason
+                                                <div className="flex items-center gap-2 font-bold mb-1">
+                                                    <AlertCircle className="h-4 w-4" /> Rejection Reason
                                                 </div>
                                                 {item.rejection_reason}
                                             </div>
@@ -677,27 +633,24 @@ const Inspector = ({
                                 </div>
                             )}
 
-                        {/* REJECTION REASON FOR COORDINATOR REQUESTS */}
                         {isCoordinatorRequest && item.rejection_reason && (
-                            <div className="flex flex-col gap-2.5">
+                            <div className="flex flex-col gap-2">
                                 <span className="text-xs font-semibold uppercase tracking-wider text-error select-none">
                                     Rejection Reason
                                 </span>
                                 <div className={ERROR_CALLOUT_STYLE}>
-                                    <div className="flex items-center gap-1.5 font-bold mb-1">
-                                        <AlertCircle className="h-3.5 w-3.5" /> Rejection Reason
+                                    <div className="flex items-center gap-2 font-bold mb-1">
+                                        <AlertCircle className="h-4 w-4" /> Rejection Reason
                                     </div>
                                     {item.rejection_reason}
                                 </div>
                             </div>
                         )}
 
-                        {/* SYSTEM PROPERTIES FLAT TABLE (ZERO INTERNAL UUID DISPLAYED) */}
-                        <div className="flex flex-col gap-2.5">
+                        <div className="flex flex-col gap-2">
                             <span className={SECTION_TITLE_STYLE}>System Properties</span>
 
                             <div className="flex flex-col">
-                                {/* DOCUMENT SPECIFIC */}
                                 {isDocument && (
                                     <>
                                         {item.version && item.version !== '—' && (
@@ -763,7 +716,7 @@ const Inspector = ({
                                                 <span className={PROPERTY_LABEL_STYLE}>
                                                     <Hash className={ICON_STYLE} /> SHA-256 Hash
                                                 </span>
-                                                <div className="flex items-center gap-1.5 min-w-0">
+                                                <div className="flex items-center gap-2 min-w-0">
                                                     <span
                                                         className="text-xs text-text-muted truncate max-w-40 cursor-default select-text"
                                                         title={checksum}
@@ -779,9 +732,9 @@ const Inspector = ({
                                                         title="Copy Full Checksum"
                                                     >
                                                         {copiedPropertyKey === 'checksum' ? (
-                                                            <Check className="h-3.5 w-3.5 text-accent" />
+                                                            <Check className="h-4 w-4 text-accent" />
                                                         ) : (
-                                                            <Copy className="h-3.5 w-3.5" />
+                                                            <Copy className="h-4 w-4" />
                                                         )}
                                                     </button>
                                                 </div>
@@ -793,15 +746,15 @@ const Inspector = ({
                                                 <span className={PROPERTY_LABEL_STYLE}>
                                                     <Shield className={ICON_STYLE} /> Classification
                                                 </span>
-                                                <ClassificationBadge
-                                                    classification={item.classification}
+                                                <Badge
+                                                    variant={CLASSIFICATION_BADGE_VARIANT[item.classification] ?? 'neutral'}
+                                                    label={item.classification}
                                                 />
                                             </div>
                                         )}
                                     </>
                                 )}
 
-                                {/* USER SPECIFIC */}
                                 {isUser && (
                                     <>
                                         {item.university_id && (
@@ -851,13 +804,15 @@ const Inspector = ({
                                                 <span className={PROPERTY_LABEL_STYLE}>
                                                     <Shield className={ICON_STYLE} /> System Role
                                                 </span>
-                                                <RoleBadge role={item.role} />
+                                                <Badge
+                                                    variant={ROLE_BADGE_VARIANT[item.role] ?? 'neutral'}
+                                                    label={item.role}
+                                                />
                                             </div>
                                         )}
                                     </>
                                 )}
 
-                                {/* DEPARTMENT SPECIFIC: CLEAR DIRECTOR & OFFICER NAMES */}
                                 {isDepartment && (
                                     <>
                                         {item.code && (
@@ -932,7 +887,6 @@ const Inspector = ({
                                     </>
                                 )}
 
-                                {/* COORDINATOR & DOCUMENT REQUEST SPECIFIC */}
                                 {item.department && !isDepartment && (
                                     <div className={PROPERTY_ROW_STYLE}>
                                         <span className={PROPERTY_LABEL_STYLE}>
@@ -961,7 +915,6 @@ const Inspector = ({
                                     </div>
                                 )}
 
-                                {/* TIMESTAMPS */}
                                 {formattedCreatedDate && (
                                     <div className={PROPERTY_ROW_STYLE}>
                                         <span className={PROPERTY_LABEL_STYLE}>
@@ -995,7 +948,6 @@ const Inspector = ({
                     </div>
                 )}
 
-                {/* TAB 2: VERSIONS TIMELINE (FOR DOCUMENTS) */}
                 {activeTab === 'versions' && isDocument && (
                     <div className="flex flex-col gap-3">
                         <div className="flex items-center justify-between">
@@ -1005,7 +957,7 @@ const Inspector = ({
                             </span>
                         </div>
 
-                        <div className="flex flex-col gap-2.5">
+                        <div className="flex flex-col gap-2">
                             {documentVersions.map((versionItem, versionIndex) => {
                                 const isCurrent = versionIndex === 0;
                                 const uploader = allUsers.find(
@@ -1018,18 +970,20 @@ const Inspector = ({
                                 return (
                                     <div
                                         key={versionItem.id ?? versionIndex}
-                                        className={`p-3 rounded-lg border flex flex-col gap-2 transition-all ${isCurrent
-                                            ? 'bg-surface border-accent-border'
-                                            : 'bg-surface-hover/40 border-surface-border'
-                                            }`}
+                                        className={`p-3 rounded-lg border flex flex-col gap-2 transition-all ${
+                                            isCurrent
+                                                ? 'bg-surface border-accent-border'
+                                                : 'bg-surface-hover border-surface-border'
+                                        }`}
                                     >
                                         <div className="flex items-center justify-between gap-2">
                                             <div className="flex items-center gap-2">
                                                 <span
-                                                    className={`px-2 py-0.5 rounded text-xs font-bold ${isCurrent
-                                                        ? 'bg-accent text-text-inverted'
-                                                        : 'bg-surface border border-surface-border text-text-muted'
-                                                        }`}
+                                                    className={`px-2 py-1 rounded text-xs font-bold ${
+                                                        isCurrent
+                                                            ? 'bg-accent text-text-inverted'
+                                                            : 'bg-surface border border-surface-border text-text-muted'
+                                                    }`}
                                                 >
                                                     v{versionItem.version}.0
                                                 </span>
@@ -1046,14 +1000,14 @@ const Inspector = ({
                                         </div>
 
                                         {versionItem.change_summary && (
-                                            <p className="text-xs text-text leading-relaxed bg-surface/80 p-2 rounded border border-surface-border">
+                                            <p className="text-xs text-text leading-relaxed bg-surface p-2 rounded border border-surface-border">
                                                 {versionItem.change_summary}
                                             </p>
                                         )}
 
-                                        <div className="flex items-center justify-between gap-2 text-xs text-text-muted pt-1 border-t border-surface-border/60">
+                                        <div className="flex items-center justify-between gap-2 text-xs text-text-muted pt-1 border-t border-surface-border">
                                             <span className="truncate font-medium">By {uploaderName}</span>
-                                            <div className="flex items-center gap-2.5 shrink-0">
+                                            <div className="flex items-center gap-2 shrink-0">
                                                 <span>{formatBytes(versionItem.size_bytes)}</span>
                                                 {!isCurrent && (
                                                     <button
@@ -1064,7 +1018,7 @@ const Inspector = ({
                                                                 versionItem
                                                             )
                                                         }
-                                                        className="px-2 py-0.5 rounded hover:bg-surface-hover text-accent font-semibold inline-flex items-center gap-1 text-[11px] transition-colors cursor-pointer"
+                                                        className="px-2 py-1 rounded hover:bg-surface-hover text-accent font-semibold inline-flex items-center gap-1 text-xs transition-colors cursor-pointer"
                                                         title={`Revert document to v${versionItem.version}.0`}
                                                     >
                                                         <RotateCcw className="h-3 w-3" />
@@ -1082,7 +1036,7 @@ const Inspector = ({
                                                     className="p-1 rounded hover:bg-surface text-text hover:text-accent transition-colors cursor-pointer"
                                                     title={`Download v${versionItem.version}.0`}
                                                 >
-                                                    <Download className="h-3.5 w-3.5" />
+                                                    <Download className="h-4 w-4" />
                                                 </button>
                                             </div>
                                         </div>
@@ -1093,7 +1047,6 @@ const Inspector = ({
                     </div>
                 )}
 
-                {/* TAB 3: ACCESS & SHARES (FOR DOCUMENTS) */}
                 {activeTab === 'shares' && isDocument && (
                     <div className="flex flex-col gap-3">
                         <div className="flex items-center justify-between">
@@ -1104,11 +1057,11 @@ const Inspector = ({
                         </div>
 
                         {documentShares.length === 0 ? (
-                            <div className="p-3.5 rounded-lg border border-surface-border bg-surface-hover/30 text-center text-text-muted text-xs">
+                            <div className="p-4 rounded-lg border border-surface-border bg-surface-hover text-center text-text-muted text-xs">
                                 No department sharing rules configured yet.
                             </div>
                         ) : (
-                            <div className="flex flex-col gap-2.5">
+                            <div className="flex flex-col gap-2">
                                 {documentShares.map((shareItem) => {
                                     const shareDepartment = allDepartments.find(
                                         (department) => department.id === shareItem.department_id
@@ -1120,13 +1073,16 @@ const Inspector = ({
                                     return (
                                         <div
                                             key={shareItem.id}
-                                            className="p-3 rounded-lg border border-surface-border bg-surface-hover/40 flex flex-col gap-2"
+                                            className="p-3 rounded-lg border border-surface-border bg-surface-hover flex flex-col gap-2"
                                         >
                                             <div className="flex items-center justify-between gap-2">
                                                 <span className="font-semibold text-xs text-text">
                                                     {shareDepartment?.name ?? 'University Wide'}
                                                 </span>
-                                                <StatusBadge status={shareItem.status} />
+                                                <Badge
+                                                    variant={STATUS_BADGE_VARIANT[shareItem.status] ?? 'neutral'}
+                                                    label={shareItem.status}
+                                                />
                                             </div>
                                             <div className="flex items-center justify-between text-xs text-text-muted pt-1 border-t border-surface-border">
                                                 <span>
@@ -1143,7 +1099,6 @@ const Inspector = ({
                     </div>
                 )}
 
-                {/* TAB 2: FOLDER CONTENTS (FOR FOLDERS) */}
                 {activeTab === 'contents' && isFolder && (
                     <div className="flex flex-col gap-3">
                         <div className="flex items-center justify-between">
@@ -1154,7 +1109,7 @@ const Inspector = ({
                         </div>
 
                         {folderContents.length === 0 ? (
-                            <div className="p-3.5 rounded-lg border border-surface-border bg-surface-hover/30 text-center text-text-muted text-xs">
+                            <div className="p-4 rounded-lg border border-surface-border bg-surface-hover text-center text-text-muted text-xs">
                                 This folder is currently empty.
                             </div>
                         ) : (
@@ -1163,9 +1118,9 @@ const Inspector = ({
                                     <div
                                         key={contentItem.id}
                                         onClick={() => handleActionClick('open', contentItem)}
-                                        className="p-2.5 rounded-md border border-surface-border/80 bg-surface hover:bg-surface-hover hover:border-accent-border flex items-center justify-between gap-3 cursor-pointer transition-colors"
+                                        className="p-3 rounded-md border border-surface-border bg-surface hover:bg-surface-hover hover:border-accent-border flex items-center justify-between gap-3 cursor-pointer transition-colors"
                                     >
-                                        <div className="flex items-center gap-2.5 min-w-0">
+                                        <div className="flex items-center gap-3 min-w-0">
                                             {contentItem.is_folder ? (
                                                 <Folder className="h-4 w-4 text-accent shrink-0" />
                                             ) : (
@@ -1188,7 +1143,6 @@ const Inspector = ({
                     </div>
                 )}
 
-                {/* TAB 2: USER AUDIT ACTIVITY (FOR USERS) */}
                 {activeTab === 'activity' && isUser && (
                     <div className="flex flex-col gap-3">
                         <div className="flex items-center justify-between">
@@ -1199,15 +1153,15 @@ const Inspector = ({
                         </div>
 
                         {userActivities.length === 0 ? (
-                            <div className="p-3.5 rounded-lg border border-surface-border bg-surface-hover/30 text-center text-text-muted text-xs">
+                            <div className="p-4 rounded-lg border border-surface-border bg-surface-hover text-center text-text-muted text-xs">
                                 No recent activity logged for this user.
                             </div>
                         ) : (
-                            <div className="flex flex-col gap-2.5">
+                            <div className="flex flex-col gap-2">
                                 {userActivities.map((logItem) => (
                                     <div
                                         key={logItem.id}
-                                        className="p-2.5 rounded-md border border-surface-border/80 bg-surface flex flex-col gap-1 text-xs"
+                                        className="p-3 rounded-md border border-surface-border bg-surface flex flex-col gap-1 text-xs"
                                     >
                                         <div className="flex items-center justify-between gap-2">
                                             <span className="font-semibold text-text capitalize">
@@ -1227,7 +1181,6 @@ const Inspector = ({
                     </div>
                 )}
 
-                {/* TAB 2: DEPARTMENT FACULTY ROSTER (FOR DEPARTMENTS) */}
                 {activeTab === 'roster' && isDepartment && (
                     <div className="flex flex-col gap-3">
                         <div className="flex items-center justify-between">
@@ -1238,7 +1191,7 @@ const Inspector = ({
                         </div>
 
                         {departmentFaculty.length === 0 ? (
-                            <div className="p-3.5 rounded-lg border border-surface-border bg-surface-hover/30 text-center text-text-muted text-xs">
+                            <div className="p-4 rounded-lg border border-surface-border bg-surface-hover text-center text-text-muted text-xs">
                                 No faculty members assigned to this department yet.
                             </div>
                         ) : (
@@ -1247,14 +1200,13 @@ const Inspector = ({
                                     <div
                                         key={facultyMember.id}
                                         onClick={() => handleActionClick('open', facultyMember)}
-                                        className="p-2.5 rounded-md border border-surface-border/80 bg-surface hover:bg-surface-hover hover:border-accent-border flex items-center justify-between gap-3 cursor-pointer transition-colors"
+                                        className="p-3 rounded-md border border-surface-border bg-surface hover:bg-surface-hover hover:border-accent-border flex items-center justify-between gap-3 cursor-pointer transition-colors"
                                     >
-                                        <div className="flex items-center gap-2.5 min-w-0">
-                                            <UserAvatar
+                                        <div className="flex items-center gap-3 min-w-0">
+                                            <Avatar
                                                 src={facultyMember.avatar_path}
-                                                name={`${facultyMember.first_name} ${facultyMember.last_name}`}
-                                                size="sm"
-                                                className="h-8 w-8 shrink-0 shadow-xs"
+                                                alt={`${facultyMember.first_name} ${facultyMember.last_name}`}
+                                                size="medium"
                                             />
                                             <div className="flex flex-col min-w-0">
                                                 <span
@@ -1271,7 +1223,10 @@ const Inspector = ({
                                                 </span>
                                             </div>
                                         </div>
-                                        <RoleBadge role={facultyMember.role} />
+                                        <Badge
+                                            variant={ROLE_BADGE_VARIANT[facultyMember.role] ?? 'neutral'}
+                                            label={facultyMember.role}
+                                        />
                                     </div>
                                 ))}
                             </div>
@@ -1279,16 +1234,14 @@ const Inspector = ({
                     </div>
                 )}
 
-                {/* TAB 2: COORDINATOR REQUEST PROPOSED PAYLOAD REVIEW */}
                 {activeTab === 'payload' && isCoordinatorRequest && item.data && (
                     <div className="flex flex-col gap-4">
-                        {/* ACTION OVERVIEW CARD */}
-                        <div className="p-3.5 rounded-lg border border-surface-border bg-surface-hover/30 flex flex-col gap-2">
+                        <div className="p-4 rounded-lg border border-surface-border bg-surface-hover flex flex-col gap-2">
                             <div className="flex items-center justify-between gap-2">
                                 <span className="text-xs font-semibold text-text">
                                     {getActionLabel(item.action)}
                                 </span>
-                                <span className="px-2 py-0.5 rounded text-xs font-bold bg-accent-background border border-accent-border text-accent">
+                                <span className="px-2 py-1 rounded text-xs font-bold bg-accent-background border border-accent-border text-accent">
                                     {item.action}
                                 </span>
                             </div>
@@ -1297,14 +1250,12 @@ const Inspector = ({
                             </p>
                         </div>
 
-                        {/* OLD VS NEW PAYLOAD COMPARISON */}
                         <div className="flex flex-col gap-3">
                             <span className={SECTION_TITLE_STYLE}>Payload Changes (Old vs New)</span>
 
                             <div className="grid grid-cols-1 gap-3">
-                                {/* OLD / CURRENT RECORD STATE */}
-                                <div className="flex flex-col gap-1.5 p-3 rounded-lg border border-surface-border bg-surface">
-                                    <div className="flex items-center justify-between pb-1.5 border-b border-surface-border/60">
+                                <div className="flex flex-col gap-2 p-3 rounded-lg border border-surface-border bg-surface">
+                                    <div className="flex items-center justify-between pb-2 border-b border-surface-border">
                                         <span className="text-xs font-bold text-text-muted uppercase tracking-wider">
                                             Current State (Database)
                                         </span>
@@ -1314,7 +1265,7 @@ const Inspector = ({
                                     </div>
 
                                     {item.data.old ? (
-                                        <div className="flex flex-col divide-y divide-surface-border/40 text-xs">
+                                        <div className="flex flex-col divide-y divide-surface-border text-xs">
                                             {Object.entries(item.data.old).map(([fieldKey, fieldValue]) => (
                                                 <div key={fieldKey} className={PROPERTY_ROW_STYLE}>
                                                     <span className="text-text-muted font-medium capitalize">
@@ -1333,19 +1284,18 @@ const Inspector = ({
                                     )}
                                 </div>
 
-                                {/* NEW / PROPOSED RECORD STATE */}
-                                <div className="flex flex-col gap-1.5 p-3 rounded-lg border border-accent-border bg-accent-background/30">
-                                    <div className="flex items-center justify-between pb-1.5 border-b border-accent-border/40">
+                                <div className="flex flex-col gap-2 p-3 rounded-lg border border-accent-border bg-accent-background">
+                                    <div className="flex items-center justify-between pb-2 border-b border-accent-border">
                                         <span className="text-xs font-bold text-accent uppercase tracking-wider">
                                             Proposed State (Coordinator Input)
                                         </span>
-                                        <span className="px-2 py-0.5 rounded text-xs font-semibold bg-accent-background text-accent border border-accent-border">
+                                        <span className="px-2 py-1 rounded text-xs font-semibold bg-accent-background text-accent border border-accent-border">
                                             Pending Authorization
                                         </span>
                                     </div>
 
                                     {item.data.new ? (
-                                        <div className="flex flex-col divide-y divide-accent-border/20 text-xs">
+                                        <div className="flex flex-col divide-y divide-accent-border text-xs">
                                             {Object.entries(item.data.new).map(([fieldKey, fieldValue]) => (
                                                 <div key={fieldKey} className={PROPERTY_ROW_STYLE}>
                                                     <span className="text-text-muted font-medium capitalize">
@@ -1358,7 +1308,7 @@ const Inspector = ({
                                             ))}
                                         </div>
                                     ) : (
-                                        <div className="flex flex-col divide-y divide-accent-border/20 text-xs">
+                                        <div className="flex flex-col divide-y divide-accent-border text-xs">
                                             {Object.entries(item.data)
                                                 .filter(([key]) => key !== 'old' && key !== 'new')
                                                 .map(([fieldKey, fieldValue]) => (
@@ -1379,10 +1329,9 @@ const Inspector = ({
                             </div>
                         </div>
 
-                        {/* REVIEW DECISION SUMMARY BANNER */}
                         {item.status === 'PENDING' && (
-                            <div className="p-3 rounded-lg bg-surface-hover/60 border border-surface-border text-xs text-text-muted flex items-start gap-2">
-                                <Clock className="h-4 w-4 text-accent shrink-0 mt-0.5" />
+                            <div className="p-3 rounded-lg bg-surface-hover border border-surface-border text-xs text-text-muted flex items-start gap-2">
+                                <Clock className="h-4 w-4 text-accent shrink-0 mt-1" />
                                 <span>
                                     <strong>Pending Administrator Authorization</strong> — Once approved by an administrator, these changes will be committed to the database.
                                 </span>
@@ -1390,7 +1339,7 @@ const Inspector = ({
                         )}
                         {item.status === 'APPROVED' && (
                             <div className="p-3 rounded-lg bg-accent-background border border-accent-border text-xs text-accent flex items-start gap-2">
-                                <CheckCircle2 className="h-4 w-4 text-accent shrink-0 mt-0.5" />
+                                <CheckCircle2 className="h-4 w-4 text-accent shrink-0 mt-1" />
                                 <span>
                                     <strong>Authorized & Executed</strong> — Changes have been carried over and successfully committed to university records.
                                 </span>
@@ -1398,7 +1347,7 @@ const Inspector = ({
                         )}
                         {item.status === 'REJECTED' && (
                             <div className="p-3 rounded-lg bg-error-background border border-error-border text-xs text-error flex items-start gap-2">
-                                <AlertCircle className="h-4 w-4 text-error shrink-0 mt-0.5" />
+                                <AlertCircle className="h-4 w-4 text-error shrink-0 mt-1" />
                                 <span>
                                     <strong>Rejected</strong> — {item.rejection_reason || 'Request declined by administrator.'}
                                 </span>
@@ -1407,7 +1356,6 @@ const Inspector = ({
                     </div>
                 )}
 
-                {/* TAB 2: MESSAGES & DISCUSSION THREAD (FOR DOCUMENT REQUESTS - MESSENGER STYLE) */}
                 {activeTab === 'messages' && isDocumentRequest && (
                     <div className="flex flex-col h-full gap-3">
                         <div className="flex items-center justify-between pb-2 border-b border-surface-border">
@@ -1417,11 +1365,10 @@ const Inspector = ({
                             </span>
                         </div>
 
-                        {/* CHAT BUBBLE FEED (MESSENGER STYLE: LEFT FOR OTHER, RIGHT FOR YOU IN ACCENT) */}
                         <div className="flex-1 flex flex-col gap-3 min-h-56">
                             {requestMessages.length === 0 ? (
                                 <div className="h-full flex flex-col items-center justify-center p-6 text-center text-text-muted gap-2">
-                                    <MessageSquare className="h-6 w-6 text-text-muted/60" />
+                                    <MessageSquare className="h-6 w-6 text-text-muted" />
                                     <span className="text-xs">No messages posted yet.</span>
                                 </div>
                             ) : (
@@ -1429,8 +1376,7 @@ const Inspector = ({
                                     const sender = allUsers.find(
                                         (userItem) => userItem.id === message.user_id
                                     );
-                                    const isSenderActiveUser =
-                                        message.user_id === activeUser?.id;
+                                    const isSenderActiveUser = message.user_id === activeUser?.id;
                                     const isAdministrativeUser =
                                         activeUser?.role === 'ADMINISTRATOR' ||
                                         activeUser?.role === 'COORDINATOR';
@@ -1446,17 +1392,12 @@ const Inspector = ({
                                         ? `${sender.first_name} ${sender.last_name}`
                                         : 'University Office';
 
-                                    // Find attachments associated with this sender / request
                                     const messageAttachments = requestAttachments.filter(
                                         (att) =>
                                             att.attached_by_id === message.user_id ||
                                             (!att.attached_by_id && isSenderActiveUser)
                                     );
 
-                                    // BUBBLE COLOR DISCIPLINE:
-                                    // - If you chatted: accent
-                                    // - If another administrative user chatted to fellow administrative: warning
-                                    // - Otherwise: standard neutral surface
                                     const bubbleStyle = isSenderActiveUser
                                         ? 'bg-accent text-text-inverted rounded-br-sm'
                                         : isFellowAdmin
@@ -1466,31 +1407,33 @@ const Inspector = ({
                                     return (
                                         <div
                                             key={message.id}
-                                            className={`flex items-end gap-2 max-w-[85%] ${isSenderActiveUser
-                                                ? 'self-end flex-row-reverse'
-                                                : 'self-start flex-row'
-                                                }`}
+                                            className={`flex items-end gap-2 max-w-sm ${
+                                                isSenderActiveUser
+                                                    ? 'self-end flex-row-reverse'
+                                                    : 'self-start flex-row'
+                                            }`}
                                         >
-                                            {/* SENDER AVATAR NEXT TO CHAT */}
-                                            <UserAvatar
+                                            <Avatar
                                                 src={sender?.avatar_path}
-                                                name={senderName}
-                                                size="xs"
+                                                alt={senderName}
+                                                size="small"
                                                 className="mb-1 shrink-0"
                                             />
 
                                             <div
-                                                className={`flex flex-col gap-1 ${isSenderActiveUser
-                                                    ? 'items-end'
-                                                    : 'items-start'
-                                                    }`}
+                                                className={`flex flex-col gap-1 ${
+                                                    isSenderActiveUser
+                                                        ? 'items-end'
+                                                        : 'items-start'
+                                                }`}
                                             >
-                                                <div className="flex items-center gap-1.5 text-xs text-text-muted px-1">
+                                                <div className="flex items-center gap-2 text-xs text-text-muted px-1">
                                                     <span className="font-semibold">{senderName}</span>
                                                     {isFellowAdmin && (
-                                                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-warning-background text-warning border border-warning-border">
-                                                            {sender?.role}
-                                                        </span>
+                                                        <Badge
+                                                            variant="warning"
+                                                            label={sender?.role}
+                                                        />
                                                     )}
                                                     <span>•</span>
                                                     <span>{formatTimestamp(message.created_at)}</span>
@@ -1501,19 +1444,19 @@ const Inspector = ({
                                                 >
                                                     <p>{message.message}</p>
 
-                                                    {/* VISIBLE ATTACHMENTS IN CHAT LOG */}
                                                     {messageAttachments.length > 0 && (
-                                                        <div className="mt-2 flex flex-col gap-1.5">
+                                                        <div className="mt-2 flex flex-col gap-2">
                                                             {messageAttachments.map((attachment) => (
                                                                 <div
                                                                     key={attachment.id}
-                                                                    className={`p-2 rounded-lg flex items-center justify-between gap-2 text-xs ${isSenderActiveUser
-                                                                        ? 'bg-black/20 text-text-inverted border border-white/20'
-                                                                        : 'bg-surface border border-surface-border text-text'
-                                                                        }`}
+                                                                    className={`p-2 rounded-lg flex items-center justify-between gap-2 text-xs ${
+                                                                        isSenderActiveUser
+                                                                            ? 'bg-surface/20 text-text-inverted border border-white/20'
+                                                                            : 'bg-surface border border-surface-border text-text'
+                                                                    }`}
                                                                 >
                                                                     <div className="flex items-center gap-2 min-w-0">
-                                                                        <Paperclip className="h-3.5 w-3.5 shrink-0" />
+                                                                        <Paperclip className="h-4 w-4 shrink-0" />
                                                                         <div className="flex flex-col min-w-0">
                                                                             <span
                                                                                 className="font-semibold truncate"
@@ -1521,7 +1464,7 @@ const Inspector = ({
                                                                             >
                                                                                 {attachment.name}
                                                                             </span>
-                                                                            <span className="text-[10px] opacity-75">
+                                                                            <span className="text-xs opacity-75">
                                                                                 {attachment.size_bytes
                                                                                     ? formatBytes(attachment.size_bytes)
                                                                                     : 'Document'}
@@ -1536,13 +1479,14 @@ const Inspector = ({
                                                                                 attachment
                                                                             )
                                                                         }
-                                                                        className={`p-1 rounded hover:bg-black/10 cursor-pointer shrink-0 transition-colors ${isSenderActiveUser
-                                                                            ? 'text-text-inverted'
-                                                                            : 'text-accent'
-                                                                            }`}
+                                                                        className={`p-1 rounded hover:bg-surface-hover cursor-pointer shrink-0 transition-colors ${
+                                                                            isSenderActiveUser
+                                                                                ? 'text-text-inverted'
+                                                                                : 'text-accent'
+                                                                        }`}
                                                                         title="Download Attachment"
                                                                     >
-                                                                        <Download className="h-3.5 w-3.5" />
+                                                                        <Download className="h-4 w-4" />
                                                                     </button>
                                                                 </div>
                                                             ))}
@@ -1557,27 +1501,25 @@ const Inspector = ({
                             <div ref={chatEndReference} />
                         </div>
 
-                        {/* REPLY FORM WITH STAGED ATTACHMENT & CLIP BUTTON */}
-                        <div className="pt-2.5 border-t border-surface-border flex flex-col gap-2 shrink-0">
-                            {/* STAGED ATTACHMENT CHIP */}
+                        <div className="pt-3 border-t border-surface-border flex flex-col gap-2 shrink-0">
                             {stagedAttachment && (
-                                <div className="px-3 py-1.5 rounded-lg bg-accent-background border border-accent-border flex items-center justify-between text-xs text-accent">
+                                <div className="px-3 py-2 rounded-lg bg-accent-background border border-accent-border flex items-center justify-between text-xs text-accent">
                                     <div className="flex items-center gap-2 min-w-0">
-                                        <Paperclip className="h-3.5 w-3.5 shrink-0" />
+                                        <Paperclip className="h-4 w-4 shrink-0" />
                                         <span className="font-semibold truncate" title={stagedAttachment.name}>
                                             {stagedAttachment.name}
                                         </span>
-                                        <span className="text-[10px] opacity-80">
+                                        <span className="text-xs opacity-80">
                                             ({stagedAttachment.size_bytes ? formatBytes(stagedAttachment.size_bytes) : 'Document'})
                                         </span>
                                     </div>
                                     <button
                                         type="button"
                                         onClick={handleRemoveStagedAttachment}
-                                        className="p-1 rounded hover:bg-accent/20 cursor-pointer text-accent shrink-0"
+                                        className="p-1 rounded hover:bg-accent-background cursor-pointer text-accent shrink-0"
                                         title="Remove staged attachment"
                                     >
-                                        <X className="h-3.5 w-3.5" />
+                                        <X className="h-4 w-4" />
                                     </button>
                                 </div>
                             )}
@@ -1603,20 +1545,19 @@ const Inspector = ({
                                     className="flex-1 px-3 py-2 text-xs rounded-md border border-surface-border bg-surface text-text focus:outline-hidden focus:border-accent focus:ring-1 focus:ring-accent"
                                 />
 
-                                <PrimaryButton
+                                <Button
                                     type="submit"
-                                    size="sm"
+                                    variant="primary"
                                     leadingIcon={Send}
-                                    disabled={!chatInputText.trim() && !stagedAttachment}
+                                    isDisabled={!chatInputText.trim() && !stagedAttachment}
                                 >
                                     Send
-                                </PrimaryButton>
+                                </Button>
                             </form>
                         </div>
                     </div>
                 )}
 
-                {/* TAB 3: DEDICATED ATTACHMENTS TAB (FOR DOCUMENT REQUESTS) */}
                 {activeTab === 'attachments' && isDocumentRequest && (
                     <div className="flex flex-col gap-3">
                         <div className="flex items-center justify-between">
@@ -1627,7 +1568,7 @@ const Inspector = ({
                         </div>
 
                         {requestAttachments.length === 0 ? (
-                            <div className="p-4 rounded-lg border border-surface-border bg-surface-hover/30 text-center text-text-muted text-xs">
+                            <div className="p-4 rounded-lg border border-surface-border bg-surface-hover text-center text-text-muted text-xs">
                                 No attachments uploaded to this request.
                             </div>
                         ) : (
@@ -1637,7 +1578,7 @@ const Inspector = ({
                                         key={attachment.id}
                                         className="p-3 rounded-lg border border-surface-border bg-surface hover:bg-surface-hover flex items-center justify-between gap-3 transition-colors"
                                     >
-                                        <div className="flex items-center gap-2.5 min-w-0">
+                                        <div className="flex items-center gap-3 min-w-0">
                                             <Paperclip className="h-4 w-4 text-accent shrink-0" />
                                             <div className="flex flex-col min-w-0">
                                                 <span
@@ -1656,7 +1597,7 @@ const Inspector = ({
                                         <button
                                             type="button"
                                             onClick={() => handleActionClick('download', attachment)}
-                                            className="p-1.5 rounded hover:bg-surface-hover text-accent transition-colors cursor-pointer shrink-0"
+                                            className="p-2 rounded hover:bg-surface-hover text-accent transition-colors cursor-pointer shrink-0"
                                             title="Download Attachment"
                                         >
                                             <Download className="h-4 w-4" />
@@ -1669,177 +1610,169 @@ const Inspector = ({
                 )}
             </div>
 
-            {/* 4. UNIFIED BOTTOM ACTION STRIP (ALL ACTIONS IN ONE SINGLE SPACE / ROW) */}
             <div className="pt-3 border-t border-surface-border shrink-0">
-                {/* DOCUMENT ACTIONS: DOWNLOAD, SHARE, ARCHIVE ALL IN ONE SINGLE ROW */}
                 {isDocument && (
                     <div className="grid grid-cols-3 gap-2 w-full">
-                        <PrimaryButton
-                            size="sm"
+                        <Button
+                            variant="primary"
                             leadingIcon={Download}
                             onClick={() => handleActionClick('download')}
                             className="justify-center truncate px-2"
                         >
                             Download
-                        </PrimaryButton>
-                        <SecondaryButton
-                            size="sm"
+                        </Button>
+                        <Button
+                            variant="secondary"
                             leadingIcon={Share2}
                             onClick={() => handleActionClick('share')}
                             className="justify-center truncate px-2"
                         >
                             Share
-                        </SecondaryButton>
-                        <DestructiveButton
-                            size="sm"
+                        </Button>
+                        <Button
+                            variant="destructive"
                             leadingIcon={Archive}
                             onClick={() => handleActionClick('archive')}
                             className="justify-center truncate px-2"
                         >
                             Archive
-                        </DestructiveButton>
+                        </Button>
                     </div>
                 )}
 
-                {/* USER ACTIONS: EDIT & SUSPEND/VERIFY IN ONE SINGLE ROW */}
                 {isUser && (
                     <div className="grid grid-cols-2 gap-2 w-full">
-                        <PrimaryButton
-                            size="sm"
+                        <Button
+                            variant="primary"
                             leadingIcon={Edit3}
                             onClick={() => handleActionClick('edit')}
                             className="justify-center truncate"
                         >
                             Edit Profile
-                        </PrimaryButton>
+                        </Button>
                         {item.status === 'VERIFIED' ? (
-                            <DestructiveButton
-                                size="sm"
+                            <Button
+                                variant="destructive"
                                 leadingIcon={UserX}
                                 onClick={() => handleActionClick('suspend')}
                                 className="justify-center truncate"
                             >
                                 Suspend Account
-                            </DestructiveButton>
+                            </Button>
                         ) : (
-                            <PrimaryButton
-                                size="sm"
+                            <Button
+                                variant="primary"
                                 leadingIcon={UserCheck}
                                 onClick={() => handleActionClick('verify')}
                                 className="justify-center truncate"
                             >
                                 Verify Account
-                            </PrimaryButton>
+                            </Button>
                         )}
                     </div>
                 )}
 
-                {/* DEPARTMENT ACTIONS: EDIT & DELETE IN ONE SINGLE ROW */}
                 {isDepartment && (
                     <div className="grid grid-cols-2 gap-2 w-full">
-                        <PrimaryButton
-                            size="sm"
+                        <Button
+                            variant="primary"
                             leadingIcon={Edit3}
                             onClick={() => handleActionClick('edit')}
                             className="justify-center truncate"
                         >
                             Edit Department
-                        </PrimaryButton>
-                        <DestructiveButton
-                            size="sm"
+                        </Button>
+                        <Button
+                            variant="destructive"
                             leadingIcon={Trash2}
                             onClick={() => handleActionClick('delete')}
                             className="justify-center truncate"
                         >
                             Delete
-                        </DestructiveButton>
+                        </Button>
                     </div>
                 )}
 
-                {/* COORDINATOR REQUEST ACTIONS: APPROVE & REJECT IN ONE SINGLE ROW */}
                 {isCoordinatorRequest && (
                     <div className="w-full">
                         {item.status === 'PENDING' ? (
                             <div className="grid grid-cols-2 gap-2 w-full">
-                                <PrimaryButton
-                                    size="sm"
+                                <Button
+                                    variant="primary"
                                     leadingIcon={CheckCircle2}
                                     onClick={() => handleActionClick('approve')}
                                     className="justify-center truncate"
                                 >
                                     Approve
-                                </PrimaryButton>
-                                <DestructiveButton
-                                    size="sm"
+                                </Button>
+                                <Button
+                                    variant="destructive"
                                     leadingIcon={XCircle}
                                     onClick={() => handleActionClick('reject')}
                                     className="justify-center truncate"
                                 >
                                     Reject
-                                </DestructiveButton>
+                                </Button>
                             </div>
                         ) : (
-                            <SecondaryButton
-                                size="sm"
+                            <Button
+                                variant="secondary"
                                 leadingIcon={Layers}
                                 onClick={() => handleActionClick('reopen')}
                                 className="w-full justify-center"
                             >
                                 Re-evaluate Action
-                            </SecondaryButton>
+                            </Button>
                         )}
                     </div>
                 )}
 
-                {/* DOCUMENT REQUEST ACTIONS: RESOLVE & REJECT IN ONE SINGLE ROW */}
                 {isDocumentRequest && (
                     <div className="w-full">
                         {item.status === 'OPEN' ? (
                             <div className="grid grid-cols-2 gap-2 w-full">
-                                <PrimaryButton
-                                    size="sm"
+                                <Button
+                                    variant="primary"
                                     leadingIcon={FileCheck}
                                     onClick={() => handleActionClick('resolve')}
                                     className="justify-center truncate"
                                 >
                                     Resolve Request
-                                </PrimaryButton>
-                                <DestructiveButton
-                                    size="sm"
+                                </Button>
+                                <Button
+                                    variant="destructive"
                                     leadingIcon={XCircle}
                                     onClick={() => handleActionClick('reject')}
                                     className="justify-center truncate"
                                 >
                                     Reject Request
-                                </DestructiveButton>
+                                </Button>
                             </div>
                         ) : (
-                            <PrimaryButton
-                                size="sm"
+                            <Button
+                                variant="primary"
                                 leadingIcon={Download}
                                 onClick={() => handleActionClick('download')}
                                 className="w-full justify-center"
                             >
                                 Download Clearance Package
-                            </PrimaryButton>
+                            </Button>
                         )}
                     </div>
                 )}
 
-                {/* FOLDER ACTIONS: BROWSE IN ONE SINGLE SPACE */}
                 {isFolder && (
-                    <PrimaryButton
-                        size="sm"
+                    <Button
+                        variant="primary"
                         leadingIcon={Folder}
                         onClick={() => handleActionClick('open_folder')}
                         className="w-full justify-center"
                     >
                         Browse Directory
-                    </PrimaryButton>
+                    </Button>
                 )}
             </div>
 
-            {/* ATTACH DOCUMENT SELECTION MODAL */}
             {isAttachModalOpen && (
                 <Modal
                     isOpen={isAttachModalOpen}
@@ -1853,7 +1786,7 @@ const Inspector = ({
                 >
                     <div className="flex flex-col gap-3 py-2">
                         <div className="relative">
-                            <Search className="absolute left-3 top-2.5 h-3.5 w-3.5 text-text-muted pointer-events-none" />
+                            <Search className="absolute left-3 top-3 h-4 w-4 text-text-muted pointer-events-none" />
                             <input
                                 type="text"
                                 value={attachSearchTerm}
@@ -1872,9 +1805,9 @@ const Inspector = ({
                                 attachableDocuments.map((doc) => (
                                     <div
                                         key={doc.id}
-                                        className="p-2.5 flex items-center justify-between gap-3 hover:bg-surface-hover transition-colors"
+                                        className="p-3 flex items-center justify-between gap-3 hover:bg-surface-hover transition-colors"
                                     >
-                                        <div className="flex items-center gap-2.5 min-w-0">
+                                        <div className="flex items-center gap-3 min-w-0">
                                             <FileText className="h-4 w-4 text-accent shrink-0" />
                                             <div className="flex flex-col min-w-0">
                                                 <span
@@ -1883,19 +1816,19 @@ const Inspector = ({
                                                 >
                                                     {doc.name}
                                                 </span>
-                                                <span className="text-[10px] text-text-muted">
+                                                <span className="text-xs text-text-muted">
                                                     {doc.size_bytes ? formatBytes(doc.size_bytes) : 'Document'} • {doc.classification ?? 'OFFICIAL'}
                                                 </span>
                                             </div>
                                         </div>
 
-                                        <PrimaryButton
-                                            size="sm"
+                                        <Button
+                                            variant="primary"
                                             onClick={() => handleSelectDocumentToAttach(doc)}
-                                            className="shrink-0 text-xs px-2.5"
+                                            className="shrink-0 text-xs px-3"
                                         >
                                             Attach
-                                        </PrimaryButton>
+                                        </Button>
                                     </div>
                                 ))
                             )}
@@ -1907,10 +1840,9 @@ const Inspector = ({
     );
 };
 
-export default Inspector;
 
 // --- HELPERS ---
-function formatBytes(bytes) {
+const formatBytes = (bytes) => {
     if (!bytes || bytes === 0) {
         return '0 B';
     }
@@ -1918,9 +1850,9 @@ function formatBytes(bytes) {
     const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
     const formattedValue = (bytes / Math.pow(1024, sizeIndex)).toFixed(1);
     return `${formattedValue} ${sizes[sizeIndex]}`;
-}
+};
 
-function formatTimestamp(timestampString) {
+const formatTimestamp = (timestampString) => {
     if (!timestampString || timestampString === 'Invalid Date') {
         return null;
     }
@@ -1931,36 +1863,92 @@ function formatTimestamp(timestampString) {
             return null;
         }
         return date.toLocaleDateString(undefined, {
-            year: 'numeric',
-            month: 'short',
-            day: 'numeric',
-            hour: '2-digit',
+            year:   'numeric',
+            month:  'short',
+            day:    'numeric',
+            hour:   '2-digit',
             minute: '2-digit',
         });
     } catch {
         return null;
     }
-}
+};
 
-function getMimeTypeFromExtension(filename) {
+const getMimeTypeFromExtension = (filename) => {
     if (!filename) {
         return null;
     }
 
     const extension = filename.split('.').pop()?.toLowerCase();
     const mimeTypes = {
-        pdf: 'application/pdf',
+        pdf:  'application/pdf',
         docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        doc: 'application/msword',
+        doc:  'application/msword',
         xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        xls: 'application/vnd.ms-excel',
+        xls:  'application/vnd.ms-excel',
         pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-        png: 'image/png',
-        jpg: 'image/jpeg',
+        png:  'image/png',
+        jpg:  'image/jpeg',
         jpeg: 'image/jpeg',
-        txt: 'text/plain',
+        txt:  'text/plain',
         json: 'application/json',
     };
 
     return mimeTypes[extension] ?? 'application/octet-stream';
-}
+};
+
+const getActionLabel = (action) => {
+    switch (action) {
+        case 'USER_CREATE':
+            return 'Provision New User Account';
+        case 'USER_UPDATE':
+            return 'Update User Account Profile';
+        case 'USER_SUSPEND':
+            return 'Account Administrative Suspension';
+        case 'DEPARTMENT_CREATE':
+            return 'Establish New Department';
+        case 'DEPARTMENT_UPDATE':
+            return 'Update Department Information';
+        case 'DOCUMENT_UPLOAD':
+            return 'Upload & Register Document';
+        case 'DOCUMENT_SHARE':
+            return 'Grant Department Access Share';
+        case 'DOCUMENT_ARCHIVE':
+            return 'Transfer Document to Archive';
+        case 'DOCUMENT_DELETE':
+            return 'Permanent Document Deletion';
+        case 'DOCUMENT_ATTACH':
+            return 'Attach Document File';
+        default:
+            return action ?? 'Coordinator Request';
+    }
+};
+
+const getActionDescription = (action) => {
+    switch (action) {
+        case 'USER_CREATE':
+            return 'Coordinator submitted candidate user data for administrative authorization and account creation.';
+        case 'USER_UPDATE':
+            return 'Coordinator requested modifications to user designation, title, or department assignment.';
+        case 'USER_SUSPEND':
+            return 'Coordinator initiated an administrative suspension request for user credentials.';
+        case 'DEPARTMENT_CREATE':
+            return 'Coordinator proposed establishing a new collegiate department or administrative unit.';
+        case 'DEPARTMENT_UPDATE':
+            return 'Coordinator submitted changes to departmental structure, naming, or unit assignment.';
+        case 'DOCUMENT_UPLOAD':
+            return 'Coordinator uploaded a document file requiring administrative verification before institutional publication.';
+        case 'DOCUMENT_SHARE':
+            return 'Coordinator requested cross-departmental sharing permissions for an official document.';
+        case 'DOCUMENT_ARCHIVE':
+            return 'Coordinator submitted a request to transfer an active document into cold vault archives.';
+        case 'DOCUMENT_DELETE':
+            return 'Coordinator requested permanent deletion of a document from institutional records.';
+        default:
+            return 'Coordinator action submitted for administrative review and execution.';
+    }
+};
+
+
+// --- EXPORTS ---
+export { Inspector };

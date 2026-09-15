@@ -1,10 +1,13 @@
 // --- IMPORTS ---
-import { useState, useRef, useMemo, cloneElement, isValidElement } from 'react';
-import { Search, Eye, EyeOff, ChevronDown, Check, X } from 'lucide-react';
-import { DropdownContainer } from './Container';
+import { useMemo, useRef, useState } from 'react';
+import { Check, ChevronDown, Eye, EyeOff, Search, X } from 'lucide-react';
 import { useClickOutside, useSmartPosition } from '../hooks';
+import { Container } from './Container';
+import { renderIcon } from './common';
+
 
 // --- CONFIGURATIONS ---
+const BASE_STYLE = 'h-9 py-1 px-3 text-sm rounded-md border bg-surface hover:bg-surface-hover focus-within:bg-surface text-text placeholder:text-text-muted transition-colors inline-flex items-center gap-2 w-full disabled:cursor-not-allowed disabled:opacity-50';
 const ICON_STYLE = 'h-4 w-4 shrink-0';
 
 const FIELD_WRAPPER_STYLE = 'flex flex-col gap-1 w-full';
@@ -12,30 +15,25 @@ const FIELD_LABEL_STYLE = 'text-xs font-medium text-text';
 const FIELD_HELPER_STYLE = 'text-xs text-text-muted';
 const FIELD_ERROR_STYLE = 'text-xs text-error';
 
-const CONTROL_BASE_STYLE =
-    'h-8 px-3 text-sm rounded-md border bg-surface hover:bg-surface-hover focus-within:bg-surface text-text placeholder:text-text-muted transition-colors inline-flex items-center gap-2 w-full disabled:cursor-not-allowed disabled:opacity-50';
-
-const CONTROL_STATE_STYLE = {
+const STATE_STYLE = {
     default: 'border-surface-border focus-within:border-accent',
-    error: 'border-error-border focus-within:border-error',
+    error:   'border-error-border focus-within:border-error',
 };
 
-const AREA_WRAPPER_BASE_STYLE =
-    'p-3 text-sm rounded-md border bg-surface hover:bg-surface-hover focus-within:bg-surface text-text placeholder:text-text-muted transition-colors w-full min-h-20 flex items-start gap-2 disabled:cursor-not-allowed disabled:opacity-50';
+const AREA_BASE_STYLE = 'p-3 text-sm rounded-md border bg-surface hover:bg-surface-hover focus-within:bg-surface text-text placeholder:text-text-muted transition-colors w-full min-h-20 flex items-start gap-2 disabled:cursor-not-allowed disabled:opacity-50';
 
 const DROPDOWN_VERTICAL_STYLE = {
     bottom: 'top-full mt-1',
-    top: 'bottom-full mb-1',
+    top:    'bottom-full mb-1',
 };
 
 const DROPDOWN_HORIZONTAL_STYLE = {
-    left: 'left-0',
+    left:  'left-0',
     right: 'right-0',
 };
 
-// --- COMPONENTS ---
 
-// 1. TEXT FIELD
+// --- COMPONENTS ---
 const TextField = ({
     label,
     error,
@@ -45,15 +43,15 @@ const TextField = ({
     type = 'text',
     value,
     placeholder,
-    disabled = false,
-    readOnly = false,
+    isDisabled = false,
+    isReadOnly = false,
     onChange,
     className,
     ...props
 }) => {
     // HANDLERS
     const handleChange = (event) => {
-        if (disabled || readOnly) {
+        if (isDisabled || isReadOnly) {
             return;
         }
 
@@ -61,10 +59,11 @@ const TextField = ({
     };
 
     // DERIVED VALUES
-    const stateStyle = error
-        ? CONTROL_STATE_STYLE.error
-        : CONTROL_STATE_STYLE.default;
-    const composedControlClassName = `${CONTROL_BASE_STYLE} ${stateStyle} ${className ?? ''}`.trim();
+    const stateStyle = error ? STATE_STYLE.error : STATE_STYLE.default;
+    const composedControlClassName = `${BASE_STYLE} ${stateStyle} ${className ?? ''}`.trim();
+
+    const renderedLeadingIcon = renderIcon(leadingIcon, ICON_STYLE);
+    const renderedTrailingIcon = renderIcon(trailingIcon, ICON_STYLE);
 
     // RENDER
     return (
@@ -72,37 +71,34 @@ const TextField = ({
             {label && <label className={FIELD_LABEL_STYLE}>{label}</label>}
 
             <div className={composedControlClassName}>
-                {leadingIcon && (
+                {renderedLeadingIcon && (
                     <span className="text-text-muted shrink-0">
-                        {renderIcon(leadingIcon)}
+                        {renderedLeadingIcon}
                     </span>
                 )}
                 <input
                     type={type}
                     value={value}
-                    disabled={disabled}
-                    readOnly={readOnly}
+                    disabled={isDisabled}
+                    readOnly={isReadOnly}
                     placeholder={placeholder}
                     onChange={handleChange}
                     className="w-full bg-transparent text-sm text-text placeholder:text-text-muted outline-none focus:outline-none focus-visible:outline-none disabled:cursor-not-allowed"
                     {...props}
                 />
-                {trailingIcon && (
+                {renderedTrailingIcon && (
                     <span className="text-text-muted shrink-0">
-                        {renderIcon(trailingIcon)}
+                        {renderedTrailingIcon}
                     </span>
                 )}
             </div>
 
             {error && <span className={FIELD_ERROR_STYLE}>{error}</span>}
-            {!error && helperText && (
-                <span className={FIELD_HELPER_STYLE}>{helperText}</span>
-            )}
+            {!error && helperText && <span className={FIELD_HELPER_STYLE}>{helperText}</span>}
         </div>
     );
 };
 
-// 2. PASSWORD FIELD
 const PasswordField = ({
     label,
     error,
@@ -111,8 +107,8 @@ const PasswordField = ({
     trailingIcon,
     value,
     placeholder = 'Enter password...',
-    disabled = false,
-    readOnly = false,
+    isDisabled = false,
+    isReadOnly = false,
     onChange,
     className,
     ...props
@@ -122,7 +118,7 @@ const PasswordField = ({
 
     // HANDLERS
     const handleToggleVisibility = () => {
-        if (disabled) {
+        if (isDisabled) {
             return;
         }
 
@@ -130,7 +126,7 @@ const PasswordField = ({
     };
 
     const handleChange = (event) => {
-        if (disabled || readOnly) {
+        if (isDisabled || isReadOnly) {
             return;
         }
 
@@ -138,10 +134,11 @@ const PasswordField = ({
     };
 
     // DERIVED VALUES
-    const stateStyle = error
-        ? CONTROL_STATE_STYLE.error
-        : CONTROL_STATE_STYLE.default;
-    const composedControlClassName = `${CONTROL_BASE_STYLE} ${stateStyle} ${className ?? ''}`.trim();
+    const stateStyle = error ? STATE_STYLE.error : STATE_STYLE.default;
+    const composedControlClassName = `${BASE_STYLE} ${stateStyle} ${className ?? ''}`.trim();
+
+    const renderedLeadingIcon = renderIcon(leadingIcon, ICON_STYLE);
+    const renderedTrailingIcon = renderIcon(trailingIcon, ICON_STYLE);
 
     // RENDER
     return (
@@ -149,30 +146,30 @@ const PasswordField = ({
             {label && <label className={FIELD_LABEL_STYLE}>{label}</label>}
 
             <div className={composedControlClassName}>
-                {leadingIcon && (
+                {renderedLeadingIcon && (
                     <span className="text-text-muted shrink-0">
-                        {renderIcon(leadingIcon)}
+                        {renderedLeadingIcon}
                     </span>
                 )}
                 <input
                     type={isPasswordVisible ? 'text' : 'password'}
                     value={value}
-                    disabled={disabled}
-                    readOnly={readOnly}
+                    disabled={isDisabled}
+                    readOnly={isReadOnly}
                     placeholder={placeholder}
                     onChange={handleChange}
                     className="w-full bg-transparent text-sm text-text placeholder:text-text-muted outline-none focus:outline-none focus-visible:outline-none disabled:cursor-not-allowed"
                     {...props}
                 />
-                {trailingIcon ? (
+                {renderedTrailingIcon ? (
                     <span className="text-text-muted shrink-0">
-                        {renderIcon(trailingIcon)}
+                        {renderedTrailingIcon}
                     </span>
                 ) : (
                     <button
                         type="button"
                         tabIndex={-1}
-                        disabled={disabled}
+                        disabled={isDisabled}
                         onClick={handleToggleVisibility}
                         className="text-text-muted hover:text-text transition-colors cursor-pointer shrink-0"
                         title={isPasswordVisible ? 'Hide password' : 'Show password'}
@@ -187,14 +184,11 @@ const PasswordField = ({
             </div>
 
             {error && <span className={FIELD_ERROR_STYLE}>{error}</span>}
-            {!error && helperText && (
-                <span className={FIELD_HELPER_STYLE}>{helperText}</span>
-            )}
+            {!error && helperText && <span className={FIELD_HELPER_STYLE}>{helperText}</span>}
         </div>
     );
 };
 
-// 3. AREA FIELD (TEXTAREA)
 const AreaField = ({
     label,
     error,
@@ -203,15 +197,15 @@ const AreaField = ({
     value,
     placeholder,
     rows = 3,
-    disabled = false,
-    readOnly = false,
+    isDisabled = false,
+    isReadOnly = false,
     onChange,
     className,
     ...props
 }) => {
     // HANDLERS
     const handleChange = (event) => {
-        if (disabled || readOnly) {
+        if (isDisabled || isReadOnly) {
             return;
         }
 
@@ -219,10 +213,10 @@ const AreaField = ({
     };
 
     // DERIVED VALUES
-    const stateStyle = error
-        ? CONTROL_STATE_STYLE.error
-        : CONTROL_STATE_STYLE.default;
-    const composedAreaClassName = `${AREA_WRAPPER_BASE_STYLE} ${stateStyle} ${className ?? ''}`.trim();
+    const stateStyle = error ? STATE_STYLE.error : STATE_STYLE.default;
+    const composedAreaClassName = `${AREA_BASE_STYLE} ${stateStyle} ${className ?? ''}`.trim();
+
+    const renderedLeadingIcon = renderIcon(leadingIcon, ICON_STYLE);
 
     // RENDER
     return (
@@ -230,17 +224,17 @@ const AreaField = ({
             {label && <label className={FIELD_LABEL_STYLE}>{label}</label>}
 
             <div className={composedAreaClassName}>
-                {leadingIcon && (
+                {renderedLeadingIcon && (
                     <span className="text-text-muted shrink-0 pt-1">
-                        {renderIcon(leadingIcon)}
+                        {renderedLeadingIcon}
                     </span>
                 )}
 
                 <textarea
                     rows={rows}
                     value={value}
-                    disabled={disabled}
-                    readOnly={readOnly}
+                    disabled={isDisabled}
+                    readOnly={isReadOnly}
                     placeholder={placeholder}
                     onChange={handleChange}
                     className="w-full bg-transparent text-sm text-text placeholder:text-text-muted outline-none focus:outline-none focus-visible:outline-none resize-y border-none p-0 disabled:cursor-not-allowed"
@@ -249,14 +243,11 @@ const AreaField = ({
             </div>
 
             {error && <span className={FIELD_ERROR_STYLE}>{error}</span>}
-            {!error && helperText && (
-                <span className={FIELD_HELPER_STYLE}>{helperText}</span>
-            )}
+            {!error && helperText && <span className={FIELD_HELPER_STYLE}>{helperText}</span>}
         </div>
     );
 };
 
-// 4. SEARCH FIELD
 const SearchField = ({
     label,
     error,
@@ -265,7 +256,7 @@ const SearchField = ({
     trailingIcon,
     value,
     placeholder = 'Search...',
-    disabled = false,
+    isDisabled = false,
     onClear,
     onChange,
     className,
@@ -273,7 +264,7 @@ const SearchField = ({
 }) => {
     // HANDLERS
     const handleChange = (event) => {
-        if (disabled) {
+        if (isDisabled) {
             return;
         }
 
@@ -281,7 +272,7 @@ const SearchField = ({
     };
 
     const handleClear = () => {
-        if (disabled) {
+        if (isDisabled) {
             return;
         }
 
@@ -289,10 +280,14 @@ const SearchField = ({
     };
 
     // DERIVED VALUES
-    const stateStyle = error
-        ? CONTROL_STATE_STYLE.error
-        : CONTROL_STATE_STYLE.default;
-    const composedControlClassName = `${CONTROL_BASE_STYLE} ${stateStyle} ${className ?? ''}`.trim();
+    const stateStyle = error ? STATE_STYLE.error : STATE_STYLE.default;
+    const composedControlClassName = `${BASE_STYLE} ${stateStyle} ${className ?? ''}`.trim();
+
+    const renderedLeadingIcon = leadingIcon
+        ? renderIcon(leadingIcon, ICON_STYLE)
+        : <Search className={ICON_STYLE} />;
+
+    const renderedTrailingIcon = renderIcon(trailingIcon, ICON_STYLE);
 
     // RENDER
     return (
@@ -301,25 +296,25 @@ const SearchField = ({
 
             <div className={composedControlClassName}>
                 <span className="text-text-muted shrink-0">
-                    {leadingIcon ? renderIcon(leadingIcon) : <Search className={ICON_STYLE} />}
+                    {renderedLeadingIcon}
                 </span>
                 <input
                     type="text"
                     value={value}
-                    disabled={disabled}
+                    disabled={isDisabled}
                     placeholder={placeholder}
                     onChange={handleChange}
                     className="w-full bg-transparent text-sm text-text placeholder:text-text-muted outline-none focus:outline-none focus-visible:outline-none disabled:cursor-not-allowed"
                     {...props}
                 />
-                {trailingIcon ? (
+                {renderedTrailingIcon ? (
                     <span className="text-text-muted shrink-0">
-                        {renderIcon(trailingIcon)}
+                        {renderedTrailingIcon}
                     </span>
                 ) : value ? (
                     <button
                         type="button"
-                        disabled={disabled}
+                        disabled={isDisabled}
                         onClick={handleClear}
                         className="text-text-muted hover:text-text transition-colors cursor-pointer shrink-0"
                         title="Clear search"
@@ -330,14 +325,11 @@ const SearchField = ({
             </div>
 
             {error && <span className={FIELD_ERROR_STYLE}>{error}</span>}
-            {!error && helperText && (
-                <span className={FIELD_HELPER_STYLE}>{helperText}</span>
-            )}
+            {!error && helperText && <span className={FIELD_HELPER_STYLE}>{helperText}</span>}
         </div>
     );
 };
 
-// 5. SELECT FIELD (SINGLE OPTION CUSTOM DROPDOWN)
 const SelectField = ({
     label,
     value,
@@ -346,7 +338,7 @@ const SelectField = ({
     leadingIcon,
     trailingIcon,
     dropdownAlign = 'auto',
-    disabled = false,
+    isDisabled = false,
     error,
     helperText,
     onChange,
@@ -357,20 +349,20 @@ const SelectField = ({
     const [isOpen, setIsOpen] = useState(false);
 
     // REFS
-    const containerReference = useRef(null);
-    const triggerReference = useRef(null);
-    const dropdownReference = useRef(null);
+    const containerRef = useRef(null);
+    const triggerRef = useRef(null);
+    const dropdownRef = useRef(null);
 
     // HOOKS
-    useClickOutside(containerReference, () => {
+    useClickOutside(containerRef, () => {
         setIsOpen(false);
     });
 
-    const position = useSmartPosition(triggerReference, dropdownReference, isOpen, dropdownAlign);
+    const position = useSmartPosition(triggerRef, dropdownRef, isOpen, dropdownAlign);
 
     // HANDLERS
     const handleToggleOpen = () => {
-        if (disabled) {
+        if (isDisabled) {
             return;
         }
 
@@ -378,7 +370,7 @@ const SelectField = ({
     };
 
     const handleSelectOption = (optionValue) => {
-        if (disabled) {
+        if (isDisabled) {
             return;
         }
 
@@ -388,10 +380,8 @@ const SelectField = ({
 
     // DERIVED VALUES
     const selectedOption = options.find((option) => option.value === value);
-    const stateStyle = error
-        ? CONTROL_STATE_STYLE.error
-        : CONTROL_STATE_STYLE.default;
-    const composedTriggerClassName = `${CONTROL_BASE_STYLE} ${stateStyle} justify-between cursor-pointer ${className ?? ''}`.trim();
+    const stateStyle = error ? STATE_STYLE.error : STATE_STYLE.default;
+    const composedTriggerClassName = `${BASE_STYLE} ${stateStyle} justify-between cursor-pointer ${className ?? ''}`.trim();
     const verticalStyle = DROPDOWN_VERTICAL_STYLE[position.vertical] ?? DROPDOWN_VERTICAL_STYLE.bottom;
     const horizontalStyle = DROPDOWN_HORIZONTAL_STYLE[position.horizontal] ?? (
         dropdownAlign === 'right' ? DROPDOWN_HORIZONTAL_STYLE.right : DROPDOWN_HORIZONTAL_STYLE.left
@@ -399,27 +389,29 @@ const SelectField = ({
     const composedPositionStyle = `${verticalStyle} ${horizontalStyle}`;
 
     const displayLeadingIcon = leadingIcon ?? selectedOption?.icon;
+    const renderedLeadingIcon = renderIcon(displayLeadingIcon, ICON_STYLE);
+    const renderedTrailingIcon = renderIcon(trailingIcon, ICON_STYLE);
 
     // RENDER
     return (
         <div
-            ref={containerReference}
+            ref={containerRef}
             className={`${FIELD_WRAPPER_STYLE} relative`}
             {...props}
         >
             {label && <label className={FIELD_LABEL_STYLE}>{label}</label>}
 
             <button
-                ref={triggerReference}
+                ref={triggerRef}
                 type="button"
-                disabled={disabled}
+                disabled={isDisabled}
                 onClick={handleToggleOpen}
                 className={composedTriggerClassName}
             >
                 <div className="flex items-center gap-2 truncate min-w-0 flex-1">
-                    {displayLeadingIcon && (
+                    {renderedLeadingIcon && (
                         <span className="text-text-muted shrink-0">
-                            {renderIcon(displayLeadingIcon)}
+                            {renderedLeadingIcon}
                         </span>
                     )}
                     <span className={`truncate ${selectedOption ? 'text-text' : 'text-text-muted'}`}>
@@ -427,8 +419,8 @@ const SelectField = ({
                     </span>
                 </div>
                 <span className="text-text-muted shrink-0">
-                    {trailingIcon ? (
-                        renderIcon(trailingIcon)
+                    {renderedTrailingIcon ? (
+                        renderedTrailingIcon
                     ) : (
                         <ChevronDown
                             className={`${ICON_STYLE} transition-transform ${isOpen ? 'rotate-180' : ''}`}
@@ -439,15 +431,20 @@ const SelectField = ({
 
             {isOpen && (
                 <div
-                    ref={dropdownReference}
+                    ref={dropdownRef}
                     className={`absolute z-50 min-w-full w-max max-w-sm sm:max-w-md ${composedPositionStyle}`}
                 >
-                    <DropdownContainer className="p-1 max-h-60 overflow-y-auto shadow-xl flex flex-col gap-1 border border-surface-border bg-surface">
+                    <Container
+                        variant="dropdown"
+                        className="max-h-60 overflow-y-auto shadow-xl"
+                    >
                         {options.map((option) => {
                             const isSelected = option.value === value;
                             const itemClassName = isSelected
-                                ? 'w-full h-6 flex items-center justify-between px-2 text-xs bg-accent-background text-accent font-semibold rounded-md transition-colors text-left cursor-pointer select-none gap-2 whitespace-nowrap'
-                                : 'w-full h-6 flex items-center justify-between px-2 text-xs text-text hover:bg-surface-hover rounded-md transition-colors text-left cursor-pointer select-none gap-2 whitespace-nowrap';
+                                ? 'w-full h-7 flex items-center justify-between px-2 text-xs bg-accent-background text-accent font-semibold rounded-md transition-colors text-left cursor-pointer select-none gap-2 whitespace-nowrap'
+                                : 'w-full h-7 flex items-center justify-between px-2 text-xs text-text hover:bg-surface-hover rounded-md transition-colors text-left cursor-pointer select-none gap-2 whitespace-nowrap';
+
+                            const renderedOptionIcon = renderIcon(option.icon, ICON_STYLE);
 
                             return (
                                 <button
@@ -457,9 +454,9 @@ const SelectField = ({
                                     className={itemClassName}
                                 >
                                     <div className="flex items-center gap-2 min-w-0 flex-1">
-                                        {option.icon && (
+                                        {renderedOptionIcon && (
                                             <span className="text-text-muted shrink-0">
-                                                {renderIcon(option.icon)}
+                                                {renderedOptionIcon}
                                             </span>
                                         )}
                                         <span className="whitespace-nowrap">{option.label}</span>
@@ -468,19 +465,16 @@ const SelectField = ({
                                 </button>
                             );
                         })}
-                    </DropdownContainer>
+                    </Container>
                 </div>
             )}
 
             {error && <span className={FIELD_ERROR_STYLE}>{error}</span>}
-            {!error && helperText && (
-                <span className={FIELD_HELPER_STYLE}>{helperText}</span>
-            )}
+            {!error && helperText && <span className={FIELD_HELPER_STYLE}>{helperText}</span>}
         </div>
     );
 };
 
-// 6. COMBO FIELD (MULTI-CATEGORY FACETED DROPDOWN)
 const ComboField = ({
     label,
     value,
@@ -490,8 +484,8 @@ const ComboField = ({
     leadingIcon,
     trailingIcon,
     dropdownAlign = 'auto',
-    multiple = true,
-    disabled = false,
+    isMultiple = true,
+    isDisabled = false,
     error,
     helperText,
     onChange,
@@ -502,16 +496,16 @@ const ComboField = ({
     const [isOpen, setIsOpen] = useState(false);
 
     // REFS
-    const containerReference = useRef(null);
-    const triggerReference = useRef(null);
-    const dropdownReference = useRef(null);
+    const containerRef = useRef(null);
+    const triggerRef = useRef(null);
+    const dropdownRef = useRef(null);
 
     // HOOKS
-    useClickOutside(containerReference, () => {
+    useClickOutside(containerRef, () => {
         setIsOpen(false);
     });
 
-    const position = useSmartPosition(triggerReference, dropdownReference, isOpen, dropdownAlign);
+    const position = useSmartPosition(triggerRef, dropdownRef, isOpen, dropdownAlign);
 
     // DERIVED VALUES
     const selectedValues = useMemo(() => {
@@ -541,20 +535,19 @@ const ComboField = ({
         }));
     }, [options]);
 
-    const stateStyle = error
-        ? CONTROL_STATE_STYLE.error
-        : CONTROL_STATE_STYLE.default;
-    const composedTriggerClassName = `${CONTROL_BASE_STYLE} ${stateStyle} justify-between cursor-pointer ${className ?? ''}`.trim();
+    const stateStyle = error ? STATE_STYLE.error : STATE_STYLE.default;
+    const composedTriggerClassName = `${BASE_STYLE} ${stateStyle} justify-between cursor-pointer ${className ?? ''}`.trim();
     const verticalStyle = DROPDOWN_VERTICAL_STYLE[position.vertical] ?? DROPDOWN_VERTICAL_STYLE.bottom;
     const horizontalStyle = DROPDOWN_HORIZONTAL_STYLE[position.horizontal] ?? (
         dropdownAlign === 'right' ? DROPDOWN_HORIZONTAL_STYLE.right : DROPDOWN_HORIZONTAL_STYLE.left
     );
     const composedPositionStyle = `${verticalStyle} ${horizontalStyle}`;
-    const displayLeadingIcon = leadingIcon;
+    const renderedLeadingIcon = renderIcon(leadingIcon, ICON_STYLE);
+    const renderedTrailingIcon = renderIcon(trailingIcon, ICON_STYLE);
 
     // HANDLERS
     const handleToggleOpen = () => {
-        if (disabled) {
+        if (isDisabled) {
             return;
         }
 
@@ -562,11 +555,11 @@ const ComboField = ({
     };
 
     const handleToggleOption = (optionValue) => {
-        if (disabled) {
+        if (isDisabled) {
             return;
         }
 
-        if (!multiple) {
+        if (!isMultiple) {
             onChange?.(optionValue);
             setIsOpen(false);
             return;
@@ -582,33 +575,33 @@ const ComboField = ({
 
     const handleClearAll = (event) => {
         event.stopPropagation();
-        if (disabled) {
+        if (isDisabled) {
             return;
         }
 
-        onChange?.(multiple ? [] : null);
+        onChange?.(isMultiple ? [] : null);
     };
 
     // RENDER
     return (
         <div
-            ref={containerReference}
+            ref={containerRef}
             className={`${FIELD_WRAPPER_STYLE} relative`}
             {...props}
         >
             {label && <label className={FIELD_LABEL_STYLE}>{label}</label>}
 
             <button
-                ref={triggerReference}
+                ref={triggerRef}
                 type="button"
-                disabled={disabled}
+                disabled={isDisabled}
                 onClick={handleToggleOpen}
                 className={composedTriggerClassName}
             >
                 <div className="flex items-center gap-2 truncate min-w-0 flex-1">
-                    {displayLeadingIcon && (
+                    {renderedLeadingIcon && (
                         <span className="text-text-muted shrink-0">
-                            {renderIcon(displayLeadingIcon)}
+                            {renderedLeadingIcon}
                         </span>
                     )}
                     {selectedValues.length === 0 ? (
@@ -632,8 +625,8 @@ const ComboField = ({
                         </button>
                     )}
                     <span className="text-text-muted shrink-0">
-                        {trailingIcon ? (
-                            renderIcon(trailingIcon)
+                        {renderedTrailingIcon ? (
+                            renderedTrailingIcon
                         ) : (
                             <ChevronDown
                                 className={`${ICON_STYLE} transition-transform ${isOpen ? 'rotate-180' : ''}`}
@@ -645,11 +638,13 @@ const ComboField = ({
 
             {isOpen && (
                 <div
-                    ref={dropdownReference}
+                    ref={dropdownRef}
                     className={`absolute z-50 ${composedPositionStyle} min-w-full w-max max-w-[calc(100vw-2rem)] sm:max-w-2xl`}
                 >
-                    <DropdownContainer className="p-1 overflow-hidden shadow-2xl border border-surface-border bg-surface flex flex-col">
-                        {/* CATEGORY COLUMNS IN HORIZONTAL WIDTH ( | Category 1 | Category 2 | ... | ) */}
+                    <Container
+                        variant="dropdown"
+                        className="overflow-hidden shadow-2xl p-1 flex flex-col"
+                    >
                         {categorizedGroups.length === 0 ? (
                             <div className="p-4 text-xs text-text-muted text-center">
                                 No options available
@@ -661,14 +656,12 @@ const ComboField = ({
                                         key={group.title}
                                         className="flex flex-col shrink-0 min-w-28 w-max max-w-xs"
                                     >
-                                        {/* CATEGORY COLUMN HEADER */}
                                         <div className="px-3 pt-2 pb-1 flex items-center justify-between shrink-0">
                                             <span className="font-bold text-xs text-text-muted uppercase tracking-wider select-none whitespace-nowrap">
                                                 {group.title}
                                             </span>
                                         </div>
 
-                                        {/* CATEGORY OPTIONS LIST */}
                                         <div className="p-1 flex flex-col gap-1 overflow-y-auto flex-1">
                                             {group.options.map((option) => {
                                                 const isSelected = selectedValues.includes(option.value);
@@ -678,23 +671,23 @@ const ComboField = ({
                                                         key={option.value}
                                                         type="button"
                                                         onClick={() => handleToggleOption(option.value)}
-                                                        className={`w-full h-6 flex items-center justify-between px-2 rounded-md text-xs transition-colors cursor-pointer text-left select-none gap-3 whitespace-nowrap ${
+                                                        className={`w-full h-7 flex items-center justify-between px-2 rounded-md text-xs transition-colors cursor-pointer text-left select-none gap-3 whitespace-nowrap ${
                                                             isSelected
                                                                 ? 'bg-accent-background text-accent font-semibold'
                                                                 : 'text-text hover:bg-surface-hover'
                                                         }`}
                                                     >
                                                         <div className="flex items-center gap-2 min-w-0">
-                                                            {multiple && (
+                                                            {isMultiple && (
                                                                 <div
-                                                                    className={`h-4 w-4 rounded border flex items-center justify-center transition-colors shrink-0 ${
+                                                                    className={`h-4 w-4 rounded-sm border flex items-center justify-center transition-colors shrink-0 ${
                                                                         isSelected
                                                                             ? 'bg-accent border-accent text-text-inverted'
                                                                             : 'border-surface-border bg-surface'
                                                                     }`}
                                                                 >
                                                                     {isSelected && (
-                                                                        <Check className="h-3 w-3 stroke-[3]" />
+                                                                        <Check className="h-3 w-3" />
                                                                     )}
                                                                 </div>
                                                             )}
@@ -703,7 +696,7 @@ const ComboField = ({
                                                             </span>
                                                         </div>
 
-                                                        {!multiple && isSelected && (
+                                                        {!isMultiple && isSelected && (
                                                             <Check className={`${ICON_STYLE} text-accent shrink-0`} />
                                                         )}
                                                     </button>
@@ -714,47 +707,23 @@ const ComboField = ({
                                 ))}
                             </div>
                         )}
-                    </DropdownContainer>
+                    </Container>
                 </div>
             )}
 
             {error && <span className={FIELD_ERROR_STYLE}>{error}</span>}
-            {!error && helperText && (
-                <span className={FIELD_HELPER_STYLE}>{helperText}</span>
-            )}
+            {!error && helperText && <span className={FIELD_HELPER_STYLE}>{helperText}</span>}
         </div>
     );
 };
 
+
+// --- EXPORTS ---
 export {
-    TextField,
-    PasswordField,
     AreaField,
+    ComboField,
+    PasswordField,
     SearchField,
     SelectField,
-    ComboField,
-};
-
-export default {
     TextField,
-    PasswordField,
-    AreaField,
-    SearchField,
-    SelectField,
-    ComboField,
 };
-
-// --- HELPERS ---
-function renderIcon(icon) {
-    if (!icon) {
-        return null;
-    }
-
-    if (isValidElement(icon)) {
-        const iconClassName = `${ICON_STYLE} ${icon.props.className ?? ''}`.trim();
-        return cloneElement(icon, { className: iconClassName });
-    }
-
-    const IconComponent = icon;
-    return <IconComponent className={ICON_STYLE} />;
-}

@@ -21,7 +21,6 @@ import {
     ForgotPasswordPage,
     DashboardPage,
     DocumentsPage,
-    RequestDocumentPage,
     UsersPage,
     DepartmentsPage,
     RequestsPage,
@@ -31,21 +30,20 @@ import {
     Inspector,
     ToastProvider,
     ProtectedRoute,
-    PublicOnlyRoute,
-    useToast,
+    PublicRoute,
 } from './components';
-import { useAuth } from './hooks';
+import { useAuth, useToast } from './hooks';
 import {
-    useNotificationStore,
-    useCoordinatorRequestStore,
+    useCoordinatorStore,
     useDepartmentStore,
-    useUserStore,
     useDocumentStore,
-    useDocumentRequestStore,
+    useNotificationStore,
+    useUserStore,
 } from './stores';
-import { USER_ROLES } from './constants';
+import { constants } from './constants';
 
-// --- MODULE-LEVEL CONSTANTS ---
+
+// --- CONFIGURATIONS ---
 const PAGE_TITLES = {
     dashboard: 'Dashboard',
     documents: 'Manage Documents',
@@ -55,13 +53,34 @@ const PAGE_TITLES = {
     requests: 'Manage Requests',
 };
 
+
 // --- COMPONENTS ---
 const AppContent = () => {
+    // STATES: WORKSPACE & INSPECTOR
+    const [selectedItem, setSelectedItem] = useState(null);
+    const [isDetailPanelOpen, setIsDetailPanelOpen] = useState(false);
+
     // HOOKS
     const location = useLocation();
     const navigate = useNavigate();
     const { showToast } = useToast();
-    const { currentUser, isLoading, loginWithUniversityId, loginWithGoogle, logout } = useAuth();
+    const {
+        currentUser,
+        isLoading,
+        initializeAuthListener,
+        loginWithUniversityId,
+        loginWithGoogle,
+        logout,
+    } = useAuth();
+
+    // LISTENERS
+    useEffect(() => {
+        const unsubscribe = initializeAuthListener();
+
+        return () => {
+            unsubscribe?.();
+        };
+    }, [initializeAuthListener]);
 
     // STORES
     const notifications = useNotificationStore((state) => state.notifications);
@@ -78,11 +97,7 @@ const AppContent = () => {
         }
     }, [currentUser, fetchDepartments, fetchUsers, fetchDocuments]);
 
-    // WORKSPACE & INSPECTOR STATES
-    const [selectedItem, setSelectedItem] = useState(null);
-    const [isDetailPanelOpen, setIsDetailPanelOpen] = useState(false);
-
-    // DERIVED VALUES: CURRENT NAVIGATION KEY
+    // DERIVED VALUES: NAVIGATION & PERMISSIONS
     const activeNavigationKey = useMemo(() => {
         const path = location.pathname;
         if (path.startsWith('/documents')) {
@@ -103,9 +118,9 @@ const AppContent = () => {
         return 'dashboard';
     }, [location.pathname]);
 
-    const userRole = currentUser?.role ?? USER_ROLES.MEMBER;
-    const isAdmin = userRole === USER_ROLES.ADMINISTRATOR;
-    const isCoordinator = userRole === USER_ROLES.COORDINATOR;
+    const userRole = currentUser?.role ?? constants.USERS_ROLE.MEMBER;
+    const isAdmin = userRole === constants.USERS_ROLE.ADMINISTRATOR;
+    const isCoordinator = userRole === constants.USERS_ROLE.COORDINATOR;
     const canRequestDocument = !isAdmin && !isCoordinator;
     const pageTitle = PAGE_TITLES[activeNavigationKey] ?? 'Dashboard';
 
@@ -288,7 +303,7 @@ const AppContent = () => {
         if (actionKey === 'archive') {
             try {
                 if (item?.id) {
-                    await useDocumentStore.getState().updateDocument(item.id, { is_archived: true });
+                    await useDocumentStore.getState().updateDocument(item.id, { isArchived: true });
                 }
                 showToast({
                     type: 'warning',
@@ -330,12 +345,12 @@ const AppContent = () => {
         if (actionKey === 'verify') {
             try {
                 if (item?.id) {
-                    await useUserStore.getState().updateUser(item.id, { status: 'VERIFIED' });
+                    await useUserStore.getState().updateUser(item.id, { status: constants.USERS_STATUS.VERIFIED });
                 }
                 showToast({
                     type: 'success',
                     title: 'Account Verified',
-                    description: `${item?.first_name ?? item?.name ?? 'User'} is now verified.`,
+                    description: `${item?.first_name ?? item?.firstName ?? item?.name ?? 'User'} is now verified.`,
                 });
             } catch (error) {
                 showToast({
@@ -350,12 +365,12 @@ const AppContent = () => {
         if (actionKey === 'suspend') {
             try {
                 if (item?.id) {
-                    await useUserStore.getState().updateUser(item.id, { status: 'SUSPENDED' });
+                    await useUserStore.getState().updateUser(item.id, { status: constants.USERS_STATUS.SUSPENDED });
                 }
                 showToast({
                     type: 'warning',
                     title: 'Account Suspended',
-                    description: `${item?.first_name ?? item?.name ?? 'User'} account suspended.`,
+                    description: `${item?.first_name ?? item?.firstName ?? item?.name ?? 'User'} account suspended.`,
                 });
             } catch (error) {
                 showToast({
@@ -379,9 +394,12 @@ const AppContent = () => {
         if (actionKey === 'approve') {
             if (item?.action && item?.data) {
                 try {
-                    const approved = await useCoordinatorRequestStore.getState().approveCoordinatorRequest(
+                    const approved = await useCoordinatorStore.getState().updateCoordinatorRequest(
                         item.id,
-                        currentUser?.id ?? 'f1000001-0000-4000-8000-000000000001'
+                        {
+                            reviewerId: currentUser?.id ?? 'f1000001-0000-4000-8000-000000000001',
+                            status: constants.COORDINATOR_REQUESTS_STATUS.APPROVED,
+                        }
                     );
                     setSelectedItem(approved);
                     showToast({
@@ -410,10 +428,13 @@ const AppContent = () => {
         if (actionKey === 'reject') {
             if (item?.action && item?.data) {
                 try {
-                    const rejected = await useCoordinatorRequestStore.getState().rejectCoordinatorRequest(
+                    const rejected = await useCoordinatorStore.getState().updateCoordinatorRequest(
                         item.id,
-                        'Declined by administrator during record review.',
-                        currentUser?.id ?? 'f1000001-0000-4000-8000-000000000001'
+                        {
+                            reviewerId: currentUser?.id ?? 'f1000001-0000-4000-8000-000000000001',
+                            status: constants.COORDINATOR_REQUESTS_STATUS.REJECTED,
+                            rejectionReason: 'Declined by administrator during record review.',
+                        }
                     );
                     setSelectedItem(rejected);
                     showToast({
@@ -433,10 +454,11 @@ const AppContent = () => {
 
             if (item?.subject) {
                 try {
-                    await useDocumentRequestStore.getState().rejectDocumentRequest(
+                    await useDocumentStore.getState().updateDocumentRequest(
                         item.id,
-                        'Declined during review.',
-                        currentUser?.id ?? 'f1000001-0000-4000-8000-000000000001'
+                        {
+                            status: constants.DOCUMENT_REQUESTS_STATUS.REJECTED,
+                        }
                     );
                     showToast({
                         type: 'warning',
@@ -464,9 +486,11 @@ const AppContent = () => {
         if (actionKey === 'resolve') {
             try {
                 if (item?.id) {
-                    await useDocumentRequestStore.getState().resolveDocumentRequest(
+                    await useDocumentStore.getState().updateDocumentRequest(
                         item.id,
-                        currentUser?.id ?? 'f1000001-0000-4000-8000-000000000001'
+                        {
+                            status: constants.DOCUMENT_REQUESTS_STATUS.RESOLVED,
+                        }
                     );
                 }
                 showToast({
@@ -505,12 +529,13 @@ const AppContent = () => {
         navigate('/request-document');
     };
 
+    // RENDER
     return (
         <Routes>
             {/* 1. PUBLIC-ONLY ROUTES (LOGGED IN USERS AUTO-REDIRECT TO /dashboard) */}
             <Route
                 element={
-                    <PublicOnlyRoute
+                    <PublicRoute
                         currentUser={currentUser}
                         isLoading={isLoading}
                     />
@@ -594,9 +619,10 @@ const AppContent = () => {
                 <Route
                     path="/request-document"
                     element={
-                        <RequestDocumentPage
+                        <RequestsPage
                             currentUser={currentUser}
-                            onSelectDocument={handleSelectActivity}
+                            initialTab="document"
+                            onSelectRequest={handleSelectActivity}
                         />
                     }
                 />
@@ -606,7 +632,7 @@ const AppContent = () => {
                     element={
                         <ProtectedRoute
                             currentUser={currentUser}
-                            allowedRoles={[USER_ROLES.ADMINISTRATOR, USER_ROLES.COORDINATOR]}
+                            allowedRoles={[constants.USERS_ROLE.ADMINISTRATOR, constants.USERS_ROLE.COORDINATOR]}
                             requiredRoleLabel="Administrator or Coordinator"
                         />
                     }
@@ -632,6 +658,7 @@ const AppContent = () => {
                         element={
                             <RequestsPage
                                 currentUser={currentUser}
+                                initialTab="coordinator"
                                 onSelectRequest={handleSelectActivity}
                             />
                         }
@@ -645,7 +672,7 @@ const AppContent = () => {
     );
 };
 
-export default function App() {
+const App = () => {
     return (
         <ToastProvider>
             <BrowserRouter>
@@ -653,4 +680,9 @@ export default function App() {
             </BrowserRouter>
         </ToastProvider>
     );
-}
+};
+
+
+// --- EXPORTS ---
+export { App };
+export default App;

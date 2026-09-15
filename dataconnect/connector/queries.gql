@@ -1,262 +1,655 @@
 # --- DEPARTMENT QUERIES ---
-query ListDepartments @auth(level: PUBLIC) {
-  departments {
-    id
-    name
-    code
-  }
+query FetchDepartments @auth(level: USER) {
+    departments {
+        id
+        name
+        code
+        createdAt
+        updatedAt
+    }
 }
 
-query GetDepartmentById($id: UUID!) @auth(level: PUBLIC) {
-  department(id: $id) {
-    id
-    name
-    code
-  }
+query FetchDepartmentById(
+    $id: UUID!
+) @auth(level: USER) {
+    departments(where: { id: { eq: $id } }) {
+        id
+        name
+        code
+        createdAt
+        updatedAt
+    }
 }
 
-query GetDepartmentByCode($code: String!) @auth(level: PUBLIC) {
-  departments(where: { code: { eq: $code } }) {
-    id
-    name
-    code
-  }
+query FetchDepartmentByCode(
+    $code: String!
+) @auth(level: USER) {
+    departments(where: { code: { eq: $code } }) {
+        id
+        name
+        code
+        createdAt
+        updatedAt
+    }
 }
+
 
 # --- USER QUERIES ---
-query ListUsers @auth(level: PUBLIC) {
-  users {
-    id
-    universityId
-    email
-    role
-    status
-    firstName
-    middleName
-    lastName
-    avatarPath
-    department {
-      id
-      name
-      code
+query FetchUsers @auth(level: USER) {
+    users {
+        id
+        universityId
+        department {
+            id
+            name
+            code
+        }
+        role
+        email
+        avatarPath
+        firstName
+        middleName
+        lastName
+        status
+        createdAt
+        updatedAt
     }
-  }
 }
 
-query GetUserByUniversityId($universityId: String!) @auth(level: PUBLIC) {
-  users(where: { universityId: { eq: $universityId } }) {
-    id
-    universityId
-    email
-    role
-    status
-    firstName
-    middleName
-    lastName
-    avatarPath
-    department {
-      id
-      name
-      code
+query FetchUserById(
+    $id: UUID!
+) @auth(level: USER) {
+    users(where: { id: { eq: $id } }) {
+        id
+        universityId
+        department {
+            id
+            name
+            code
+        }
+        role
+        email
+        avatarPath
+        firstName
+        middleName
+        lastName
+        status
+        createdAt
+        updatedAt
     }
-  }
 }
 
-query GetUserByEmail($email: String!) @auth(level: PUBLIC) {
-  users(where: { email: { eq: $email } }) {
-    id
-    universityId
-    email
-    role
-    status
-    firstName
-    middleName
-    lastName
-    avatarPath
-    department {
-      id
-      name
-      code
+query FetchUserByUniversityId(
+    $universityId: String!
+) @auth(level: USER) {
+    users(where: { universityId: { eq: $universityId } }) {
+        id
+        universityId
+        department {
+            id
+            name
+            code
+        }
+        role
+        email
+        avatarPath
+        firstName
+        middleName
+        lastName
+        status
+        createdAt
+        updatedAt
     }
-  }
 }
 
-query GetUserSettings($userId: UUID!) @auth(level: USER) {
-  userSettings(where: { user: { id: { eq: $userId } } }) {
-    id
-    theme
-    notification
-  }
+query FetchUserByEmail(
+    $email: String!
+) @auth(level: USER) {
+    users(where: { email: { eq: $email } }) {
+        id
+        universityId
+        department {
+            id
+            name
+            code
+        }
+        role
+        email
+        avatarPath
+        firstName
+        middleName
+        lastName
+        status
+        createdAt
+        updatedAt
+    }
 }
+
+query FetchUserCredentialsByUserId(
+    $userId: UUID!
+) @auth(level: USER) {
+    userCredentials(where: { user: { id: { eq: $userId } } }) {
+        user {
+            id
+        }
+        passwordHash
+        googleId
+        createdAt
+        updatedAt
+    }
+}
+
+query FetchUserSettingsByUserId(
+    $userId: UUID!
+) @auth(level: USER) {
+    userSettings(where: { user: { id: { eq: $userId } } }) {
+        user {
+            id
+        }
+        theme
+        notification
+        createdAt
+        updatedAt
+    }
+}
+
+query FetchUserSessionsByUserId(
+    $userId: UUID!
+) @auth(level: USER) {
+    userSessions(where: { user: { id: { eq: $userId } } }) {
+        id
+        user {
+            id
+        }
+        tokenHash
+        ipAddress
+        userAgent
+        createdAt
+        expiredAt
+    }
+}
+
 
 # --- DOCUMENT QUERIES ---
-query ListDocuments($isArchived: Boolean) @auth(level: USER) {
-  documents(where: { isArchived: { eq: $isArchived } }) {
-    id
-    name
-    isFolder
-    isArchived
-    comment
-    parent {
-      id
-      name
+query FetchDocuments(
+    $isArchived: Boolean
+) @auth(level: USER) {
+    documents(where: { isArchived: { eq: $isArchived } }) {
+        id
+        parent {
+            id
+            name
+        }
+        uploader {
+            id
+            firstName
+            lastName
+            email
+        }
+        name
+        comment
+        isFolder
+        isArchived
+        createdAt
+        updatedAt
     }
-    uploader {
-      id
-      firstName
-      lastName
-      email
-    }
-  }
 }
 
-query GetDocumentById($id: UUID!) @auth(level: USER) {
-  document(id: $id) {
-    id
-    name
-    isFolder
-    isArchived
-    comment
-    parent {
-      id
-      name
+query FetchDocumentById(
+    $id: UUID!
+) @auth(level: USER) {
+    documents(where: { id: { eq: $id } }) {
+        id
+        parent {
+            id
+            name
+        }
+        uploader {
+            id
+            firstName
+            lastName
+            email
+        }
+        name
+        comment
+        isFolder
+        isArchived
+        createdAt
+        updatedAt
     }
-    uploader {
-      id
-      firstName
-      lastName
-      email
-    }
-  }
 }
 
-query ListDocumentVersions($documentId: UUID!) @auth(level: USER) {
-  documentVersions(where: { document: { id: { eq: $documentId } } }, orderBy: [{ version: DESC }]) {
-    id
-    version
-    path
-    sizeBytes
-    mimeType
-    classification
-    changeSummary
-    rejectionReason
-    summary
-    textHash
-    uploader {
-      id
-      firstName
-      lastName
+query FetchDocumentVersions(
+    $documentId: UUID!
+) @auth(level: USER) {
+    documentVersions(where: { document: { id: { eq: $documentId } } }, orderBy: [{ version: DESC }]) {
+        id
+        document {
+            id
+            name
+        }
+        uploader {
+            id
+            firstName
+            lastName
+        }
+        approver {
+            id
+            firstName
+            lastName
+        }
+        publisher {
+            id
+            firstName
+            lastName
+        }
+        rejecter {
+            id
+            firstName
+            lastName
+        }
+        version
+        checksum
+        path
+        sizeBytes
+        mimeType
+        classification
+        changeSummary
+        rejectionReason
+        summary
+        textHash
+        createdAt
+        updatedAt
     }
-    approver {
-      id
-      firstName
-      lastName
-    }
-    publisher {
-      id
-      firstName
-      lastName
-    }
-    rejecter {
-      id
-      firstName
-      lastName
-    }
-  }
 }
 
-query ListDocumentShares($documentId: UUID!) @auth(level: USER) {
-  documentShares(where: { document: { id: { eq: $documentId } } }) {
-    id
-    status
-    department {
-      id
-      name
-      code
+query FetchDocumentVersionById(
+    $id: UUID!
+) @auth(level: USER) {
+    documentVersions(where: { id: { eq: $id } }) {
+        id
+        document {
+            id
+            name
+        }
+        uploader {
+            id
+            firstName
+            lastName
+        }
+        approver {
+            id
+            firstName
+            lastName
+        }
+        publisher {
+            id
+            firstName
+            lastName
+        }
+        rejecter {
+            id
+            firstName
+            lastName
+        }
+        version
+        checksum
+        path
+        sizeBytes
+        mimeType
+        classification
+        changeSummary
+        rejectionReason
+        summary
+        textHash
+        createdAt
+        updatedAt
     }
-    sharer {
-      id
-      firstName
-      lastName
-    }
-    recipient {
-      id
-      firstName
-      lastName
-    }
-  }
 }
 
-# --- REQUEST QUERIES ---
-query ListDocumentRequests @auth(level: USER) {
-  documentRequests {
-    id
-    subject
-    status
-    requester {
-      id
-      firstName
-      lastName
-      email
+query FetchDocumentShares(
+    $documentId: UUID!
+) @auth(level: USER) {
+    documentShares(where: { document: { id: { eq: $documentId } } }) {
+        id
+        document {
+            id
+            name
+        }
+        sharer {
+            id
+            firstName
+            lastName
+        }
+        recipient {
+            id
+            firstName
+            lastName
+        }
+        department {
+            id
+            name
+            code
+        }
+        status
+        createdAt
+        updatedAt
     }
-    resolver {
-      id
-      firstName
-      lastName
-      email
-    }
-  }
 }
 
-query ListCoordinatorRequests @auth(level: USER) {
-  coordinatorRequests {
-    id
-    action
-    data
-    status
-    rejectionReason
-    requester {
-      id
-      firstName
-      lastName
+query FetchDocumentSharesByDepartmentId(
+    $departmentId: UUID!
+) @auth(level: USER) {
+    documentShares(where: { department: { id: { eq: $departmentId } } }) {
+        id
+        document {
+            id
+            name
+        }
+        sharer {
+            id
+            firstName
+            lastName
+        }
+        recipient {
+            id
+            firstName
+            lastName
+        }
+        department {
+            id
+            name
+            code
+        }
+        status
+        createdAt
+        updatedAt
     }
-    reviewer {
-      id
-      firstName
-      lastName
-    }
-  }
 }
 
-# --- NOTIFICATION & AUDIT LOG QUERIES ---
-query ListNotifications($recipientId: UUID!) @auth(level: USER) {
-  notifications(where: { recipient: { id: { eq: $recipientId } } }) {
-    id
-    entityType
-    entityId
-    action
-    isRead
-    isEmailed
-    actor {
-      id
-      firstName
-      lastName
+query FetchDocumentSharesByRecipientId(
+    $recipientId: UUID!
+) @auth(level: USER) {
+    documentShares(where: { recipient: { id: { eq: $recipientId } } }) {
+        id
+        document {
+            id
+            name
+        }
+        sharer {
+            id
+            firstName
+            lastName
+        }
+        recipient {
+            id
+            firstName
+            lastName
+        }
+        department {
+            id
+            name
+            code
+        }
+        status
+        createdAt
+        updatedAt
     }
-  }
 }
 
-query ListAuditLogs @auth(level: USER) {
-  auditLogs {
-    id
-    entityType
-    entityId
-    action
-    data
-    actor {
-      id
-      firstName
-      lastName
-      email
+query FetchDocumentShareById(
+    $id: UUID!
+) @auth(level: USER) {
+    documentShares(where: { id: { eq: $id } }) {
+        id
+        document {
+            id
+            name
+        }
+        sharer {
+            id
+            firstName
+            lastName
+        }
+        recipient {
+            id
+            firstName
+            lastName
+        }
+        department {
+            id
+            name
+            code
+        }
+        status
+        createdAt
+        updatedAt
     }
-  }
+}
+
+query FetchDocumentRequests @auth(level: USER) {
+    documentRequests {
+        id
+        requester {
+            id
+            firstName
+            lastName
+            email
+        }
+        resolver {
+            id
+            firstName
+            lastName
+            email
+        }
+        subject
+        status
+        createdAt
+        updatedAt
+    }
+}
+
+query FetchDocumentRequestsByRequesterId(
+    $requesterId: UUID!
+) @auth(level: USER) {
+    documentRequests(where: { requester: { id: { eq: $requesterId } } }) {
+        id
+        requester {
+            id
+            firstName
+            lastName
+            email
+        }
+        resolver {
+            id
+            firstName
+            lastName
+            email
+        }
+        subject
+        status
+        createdAt
+        updatedAt
+    }
+}
+
+query FetchDocumentRequestById(
+    $id: UUID!
+) @auth(level: USER) {
+    documentRequests(where: { id: { eq: $id } }) {
+        id
+        requester {
+            id
+            firstName
+            lastName
+            email
+        }
+        resolver {
+            id
+            firstName
+            lastName
+            email
+        }
+        subject
+        status
+        createdAt
+        updatedAt
+    }
+}
+
+query FetchDocumentRequestMessages(
+    $documentRequestId: UUID!
+) @auth(level: USER) {
+    documentRequestMessages(where: { documentRequest: { id: { eq: $documentRequestId } } }) {
+        id
+        documentRequest {
+            id
+        }
+        user {
+            id
+            firstName
+            lastName
+        }
+        message
+        createdAt
+    }
+}
+
+query FetchDocumentRequestAttachments(
+    $documentRequestId: UUID!
+) @auth(level: USER) {
+    documentRequestAttachments(where: { documentRequest: { id: { eq: $documentRequestId } } }) {
+        id
+        documentRequest {
+            id
+        }
+        document {
+            id
+            name
+        }
+        attachedBy {
+            id
+            firstName
+            lastName
+        }
+        createdAt
+    }
+}
+
+
+# --- COORDINATOR REQUEST QUERIES ---
+query FetchCoordinatorRequests @auth(level: USER) {
+    coordinatorRequests {
+        id
+        requester {
+            id
+            firstName
+            lastName
+        }
+        reviewer {
+            id
+            firstName
+            lastName
+        }
+        action
+        data
+        status
+        rejectionReason
+        createdAt
+        updatedAt
+    }
+}
+
+query FetchCoordinatorRequestsByRequesterId(
+    $requesterId: UUID!
+) @auth(level: USER) {
+    coordinatorRequests(where: { requester: { id: { eq: $requesterId } } }) {
+        id
+        requester {
+            id
+            firstName
+            lastName
+        }
+        reviewer {
+            id
+            firstName
+            lastName
+        }
+        action
+        data
+        status
+        rejectionReason
+        createdAt
+        updatedAt
+    }
+}
+
+query FetchCoordinatorRequestById(
+    $id: UUID!
+) @auth(level: USER) {
+    coordinatorRequests(where: { id: { eq: $id } }) {
+        id
+        requester {
+            id
+            firstName
+            lastName
+        }
+        reviewer {
+            id
+            firstName
+            lastName
+        }
+        action
+        data
+        status
+        rejectionReason
+        createdAt
+        updatedAt
+    }
+}
+
+
+# --- NOTIFICATION QUERIES ---
+query FetchNotifications(
+    $recipientId: UUID!
+) @auth(level: USER) {
+    notifications(where: { recipient: { id: { eq: $recipientId } } }) {
+        id
+        recipient {
+            id
+        }
+        actor {
+            id
+            firstName
+            lastName
+        }
+        entityType
+        entityId
+        action
+        isRead
+        isEmailed
+        createdAt
+        updatedAt
+    }
+}
+
+
+
+
+# --- AUDIT LOG QUERIES ---
+query FetchAuditLogs @auth(level: USER) {
+    auditLogs {
+        id
+        actor {
+            id
+            firstName
+            lastName
+            email
+        }
+        entityType
+        entityId
+        action
+        data
+        createdAt
+    }
 }

@@ -5,16 +5,14 @@ import {
     User,
     ArrowRight,
 } from 'lucide-react';
-import { AuthenticationLayout } from '../layouts';
+import { AuthLayout } from '../layouts';
 import {
-    PrimaryButton,
-    SecondaryButton,
+    Button,
     TextField,
     PasswordField,
-    useToast,
 } from '../components';
-import { VALIDATION_PATTERNS, INSTITUTIONAL_CONFIG } from '../constants';
-
+import { useToast } from '../hooks';
+import { constants } from '../constants';
 
 // --- COMPONENTS ---
 const LoginPage = ({
@@ -22,9 +20,6 @@ const LoginPage = ({
     onGoogleLogin,
     onForgotPasswordClick,
 }) => {
-    // HOOKS
-    const { showToast } = useToast();
-
     // STATES
     const [universityId, setUniversityId] = useState('');
     const [password, setPassword] = useState('');
@@ -32,6 +27,9 @@ const LoginPage = ({
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [universityIdError, setUniversityIdError] = useState('');
     const [passwordError, setPasswordError] = useState('');
+
+    // HOOKS
+    const { showToast } = useToast();
 
     // HANDLERS
     const handleUniversityIdChange = (event) => {
@@ -70,7 +68,7 @@ const LoginPage = ({
     const handleFormSubmit = async (event) => {
         event.preventDefault();
 
-        // 1. Guard against empty inputs
+        // Guard against empty inputs
         const trimmedUniversityId = universityId.trim();
         if (!trimmedUniversityId) {
             setUniversityIdError('University ID is required.');
@@ -82,8 +80,8 @@ const LoginPage = ({
             return;
         }
 
-        // 2. Validate University ID format (7 digits total with dash: XX-XXXXX)
-        if (!VALIDATION_PATTERNS.UNIVERSITY_ID.test(trimmedUniversityId)) {
+        // Validate University ID format
+        if (!constants.VALIDATION_PATTERNS.UNIVERSITY_ID.test(trimmedUniversityId)) {
             setUniversityIdError('Enter a valid University ID format (e.g. 20-00001).');
             return;
         }
@@ -146,7 +144,7 @@ const LoginPage = ({
 
     // RENDER
     return (
-        <AuthenticationLayout
+        <AuthLayout
             title="Sign In"
             description="Enter your official University ID and password to access your account."
         >
@@ -159,7 +157,7 @@ const LoginPage = ({
                     onChange={handleUniversityIdChange}
                     error={universityIdError}
                     leadingIcon={User}
-                    maxLength={INSTITUTIONAL_CONFIG.MAX_UNIVERSITY_ID_LENGTH}
+                    maxLength={constants.INSTITUTIONAL_CONFIGURATION.MAX_UNIVERSITY_ID_LENGTH}
                     inputMode="numeric"
                     autoComplete="username"
                     required
@@ -195,11 +193,12 @@ const LoginPage = ({
                     </button>
                 </div>
 
-                <PrimaryButton
+                <Button
                     type="submit"
+                    variant="primary"
                     label={isSubmitting ? 'Verifying Credentials...' : 'Sign In to Pamantasan Records'}
                     leadingIcon={ArrowRight}
-                    loading={isSubmitting}
+                    isLoading={isSubmitting}
                     className="w-full mt-2"
                 />
             </form>
@@ -213,16 +212,15 @@ const LoginPage = ({
             </div>
 
             {/* GOOGLE WORKSPACE SSO BUTTON */}
-            <SecondaryButton
+            <Button
+                variant="secondary"
                 label="Sign in with Google Workspace"
                 onClick={handleGoogleSSOClick}
                 className="w-full justify-center"
             />
-        </AuthenticationLayout>
+        </AuthLayout>
     );
 };
-
-export default LoginPage;
 
 // --- HELPERS ---
 function formatUniversityId(rawInput) {
@@ -230,7 +228,6 @@ function formatUniversityId(rawInput) {
         return '';
     }
 
-    // Extract digits only, maximum 7 digits (2 for prefix + 5 for suffix)
     const digits = rawInput.replace(/\D/g, '').slice(0, 7);
 
     if (digits.length <= 2) {
@@ -239,3 +236,7 @@ function formatUniversityId(rawInput) {
 
     return `${digits.slice(0, 2)}-${digits.slice(2, 7)}`;
 }
+
+// --- EXPORTS ---
+export { LoginPage };
+export default LoginPage;

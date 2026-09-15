@@ -2,11 +2,12 @@
 const BASE_STYLE = 'flex flex-col text-text';
 
 const VARIANT_STYLE = {
-    page: 'w-full gap-6',
-    panel: 'p-4 bg-surface border border-surface-border rounded-lg gap-4',
-    card: 'p-4 bg-surface border border-surface-border rounded-xl shadow-lg gap-3',
-    dropdown: 'p-2 bg-surface border border-surface-border rounded-md shadow-md gap-1 min-w-48',
+    dropdown: 'p-2 gap-1 bg-surface border border-surface-border rounded-md shadow-md',
+    card:     'p-4 gap-3 bg-surface border border-surface-border rounded-xl shadow-sm',
+    panel:    'p-6 gap-4 bg-surface border border-surface-border rounded-xl shadow-xl',
+    page:     'p-8 gap-6 bg-background',
 };
+
 
 // --- COMPONENTS ---
 const Container = ({
@@ -30,17 +31,6 @@ const Container = ({
     );
 };
 
-const PageContainer = (props) => <Container variant="page" {...props} />;
-const PanelContainer = (props) => <Container variant="panel" {...props} />;
-const CardContainer = (props) => <Container variant="card" {...props} />;
-const DropdownContainer = (props) => <Container variant="dropdown" {...props} />;
 
-export {
-    Container,
-    PageContainer,
-    PanelContainer,
-    CardContainer,
-    DropdownContainer,
-};
-
-export default Container;
+// --- EXPORTS ---
+export { Container };

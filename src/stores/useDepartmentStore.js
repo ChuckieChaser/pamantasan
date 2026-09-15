@@ -1,167 +1,154 @@
 // --- IMPORTS ---
 import { create } from 'zustand';
-import {
-    DepartmentInsertSchema,
-    DepartmentUpdateSchema,
-} from '../schemas';
-import { DEFAULT_DEPARTMENTS } from '../constants';
+
+import { mutationSchema } from '../schemas';
 import { departmentService } from '../services';
 
-// --- STORE DEFINITION ---
+
+// --- STORE ---
 const useDepartmentStore = create((set, get) => ({
-    // STATE
-    departments: [...DEFAULT_DEPARTMENTS],
+    // STATES
+    departments: [],
     selectedDepartment: null,
     isLoading: false,
     error: null,
 
-    // ACTIONS
+    // CORE
     fetchDepartments: async () => {
         set({ isLoading: true, error: null });
 
         try {
-            let liveDepartments = await departmentService.fetchDepartments();
-
-            // Auto-seed missing canonical colleges into PostgreSQL
-            const existingCodes = new Set(liveDepartments.map((d) => d.code));
-            const missingColleges = DEFAULT_DEPARTMENTS.filter((d) => !existingCodes.has(d.code));
-
-            if (missingColleges.length > 0) {
-                for (const missing of missingColleges) {
-                    try {
-                        await departmentService.createDepartment({
-                            name: missing.name,
-                            code: missing.code,
-                        });
-                    } catch {
-                        // Ignore race condition
-                    }
-                }
-                liveDepartments = await departmentService.fetchDepartments();
-            }
-
-            const combinedMap = new Map();
-            DEFAULT_DEPARTMENTS.forEach((dept) => {
-                combinedMap.set(dept.code, dept);
-            });
-            liveDepartments.forEach((dept) => {
-                const existing = combinedMap.get(dept.code);
-                if (existing) {
-                    combinedMap.set(dept.code, { ...existing, ...dept });
-                } else {
-                    combinedMap.set(dept.code || dept.id, dept);
-                }
-            });
-
-            const mergedList = Array.from(combinedMap.values());
-            set({ departments: mergedList, isLoading: false });
-            return mergedList;
+            const departments = await departmentService.fetchDepartments();
+            set({ departments: departments, isLoading: false, error: null });
+            
+            return departments;
         } catch (error) {
-            const errorMessage = error?.message ?? 'Failed to fetch departments.';
-            set({ departments: [...DEFAULT_DEPARTMENTS], isLoading: false, error: errorMessage });
-            return [...DEFAULT_DEPARTMENTS];
+            const message = error?.message ?? 'Failed to fetch departments.';
+            set({ isLoading: false, error: message });
+            
+            return [];
         }
     },
 
-    fetchDepartmentById: async (departmentId) => {
+    fetchDepartmentById: async (id) => {
         set({ isLoading: true, error: null });
 
         try {
-            let department = get().departments.find((item) => item.id === departmentId);
+            let department = get().departments.find((item) => item.id === id);
+
             if (!department) {
-                department = await departmentService.fetchDepartmentById(departmentId);
+                department = await departmentService.fetchDepartmentById(id);
             }
-            set({ selectedDepartment: department, isLoading: false });
+
+            set({ selectedDepartment: department, isLoading: false, error: null });
+            
             return department;
         } catch (error) {
-            const errorMessage = error?.message ?? 'Failed to fetch department by identifier.';
-            set({ isLoading: false, error: errorMessage });
-            throw error;
+            const message = error?.message ?? `Failed to fetch department with ID "${id}".`;
+            set({ isLoading: false, error: message });
+            
+            return null;
         }
     },
 
-    createDepartment: async (departmentPayload) => {
+    fetchDepartmentByCode: async (code) => {
         set({ isLoading: true, error: null });
 
         try {
-            const validatedData = DepartmentInsertSchema.parse(departmentPayload);
-            const created = await departmentService.createDepartment({
-                name: validatedData.name,
-                code: validatedData.code,
-            });
+            let department = get().departments.find((item) => item.code === code);
 
-            const newDepartment = created ?? {
-                id: validatedData.id ?? `dept-${Date.now()}`,
-                name: validatedData.name,
-                code: validatedData.code,
-            };
+            if (!department) {
+                department = await departmentService.fetchDepartmentByCode(code);
+            }
+
+            set({ selectedDepartment: department, isLoading: false, error: null });
+            return department;
+        } catch (error) {
+            const message = error?.message ?? `Failed to fetch department with code "${code}".`;
+            set({ isLoading: false, error: message });
+            
+            return null;
+        }
+    },
+
+    insertDepartment: async (payload) => {
+        set({ isLoading: true, error: null });
+
+        try {
+            const validatedPayload = mutationSchema.InsertDepartmentSchema.parse(payload);
+            const newDepartment = await departmentService.insertDepartment(validatedPayload);
 
             set((state) => ({
                 departments: [...state.departments, newDepartment],
                 isLoading: false,
+                error: null,
             }));
 
             return newDepartment;
         } catch (error) {
-            const errorMessage = error?.message ?? 'Failed to create department record.';
-            set({ isLoading: false, error: errorMessage });
+            const message = error?.errors?.[0]?.message ?? error?.message ?? 'Failed to insert department.';
+            set({ isLoading: false, error: message });
+
             throw error;
         }
     },
 
-    updateDepartment: async (departmentId, departmentUpdates) => {
+    updateDepartment: async (id, payload) => {
         set({ isLoading: true, error: null });
 
         try {
-            const validatedUpdates = DepartmentUpdateSchema.parse(departmentUpdates);
-            await departmentService.updateDepartment(departmentId, validatedUpdates);
-
-            const updatedDepartment = {
-                ...(get().departments.find((item) => item.id === departmentId) ?? {}),
-                ...validatedUpdates,
-                id: departmentId,
-            };
+            const validatedPayload = mutationSchema.UpdateDepartmentSchema.parse(payload);
+            const updatedDepartment = await departmentService.updateDepartment(id, validatedPayload);
 
             set((state) => ({
                 departments: state.departments.map((item) =>
-                    item.id === departmentId ? updatedDepartment : item
+                    item.id === id ? updatedDepartment : item
                 ),
-                selectedDepartment: state.selectedDepartment?.id === departmentId
+                selectedDepartment: state.selectedDepartment?.id === id
                     ? updatedDepartment
                     : state.selectedDepartment,
                 isLoading: false,
+                error: null,
             }));
 
             return updatedDepartment;
         } catch (error) {
-            const errorMessage = error?.message ?? 'Failed to update department record.';
-            set({ isLoading: false, error: errorMessage });
+            const message = error?.errors?.[0]?.message ?? error?.message ?? 'Failed to update department.';
+            set({ isLoading: false, error: message });
+
             throw error;
         }
     },
 
-    deleteDepartment: async (departmentId) => {
+    deleteDepartment: async (id) => {
         set({ isLoading: true, error: null });
 
         try {
-            await departmentService.deleteDepartment(departmentId);
+            const isDeleted = await departmentService.deleteDepartment(id);
 
-            set((state) => ({
-                departments: state.departments.filter((item) => item.id !== departmentId),
-                selectedDepartment: state.selectedDepartment?.id === departmentId
-                    ? null
-                    : state.selectedDepartment,
-                isLoading: false,
-            }));
+            if (isDeleted) {
+                set((state) => ({
+                    departments: state.departments.filter((item) => item.id !== id),
+                    selectedDepartment: state.selectedDepartment?.id === id
+                        ? null
+                        : state.selectedDepartment,
+                    isLoading: false,
+                    error: null,
+                }));
+            } else {
+                set({ isLoading: false });
+            }
 
-            return true;
+            return isDeleted;
         } catch (error) {
-            const errorMessage = error?.message ?? 'Failed to delete department record.';
-            set({ isLoading: false, error: errorMessage });
+            const message = error?.message ?? 'Failed to delete department.';
+            set({ isLoading: false, error: message });
+            
             throw error;
         }
     },
 
+    // CONTROLS
     setSelectedDepartment: (department) => {
         set({ selectedDepartment: department });
     },
@@ -171,8 +158,6 @@ const useDepartmentStore = create((set, get) => ({
     },
 }));
 
-export {
-    useDepartmentStore,
-};
 
-export default useDepartmentStore;
+// --- EXPORTS ---
+export { useDepartmentStore };

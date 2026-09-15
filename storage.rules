@@ -35,8 +35,8 @@ service firebase.storage {
              request.resource.contentType.matches('image/(jpeg|png|webp)');
     }
 
-    // User Avatar Icons: avatars/{userId}/{fileName}
-    match /avatars/{userId}/{fileName} {
+    // User Avatar Icons: avatars/{allPaths=**}
+    match /avatars/{allPaths=**} {
       allow read: if true;
       allow write: if isValidFileSize();
     }
@@ -50,7 +50,8 @@ service firebase.storage {
 
     // Default fallback
     match /{allPaths=**} {
-      allow read, write: if isValidFileSize();
+      allow read: if true;
+      allow write: if isValidFileSize();
     }
   }
 }

@@ -1,84 +1,84 @@
 // --- IMPORTS ---
-import { useState, useEffect, useRef, useCallback, createContext } from 'react';
+import { createContext, useCallback, useEffect, useRef, useState } from 'react';
 import {
-    CheckCircle2,
     AlertTriangle,
-    XCircle,
-    Info,
-    Loader2,
+    CheckCircle2,
     ChevronDown,
     ChevronUp,
+    Info,
+    Loader2,
     X,
+    XCircle,
 } from 'lucide-react';
-import { CardContainer } from './Container';
+import { Container } from './Container';
+
 
 // --- CONFIGURATIONS ---
 const ICON_STYLE = 'h-5 w-5 shrink-0';
 const ACTION_ICON_STYLE = 'h-4 w-4 shrink-0';
 const ITEM_ICON_STYLE = 'h-4 w-4 shrink-0';
 
-const AUTO_DISMISS_DURATION_MILLISECONDS = 5000;
+const DEFAULT_TOAST_DURATION_MS = 5000;
 
 const VARIANT_ICON = {
     information: Info,
-    success: CheckCircle2,
-    warning: AlertTriangle,
-    error: XCircle,
+    success:     CheckCircle2,
+    warning:     AlertTriangle,
+    error:       XCircle,
 };
 
 const VARIANT_ICON_STYLE = {
     information: 'text-information',
-    success: 'text-accent',
-    warning: 'text-warning',
-    error: 'text-error',
+    success:     'text-accent',
+    warning:     'text-warning',
+    error:       'text-error',
 };
 
 const VARIANT_PROGRESS_STYLE = {
     information: 'bg-information',
-    success: 'bg-accent',
-    warning: 'bg-warning',
-    error: 'bg-error',
+    success:     'bg-accent',
+    warning:     'bg-warning',
+    error:       'bg-error',
 };
 
 const ToastContext = createContext(null);
 
-// --- COMPONENTS ---
 
-// 1. AUTO-DISMISS TOAST
+// --- COMPONENTS ---
 const AutoDismissToast = ({
     title,
     description,
     variant = 'success',
-    duration = AUTO_DISMISS_DURATION_MILLISECONDS,
+    duration = DEFAULT_TOAST_DURATION_MS,
     onDismiss,
     className,
     ...props
 }) => {
+    // REFS
+    const timerRef = useRef(null);
+    const remainingTimeRef = useRef(duration);
+    const startTimeRef = useRef(null);
+
     // STATES
     const [isHovered, setIsHovered] = useState(false);
 
-    // REFS
-    const timerReference = useRef(null);
-    const remainingTimeReference = useRef(duration);
-    const startTimeReference = useRef(null);
-
     // HANDLERS
     const handleTriggerDismiss = useCallback(() => {
-        if (timerReference.current) {
-            clearTimeout(timerReference.current);
+        if (timerRef.current) {
+            clearTimeout(timerRef.current);
         }
 
         onDismiss?.();
     }, [onDismiss]);
 
     const handleMouseEnter = () => {
-        if (timerReference.current) {
-            clearTimeout(timerReference.current);
+        if (timerRef.current) {
+            clearTimeout(timerRef.current);
         }
 
-        if (startTimeReference.current) {
-            const elapsedTime = Date.now() - startTimeReference.current;
-            remainingTimeReference.current = Math.max(0, remainingTimeReference.current - elapsedTime);
+        if (startTimeRef.current) {
+            const elapsedTime = Date.now() - startTimeRef.current;
+            remainingTimeRef.current = Math.max(0, remainingTimeRef.current - elapsedTime);
         }
         setIsHovered(true);
     };
@@ -97,15 +97,15 @@ const AutoDismissToast = ({
             return;
         }
 
-        startTimeReference.current = Date.now();
+        startTimeRef.current = Date.now();
 
-        timerReference.current = setTimeout(() => {
+        timerRef.current = setTimeout(() => {
             handleTriggerDismiss();
-        }, remainingTimeReference.current);
+        }, remainingTimeRef.current);
 
         return () => {
-            if (timerReference.current) {
-                clearTimeout(timerReference.current);
+            if (timerRef.current) {
+                clearTimeout(timerRef.current);
             }
         };
     }, [isHovered, handleTriggerDismiss]);
@@ -118,11 +118,12 @@ const AutoDismissToast = ({
 
     // RENDER
     return (
-        <CardContainer
+        <Container
+            variant="card"
             onClick={handleClick}
             onMouseEnter={handleMouseEnter}
             onMouseLeave={handleMouseLeave}
-            className={`relative overflow-hidden cursor-pointer select-none pointer-events-auto animate-toast-in p-4 gap-3 border-surface-border ${className ?? ''}`.trim()}
+            className={`relative overflow-hidden cursor-pointer select-none pointer-events-auto animate-toast-in ${className ?? ''}`.trim()}
             {...props}
         >
             <div className="flex items-start gap-3">
@@ -144,15 +145,13 @@ const AutoDismissToast = ({
                 </button>
             </div>
 
-            {/* PROGRESS BAR DIRECTLY INSIDE CARD CONTAINER */}
             <div className="absolute inset-x-0 bottom-0 h-1 bg-transparent overflow-hidden rounded-b-xl pointer-events-none">
                 <div className={progressAnimationClassName} />
             </div>
-        </CardContainer>
+        </Container>
     );
 };
 
-// 2. PROCESSING TOAST (ALWAYS USES UNIFIED ITEM LIST MODEL WITH STAGE HELPER TEXT)
 const ProcessingToast = ({
     title,
     description,
@@ -170,9 +169,9 @@ const ProcessingToast = ({
     const resolvedItems = items.length > 0
         ? items
         : [{
-              id: 'item-default',
-              name: title ?? 'Processing Document',
-              progress: progress ?? 0,
+              id:         'item-default',
+              name:       title ?? 'Processing Document',
+              progress:   progress ?? 0,
               isFinished,
           }];
 
@@ -198,7 +197,6 @@ const ProcessingToast = ({
     );
 
     const effectiveDescription = description ?? `${completedItemsCount} of ${totalItemsCount} completed`;
-
     const isAllCompleted = isFinished || completedItemsCount === totalItemsCount;
 
     // HOOKS
@@ -249,9 +247,10 @@ const ProcessingToast = ({
     }
 
     return (
-        <CardContainer
+        <Container
+            variant="card"
             onClick={handleCardClick}
-            className={`animate-toast-in cursor-pointer select-none pointer-events-auto p-4 gap-3 border-surface-border ${className ?? ''}`.trim()}
+            className={`animate-toast-in cursor-pointer select-none pointer-events-auto ${className ?? ''}`.trim()}
             title="Click to minimize"
             {...props}
         >
@@ -283,7 +282,6 @@ const ProcessingToast = ({
                 </div>
             </div>
 
-            {/* OVERALL PROGRESS BAR */}
             <div className="w-full h-2 bg-surface-hover rounded-full overflow-hidden">
                 <div
                     className="h-full bg-accent rounded-full transition-all duration-200 ease-out"
@@ -291,7 +289,6 @@ const ProcessingToast = ({
                 />
             </div>
 
-            {/* CONSOLIDATED ITEM BREAKDOWN LIST WITH STAGE HELPER TEXT */}
             <div className="flex flex-col gap-2 max-h-48 overflow-y-auto pt-1">
                 {resolvedItems.map((item) => {
                     const isItemDone = item.isFinished || (item.progress ?? 0) >= 100;
@@ -323,11 +320,10 @@ const ProcessingToast = ({
                     );
                 })}
             </div>
-        </CardContainer>
+        </Container>
     );
 };
 
-// 3. TOAST VIEWPORT CONTAINER
 const ToastViewport = ({ children, className, ...props }) => {
     return (
         <div
@@ -339,7 +335,6 @@ const ToastViewport = ({ children, className, ...props }) => {
     );
 };
 
-// 4. TOAST PROVIDER & CONTEXT MANAGER (GUARANTEES EXACTLY 1 PROCESSING TOAST ALWAYS AT THE BOTTOM)
 const ToastProvider = ({ children }) => {
     // STATES
     const [autoDismissToasts, setAutoDismissToasts] = useState([]);
@@ -361,9 +356,9 @@ const ToastProvider = ({ children }) => {
             : `${toast.items?.[0]?.name ?? toast.title ?? 'File'} uploaded successfully`;
 
         const completedToast = {
-            id: `completed-${Date.now()}`,
-            variant: 'success',
-            title: toast.completionTitle ?? defaultTitle,
+            id:          `completed-${Date.now()}`,
+            variant:     'success',
+            title:       toast.completionTitle ?? defaultTitle,
             description: toast.completionDescription ?? 'All items were scanned, processed, and indexed in the repository.',
         };
 
@@ -396,9 +391,9 @@ const ToastProvider = ({ children }) => {
         const initialItems = items.length > 0
             ? items
             : [{
-                  id: `file-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-                  name: fileName ?? title ?? 'Document_Upload.pdf',
-                  progress: progress ?? 0,
+                  id:         `file-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+                  name:       fileName ?? title ?? 'Document_Upload.pdf',
+                  progress:   progress ?? 0,
                   isFinished: false,
               }];
 
@@ -521,16 +516,15 @@ const ToastProvider = ({ children }) => {
     return (
         <ToastContext.Provider
             value={{
-                toasts: autoDismissToasts,
+                toasts:         autoDismissToasts,
                 processingToast,
-                showToast: addAutoDismissToast,
+                showToast:      addAutoDismissToast,
                 showProcessing: addProcessingToast,
-                dismissToast: handleDismissAutoToast,
+                dismissToast:   handleDismissAutoToast,
             }}
         >
             {children}
             <ToastViewport>
-                {/* 1. AUTO-DISMISS NOTIFICATION TOASTS RENDERED FIRST (STACKED AT TOP/MIDDLE) */}
                 {autoDismissToasts.map((toast) => (
                     <AutoDismissToast
                         key={toast.id}
@@ -542,7 +536,6 @@ const ToastProvider = ({ children }) => {
                     />
                 ))}
 
-                {/* 2. PROCESSING TOAST ALWAYS AT THE BOTTOM (EXACTLY 1 AT A TIME) */}
                 {processingToast && (
                     <ProcessingToast
                         key={processingToast.id}
@@ -559,18 +552,9 @@ const ToastProvider = ({ children }) => {
     );
 };
 
-export {
-    ToastContext,
-    AutoDismissToast,
-    ProcessingToast,
-    ToastViewport,
-    ToastProvider,
-};
-
-export default ToastProvider;
 
 // --- HELPERS ---
-function getItemStageDescription(progress = 0, isFinished = false) {
+const getItemStageDescription = (progress = 0, isFinished = false) => {
     if (isFinished || progress >= 100) {
         return 'Completed and indexed';
     }
@@ -584,4 +568,14 @@ function getItemStageDescription(progress = 0, isFinished = false) {
         return 'Extracting OCR text layer...';
     }
     return 'Generating AI metadata & summary...';
-}
+};
+
+
+// --- EXPORTS ---
+export {
+    AutoDismissToast,
+    ProcessingToast,
+    ToastContext,
+    ToastProvider,
+    ToastViewport,
+};

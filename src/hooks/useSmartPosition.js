@@ -1,39 +1,42 @@
 // --- IMPORTS ---
 import { useState, useEffect } from 'react';
 
-// --- HOOKS ---
-function useSmartPosition(
-    triggerReference,
-    dropdownReference,
-    isOpen,
-    preferredHorizontal = 'auto',
-) {
+
+// --- CONFIGURATIONS ---
+const DEFAULT_DROPDOWN_HEIGHT = 240;
+const DEFAULT_DROPDOWN_WIDTH = 320;
+
+
+// --- HOOK ---
+const useSmartPosition = (triggerRef, dropdownRef, isOpen, preferredHorizontal = 'auto') => {
+    // STATES
     const [placement, setPlacement] = useState({
         vertical: 'bottom',
         horizontal: preferredHorizontal === 'right' ? 'right' : 'left',
     });
 
+    // LISTENERS
     useEffect(() => {
         if (!isOpen) {
             return;
         }
 
         const updatePosition = () => {
-            if (!triggerReference.current) {
+            if (!triggerRef?.current) {
                 return;
             }
 
-            const triggerRectangle = triggerReference.current.getBoundingClientRect();
-            const dropdownElement = dropdownReference?.current;
-            const dropdownHeight = dropdownElement?.offsetHeight ?? 240;
-            const dropdownWidth = dropdownElement?.offsetWidth ?? 320;
+            const triggerRect = triggerRef.current.getBoundingClientRect();
+            const dropdown = dropdownRef?.current;
+            const dropdownHeight = dropdown?.offsetHeight ?? DEFAULT_DROPDOWN_HEIGHT;
+            const dropdownWidth = dropdown?.offsetWidth ?? DEFAULT_DROPDOWN_WIDTH;
             const viewportHeight = window.innerHeight;
             const viewportWidth = window.innerWidth;
 
-            const spaceBelow = viewportHeight - triggerRectangle.bottom;
-            const spaceAbove = triggerRectangle.top;
-            const spaceRight = viewportWidth - triggerRectangle.left;
-            const spaceLeft = triggerRectangle.right;
+            const spaceBelow = viewportHeight - triggerRect.bottom;
+            const spaceAbove = triggerRect.top;
+            const spaceRight = viewportWidth - triggerRect.left;
+            const spaceLeft = triggerRect.right;
 
             const vertical = spaceBelow < dropdownHeight && spaceAbove > spaceBelow
                 ? 'top'
@@ -50,7 +53,8 @@ function useSmartPosition(
                     ? 'left'
                     : 'right';
             } else {
-                const isRightHalf = triggerRectangle.left + triggerRectangle.width / 2 > viewportWidth / 2;
+                const isRightHalf = triggerRect.left + triggerRect.width / 2 > viewportWidth / 2;
+
                 if (isRightHalf) {
                     horizontal = spaceLeft >= dropdownWidth || spaceLeft > spaceRight
                         ? 'right'
@@ -66,20 +70,22 @@ function useSmartPosition(
         };
 
         updatePosition();
-        const animationFrameIdentifier = requestAnimationFrame(updatePosition);
+        const frameId = requestAnimationFrame(updatePosition);
 
-        window.addEventListener('resize', updatePosition);
-        window.addEventListener('scroll', updatePosition, true);
+        window.addEventListener('resize', updatePosition, { passive: true });
+        window.addEventListener('scroll', updatePosition, { capture: true, passive: true });
 
         return () => {
-            cancelAnimationFrame(animationFrameIdentifier);
+            cancelAnimationFrame(frameId);
+            
             window.removeEventListener('resize', updatePosition);
             window.removeEventListener('scroll', updatePosition, true);
         };
-    }, [triggerReference, dropdownReference, isOpen, preferredHorizontal]);
+    }, [triggerRef, dropdownRef, isOpen, preferredHorizontal]);
 
     return placement;
-}
+};
 
-export default useSmartPosition;
 
+// --- EXPORTS ---
+export { useSmartPosition };

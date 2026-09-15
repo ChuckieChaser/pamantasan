@@ -1,36 +1,30 @@
 // --- IMPORTS ---
-import { useState, useEffect } from 'react';
-import placeholderImage from '../assets/placeholder.png';
-import { storageService } from '../services';
+import { useEffect, useState } from 'react';
 
-// --- MODULE-LEVEL CONSTANTS ---
+import { storageService } from '../services';
+import placeholderImage from '../assets/placeholder.png';
+
+
+// --- CONFIGURATIONS ---
+const BASE_STYLE = 'rounded-full object-cover bg-surface border border-surface-border shrink-0 overflow-hidden select-none';
+
 const SIZE_STYLE = {
-    xs: 'h-6 w-6 text-[10px]',
-    sm: 'h-8 w-8 text-xs',
-    md: 'h-10 w-10 text-sm',
-    lg: 'h-12 w-12 text-base',
-    xl: 'h-16 w-16 text-lg',
-    '2xl': 'h-20 w-20 text-xl',
+    small:      'h-5 w-5 text-xs',
+    medium:     'h-7 w-7 text-xs',
+    large:      'h-9 w-9 text-sm',
+    extraLarge: 'h-12 w-12 text-base',
 };
 
-const BASE_CONTAINER_STYLE =
-    'rounded-full object-cover bg-surface border border-surface-border shrink-0 overflow-hidden shadow-xs select-none';
 
-function getInitialsAvatarUrl(name) {
-    const trimmedName = (name ?? '').trim() || 'User';
-    return `https://ui-avatars.com/api/?name=${encodeURIComponent(trimmedName)}&background=0f5132&color=ffffff&bold=true&format=svg`;
-}
-
-// --- COMPONENT DEFINITION ---
-function UserAvatar({
+// --- COMPONENTS ---
+const Avatar = ({
+    size = 'medium',
     src = null,
-    name = '',
     alt = '',
-    size = 'md',
-    className = '',
+    className,
     ...props
-}) {
-    // 4. GUARD CLAUSES / STATES
+}) => {
+    // STATES
     const isDirectUrl = Boolean(
         src &&
         (src.startsWith('http://') ||
@@ -49,14 +43,14 @@ function UserAvatar({
         setHasLoadError(false);
     }
 
+    // HOOKS
     useEffect(() => {
         let isCancelled = false;
 
-        if (!src || isDirectUrl) {
+        if (!src || isDirectUrl || src === 'avatars/defaultAvatar.png' || src === '/avatars/defaultAvatar.png') {
             return;
         }
 
-        // Resolve Firebase Storage pointer path asynchronously
         storageService
             .getFileDownloadUrl(src)
             .then((downloadUrl) => {
@@ -79,34 +73,31 @@ function UserAvatar({
         };
     }, [src, isDirectUrl]);
 
-    // 5. HANDLERS
+    // HANDLERS
     const handleImageError = () => {
         setHasLoadError(true);
     };
 
-    // 6. DERIVED VALUES
-    const sizeStyle = SIZE_STYLE[size] ?? SIZE_STYLE.md;
-    const autoAvatarUrl = getInitialsAvatarUrl(name || alt);
-    const activeUrl = isDirectUrl ? src : storageUrl;
-    const effectiveSource = !activeUrl || hasLoadError ? (hasLoadError && !activeUrl ? placeholderImage : autoAvatarUrl) : activeUrl;
-    const effectiveAlt = alt || name || 'User avatar';
+    // DERIVED VALUES
+    const sizeStyle = SIZE_STYLE[size] ?? SIZE_STYLE.medium;
+    const composedClassName = `${BASE_STYLE} ${sizeStyle} ${className ?? ''}`.trim();
+    const effectiveAlt = alt || 'User avatar';
 
-    // 7. RETURN
+    const activeUrl = isDirectUrl ? src : storageUrl;
+    const effectiveSource = !activeUrl || hasLoadError ? placeholderImage : activeUrl;
+
+    // RENDER
     return (
         <img
             src={effectiveSource}
             alt={effectiveAlt}
             onError={handleImageError}
-            className={`${BASE_CONTAINER_STYLE} ${sizeStyle} ${className}`}
+            className={composedClassName}
             {...props}
         />
     );
-}
-
-export {
-    UserAvatar,
-    UserAvatar as Avatar,
 };
 
-export default UserAvatar;
 
+// --- EXPORTS ---
+export { Avatar };

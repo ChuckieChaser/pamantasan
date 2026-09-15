@@ -1,122 +1,143 @@
 // --- IMPORTS ---
 import { create } from 'zustand';
-import {
-    NotificationInsertSchema,
-} from '../schemas';
 
-// --- STORE DEFINITION ---
+import { mutationSchema } from '../schemas';
+import { notificationService } from '../services';
+
+
+// --- STORE ---
 const useNotificationStore = create((set, get) => ({
-    // STATE
+    // STATES
+    recipientId: null,
     notifications: [],
+    viewNotifications: [],
     isLoading: false,
     error: null,
 
-    // ACTIONS
-    fetchNotificationsByRecipientId: async (recipientId) => {
+    // CORE
+    fetchNotifications: async (recipientId) => {
         set({ isLoading: true, error: null });
 
         try {
-            const userNotifications = get().notifications.filter(
-                (item) => item.recipient_id === recipientId
-            );
-            set({ isLoading: false });
-            return userNotifications;
+            const notifications = await notificationService.fetchNotifications(recipientId);
+            set({ recipientId: recipientId, notifications: notifications, isLoading: false, error: null });
+
+            return notifications;
         } catch (error) {
-            const errorMessage = error?.message ?? 'Failed to fetch notifications.';
-            set({ isLoading: false, error: errorMessage });
-            throw error;
+            const message = error?.message ?? `Failed to fetch notifications for recipient "${recipientId}".`;
+            set({ isLoading: false, error: message });
+
+            return [];
         }
     },
 
-    createNotification: async (notificationPayload) => {
+    fetchViewNotifications: async (recipientId) => {
         set({ isLoading: true, error: null });
 
         try {
-            const validatedData = NotificationInsertSchema.parse(notificationPayload);
-            const newNotification = {
-                id: validatedData.id ?? `notif-${Date.now()}`,
-                recipient_id: validatedData.recipient_id,
-                actor_id: validatedData.actor_id ?? null,
-                entity_type: validatedData.entity_type,
-                entity_id: validatedData.entity_id,
-                action: validatedData.action,
-                is_read: false,
-                is_emailed: false,
-                created_at: new Date().toISOString(),
-            };
+            const viewNotifications = await notificationService.fetchViewNotifications(recipientId);
+            set({ recipientId: recipientId, viewNotifications: viewNotifications, isLoading: false, error: null });
+
+            return viewNotifications;
+        } catch (error) {
+            const message = error?.message ?? `Failed to fetch notification views for recipient "${recipientId}".`;
+            set({ isLoading: false, error: message });
+
+            return [];
+        }
+    },
+
+    insertNotification: async (payload) => {
+        set({ isLoading: true, error: null });
+
+        try {
+            const validatedPayload = mutationSchema.InsertNotificationSchema.parse(payload);
+            const newNotification = await notificationService.insertNotification(validatedPayload);
 
             set((state) => ({
                 notifications: [newNotification, ...state.notifications],
                 isLoading: false,
+                error: null,
             }));
 
             return newNotification;
         } catch (error) {
-            const errorMessage = error?.message ?? 'Failed to create notification.';
-            set({ isLoading: false, error: errorMessage });
+            const message = error?.errors?.[0]?.message ?? error?.message ?? 'Failed to insert notification.';
+            set({ isLoading: false, error: message });
+
             throw error;
         }
     },
 
-    markNotificationAsRead: async (notificationId) => {
+    updateNotification: async (id, payload) => {
         set({ isLoading: true, error: null });
 
         try {
+            const validatedPayload = mutationSchema.UpdateNotificationSchema.parse(payload);
+            const updatedNotification = await notificationService.updateNotification(id, validatedPayload);
+
+            const recipientId = get().recipientId;
+
+            const [viewNotifications] = await Promise.all([
+                recipientId ? notificationService.fetchViewNotifications(recipientId) : Promise.resolve(get().viewNotifications),
+            ]);
+
             set((state) => ({
                 notifications: state.notifications.map((item) =>
-                    item.id === notificationId ? { ...item, is_read: true } : item
+                    item.id === id ? updatedNotification : item
                 ),
+                viewNotifications: viewNotifications,
                 isLoading: false,
+                error: null,
             }));
-            return true;
+
+            return updatedNotification;
         } catch (error) {
-            const errorMessage = error?.message ?? 'Failed to update notification read status.';
-            set({ isLoading: false, error: errorMessage });
+            const message = error?.errors?.[0]?.message ?? error?.message ?? 'Failed to update notification.';
+            set({ isLoading: false, error: message });
+
             throw error;
         }
     },
 
-    markAllNotificationsAsRead: async (recipientId) => {
+    deleteNotification: async (id) => {
         set({ isLoading: true, error: null });
 
         try {
-            set((state) => ({
-                notifications: state.notifications.map((item) =>
-                    item.recipient_id === recipientId ? { ...item, is_read: true } : item
-                ),
-                isLoading: false,
-            }));
-            return true;
+            const isDeleted = await notificationService.deleteNotification(id);
+
+            if (isDeleted) {
+                const recipientId = get().recipientId;
+
+                const viewNotifications = recipientId
+                    ? await notificationService.fetchViewNotifications(recipientId)
+                    : get().viewNotifications;
+
+                set((state) => ({
+                    notifications: state.notifications.filter((item) => item.id !== id),
+                    viewNotifications: viewNotifications,
+                    isLoading: false,
+                    error: null,
+                }));
+            } else {
+                set({ isLoading: false });
+            }
+
+            return isDeleted;
         } catch (error) {
-            const errorMessage = error?.message ?? 'Failed to mark all notifications as read.';
-            set({ isLoading: false, error: errorMessage });
+            const message = error?.message ?? 'Failed to delete notification.';
+            set({ isLoading: false, error: message });
+
             throw error;
         }
     },
 
-    deleteNotification: async (notificationId) => {
-        set({ isLoading: true, error: null });
-
-        try {
-            set((state) => ({
-                notifications: state.notifications.filter((item) => item.id !== notificationId),
-                isLoading: false,
-            }));
-            return true;
-        } catch (error) {
-            const errorMessage = error?.message ?? 'Failed to delete notification.';
-            set({ isLoading: false, error: errorMessage });
-            throw error;
-        }
-    },
-
+    // CONTROLS
     clearError: () => {
         set({ error: null });
     },
 }));
 
-export {
-    useNotificationStore,
-};
 
-export default useNotificationStore;
+// --- EXPORTS ---
+export { useNotificationStore };

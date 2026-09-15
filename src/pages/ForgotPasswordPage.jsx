@@ -5,29 +5,27 @@ import {
     ArrowRight,
     CheckCircle2,
 } from 'lucide-react';
-import { AuthenticationLayout } from '../layouts';
+import { AuthLayout } from '../layouts';
 import {
-    PrimaryButton,
-    SecondaryButton,
+    Button,
     TextField,
-    useToast,
 } from '../components';
-import { VALIDATION_PATTERNS } from '../constants';
-
+import { useToast } from '../hooks';
+import { constants } from '../constants';
 
 // --- COMPONENTS ---
 const ForgotPasswordPage = ({
     onBackToLogin,
     onResetRequested,
 }) => {
-    // HOOKS
-    const { showToast } = useToast();
-
     // STATES
     const [email, setEmail] = useState('');
     const [emailError, setEmailError] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isSubmitted, setIsSubmitted] = useState(false);
+
+    // HOOKS
+    const { showToast } = useToast();
 
     // HANDLERS
     const handleEmailChange = (event) => {
@@ -46,7 +44,7 @@ const ForgotPasswordPage = ({
             return;
         }
 
-        if (!VALIDATION_PATTERNS.EMAIL.test(trimmedEmail)) {
+        if (!constants.VALIDATION_PATTERNS.EMAIL.test(trimmedEmail)) {
             setEmailError('Enter a valid institutional email address (e.g. name@plpasig.edu.ph).');
             return;
         }
@@ -86,7 +84,7 @@ const ForgotPasswordPage = ({
     // RENDER: SUBMITTED SUCCESS STATE
     if (isSubmitted) {
         return (
-            <AuthenticationLayout
+            <AuthLayout
                 title="Check Your Email"
                 description={`Password reset link has been dispatched to ${email}.`}
                 onBack={handleBackClick}
@@ -101,19 +99,20 @@ const ForgotPasswordPage = ({
                         Please check your inbox at <span className="font-semibold text-text">{email}</span> and follow the instructions to securely reset your password.
                     </p>
 
-                    <PrimaryButton
+                    <Button
+                        variant="primary"
                         label="Return to Sign In"
                         onClick={handleBackClick}
                         className="w-full mt-2"
                     />
                 </div>
-            </AuthenticationLayout>
+            </AuthLayout>
         );
     }
 
     // RENDER: INITIAL REQUEST FORM
     return (
-        <AuthenticationLayout
+        <AuthLayout
             title="Reset Password"
             description="Enter your registered institutional email to receive password reset instructions."
             onBack={handleBackClick}
@@ -132,22 +131,26 @@ const ForgotPasswordPage = ({
                     required
                 />
 
-                <PrimaryButton
+                <Button
                     type="submit"
+                    variant="primary"
                     label={isSubmitting ? 'Sending Request...' : 'Send Recovery Instructions'}
                     leadingIcon={ArrowRight}
-                    loading={isSubmitting}
+                    isLoading={isSubmitting}
                     className="w-full mt-2"
                 />
 
-                <SecondaryButton
+                <Button
+                    variant="secondary"
                     label="Cancel and Sign In"
                     onClick={handleBackClick}
                     className="w-full justify-center"
                 />
             </form>
-        </AuthenticationLayout>
+        </AuthLayout>
     );
 };
 
+// --- EXPORTS ---
+export { ForgotPasswordPage };
 export default ForgotPasswordPage;

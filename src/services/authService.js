@@ -1,60 +1,20 @@
 // --- IMPORTS ---
-import {
-    auth,
-    googleProvider,
-    signInWithEmailAndPassword,
-    signInWithPopup,
-    signOut,
-    onAuthStateChanged as onFirebaseAuthChanged,
-} from './firebase';
+import { signInWithEmailAndPassword, signInWithPopup, signOut, sendPasswordResetEmail, onAuthStateChanged as onFirebaseAuthChanged } from 'firebase/auth';
+import { auth, googleProvider } from './firebase';
+
 import { userService } from './userService';
+import { constants } from '../constants';
+
 
 // --- CONFIGURATIONS ---
 const authListeners = new Set();
-let cachedCurrentUser = null;
+let cachedCurrentUser = undefined;
+let unsubscribeFirebase = null;
 
-// --- HELPERS ---
-function mapUniversityIdToEmail(input) {
-    const clean = (input ?? '').trim().toLowerCase();
-    if (clean.includes('@')) {
-        return clean;
-    }
 
-    if (clean.startsWith('admin.')) return `${clean}@plpasig.edu.ph`;
-    if (clean.startsWith('coord.')) return `${clean}@plpasig.edu.ph`;
-    if (clean.startsWith('director.')) return `${clean}@plpasig.edu.ph`;
-    if (clean.startsWith('officer.')) return `${clean}@plpasig.edu.ph`;
-    if (clean.startsWith('member.')) return `${clean}@plpasig.edu.ph`;
-
-    const numericOnly = clean.replace(/-/g, '');
-    if (clean === '20-00001' || numericOnly === '2000001') return '20-00001@plpasig.edu.ph';
-    if (clean === '20-00002' || numericOnly === '2000002') return '20-00002@plpasig.edu.ph';
-    if (clean === '20-00003' || numericOnly === '2000003') return '20-00003@plpasig.edu.ph';
-    if (clean === '20-00004' || numericOnly === '2000004') return '20-00004@plpasig.edu.ph';
-    if (clean === '20-00005' || numericOnly === '2000005') return '20-00005@plpasig.edu.ph';
-    if (clean === '21-00001' || numericOnly === '2100001') return '21-00001@plpasig.edu.ph';
-    if (clean === '21-00002' || numericOnly === '2100002') return '21-00002@plpasig.edu.ph';
-
-    return `${clean}@plpasig.edu.ph`;
-}
-
-function notifyListeners(user) {
-    cachedCurrentUser = user;
-    authListeners.forEach((listener) => {
-        try {
-            listener(user);
-        } catch {
-            // Guard against listener execution failure
-        }
-    });
-}
-
-// --- AUTHENTICATION SERVICE IMPLEMENTATION ---
+// --- SERVICES ---
 const authService = {
-    loginWithEmail: async (email, password) => {
-        return authService.loginWithUniversityId(email, password);
-    },
-
+    // CORE
     loginWithUniversityId: async (universityId, password) => {
         const resolvedEmail = mapUniversityIdToEmail(universityId);
 
@@ -66,73 +26,105 @@ const authService = {
             const userCredential = await signInWithEmailAndPassword(auth, resolvedEmail, password);
             const firebaseUser = userCredential.user;
 
-            // Fetch live PostgreSQL profile
-            let dbUser = await userService.fetchUserByEmail(firebaseUser.email);
-            if (!dbUser && universityId) {
-                dbUser = await userService.fetchUserByUniversityId(universityId);
+            let databaseUser = await userService.fetchUserByEmail(firebaseUser.email);
+            
+            if (!databaseUser && universityId) {
+                databaseUser = await userService.fetchUserByUniversityId(universityId);
             }
 
-            const formattedUser = dbUser ?? {
-                id: firebaseUser.uid,
-                university_id: universityId,
-                universityId: universityId,
-                email: firebaseUser.email,
-                name: firebaseUser.displayName ?? 'University User',
-                first_name: firebaseUser.displayName?.split(' ')[0] ?? 'University',
-                last_name: firebaseUser.displayName?.split(' ')[1] ?? 'User',
-                role: 'MEMBER',
-                department: 'College of Computer Studies',
-                department_code: 'CCS',
-                status: 'VERIFIED',
-                avatar_path: firebaseUser.photoURL ?? null,
-            };
+            if (!databaseUser) {
+                await signOut(auth);
+                throw new Error('No registered university account found for this user. Please contact your administrator to provision your account.');
+            }
 
-            notifyListeners(formattedUser);
-            return formattedUser;
+            if (databaseUser.status === constants.USERS_STATUS.SUSPENDED) {
+                await signOut(auth);
+                throw new Error('This account has been suspended. Please contact your system administrator.');
+            }
+
+            notifyAuthListeners(databaseUser);
+            return databaseUser;
         } catch (error) {
             console.error('Login failed:', error);
-            const errorCode = error?.code;
-            if (errorCode === 'auth/invalid-credential' || errorCode === 'auth/wrong-password') {
+            
+            if (error.code === 'auth/invalid-credential' || error.code === 'auth/wrong-password') {
                 throw new Error('Invalid University ID or password. Please verify your credentials.', { cause: error });
             }
-            if (errorCode === 'auth/user-not-found') {
+            
+            if (error.code === 'auth/user-not-found') {
                 throw new Error(`Account for "${universityId}" not found.`, { cause: error });
             }
-            throw new Error(error?.message ?? 'Authentication failed.', { cause: error });
+            
+            throw error;
         }
     },
 
     loginWithGoogle: async () => {
         if (!auth || !googleProvider) {
-            throw new Error('Firebase Google Authentication is not initialized.');
+            throw new Error('Firebase Google Auth is not initialized.');
         }
 
         try {
             const userCredential = await signInWithPopup(auth, googleProvider);
-            const firebaseUser = userCredential.user;
+            const rawEmail = userCredential.user.email;
+            const googleEmail = rawEmail ? rawEmail.toLowerCase() : '';
+            const institutionalDomain = constants.INSTITUTIONAL_CONFIGURATION.EMAIL_DOMAIN;
 
-            let dbUser = await userService.fetchUserByEmail(firebaseUser.email);
+            if (!googleEmail.endsWith(institutionalDomain)) {
+                await signOut(auth);
+                throw new Error(`Access restricted. Please sign in with an official institutional account (${institutionalDomain}).`);
+            }
 
-            const formattedUser = dbUser ?? {
-                id: firebaseUser.uid,
-                university_id: 'SSO-USER',
-                universityId: 'SSO-USER',
-                email: firebaseUser.email,
-                name: firebaseUser.displayName ?? 'Google User',
-                first_name: firebaseUser.displayName?.split(' ')[0] ?? 'Institutional',
-                last_name: firebaseUser.displayName?.split(' ').slice(1).join(' ') || 'Member',
-                role: 'MEMBER',
-                department: 'College of Computer Studies',
-                department_code: 'CCS',
-                status: 'VERIFIED',
-                avatar_path: firebaseUser.photoURL ?? null,
-            };
+            const databaseUser = await userService.fetchUserByEmail(googleEmail);
+            
+            if (!databaseUser) {
+                await signOut(auth);
+                throw new Error('No registered university account found for this email. Please contact your system administrator to provision your account.');
+            }
 
-            notifyListeners(formattedUser);
-            return formattedUser;
+            if (databaseUser.status === constants.USERS_STATUS.SUSPENDED) {
+                await signOut(auth);
+                throw new Error('This account has been suspended. Please contact your system administrator.');
+            }
+
+            notifyAuthListeners(databaseUser);
+            return databaseUser;
         } catch (error) {
             console.error('Google Sign-In failed:', error);
-            throw new Error(error?.message ?? 'Google authentication failed.', { cause: error });
+            
+            if (error.code === 'auth/popup-closed-by-user') {
+                throw new Error('Sign-in cancelled. The Google sign-in window was closed before completing.', { cause: error });
+            }
+            
+            throw error;
+        }
+    },
+
+    requestPasswordReset: async (email) => {
+        if (!auth) {
+            throw new Error('Firebase Auth is not initialized.');
+        }
+
+        const cleanEmail = email?.trim().toLowerCase() ?? '';
+
+        if (!cleanEmail) {
+            throw new Error('Institutional email is required.');
+        }
+
+        if (!constants.VALIDATION_PATTERNS.EMAIL.test(cleanEmail)) {
+            throw new Error(`Email must belong to ${constants.INSTITUTIONAL_CONFIGURATION.EMAIL_DOMAIN}`);
+        }
+
+        try {
+            await sendPasswordResetEmail(auth, cleanEmail);
+        } catch (error) {
+            console.error('Password reset request failed:', error);
+
+            if (error.code === 'auth/user-not-found') {
+                throw new Error(`No registered account found for "${cleanEmail}".`, { cause: error });
+            }
+
+            throw error;
         }
     },
 
@@ -140,59 +132,106 @@ const authService = {
         if (auth) {
             await signOut(auth);
         }
-        notifyListeners(null);
+        notifyAuthListeners(null);
+    },
+
+    // LISTENERS
+    fetchCurrentUser: () => {
+        return cachedCurrentUser;
+    },
+
+    resolveCurrentUser: () => {
+        if (cachedCurrentUser !== undefined) {
+            return Promise.resolve(cachedCurrentUser);
+        }
+
+        return new Promise((resolve) => {
+            const unsubscribe = authService.onAuthStateChanged((user) => {
+                unsubscribe();
+                resolve(user);
+            });
+        });
     },
 
     onAuthStateChanged: (callback) => {
         authListeners.add(callback);
 
-        if (!auth) {
+        if (cachedCurrentUser !== undefined) {
+            callback(cachedCurrentUser);
+        } else if (!auth) {
             callback(null);
-            return () => authListeners.delete(callback);
         }
 
-        const unsubscribeFirebase = onFirebaseAuthChanged(auth, async (firebaseUser) => {
-            if (!firebaseUser) {
-                notifyListeners(null);
-                return;
-            }
+        if (!unsubscribeFirebase && auth) {
+            unsubscribeFirebase = onFirebaseAuthChanged(auth, async (firebaseUser) => {
+                if (!firebaseUser) {
+                    notifyAuthListeners(null);
+                    return;
+                }
 
-            try {
-                let dbUser = await userService.fetchUserByEmail(firebaseUser.email);
-                const resolvedUser = dbUser ?? {
-                    id: firebaseUser.uid,
-                    university_id: 'ACTIVE-USER',
-                    universityId: 'ACTIVE-USER',
-                    email: firebaseUser.email,
-                    name: firebaseUser.displayName ?? 'Active User',
-                    first_name: firebaseUser.displayName?.split(' ')[0] ?? 'Active',
-                    last_name: firebaseUser.displayName?.split(' ').slice(1).join(' ') || 'User',
-                    role: 'MEMBER',
-                    department: 'College of Computer Studies',
-                    department_code: 'CCS',
-                    status: 'VERIFIED',
-                    avatar_path: firebaseUser.photoURL ?? null,
-                };
-                notifyListeners(resolvedUser);
-            } catch {
-                notifyListeners(null);
-            }
-        });
+                try {
+                    let databaseUser = await userService.fetchUserByEmail(firebaseUser.email);
+
+                    if (!databaseUser && firebaseUser.email) {
+                        const potentialUniversityId = firebaseUser.email.split('@')[0];
+                        if (constants.VALIDATION_PATTERNS.UNIVERSITY_ID.test(potentialUniversityId)) {
+                            databaseUser = await userService.fetchUserByUniversityId(potentialUniversityId);
+                        }
+                    }
+
+                    if (!databaseUser || databaseUser.status === constants.USERS_STATUS.SUSPENDED) {
+                        await signOut(auth);
+                        notifyAuthListeners(null);
+                        return;
+                    }
+
+                    notifyAuthListeners(databaseUser);
+                } catch (error) {
+                    console.error('Failed to sync authenticated user with database:', error);
+                    notifyAuthListeners(null);
+                }
+            });
+        }
 
         return () => {
             authListeners.delete(callback);
-            unsubscribeFirebase();
+            if (authListeners.size === 0 && unsubscribeFirebase) {
+                unsubscribeFirebase();
+                unsubscribeFirebase = null;
+            }
         };
     },
-
-    getCurrentUser: () => {
-        return cachedCurrentUser;
-    },
 };
 
-export {
-    authService,
-    mapUniversityIdToEmail,
-};
 
-export default authService;
+// --- HELPERS ---
+function mapUniversityIdToEmail(rawInput) {
+    if (!rawInput) {
+        return '';
+    }
+
+    const cleanInput = rawInput.trim().toLowerCase();
+    
+    if (cleanInput.includes('@')) {
+        return cleanInput;
+    }
+
+    const domain = constants.INSTITUTIONAL_CONFIGURATION.EMAIL_DOMAIN;
+    return `${cleanInput}${domain}`;
+}
+
+function notifyAuthListeners(user) {
+    cachedCurrentUser = user;
+    authListeners.forEach((listener) => {
+        try {
+            listener(user);
+        } catch (error) {
+            console.error('Auth listener execution failure:', error);
+        }
+    });
+}
+
+
+// --- EXPORTS ---
+export { authService };
+

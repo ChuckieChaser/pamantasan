@@ -1,23 +1,21 @@
 // --- IMPORTS ---
-import {
-    ArrowLeft,
-} from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 import backgroundImage from '../assets/background.jpg';
 import logoImage from '../assets/logo.jpg';
-import { CardContainer } from '../components';
+import { Container } from '../components';
 
 // --- CONFIGURATIONS ---
-const BASE_LAYOUT_STYLE = 'relative min-h-screen w-full flex items-center justify-center p-4 sm:p-6 overflow-hidden select-none bg-surface text-text';
-const CARD_BASE_STYLE = 'bg-surface border border-surface-border shadow-2xl rounded-2xl p-6 sm:p-8 flex flex-col gap-6 text-text w-full';
+const BASE_STYLE = 'relative min-h-screen w-full flex items-center justify-center p-4 sm:p-6 overflow-hidden select-none bg-surface text-text';
+const CARD_STYLE = 'bg-surface border border-surface-border shadow-2xl rounded-2xl p-6 sm:p-8 flex flex-col gap-6 text-text w-full';
 
 // --- COMPONENTS ---
-const AuthenticationLayout = ({
+const AuthLayout = ({
     title,
     description,
     icon,
     backButtonLabel = 'Back',
-    showBrandHeader = true,
-    showFooter = true,
+    hasBrandHeader = true,
+    hasFooter = true,
     headerActions,
     footer,
     onBack,
@@ -32,8 +30,8 @@ const AuthenticationLayout = ({
     };
 
     // DERIVED VALUES
-    const composedLayoutStyle = `${BASE_LAYOUT_STYLE} ${className ?? ''}`.trim();
-    const composedCardStyle = `${CARD_BASE_STYLE} ${cardClassName ?? ''}`.trim();
+    const composedLayoutStyle = `${BASE_STYLE} ${className ?? ''}`.trim();
+    const composedCardStyle = `${CARD_STYLE} ${cardClassName ?? ''}`.trim();
 
     // RENDER
     return (
@@ -41,7 +39,7 @@ const AuthenticationLayout = ({
             className={composedLayoutStyle}
             {...props}
         >
-            {/* 1. BACKGROUND UNIVERSITY IMAGE WITH AMBIENT OVERLAYS */}
+            {/* CAMPUS BACKGROUND WITH AMBIENT OVERLAYS */}
             <img
                 src={backgroundImage}
                 alt="Pamantasan Campus Background"
@@ -56,8 +54,8 @@ const AuthenticationLayout = ({
             <div className="absolute -top-32 -left-32 h-96 w-96 rounded-full bg-accent/20 blur-3xl pointer-events-none" />
             <div className="absolute -bottom-32 -right-32 h-96 w-96 rounded-full bg-information/15 blur-3xl pointer-events-none" />
 
-            {/* 2. TOP BRAND & ACTION BAR */}
-            {showBrandHeader && (
+            {/* TOP BRAND & ACTION BAR */}
+            {hasBrandHeader && (
                 <header className="absolute top-0 inset-x-0 p-4 sm:p-6 flex items-center justify-between z-20">
                     <div className="flex items-center gap-3 text-text-inverted">
                         <img
@@ -78,9 +76,12 @@ const AuthenticationLayout = ({
                 </header>
             )}
 
-            {/* 3. CENTER CARD CONTAINER */}
+            {/* CENTER CARD CONTAINER */}
             <main className="relative z-10 max-w-md w-full my-auto">
-                <CardContainer className={composedCardStyle}>
+                <Container
+                    variant="card"
+                    className={composedCardStyle}
+                >
                     {/* OPTIONAL BACK BUTTON */}
                     {onBack && (
                         <div>
@@ -95,7 +96,7 @@ const AuthenticationLayout = ({
                         </div>
                     )}
 
-                    {/* CARD HEADER (ICON, TITLE, DESCRIPTION) */}
+                    {/* CARD HEADER */}
                     {(title || description || icon) && (
                         <div className="flex flex-col gap-2">
                             {icon && (
@@ -118,11 +119,11 @@ const AuthenticationLayout = ({
 
                     {/* CARD CONTENT / FORM */}
                     {children}
-                </CardContainer>
+                </Container>
             </main>
 
-            {/* 4. INSTITUTIONAL FOOTER */}
-            {showFooter && (
+            {/* INSTITUTIONAL FOOTER */}
+            {hasFooter && (
                 <footer className="absolute bottom-4 inset-x-0 text-center text-xs text-text-muted z-20 pointer-events-none px-4">
                     {footer ?? (
                         <span>
@@ -135,4 +136,5 @@ const AuthenticationLayout = ({
     );
 };
 
-export default AuthenticationLayout;
+// --- EXPORTS ---
+export { AuthLayout };

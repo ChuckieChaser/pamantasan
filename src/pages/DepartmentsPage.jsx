@@ -6,13 +6,13 @@ import {
     CheckCircle2,
 } from 'lucide-react';
 import {
-    PageContainer,
     Browser,
-    TextField,
+    Container,
     Modal,
-    useToast,
+    TextField,
 } from '../components';
 import { useDepartmentStore, useUserStore } from '../stores';
+import { useToast } from '../hooks';
 
 // --- CONFIGURATIONS ---
 const DEPARTMENT_COLUMNS = [
@@ -35,12 +35,9 @@ const DepartmentsPage = ({
     className,
     ...props
 }) => {
-    // HOOKS
-    const { showToast } = useToast();
-
     // STORES
     const departments = useDepartmentStore((state) => state.departments);
-    const createDepartment = useDepartmentStore((state) => state.createDepartment);
+    const insertDepartment = useDepartmentStore((state) => state.insertDepartment);
     const updateDepartment = useDepartmentStore((state) => state.updateDepartment);
     const deleteDepartment = useDepartmentStore((state) => state.deleteDepartment);
     const users = useUserStore((state) => state.users);
@@ -51,42 +48,12 @@ const DepartmentsPage = ({
     const [editingDepartment, setEditingDepartment] = useState(null);
     const [deletingDepartment, setDeletingDepartment] = useState(null);
 
-    // FORM STATES
     const [formCode, setFormCode] = useState('');
     const [formName, setFormName] = useState('');
     const [formError, setFormError] = useState('');
 
-    // DERIVED VALUES
-    const formattedDepartmentData = useMemo(() => {
-        return departments.map((department) => {
-            const count = users.filter((user) => user.department_id === department.id).length;
-            return {
-                ...department,
-                id: department.id,
-                code: department.code,
-                title: department.name,
-                name: department.name,
-                subtitle: department.code,
-                description: department.description ?? `${department.name} collegiate department and academic operations.`,
-                division: department.division ?? 'Academic Division',
-                department_head: department.department_head ?? 'Office of the Dean',
-                faculty_count: department.faculty_count ?? (count > 0 ? count : 12),
-                memberCount: `${count > 0 ? count : (department.faculty_count ?? 12)} members`,
-                metadata: `${department.code} · ${count > 0 ? count : (department.faculty_count ?? 12)} members`,
-                department: department.name,
-                created_at: department.created_at ?? new Date().toISOString(),
-                updated_at: department.updated_at ?? department.created_at ?? new Date().toISOString(),
-                date: department.created_at && !isNaN(new Date(department.created_at).getTime())
-                    ? new Date(department.created_at).toLocaleDateString([], {
-                        month: 'short',
-                        day: 'numeric',
-                        year: 'numeric',
-                    })
-                    : 'Active',
-                badge: department.code,
-            };
-        });
-    }, [departments, users]);
+    // HOOKS
+    const { showToast } = useToast();
 
     // HANDLERS
     const handleSelectDepartment = (item) => {
@@ -141,7 +108,7 @@ const DepartmentsPage = ({
         }
 
         try {
-            await createDepartment({
+            await insertDepartment({
                 code: formCode.trim().toUpperCase(),
                 name: formName.trim(),
             });
@@ -206,8 +173,45 @@ const DepartmentsPage = ({
         }
     };
 
+    // DERIVED VALUES
+    const formattedDepartmentData = useMemo(() => {
+        return departments.map((department) => {
+            const count = users.filter((user) => user.department_id === department.id).length;
+            return {
+                ...department,
+                id: department.id,
+                code: department.code,
+                title: department.name,
+                name: department.name,
+                subtitle: department.code,
+                description: department.description ?? `${department.name} collegiate department and academic operations.`,
+                division: department.division ?? 'Academic Division',
+                department_head: department.department_head ?? 'Office of the Dean',
+                faculty_count: department.faculty_count ?? (count > 0 ? count : 12),
+                memberCount: `${count > 0 ? count : (department.faculty_count ?? 12)} members`,
+                metadata: `${department.code} · ${count > 0 ? count : (department.faculty_count ?? 12)} members`,
+                department: department.name,
+                created_at: department.created_at ?? new Date().toISOString(),
+                updated_at: department.updated_at ?? department.created_at ?? new Date().toISOString(),
+                date: department.created_at && !isNaN(new Date(department.created_at).getTime())
+                    ? new Date(department.created_at).toLocaleDateString([], {
+                        month: 'short',
+                        day: 'numeric',
+                        year: 'numeric',
+                    })
+                    : 'Active',
+                badge: department.code,
+            };
+        });
+    }, [departments, users]);
+
+    // RENDER
     return (
-        <PageContainer className={`flex flex-col gap-6 ${className ?? ''}`} {...props}>
+        <Container
+            variant="page"
+            className={`flex flex-col gap-6 ${className ?? ''}`}
+            {...props}
+        >
             <Browser
                 resourceName="departments"
                 title="Manage Departments"
@@ -305,8 +309,10 @@ const DepartmentsPage = ({
                     variant="destructive"
                 />
             )}
-        </PageContainer>
+        </Container>
     );
 };
 
+// --- EXPORTS ---
+export { DepartmentsPage };
 export default DepartmentsPage;
