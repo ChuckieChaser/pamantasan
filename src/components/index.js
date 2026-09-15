@@ -34,4 +34,4 @@ export { DenyRoute, ProtectedRoute, PublicRoute } from './Route';
 export { Inspector } from './Inspector';
 export { DocumentViewerModal } from './DocumentViewerModal';
 export { Account, Notifications, Settings, Sidebar, TopBar } from './ui';
-export { formatUniversityId, renderIcon } from './common';
+export { formatUniversityId, renderIcon, formatDateTime } from './common';

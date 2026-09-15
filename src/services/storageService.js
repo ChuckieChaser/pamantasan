@@ -1,5 +1,5 @@
 // --- IMPORTS ---
-import { ref, uploadBytes, getDownloadURL, deleteObject, getBlob } from 'firebase/storage';
+import { ref, uploadBytes, getDownloadURL, deleteObject, getBlob, listAll } from 'firebase/storage';
 import { storage } from './firebase';
 
 
@@ -19,6 +19,7 @@ const storageService = {
             return null;
         }
 
+        // 1. Data URLs and Blob URLs
         if (storagePath.startsWith('blob:') || storagePath.startsWith('data:')) {
             try {
                 onProgress?.({ progress: 50, statusText: 'Reading data stream...' });
@@ -31,27 +32,55 @@ const storageService = {
             }
         }
 
-        const isHttp = storagePath.startsWith('http://') || storagePath.startsWith('https://');
-        if (storage && !isHttp) {
-            const cleanPath = cleanStoragePath(storagePath);
+        // 2. Firebase Storage Reference (clean path or Firebase URL)
+        const cleanPath = cleanStoragePath(storagePath);
+        const isExternalHttp = (storagePath.startsWith('http://') || storagePath.startsWith('https://')) &&
+            !storagePath.includes('firebasestorage.googleapis.com');
+
+        if (storage && cleanPath && !isExternalHttp) {
+            onProgress?.({ progress: 40, statusText: 'Fetching from storage...' });
+
+            // Strategy A: Resolve download URL and fetch via Vite dev proxy (/firebase-storage)
+            // This is SAME-ORIGIN in development (http://localhost:5173/firebase-storage/...)
+            // which completely bypasses browser CORS restrictions and resolves in ~100ms without XMLHttpRequest errors.
             try {
-                onProgress?.({ progress: 40, statusText: 'Fetching from Firebase Storage...' });
+                const downloadUrl = await storageService.fetchDocument(cleanPath);
+                if (downloadUrl) {
+                    const targetUrl = toProxiedUrl(downloadUrl);
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 6000);
+                    try {
+                        const response = await fetch(targetUrl, { signal: controller.signal });
+                        clearTimeout(timeoutId);
+                        if (response.ok) {
+                            return await response.blob();
+                        }
+                    } catch {
+                        clearTimeout(timeoutId);
+                    }
+                }
+            } catch (urlErr) {
+                console.warn(`Failed to resolve download URL for "${cleanPath}":`, urlErr?.message);
+            }
+
+            // Strategy B: Fallback attempt with Firebase SDK getBlob (capped at 3s timeout to avoid 120s retry loop)
+            try {
                 const fileReference = ref(storage, cleanPath);
-                const blobPromise = getBlob(fileReference);
+                const blobPromise = getBlob(fileReference, 100 * 1024 * 1024);
                 const timeoutPromise = new Promise((_, reject) =>
-                    setTimeout(() => reject(new Error('Storage timeout')), 1200)
+                    setTimeout(() => reject(new Error('Firebase SDK timeout')), 3000)
                 );
                 const blob = await Promise.race([blobPromise, timeoutPromise]);
                 if (blob) {
                     return blob;
                 }
             } catch (error) {
-                // If object does not exist in bucket or timed out, fail fast without blocking
-                return null;
+                console.warn(`Firebase getBlob failed for "${cleanPath}":`, error?.message);
             }
         }
 
-        if (isHttp) {
+        // 3. External HTTP/HTTPS URLs
+        if (storagePath.startsWith('http://') || storagePath.startsWith('https://')) {
             try {
                 onProgress?.({ progress: 50, statusText: 'Downloading from network...' });
                 const response = await fetch(storagePath);
@@ -166,6 +195,24 @@ const storageService = {
 
         // Fallback: When remote storage object is not physically present (mock/seeded data)
         if (!blob) {
+            // Attempt direct download link via proxied URL before generating institutional placeholder
+            try {
+                const directUrl = await storageService.fetchDocument(storagePath);
+                if (directUrl && typeof window !== 'undefined') {
+                    const link = document.createElement('a');
+                    link.href = toProxiedUrl(directUrl);
+                    link.download = effectiveFileName;
+                    link.setAttribute('download', effectiveFileName);
+                    document.body.appendChild(link);
+                    link.click();
+                    setTimeout(() => link.remove(), 1000);
+                    onProgress?.({ progress: 100, isFinished: true, statusText: 'Saved to laptop' });
+                    return true;
+                }
+            } catch {
+                // Continue to placeholder if direct link unavailable
+            }
+
             onProgress?.({ progress: 70, statusText: 'Generating institutional record...' });
             const fallbackContent = `Pamantasan Institutional Document\n\nFile: ${effectiveFileName}\nPath: ${storagePath || 'N/A'}\nDownloaded: ${new Date().toISOString()}\n`;
             blob = new Blob([fallbackContent], { type: 'text/plain;charset=utf-8' });
@@ -339,16 +386,62 @@ const storageService = {
 
         return null;
     },
+
+    getLatestUserAvatarPath: async (userId) => {
+        if (!storage || !userId) {
+            return 'avatars/defaultAvatar.png';
+        }
+        try {
+            const folderReference = ref(storage, `avatars/${userId}`);
+            const result = await listAll(folderReference);
+            if (result.items && result.items.length > 0) {
+                return result.items[result.items.length - 1].fullPath;
+            }
+        } catch {
+            // Folder may not exist if user never uploaded custom image
+        }
+        return 'avatars/defaultAvatar.png';
+    },
 };
 
 
 // --- HELPERS ---
+function toProxiedUrl(url) {
+    if (!url || typeof url !== 'string') return url;
+    if (typeof window !== 'undefined') {
+        const isLocalDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+        if (isLocalDev && url.startsWith('https://firebasestorage.googleapis.com')) {
+            return url.replace('https://firebasestorage.googleapis.com', '/firebase-storage');
+        }
+    }
+    return url;
+}
+
 function cleanStoragePath(storagePath) {
-    if (!storagePath) {
+    if (!storagePath || typeof storagePath !== 'string') {
         return '';
     }
 
-    return storagePath.replace(/^gs:\/\/[^/]+\//, '');
+    // Handle gs://bucket/path
+    if (storagePath.startsWith('gs://')) {
+        return storagePath.replace(/^gs:\/\/[^/]+\//, '');
+    }
+
+    // Handle Firebase Storage HTTP/HTTPS download URLs
+    if (storagePath.includes('firebasestorage.googleapis.com/v0/b/')) {
+        try {
+            const parts = storagePath.split('/o/');
+            if (parts.length > 1) {
+                const encodedPath = parts[1].split('?')[0];
+                return decodeURIComponent(encodedPath);
+            }
+        } catch (e) {
+            console.warn('Failed to parse Firebase storage URL path:', e);
+        }
+    }
+
+    // Strip leading slash if any
+    return storagePath.replace(/^\/+/, '');
 }
 
 function sanitizeFileName(fileName) {

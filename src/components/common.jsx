@@ -28,6 +28,24 @@ const formatUniversityId = (value) => {
 };
 
 
+const formatDateTime = (dateInput) => {
+    if (!dateInput) return '—';
+    const d = new Date(dateInput);
+    if (isNaN(d.getTime())) return typeof dateInput === 'string' ? dateInput : '—';
+    const datePart = d.toLocaleDateString([], {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+    });
+    const timePart = d.toLocaleTimeString([], {
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+    });
+    return `${datePart} at ${timePart}`;
+};
+
+
 // --- EXPORTS ---
-export { renderIcon, formatUniversityId };
+export { renderIcon, formatUniversityId, formatDateTime };
 

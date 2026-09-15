@@ -31,6 +31,7 @@ import {
     AreaField,
     SelectField,
     DocumentViewerModal,
+    formatDateTime,
 } from '../components';
 import { useToast } from '../hooks';
 import { constants } from '../constants';
@@ -38,6 +39,7 @@ import { useDocumentStore, useDepartmentStore } from '../stores';
 import {
     storageService,
     documentService,
+    aiService,
 } from '../services';
 
 
@@ -155,6 +157,7 @@ const DocumentsPage = ({
     const [editFormComment, setEditFormComment] = useState('');
     const [editFormErrors, setEditFormErrors] = useState({});
     const [isSavingEdit, setIsSavingEdit] = useState(false);
+    const [isGeneratingAiSummary, setIsGeneratingAiSummary] = useState(false);
 
     // HOOKS
     const { showToast, showProcessing } = useToast();
@@ -327,29 +330,155 @@ const DocumentsPage = ({
         setEditFormErrors({});
     };
 
-    const handleGenerateSummaryWithAI = () => {
-        if (!editFormName.trim()) {
+    const handleGenerateSummaryWithAI = async () => {
+        if (!editItem) return;
+        setIsGeneratingAiSummary(true);
+
+        try {
+            if (editItem.isFolder) {
+                // Folder summary synthesis
+                const childDocs = (documents || []).filter(
+                    (d) => (d.parentId ?? null) === editItem.id && !d.isArchived
+                );
+                const childMeta = childDocs.map((doc) => {
+                    const vers = (documentVersions || []).filter(
+                        (v) => (v.document?.id ?? v.documentId) === doc.id
+                    );
+                    const latest = vers.length > 0 ? [...vers].sort((a, b) => (b.version ?? 0) - (a.version ?? 0))[0] : null;
+                    return {
+                        name: doc.name || doc.title,
+                        mimeType: latest?.mimeType,
+                        summary: latest?.summary,
+                        classification: latest?.classification,
+                    };
+                });
+
+                showToast({
+                    type: 'information',
+                    title: 'Synthesizing Folder Overview',
+                    description: `Analyzing ${childDocs.length} items in "${editFormName || editItem.name}" with Vertex AI...`,
+                });
+
+                const res = await aiService.synthesizeFolderSummary({
+                    folderName: editFormName.trim() || editItem.name || 'Folder',
+                    childDocuments: childMeta,
+                });
+
+                if (res?.summary) {
+                    setEditFormSummary(res.summary);
+                    if (editFormErrors.summary) setEditFormErrors((prev) => ({ ...prev, summary: '' }));
+                    showToast({
+                        type: 'success',
+                        title: 'AI Summary Synthesized',
+                        description: 'Generated folder overview based on child repository items.',
+                    });
+                }
+            } else {
+                // File summary analysis
+                const vers = (documentVersions || []).filter(
+                    (v) => (v.document?.id ?? v.documentId) === editItem.id
+                );
+                const latestVer = vers.length > 0
+                    ? [...vers].sort((a, b) => (b.version ?? 0) - (a.version ?? 0))[0]
+                    : null;
+                const path = latestVer?.path || editItem.path;
+
+                if (path) {
+                    showToast({
+                        type: 'information',
+                        title: 'Analyzing Document with AI',
+                        description: `Reading content of "${editFormName || editItem.name}" via Vertex AI Gemini Flash...`,
+                    });
+
+                    const res = await aiService.analyzeDocumentFile({
+                        storagePath: path,
+                        mimeType: latestVer?.mimeType || 'application/octet-stream',
+                        fileName: editFormName.trim() || editItem.name || 'document',
+                        fileSize: latestVer?.sizeBytes || 0,
+                    });
+
+                    if (res?.summary) {
+                        setEditFormSummary(res.summary);
+                        if (editFormErrors.summary) setEditFormErrors((prev) => ({ ...prev, summary: '' }));
+                    }
+
+                    if (res?.classification && res.classification !== 'UNCLASSIFIED') {
+                        setEditFormClassification(res.classification);
+                        if (editFormErrors.classification) setEditFormErrors((prev) => ({ ...prev, classification: '' }));
+                    }
+
+                    showToast({
+                        type: 'success',
+                        title: 'AI Analysis Complete',
+                        description: `Summary and classification updated (${res?.classification || 'Analyzed'}).`,
+                    });
+                } else {
+                    const cleanedName = editFormName.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
+                    const generated = `Institutional documentation and operational records pertaining to ${cleanedName}.`;
+                    setEditFormSummary(generated);
+                    if (editFormErrors.summary) {
+                        setEditFormErrors((prev) => ({ ...prev, summary: '' }));
+                    }
+                    showToast({
+                        type: 'information',
+                        title: 'AI Summary Generated',
+                        description: 'Generated document summary based on filename.',
+                    });
+                }
+            }
+        } catch (err) {
+            console.error('AI summary error:', err);
             showToast({
-                type: 'warning',
-                title: 'Filename Required',
-                description: 'Please enter a document filename first to generate an AI summary.',
+                type: 'error',
+                title: 'AI Generation Failed',
+                description: err?.message || 'Could not generate AI summary.',
             });
-            return;
+        } finally {
+            setIsGeneratingAiSummary(false);
         }
-        const cleanedName = editFormName.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
-        const generated = `Institutional documentation and operational records pertaining to ${cleanedName}.`;
-        setEditFormSummary(generated);
-        if (editFormErrors.summary) {
-            setEditFormErrors((prev) => ({ ...prev, summary: '' }));
-        }
-        showToast({
-            type: 'information',
-            title: 'AI Summary Generated',
-            description: 'Generated document summary based on filename.',
-        });
     };
 
-    const handleAutoClassifyWithAI = () => {
+    const handleAutoClassifyWithAI = async () => {
+        if (!editItem) return;
+        const vers = (documentVersions || []).filter(
+            (v) => (v.document?.id ?? v.documentId) === editItem.id
+        );
+        const latestVer = vers.length > 0
+            ? [...vers].sort((a, b) => (b.version ?? 0) - (a.version ?? 0))[0]
+            : null;
+        const path = latestVer?.path || editItem.path;
+
+        if (path) {
+            showToast({
+                type: 'information',
+                title: 'Classifying Document',
+                description: 'Evaluating sensitivity level with Vertex AI...',
+            });
+            try {
+                const res = await aiService.analyzeDocumentFile({
+                    storagePath: path,
+                    mimeType: latestVer?.mimeType || 'application/octet-stream',
+                    fileName: editFormName.trim() || editItem.name || 'document',
+                    fileSize: latestVer?.sizeBytes || 0,
+                });
+                if (res?.classification && res.classification !== 'UNCLASSIFIED') {
+                    setEditFormClassification(res.classification);
+                    if (editFormErrors.classification) {
+                        setEditFormErrors((prev) => ({ ...prev, classification: '' }));
+                    }
+                    showToast({
+                        type: 'success',
+                        title: 'AI Classified',
+                        description: `Classified as ${res.classification} based on document content.`,
+                    });
+                    return;
+                }
+            } catch (err) {
+                console.warn('AI classification fallback to keywords:', err);
+            }
+        }
+
+        // Fallback keyword heuristic
         const lower = (editFormName + ' ' + editFormSummary).toLowerCase();
         let suggested = constants.DOCUMENT_VERSIONS_CLASSIFICATION.CONFIDENTIAL;
         if (lower.includes('public') || lower.includes('handbook') || lower.includes('memo') || lower.includes('calendar') || lower.includes('bulletin')) {
@@ -419,7 +548,7 @@ const DocumentsPage = ({
                 summary: editItem.isFolder ? null : (editFormSummary.trim() || null),
                 classification: editItem.isFolder ? '—' : editFormClassification,
                 updatedAt: timestamp,
-                date: new Date(timestamp).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }),
+                date: formatDateTime(timestamp),
             };
 
             if (selectedDocument?.id === editItem.id) {
@@ -774,12 +903,13 @@ const DocumentsPage = ({
         const rootTargetId = destinationFolderId === 'root' ? null : destinationFolderId;
         const folderCache = new Map();
 
-        for (let itemIndex = 0; itemIndex < validItems.length; itemIndex++) {
-            const item = validItems[itemIndex];
+        const CONCURRENCY_LIMIT = 2;
+        let itemIndex = 0;
 
+        const processItem = async (item) => {
             try {
                 toastProcess.updateItem(item.id, {
-                    progress: 25,
+                    progress: 15,
                     statusText: 'Resolving folder location...',
                 });
 
@@ -834,9 +964,12 @@ const DocumentsPage = ({
                         (v) => (v.document?.id ?? v.documentId) === targetDocumentId
                     );
                     const nextVersionNum = item.nextVersion || (docVersions.length > 0 ? Math.max(...docVersions.map((v) => v.version || 1)) + 1 : 2);
+                    const latestPriorVer = docVersions.length > 0
+                        ? [...docVersions].sort((a, b) => (b.version ?? 0) - (a.version ?? 0))[0]
+                        : null;
 
                     toastProcess.updateItem(item.id, {
-                        progress: 50,
+                        progress: 35,
                         statusText: `Uploading version ${nextVersionNum}.0 to Firebase Storage...`,
                     });
 
@@ -848,11 +981,37 @@ const DocumentsPage = ({
                     );
 
                     toastProcess.updateItem(item.id, {
-                        progress: 80,
-                        statusText: `Saving version ${nextVersionNum}.0 in database...`,
+                        progress: 65,
+                        statusText: `AI analyzing document & version differences...`,
+                    });
+
+                    // Call Vertex AI for version diffing, OCR/summary, and embeddings
+                    let aiResult = null;
+                    try {
+                        aiResult = await aiService.analyzeDocumentFile({
+                            storagePath: storageResult.path,
+                            mimeType: storageResult.mimeType || item.file.type || 'application/octet-stream',
+                            fileName: item.fileName || item.title,
+                            fileSize: storageResult.sizeBytes || item.file.size || 0,
+                            isVersionUpdate: true,
+                            previousStoragePath: latestPriorVer?.path || null,
+                            previousMimeType: latestPriorVer?.mimeType || null,
+                            nextVersion: nextVersionNum,
+                        });
+                    } catch (aiErr) {
+                        console.warn('AI analysis error on version update:', aiErr);
+                    }
+
+                    toastProcess.updateItem(item.id, {
+                        progress: 85,
+                        statusText: `Saving version ${nextVersionNum}.0 and embeddings in database...`,
                     });
 
                     if (activeUserId) {
+                        const finalClassification = (item.classification && item.classification !== constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED)
+                            ? item.classification
+                            : (aiResult?.classification || constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED);
+
                         await documentService.insertDocumentVersion({
                             documentId: targetDocumentId,
                             uploaderId: activeUserId,
@@ -860,9 +1019,10 @@ const DocumentsPage = ({
                             path: storageResult.path,
                             sizeBytes: storageResult.sizeBytes,
                             mimeType: storageResult.mimeType || item.file.type || 'application/octet-stream',
-                            classification: item.classification || constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED,
-                            changeSummary: null,
-                            summary: null,
+                            classification: finalClassification,
+                            changeSummary: aiResult?.changeSummary || `Version ${nextVersionNum}.0 update`,
+                            summary: aiResult?.summary || null,
+                            embedding: aiResult?.embedding || null,
                         });
 
                         await documentService.updateDocument(targetDocumentId, {
@@ -872,7 +1032,7 @@ const DocumentsPage = ({
                 } else {
                     // NEW DOCUMENT: Insert document row first, then upload, then insert version row
                     toastProcess.updateItem(item.id, {
-                        progress: 35,
+                        progress: 25,
                         statusText: 'Creating document in database...',
                     });
 
@@ -892,8 +1052,8 @@ const DocumentsPage = ({
                     }
 
                     toastProcess.updateItem(item.id, {
-                        progress: 60,
-                        statusText: 'Uploading binary to Firebase Storage...',
+                        progress: 45,
+                        statusText: 'Uploading file to Firebase Storage...',
                     });
 
                     let storageResult;
@@ -912,11 +1072,34 @@ const DocumentsPage = ({
                     }
 
                     toastProcess.updateItem(item.id, {
-                        progress: 85,
-                        statusText: 'Saving version record in database...',
+                        progress: 70,
+                        statusText: 'AI reading & analyzing document...',
+                    });
+
+                    // Call Vertex AI for multimodal analysis, OCR, classification, and embeddings
+                    let aiResult = null;
+                    try {
+                        aiResult = await aiService.analyzeDocumentFile({
+                            storagePath: storageResult.path,
+                            mimeType: storageResult.mimeType || item.file.type || 'application/octet-stream',
+                            fileName: item.fileName || item.title,
+                            fileSize: storageResult.sizeBytes || item.file.size || 0,
+                            isVersionUpdate: false,
+                        });
+                    } catch (aiErr) {
+                        console.warn('AI analysis error on initial upload:', aiErr);
+                    }
+
+                    toastProcess.updateItem(item.id, {
+                        progress: 90,
+                        statusText: 'Saving version record & embeddings in database...',
                     });
 
                     if (activeUserId) {
+                        const finalClassification = (item.classification && item.classification !== constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED)
+                            ? item.classification
+                            : (aiResult?.classification || constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED);
+
                         try {
                             await documentService.insertDocumentVersion({
                                 documentId: targetDocumentId,
@@ -925,9 +1108,10 @@ const DocumentsPage = ({
                                 path: storageResult.path,
                                 sizeBytes: storageResult.sizeBytes,
                                 mimeType: storageResult.mimeType || item.file.type || 'application/octet-stream',
-                                classification: item.classification || constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED,
-                                changeSummary: null,
-                                summary: null,
+                                classification: finalClassification,
+                                changeSummary: aiResult?.changeSummary || 'Initial file upload',
+                                summary: aiResult?.summary || null,
+                                embedding: aiResult?.embedding || null,
                             });
                         } catch (verErr) {
                             await storageService.deleteDocument(storageResult.path).catch(() => null);
@@ -952,7 +1136,20 @@ const DocumentsPage = ({
                     statusText: 'Upload error',
                 });
             }
-        }
+        };
+
+        const worker = async () => {
+            while (itemIndex < validItems.length) {
+                const currentIdx = itemIndex++;
+                await processItem(validItems[currentIdx]);
+            }
+        };
+
+        const workers = Array.from(
+            { length: Math.min(CONCURRENCY_LIMIT, validItems.length) },
+            () => worker()
+        );
+        await Promise.all(workers);
 
         await fetchDocuments().catch(() => {});
         toastProcess.complete();
@@ -1267,8 +1464,8 @@ const DocumentsPage = ({
                 sizeBytes: doc.isFolder ? folderSizeBytes : (latestVer?.sizeBytes ?? 0),
                 path: latestVer?.path ?? null,
                 status: '—',
-                date: doc.createdAt && !isNaN(new Date(doc.createdAt).getTime())
-                    ? new Date(doc.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
+                date: (doc.updatedAt || latestVer?.createdAt || doc.createdAt) && !isNaN(new Date(doc.updatedAt || latestVer?.createdAt || doc.createdAt).getTime())
+                    ? formatDateTime(doc.updatedAt || latestVer?.createdAt || doc.createdAt)
                     : 'Active',
                 isFolder: Boolean(doc.isFolder),
                 isArchived: Boolean(doc.isArchived),
@@ -1739,8 +1936,8 @@ const DocumentsPage = ({
                             </div>
                         )}
 
-                        {/* 3. FOR FILES ONLY: SUMMARY WITH SPARKLES AI BUTTON */}
-                        {!editItem.isFolder && (
+                        {/* 3. SUMMARY / OVERVIEW WITH SPARKLES AI BUTTON */}
+                        {!editItem.isFolder ? (
                             <div className="flex flex-col gap-1.5">
                                 <div className="flex items-center justify-between">
                                     <label className="text-xs font-semibold text-text">
@@ -1749,11 +1946,12 @@ const DocumentsPage = ({
                                     <button
                                         type="button"
                                         onClick={handleGenerateSummaryWithAI}
-                                        className="flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-medium bg-surface-hover hover:bg-surface-border text-text-muted hover:text-text border border-surface-border cursor-pointer transition-colors"
-                                        title="Generate AI summary based on document name"
+                                        disabled={isGeneratingAiSummary}
+                                        className="flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-medium bg-surface-hover hover:bg-surface-border text-text-muted hover:text-text border border-surface-border cursor-pointer transition-colors disabled:opacity-50"
+                                        title="Generate AI summary with Vertex AI"
                                     >
-                                        <Sparkles className="h-3 w-3 text-text-muted" />
-                                        <span>Generate with AI</span>
+                                        <Sparkles className={`h-3 w-3 text-text-muted ${isGeneratingAiSummary ? 'animate-spin' : ''}`} />
+                                        <span>{isGeneratingAiSummary ? 'Analyzing...' : 'Generate with AI'}</span>
                                     </button>
                                 </div>
                                 <AreaField
@@ -1767,9 +1965,37 @@ const DocumentsPage = ({
                                     rows={3}
                                 />
                             </div>
+                        ) : (
+                            <div className="flex flex-col gap-1.5">
+                                <div className="flex items-center justify-between">
+                                    <label className="text-xs font-semibold text-text">
+                                        Folder Overview
+                                    </label>
+                                    <button
+                                        type="button"
+                                        onClick={handleGenerateSummaryWithAI}
+                                        disabled={isGeneratingAiSummary}
+                                        className="flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-medium bg-surface-hover hover:bg-surface-border text-text-muted hover:text-text border border-surface-border cursor-pointer transition-colors disabled:opacity-50"
+                                        title="Synthesize overview of child records with Vertex AI"
+                                    >
+                                        <Sparkles className={`h-3 w-3 text-text-muted ${isGeneratingAiSummary ? 'animate-spin' : ''}`} />
+                                        <span>{isGeneratingAiSummary ? 'Synthesizing...' : 'Synthesize with AI'}</span>
+                                    </button>
+                                </div>
+                                <AreaField
+                                    placeholder="Overview of records stored in this folder..."
+                                    value={editFormSummary}
+                                    onChange={(event) => {
+                                        setEditFormSummary(event.target.value);
+                                        if (editFormErrors.summary) setEditFormErrors((prev) => ({ ...prev, summary: '' }));
+                                    }}
+                                    error={editFormErrors.summary}
+                                    rows={3}
+                                />
+                            </div>
                         )}
 
-                        {/* 4. COMMENT (FOR BOTH) */}
+                        {/* 4. COMMENT (FOR BOTH - STRICTLY 100% HUMAN-ONLY, NO AI BUTTON) */}
                         <AreaField
                             label="Comment"
                             placeholder="Add administrative comment or notes..."

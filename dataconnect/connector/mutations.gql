@@ -286,6 +286,7 @@ mutation InsertDocumentVersion(
     $changeSummary: String
     $rejectionReason: String
     $summary: String
+    $embedding: Vector
     $textHash: String
     $createdAt: Timestamp
     $updatedAt: Timestamp
@@ -306,6 +307,7 @@ mutation InsertDocumentVersion(
             changeSummary: $changeSummary
             rejectionReason: $rejectionReason
             summary: $summary
+            embedding: $embedding
             textHash: $textHash
             createdAt: $createdAt
             updatedAt: $updatedAt
@@ -326,6 +328,7 @@ mutation UpdateDocumentVersion(
     $changeSummary: String
     $rejectionReason: String
     $summary: String
+    $embedding: Vector
     $textHash: String
     $updatedAt: Timestamp
 ) @auth(level: PUBLIC) {
@@ -343,6 +346,7 @@ mutation UpdateDocumentVersion(
             changeSummary: $changeSummary
             rejectionReason: $rejectionReason
             summary: $summary
+            embedding: $embedding
             textHash: $textHash
             updatedAt: $updatedAt
         }

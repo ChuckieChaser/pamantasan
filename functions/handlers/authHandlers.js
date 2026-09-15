@@ -1,7 +1,7 @@
 // --- IMPORTS ---
 const { HttpsError } = require('firebase-functions/v2/https');
 const { generateAndStoreOtp, verifyOtp, consumeOtp } = require('../services/otpService');
-const { sendOtpEmail } = require('../services/emailService');
+const { sendOtpEmail, sendUserProvisionEmail } = require('../services/emailService');
 
 const INSTITUTIONAL_DOMAIN = '@plpasig.edu.ph';
 
@@ -72,8 +72,47 @@ async function handleConsumePasswordResetOtp(data) {
     return { success: true };
 }
 
+/**
+ * Callable function to send account provisioning email with credentials upon account creation.
+ */
+async function handleSendUserProvisionEmail(data) {
+    const rawEmail = data?.email || data?.data?.email;
+    const cleanEmail = (rawEmail || '').toString().trim().toLowerCase();
+    const recipientName = data?.recipientName || data?.data?.recipientName || '';
+    const universityId = (data?.universityId || data?.data?.universityId || '').toString().trim();
+    const temporaryPassword = (data?.temporaryPassword || data?.data?.temporaryPassword || '').toString().trim();
+    const loginUrl = data?.loginUrl || data?.data?.loginUrl || '';
+
+    if (!cleanEmail) {
+        throw new HttpsError('invalid-argument', 'Institutional email address is required.');
+    }
+
+    if (!universityId || !temporaryPassword) {
+        throw new HttpsError('invalid-argument', 'University ID and temporary password are required.');
+    }
+
+    try {
+        await sendUserProvisionEmail({
+            toEmail: cleanEmail,
+            recipientName,
+            universityId,
+            temporaryPassword,
+            loginUrl,
+        });
+
+        return {
+            success: true,
+            message: `Provisioning credentials sent to ${cleanEmail}.`,
+        };
+    } catch (error) {
+        console.error('[handleSendUserProvisionEmail] Failed:', error);
+        throw new HttpsError('internal', error.message || 'Failed to dispatch user credentials.');
+    }
+}
+
 module.exports = {
     handleSendPasswordResetOtp,
     handleVerifyPasswordResetOtp,
     handleConsumePasswordResetOtp,
+    handleSendUserProvisionEmail,
 };

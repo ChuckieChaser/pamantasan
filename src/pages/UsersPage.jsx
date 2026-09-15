@@ -21,11 +21,12 @@ import {
     SelectField,
     TextField,
     formatUniversityId,
+    formatDateTime,
     resolveUserAvatar,
 } from '../components';
 import { useToast } from '../hooks';
 import { useUserStore, useDepartmentStore, useAuthStore } from '../stores';
-import { storageService } from '../services';
+import { storageService, authService } from '../services';
 import { constants } from '../constants';
 
 
@@ -301,14 +302,19 @@ const UsersPage = ({
                 uploadedAvatarPath = uploadResult.path;
             }
 
+            const targetUid = formUniversityId.trim();
+            const targetEmail = formEmail.trim().toLowerCase();
+            const tempPassword = targetUid;
+
             const minTimer = new Promise((resolve) => setTimeout(resolve, 500));
             const [newUser] = await Promise.all([
                 insertUser({
-                    universityId: formUniversityId.trim(),
+                    universityId: targetUid,
+                    password: tempPassword,
                     firstName: formFirstName.trim(),
                     middleName: formMiddleName.trim() || null,
                     lastName: formLastName.trim(),
-                    email: formEmail.trim().toLowerCase(),
+                    email: targetEmail,
                     departmentId: finalDepartmentId,
                     role: formRole,
                     status: constants.USERS_STATUS.PENDING_PASSWORD,
@@ -319,11 +325,23 @@ const UsersPage = ({
 
             const targetFirstName = newUser?.firstName || formFirstName.trim();
             const targetLastName = newUser?.lastName || formLastName.trim();
+            const fullName = `${targetFirstName} ${targetLastName}`.trim();
+
+            // Dispatch official user provisioning email with credentials
+            authService.sendUserProvisionEmail({
+                email: targetEmail,
+                recipientName: fullName,
+                universityId: targetUid,
+                temporaryPassword: tempPassword,
+                loginUrl: 'https://pamantasan-records-210fe.web.app/login',
+            }).catch((emailErr) => {
+                console.warn('Background provision email dispatch encountered error:', emailErr);
+            });
 
             showToast({
                 type: 'success',
                 title: 'User Registered',
-                description: `${targetFirstName} ${targetLastName} registered.`,
+                description: `${fullName} registered. Credentials sent to ${targetEmail}.`,
             });
             handleCloseModals();
         } catch (error) {
@@ -593,11 +611,7 @@ const UsersPage = ({
                 createdAt: createdAt ?? null,
                 updatedAt: user.updatedAt ?? createdAt ?? null,
                 date: createdAt && !isNaN(new Date(createdAt).getTime())
-                    ? new Date(createdAt).toLocaleDateString([], {
-                        month: 'short',
-                        day: 'numeric',
-                        year: 'numeric',
-                    })
+                    ? formatDateTime(createdAt)
                     : 'Active Member',
             };
         });

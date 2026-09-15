@@ -276,6 +276,7 @@ const documentService = {
             changeSummary: payload.changeSummary ?? null,
             rejectionReason: payload.rejectionReason ?? null,
             summary: payload.summary ?? null,
+            embedding: payload.embedding ?? null,
             textHash: payload.textHash ?? null,
             createdAt: timestamp,
             updatedAt: updatedTimestamp,
@@ -307,6 +308,7 @@ const documentService = {
             changeSummary: payload.changeSummary,
             rejectionReason: payload.rejectionReason,
             summary: payload.summary,
+            embedding: payload.embedding !== undefined ? payload.embedding : undefined,
             textHash: payload.textHash,
             updatedAt: timestamp,
         });
@@ -607,6 +609,7 @@ function formatLiveDocumentVersion(rawVersion) {
         changeSummary: rawVersion.changeSummary,
         rejectionReason: rawVersion.rejectionReason,
         summary: rawVersion.summary,
+        embedding: rawVersion.embedding ?? null,
         textHash: rawVersion.textHash,
         createdAt: rawVersion.createdAt,
         updatedAt: rawVersion.updatedAt,

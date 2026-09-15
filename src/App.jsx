@@ -446,7 +446,14 @@ const AppContent = () => {
                         useDocumentStore.getState().documentVersions
                     );
                 } else {
-                    const rawPath = item?.path ?? item?.url ?? item?.downloadUrl;
+                    const allVersions = useDocumentStore.getState().documentVersions ?? [];
+                    const vers = allVersions.filter(
+                        (v) => (v.document?.id ?? v.documentId) === item?.id
+                    );
+                    const latestVer = vers.length > 0
+                        ? [...vers].sort((a, b) => (b.version ?? 0) - (a.version ?? 0))[0]
+                        : null;
+                    const rawPath = latestVer?.path ?? item?.path ?? item?.url ?? item?.downloadUrl;
                     await storageService.downloadDocument(
                         rawPath,
                         fileName

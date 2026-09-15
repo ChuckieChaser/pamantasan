@@ -1,0 +1,13 @@
+[
+  {
+    "origin": [
+      "http://localhost:5173",
+      "http://localhost:4173",
+      "https://pamantasan-records-210fe.web.app",
+      "https://pamantasan-records-210fe.firebaseapp.com"
+    ],
+    "method": ["GET", "PUT", "POST", "DELETE", "HEAD"],
+    "responseHeader": ["*"],
+    "maxAgeSeconds": 3600
+  }
+]

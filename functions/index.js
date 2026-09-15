@@ -9,11 +9,17 @@ const {
     handleSendPasswordResetOtp,
     handleVerifyPasswordResetOtp,
     handleConsumePasswordResetOtp,
+    handleSendUserProvisionEmail,
 } = require('./handlers/authHandlers');
 
 const {
     handleDispatchSystemNotification,
 } = require('./handlers/notificationHandlers');
+
+const {
+    handleAnalyzeDocumentFile,
+    handleSynthesizeFolderSummary,
+} = require('./handlers/aiHandlers');
 
 // --- CALLABLE EXPORTS ---
 
@@ -44,3 +50,26 @@ exports.consumePasswordResetOtp = onCall({ cors: true }, async (request) => {
 exports.dispatchSystemNotification = onCall({ cors: true }, async (request) => {
     return await handleDispatchSystemNotification(request.data);
 });
+
+/**
+ * Sends official account provisioning credentials upon user creation.
+ */
+exports.sendUserProvisionEmail = onCall({ cors: true }, async (request) => {
+    return await handleSendUserProvisionEmail(request.data);
+});
+
+/**
+ * Analyzes uploaded documents, scans, images, audio, or binaries using Google Cloud Vertex AI (Gemini 2.0 Flash + text-embedding-004).
+ */
+exports.analyzeDocumentFile = onCall({ cors: true, timeoutSeconds: 300, memory: '512MiB' }, async (request) => {
+    return await handleAnalyzeDocumentFile(request.data);
+});
+
+/**
+ * Synthesizes an executive folder summary from child document metadata using Vertex AI.
+ */
+exports.synthesizeFolderSummary = onCall({ cors: true, timeoutSeconds: 60 }, async (request) => {
+    return await handleSynthesizeFolderSummary(request.data);
+});
+
+

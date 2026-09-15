@@ -11,6 +11,7 @@ import {
     Container,
     Modal,
     TextField,
+    formatDateTime,
 } from '../components';
 import { useDepartmentStore, useUserStore } from '../stores';
 import { useToast } from '../hooks';
@@ -309,12 +310,8 @@ const DepartmentsPage = ({
                 metadata: `${department.code ?? ''} · ${count} personnel`,
                 createdAt: createdAtDate,
                 updatedAt: updatedAtDate,
-                date: createdAtDate && !isNaN(new Date(createdAtDate).getTime())
-                    ? new Date(createdAtDate).toLocaleDateString([], {
-                        month: 'short',
-                        day: 'numeric',
-                        year: 'numeric',
-                    })
+                date: (updatedAtDate || createdAtDate) && !isNaN(new Date(updatedAtDate || createdAtDate).getTime())
+                    ? formatDateTime(updatedAtDate || createdAtDate)
                     : 'Active',
                 badge: department.code ?? '',
             };

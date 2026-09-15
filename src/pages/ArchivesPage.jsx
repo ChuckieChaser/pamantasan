@@ -8,6 +8,7 @@ import {
     Browser,
     Container,
     Modal,
+    formatDateTime,
 } from '../components';
 import { useToast } from '../hooks';
 import { constants } from '../constants';
@@ -75,7 +76,7 @@ const ArchivesPage = ({
 
             const dateValue = doc.updatedAt || latestVer?.createdAt || doc.createdAt;
             const formattedDate = dateValue && !isNaN(new Date(dateValue).getTime())
-                ? new Date(dateValue).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
+                ? formatDateTime(dateValue)
                 : 'Active';
 
             return {
