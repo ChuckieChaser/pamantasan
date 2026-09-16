@@ -653,21 +653,45 @@ const useDocumentStore = create((set, get) => ({
         set({ isLoading: true, error: null });
 
         try {
-            const validatedPayload = mutationSchema.UpdateDocumentRequestSchema.parse(payload);
-            const updatedRequest = await documentService.updateDocumentRequest(id, validatedPayload);
+            const timestamp = new Date().toISOString();
+            const payloadWithUpdate = {
+                ...payload,
+                updatedAt: payload?.updatedAt ?? timestamp,
+            };
+            const validatedPayload = mutationSchema.UpdateDocumentRequestSchema.parse(payloadWithUpdate);
+            const existingRequest = get().documentRequests.find((item) => item?.id === id) ?? {};
+
+            const result = await documentService.updateDocumentRequest(id, validatedPayload);
+
+            const cleanResult = Object.fromEntries(
+                Object.entries(result || {}).filter(([_, v]) => v !== undefined && v !== null)
+            );
+            const cleanPayload = Object.fromEntries(
+                Object.entries(validatedPayload || {}).filter(([_, v]) => v !== undefined)
+            );
+
+            const mergedRequest = {
+                ...existingRequest,
+                ...cleanPayload,
+                ...cleanResult,
+                id: id,
+                updatedAt: validatedPayload.updatedAt ?? timestamp,
+            };
 
             set((state) => ({
                 documentRequests: state.documentRequests.map((item) =>
-                    item.id === id ? updatedRequest : item
+                    item?.id === id ? mergedRequest : item
                 ),
                 selectedDocumentRequest: state.selectedDocumentRequest?.id === id
-                    ? updatedRequest
+                    ? mergedRequest
                     : state.selectedDocumentRequest,
                 isLoading: false,
                 error: null,
             }));
 
-            return updatedRequest;
+            get().fetchDocumentRequests().catch(() => {});
+
+            return mergedRequest;
         } catch (error) {
             const message = error?.errors?.[0]?.message ?? error?.message ?? 'Failed to update document request.';
             set({ isLoading: false, error: message });
@@ -706,24 +730,28 @@ const useDocumentStore = create((set, get) => ({
 
     // MESSAGES
     fetchDocumentRequestMessages: async (documentRequestId) => {
-        set({ isLoading: true, error: null });
-
         try {
             const messages = await documentService.fetchDocumentRequestMessages(documentRequestId);
-            set({ documentRequestMessages: messages, isLoading: false, error: null });
+            set((state) => {
+                const otherMessages = (state.documentRequestMessages ?? []).filter(
+                    (item) => (item.documentRequest?.id ?? item.documentRequestId) !== documentRequestId
+                );
+                return {
+                    documentRequestMessages: [...otherMessages, ...messages],
+                    error: null,
+                };
+            });
 
             return messages;
         } catch (error) {
             const message = error?.message ?? `Failed to fetch messages for request "${documentRequestId}".`;
-            set({ isLoading: false, error: message });
+            set({ error: message });
 
             return [];
         }
     },
 
     insertDocumentRequestMessage: async (payload) => {
-        set({ isLoading: true, error: null });
-
         try {
             const validatedPayload = mutationSchema.InsertDocumentRequestMessageSchema.parse({
                 documentRequestId: payload.documentRequestId,
@@ -734,15 +762,17 @@ const useDocumentStore = create((set, get) => ({
             const newMessage = await documentService.insertDocumentRequestMessage(validatedPayload);
 
             set((state) => ({
-                documentRequestMessages: [...state.documentRequestMessages, newMessage],
-                isLoading: false,
+                documentRequestMessages: [...(state.documentRequestMessages ?? []), newMessage],
                 error: null,
             }));
+
+            // Background fetch to sync with server
+            get().fetchDocumentRequestMessages(payload.documentRequestId).catch(() => {});
 
             return newMessage;
         } catch (error) {
             const message = error?.errors?.[0]?.message ?? error?.message ?? 'Failed to insert document request message.';
-            set({ isLoading: false, error: message });
+            set({ error: message });
 
             throw error;
         }
@@ -775,24 +805,28 @@ const useDocumentStore = create((set, get) => ({
 
     // ATTACHMENTS
     fetchDocumentRequestAttachments: async (documentRequestId) => {
-        set({ isLoading: true, error: null });
-
         try {
             const attachments = await documentService.fetchDocumentRequestAttachments(documentRequestId);
-            set({ documentRequestAttachments: attachments, isLoading: false, error: null });
+            set((state) => {
+                const otherAttachments = (state.documentRequestAttachments ?? []).filter(
+                    (item) => (item.documentRequest?.id ?? item.documentRequestId) !== documentRequestId
+                );
+                return {
+                    documentRequestAttachments: [...otherAttachments, ...attachments],
+                    error: null,
+                };
+            });
 
             return attachments;
         } catch (error) {
             const message = error?.message ?? `Failed to fetch attachments for request "${documentRequestId}".`;
-            set({ isLoading: false, error: message });
+            set({ error: message });
 
             return [];
         }
     },
 
     insertDocumentRequestAttachment: async (payload) => {
-        set({ isLoading: true, error: null });
-
         try {
             const validatedPayload = mutationSchema.InsertDocumentRequestAttachmentSchema.parse({
                 documentRequestId: payload.documentRequestId,
@@ -800,18 +834,23 @@ const useDocumentStore = create((set, get) => ({
                 attachedById: payload.attachedById,
                 createdAt: payload.createdAt,
             });
-            const newAttachment = await documentService.insertDocumentRequestAttachment(validatedPayload);
+            const newAttachment = await documentService.insertDocumentRequestAttachment({
+                ...validatedPayload,
+                name: payload.name,
+            });
 
             set((state) => ({
-                documentRequestAttachments: [...state.documentRequestAttachments, newAttachment],
-                isLoading: false,
+                documentRequestAttachments: [...(state.documentRequestAttachments ?? []), newAttachment],
                 error: null,
             }));
+
+            // Background fetch to sync with server
+            get().fetchDocumentRequestAttachments(payload.documentRequestId).catch(() => {});
 
             return newAttachment;
         } catch (error) {
             const message = error?.errors?.[0]?.message ?? error?.message ?? 'Failed to insert document request attachment.';
-            set({ isLoading: false, error: message });
+            set({ error: message });
 
             throw error;
         }

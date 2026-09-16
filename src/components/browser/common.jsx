@@ -77,9 +77,9 @@ const renderItemBadge = (item, columnKey) => {
         const upper = String(item.status).toUpperCase();
         const variant = (upper.includes('VERIF') || upper.includes('APPROV') || upper.includes('RESOLV') || upper.includes('PUBLISH') || upper.includes('ACTIVE'))
             ? 'success'
-            : upper.includes('PENDING_SSO')
+            : (upper.includes('PENDING_SSO') || upper === 'OPEN' || upper.includes('OPEN'))
             ? 'information'
-            : (upper.includes('PENDING') || upper.includes('OPEN') || upper.includes('CONFIDENT'))
+            : (upper.includes('PENDING') || upper.includes('CONFIDENT'))
             ? 'warning'
             : (upper.includes('REJECT') || upper.includes('SUSPEND') || upper.includes('RESTRICT'))
             ? 'error'
@@ -120,9 +120,9 @@ const renderItemBadge = (item, columnKey) => {
         const upper = String(item.status).toUpperCase();
         const variant = (upper.includes('VERIF') || upper.includes('APPROV') || upper.includes('RESOLV') || upper.includes('PUBLISH') || upper.includes('ACTIVE'))
             ? 'success'
-            : upper.includes('PENDING_SSO')
+            : (upper.includes('PENDING_SSO') || upper === 'OPEN' || upper.includes('OPEN'))
             ? 'information'
-            : (upper.includes('PENDING') || upper.includes('OPEN') || upper.includes('RESTRICT'))
+            : (upper.includes('PENDING') || upper.includes('RESTRICT'))
             ? 'warning'
             : (upper.includes('REJECT') || upper.includes('SUSPEND') || upper.includes('CONFIDENT'))
             ? 'error'

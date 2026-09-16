@@ -58,6 +58,7 @@ const coordinatorService = {
     },
 
     updateCoordinatorRequest: async (id, payload) => {
+        const timestamp = payload.updatedAt || new Date().toISOString();
         const data = await dataConnectService.executeMutation('UpdateCoordinatorRequest', {
             id: id,
             reviewerId: payload.reviewerId,
@@ -65,10 +66,24 @@ const coordinatorService = {
             data: payload.data,
             status: payload.status,
             rejectionReason: payload.rejectionReason,
-            updatedAt: payload.updatedAt,
+            updatedAt: timestamp,
         });
 
-        return formatLiveCoordinatorRequest(data?.coordinatorRequest_update ?? data?.coordinatorRequests_update);
+        const raw = data?.coordinatorRequest_update ?? data?.coordinatorRequests_update;
+        const formatted = raw ? formatLiveCoordinatorRequest(raw) : null;
+        const cleanFormatted = Object.fromEntries(
+            Object.entries(formatted || {}).filter(([_, v]) => v !== undefined && v !== null)
+        );
+        const cleanPayload = Object.fromEntries(
+            Object.entries(payload || {}).filter(([_, v]) => v !== undefined)
+        );
+
+        return {
+            id: id,
+            ...cleanPayload,
+            ...cleanFormatted,
+            updatedAt: timestamp,
+        };
     },
 
     deleteCoordinatorRequest: async (id) => {

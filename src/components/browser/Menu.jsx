@@ -13,6 +13,8 @@ import {
     Info,
     Layers,
     MessageSquare,
+    Paperclip,
+    RotateCcw,
     Share2,
     Trash2,
     User,
@@ -54,6 +56,7 @@ const Menu = ({
             (item.universityId && currentUser.universityId === item.universityId)
         )
     );
+    const isStaff = currentUser?.role === constants.USERS_ROLE.ADMINISTRATOR || currentUser?.role === constants.USERS_ROLE.COORDINATOR;
 
     // SMART POSITIONING (DYNAMIC MEASUREMENT, AUTO-FLIP & VIEWPORT CLAMPING)
     const [position, setPosition] = useState(() => {
@@ -234,43 +237,78 @@ const Menu = ({
 
             {resourceName === 'document_requests' && (
                 <>
+                    {isStaff ? (
+                        item.status === constants.DOCUMENT_REQUESTS_STATUS.OPEN ? (
+                            <>
+                                <button
+                                    type="button"
+                                    onClick={(event) => onActionClick?.(event, 'resolve', item)}
+                                    className="flex items-center gap-2 px-3 py-2 rounded text-accent hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                >
+                                    <CheckCircle2 className={ICON_STYLE} />
+                                    <span>Resolve Request</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={(event) => onActionClick?.(event, 'reject', item)}
+                                    className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
+                                >
+                                    <XCircle className={ICON_STYLE} />
+                                    <span>Reject Request</span>
+                                </button>
+                            </>
+                        ) : (
+                            <button
+                                type="button"
+                                onClick={(event) => onActionClick?.(event, 'open_request', item)}
+                                className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                            >
+                                <RotateCcw className={ICON_STYLE} />
+                                <span>Open Request</span>
+                            </button>
+                        )
+                    ) : null}
+
+                    {isStaff && <div className="h-px bg-surface-border my-1" />}
+
                     <button
                         type="button"
-                        onClick={(event) => onActionClick?.(event, 'open', item)}
+                        onClick={(event) => onActionClick?.(event, 'view_information', item)}
+                        className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                    >
+                        <Info className={ICON_STYLE} />
+                        <span>View Information</span>
+                    </button>
+                    <button
+                        type="button"
+                        onClick={(event) => onActionClick?.(event, 'view_message', item)}
                         className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
                     >
                         <MessageSquare className={ICON_STYLE} />
-                        <span>View Thread & Messages</span>
+                        <span>View Message</span>
                     </button>
-                    {item.status === constants.DOCUMENT_REQUESTS_STATUS.OPEN && (
+                    <button
+                        type="button"
+                        onClick={(event) => onActionClick?.(event, 'view_attachment', item)}
+                        className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                    >
+                        <Paperclip className={ICON_STYLE} />
+                        <span>View Attachment</span>
+                    </button>
+
+                    {!isStaff && (
                         <>
+                            <div className="h-px bg-surface-border my-1" />
                             <button
                                 type="button"
-                                onClick={(event) => onActionClick?.(event, 'resolve', item)}
-                                className="flex items-center gap-2 px-3 py-2 rounded text-accent hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                            >
-                                <CheckCircle2 className={ICON_STYLE} />
-                                <span>Resolve Request</span>
-                            </button>
-                            <button
-                                type="button"
-                                onClick={(event) => onActionClick?.(event, 'reject', item)}
+                                onClick={(event) => onActionClick?.(event, 'delete', item)}
                                 className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
                             >
-                                <XCircle className={ICON_STYLE} />
-                                <span>Reject Request</span>
+                                <Trash2 className={ICON_STYLE} />
+                                <span>Delete Request</span>
                             </button>
                         </>
                     )}
-                    <div className="h-px bg-surface-border my-1" />
-                    <button
-                        type="button"
-                        onClick={(event) => onActionClick?.(event, 'delete', item)}
-                        className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
-                    >
-                        <Trash2 className={ICON_STYLE} />
-                        <span>Delete Request</span>
-                    </button>
                 </>
             )}
 

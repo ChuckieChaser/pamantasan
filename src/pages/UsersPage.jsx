@@ -623,6 +623,7 @@ const UsersPage = ({
             <Browser
                 resourceName="users"
                 title="Manage Users"
+                description="Manage institutional accounts, academic roles, and departmental access permissions."
                 data={formattedUserData}
                 columns={USER_COLUMNS}
                 sortOptions={USER_SORT_OPTIONS}

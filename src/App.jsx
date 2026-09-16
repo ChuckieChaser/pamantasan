@@ -17,6 +17,7 @@ import {
     Inbox,
     AlertTriangle,
     Archive,
+    UserCheck,
 } from 'lucide-react';
 import {
     LoginPage,
@@ -27,6 +28,7 @@ import {
     UsersPage,
     DepartmentsPage,
     RequestsPage,
+    CoordinatorPage,
     OnboardingPage,
 } from './pages';
 import { MainLayout } from './layouts';
@@ -57,7 +59,8 @@ const PAGE_TITLES = {
     request_document: 'Manage Document Requests',
     departments: 'Manage Departments',
     users: 'Manage Users',
-    requests: 'Manage Requests',
+    requests: 'Manage Document Requests',
+    coordinator: 'Coordinator Requests',
 };
 
 
@@ -201,8 +204,11 @@ const AppContent = () => {
         if (path.startsWith('/archives')) {
             return 'archives';
         }
-        if (path.startsWith('/request-document')) {
-            return 'request_document';
+        if (path.startsWith('/coordinator')) {
+            return 'coordinator';
+        }
+        if (path.startsWith('/request-document') || path.startsWith('/requests')) {
+            return 'requests';
         }
         if (path.startsWith('/departments')) {
             return 'departments';
@@ -210,20 +216,16 @@ const AppContent = () => {
         if (path.startsWith('/users')) {
             return 'users';
         }
-        if (path.startsWith('/requests')) {
-            return 'requests';
-        }
         return 'dashboard';
     }, [location.pathname]);
 
     const userRole = currentUser?.role ?? constants.USERS_ROLE.MEMBER;
     const isAdmin = userRole === constants.USERS_ROLE.ADMINISTRATOR;
     const isCoordinator = userRole === constants.USERS_ROLE.COORDINATOR;
-    const canRequestDocument = !isAdmin && !isCoordinator;
     const pageTitle = PAGE_TITLES[activeNavigationKey] ?? 'Dashboard';
 
     const generalNavigationItems = useMemo(() => {
-        const items = [
+        return [
             {
                 key: 'dashboard',
                 value: 'dashboard',
@@ -245,20 +247,15 @@ const AppContent = () => {
                 title: 'Archived Documents',
                 icon: Archive,
             },
-        ];
-
-        if (canRequestDocument) {
-            items.push({
-                key: 'request_document',
-                value: 'request_document',
+            {
+                key: 'requests',
+                value: 'requests',
                 label: 'Document Requests',
                 title: 'Manage Document Requests',
                 icon: FilePlus,
-            });
-        }
-
-        return items;
-    }, [canRequestDocument]);
+            },
+        ];
+    }, []);
 
     const adminNavigationItems = useMemo(() => {
         if (!isAdmin && !isCoordinator) {
@@ -281,11 +278,11 @@ const AppContent = () => {
                 icon: Users,
             },
             {
-                key: 'requests',
-                value: 'requests',
-                label: 'Requests',
-                title: 'Manage Requests',
-                icon: Inbox,
+                key: 'coordinator',
+                value: 'coordinator',
+                label: 'Coordinator Requests',
+                title: 'Coordinator Requests',
+                icon: UserCheck,
             },
         ];
     }, [isAdmin, isCoordinator]);
@@ -378,8 +375,8 @@ const AppContent = () => {
         setSelectedItem(null);
         setInspectorTab('information');
         const targetPath =
-            navigationKey === 'request_document'
-                ? '/request-document'
+            navigationKey === 'request_document' || navigationKey === 'requests'
+                ? '/requests'
                 : `/${navigationKey}`;
         navigate(targetPath);
     };
@@ -511,6 +508,10 @@ const AppContent = () => {
         }
 
         if (actionKey === 'open' || actionKey === 'open_folder') {
+            if (item?.action) {
+                navigate('/coordinator');
+                return;
+            }
             if (item?.subject) {
                 navigate('/requests');
                 return;
@@ -618,6 +619,10 @@ const AppContent = () => {
                 window.dispatchEvent(new CustomEvent('pamantasan:delete-department', { detail: item }));
                 return;
             }
+            if (item?.subject) {
+                window.dispatchEvent(new CustomEvent('pamantasan:delete-document-request', { detail: item }));
+                return;
+            }
             showToast({
                 type: 'error',
                 title: 'Deletion Requested',
@@ -695,12 +700,17 @@ const AppContent = () => {
 
             if (item?.subject) {
                 try {
-                    await useDocumentStore.getState().updateDocumentRequest(
-                        item.id,
-                        {
-                            status: constants.DOCUMENT_REQUESTS_STATUS.REJECTED,
-                        }
-                    );
+                    const minTimer = new Promise((resolve) => setTimeout(resolve, 500));
+                    const [updated] = await Promise.all([
+                        useDocumentStore.getState().updateDocumentRequest(
+                            item.id,
+                            {
+                                status: constants.DOCUMENT_REQUESTS_STATUS.REJECTED,
+                            }
+                        ),
+                        minTimer,
+                    ]);
+                    setSelectedItem((prev) => (prev && prev.id === item.id ? { ...prev, ...updated, status: constants.DOCUMENT_REQUESTS_STATUS.REJECTED } : prev));
                     showToast({
                         type: 'warning',
                         title: 'Document Request Rejected',
@@ -727,12 +737,17 @@ const AppContent = () => {
         if (actionKey === 'resolve') {
             try {
                 if (item?.id) {
-                    await useDocumentStore.getState().updateDocumentRequest(
-                        item.id,
-                        {
-                            status: constants.DOCUMENT_REQUESTS_STATUS.RESOLVED,
-                        }
-                    );
+                    const minTimer = new Promise((resolve) => setTimeout(resolve, 500));
+                    const [updated] = await Promise.all([
+                        useDocumentStore.getState().updateDocumentRequest(
+                            item.id,
+                            {
+                                status: constants.DOCUMENT_REQUESTS_STATUS.RESOLVED,
+                            }
+                        ),
+                        minTimer,
+                    ]);
+                    setSelectedItem((prev) => (prev && prev.id === item.id ? { ...prev, ...updated, status: constants.DOCUMENT_REQUESTS_STATUS.RESOLVED } : prev));
                 }
                 showToast({
                     type: 'success',
@@ -744,6 +759,36 @@ const AppContent = () => {
                     type: 'error',
                     title: 'Resolve Failed',
                     description: error?.message ?? 'Could not resolve request.',
+                });
+            }
+            return;
+        }
+
+        if (actionKey === 'open_request' || (actionKey === 'reopen' && item?.subject)) {
+            try {
+                if (item?.id) {
+                    const minTimer = new Promise((resolve) => setTimeout(resolve, 500));
+                    const [updated] = await Promise.all([
+                        useDocumentStore.getState().updateDocumentRequest(
+                            item.id,
+                            {
+                                status: constants.DOCUMENT_REQUESTS_STATUS.OPEN,
+                            }
+                        ),
+                        minTimer,
+                    ]);
+                    setSelectedItem((prev) => (prev && prev.id === item.id ? { ...prev, ...updated, status: constants.DOCUMENT_REQUESTS_STATUS.OPEN } : prev));
+                    showToast({
+                        type: 'success',
+                        title: 'Request Reopened',
+                        description: 'Document request status set to OPEN.',
+                    });
+                }
+            } catch (error) {
+                showToast({
+                    type: 'error',
+                    title: 'Reopen Failed',
+                    description: error?.message ?? 'Could not reopen request.',
                 });
             }
             return;
@@ -819,7 +864,7 @@ const AppContent = () => {
     };
 
     const handleRequestDocument = () => {
-        navigate('/request-document');
+        navigate('/requests');
     };
 
     // RENDER
@@ -945,14 +990,18 @@ const AppContent = () => {
                     }
                 />
                 <Route
-                    path="/request-document"
+                    path="/requests"
                     element={
                         <RequestsPage
                             currentUser={currentUser}
-                            initialTab="document"
+                            selectedItem={selectedItem}
                             onSelectRequest={handleSelectActivity}
                         />
                     }
+                />
+                <Route
+                    path="/request-document"
+                    element={<Navigate to="/requests" replace />}
                 />
 
                 {/* ADMINISTRATIVE PROTECTED SUB-ROUTES (ADMINISTRATOR & COORDINATOR ONLY) */}
@@ -982,11 +1031,11 @@ const AppContent = () => {
                         }
                     />
                     <Route
-                        path="/requests"
+                        path="/coordinator"
                         element={
-                            <RequestsPage
+                            <CoordinatorPage
                                 currentUser={currentUser}
-                                initialTab="coordinator"
+                                selectedItem={selectedItem}
                                 onSelectRequest={handleSelectActivity}
                             />
                         }

@@ -47,6 +47,7 @@ import {
 import { useAuth, useToast } from '../hooks';
 import {
     useAuditStore,
+    useCoordinatorStore,
     useDepartmentStore,
     useDocumentStore,
     useUserStore,
@@ -96,7 +97,7 @@ const STATUS_BADGE_VARIANT = {
     [constants.USERS_STATUS.PENDING_PASSWORD]: 'warning',
     [constants.USERS_STATUS.PENDING_SSO]: 'information',
     [constants.USERS_STATUS.SUSPENDED]: 'error',
-    [constants.DOCUMENT_REQUESTS_STATUS.OPEN]: 'warning',
+    [constants.DOCUMENT_REQUESTS_STATUS.OPEN]: 'information',
     [constants.DOCUMENT_REQUESTS_STATUS.RESOLVED]: 'success',
     [constants.DOCUMENT_REQUESTS_STATUS.REJECTED]: 'error',
     [constants.COORDINATOR_REQUESTS_STATUS.PENDING]: 'warning',
@@ -115,6 +116,8 @@ const normalizeTab = (tab) => {
     if (tab === 'version' || tab === 'versions' || tab === 'view_version') return 'version';
     if (tab === 'share' || tab === 'shares' || tab === 'view_share') return 'share';
     if (tab === 'view_information') return 'information';
+    if (tab === 'view_message' || tab === 'message' || tab === 'messages' || tab === 'discussion') return 'messages';
+    if (tab === 'view_attachment' || tab === 'attachment' || tab === 'attachments') return 'attachments';
     return tab;
 };
 
@@ -131,12 +134,13 @@ const Inspector = ({
 }) => {
     // REFS
     const chatEndReference = useRef(null);
+    const chatTextareaRef = useRef(null);
 
     // STATES
     const [activeTab, setActiveTab] = useState(normalizeTab(targetTab || item?._targetTab || 'information'));
     const [copiedPropertyKey, setCopiedPropertyKey] = useState(null);
     const [chatInputText, setChatInputText] = useState('');
-    const [stagedAttachment, setStagedAttachment] = useState(null);
+    const [stagedAttachments, setStagedAttachments] = useState([]);
     const [isAttachModalOpen, setIsAttachModalOpen] = useState(false);
     const [attachSearchTerm, setAttachSearchTerm] = useState('');
     const [previousItemId, setPreviousItemId] = useState(item?.id);
@@ -196,10 +200,13 @@ const Inspector = ({
     const { showToast } = useToast();
     const { currentUser: authUser } = useAuth();
     const activeUser = currentUser ?? authUser;
+    const isStaff = activeUser?.role === constants.USERS_ROLE.ADMINISTRATOR || activeUser?.role === constants.USERS_ROLE.COORDINATOR;
 
     const allDocuments = useDocumentStore((state) => state.documents);
     const allDocumentVersions = useDocumentStore((state) => state.documentVersions ?? state.versions ?? []);
     const allDocumentShares = useDocumentStore((state) => state.documentShares ?? state.shares ?? []);
+    const allDocumentRequests = useDocumentStore((state) => state.documentRequests ?? []);
+    const allCoordinatorRequests = useCoordinatorStore((state) => state.coordinatorRequests ?? []);
     const allRequestMessages = useDocumentStore((state) => state.documentRequestMessages ?? []);
     const allRequestAttachments = useDocumentStore((state) => state.documentRequestAttachments ?? []);
     const addRequestMessage = useDocumentStore((state) => state.insertDocumentRequestMessage);
@@ -264,6 +271,14 @@ const Inspector = ({
         }
         return currentU.department ?? '—';
     }, [isUser, activeUserRecord, item, allDepartments]);
+
+    const isCoordinatorRequest = Boolean(
+        item?.action &&
+        (item.action.startsWith('USER_') ||
+            item.action.startsWith('DEPARTMENT_') ||
+            item.action.startsWith('DOCUMENT_'))
+    );
+    const isDocumentRequest = Boolean(item?.subject && !isCoordinatorRequest);
 
     const activeItem = useMemo(() => {
         if (!item) return null;
@@ -372,16 +387,50 @@ const Inspector = ({
                 updatedAt: matchedDoc?.updatedAt ?? item.updatedAt,
             };
         }
+        if (isDocumentRequest) {
+            const matchedRequest = allDocumentRequests.find((r) => r.id === item.id);
+            if (matchedRequest) {
+                return {
+                    ...item,
+                    ...matchedRequest,
+                    status: matchedRequest.status ?? item.status,
+                    updatedAt: matchedRequest.updatedAt ?? item.updatedAt,
+                };
+            }
+        }
+        if (isCoordinatorRequest) {
+            const matchedRequest = allCoordinatorRequests.find((r) => r.id === item.id);
+            if (matchedRequest) {
+                return {
+                    ...item,
+                    ...matchedRequest,
+                    status: matchedRequest.status ?? item.status,
+                    updatedAt: matchedRequest.updatedAt ?? item.updatedAt,
+                };
+            }
+        }
         return item;
-    }, [item, isDepartment, activeDepartment, isUser, activeUserRecord, userDepartmentDisplay, isDocument, isFolder, allDocuments, allDocumentVersions]);
+    }, [item, isDepartment, activeDepartment, isUser, activeUserRecord, userDepartmentDisplay, isDocument, isFolder, isDocumentRequest, isCoordinatorRequest, allDocuments, allDocumentVersions, allDocumentRequests, allCoordinatorRequests]);
 
-    const isCoordinatorRequest = Boolean(
-        item?.action &&
-        (item.action.startsWith('USER_') ||
-            item.action.startsWith('DEPARTMENT_') ||
-            item.action.startsWith('DOCUMENT_'))
-    );
-    const isDocumentRequest = Boolean(item?.subject && !isCoordinatorRequest);
+    // FETCH REQUEST MESSAGES & ATTACHMENTS (INITIAL + REALTIME POLLING)
+    useEffect(() => {
+        const requestId = activeItem?.id ?? item?.id;
+        if (!requestId || !isDocumentRequest) return;
+
+        if (allDocuments.length === 0) {
+            useDocumentStore.getState().fetchDocuments().catch(() => {});
+        }
+
+        useDocumentStore.getState().fetchDocumentRequestMessages(requestId).catch(() => {});
+        useDocumentStore.getState().fetchDocumentRequestAttachments(requestId).catch(() => {});
+
+        const intervalId = setInterval(() => {
+            useDocumentStore.getState().fetchDocumentRequestMessages(requestId).catch(() => {});
+            useDocumentStore.getState().fetchDocumentRequestAttachments(requestId).catch(() => {});
+        }, 3000);
+
+        return () => clearInterval(intervalId);
+    }, [activeItem?.id, item?.id, isDocumentRequest, allDocuments.length]);
 
     const documentVersions = useMemo(() => {
         if (!item || !isDocument) {
@@ -578,7 +627,7 @@ const Inspector = ({
         if (isDocumentRequest) {
             return [
                 { value: 'information', label: 'Information', icon: Info },
-                { value: 'messages',    label: `Discussion (${requestMessages.length})`, icon: MessageSquare },
+                { value: 'messages',    label: `Message (${requestMessages.length})`, icon: MessageSquare },
                 { value: 'attachments', label: `Attachments (${requestAttachments.length})`, icon: Paperclip },
             ];
         }
@@ -822,6 +871,9 @@ const Inspector = ({
     };
 
     const handleOpenAttachModal = () => {
+        if (allDocuments.length === 0) {
+            useDocumentStore.getState().fetchDocuments().catch(() => {});
+        }
         setIsAttachModalOpen(true);
         setAttachSearchTerm('');
     };
@@ -832,22 +884,79 @@ const Inspector = ({
     };
 
     const handleSelectDocumentToAttach = (selectedDocument) => {
-        setStagedAttachment({
-            documentId: selectedDocument.id,
-            name:       selectedDocument.name,
-            sizeBytes:  selectedDocument.sizeBytes ?? selectedDocument.size,
+        const docId = selectedDocument.id;
+        setStagedAttachments((prev) => {
+            if (prev.some((item) => item.documentId === docId)) {
+                return prev.filter((item) => item.documentId !== docId);
+            }
+            return [
+                ...prev,
+                {
+                    documentId: docId,
+                    name:       selectedDocument.name || selectedDocument.title,
+                    sizeBytes:  selectedDocument.sizeBytes ?? selectedDocument.size,
+                },
+            ];
         });
-        setIsAttachModalOpen(false);
-        setAttachSearchTerm('');
     };
 
-    const handleRemoveStagedAttachment = () => {
-        setStagedAttachment(null);
+    const handleRemoveStagedAttachment = (documentId) => {
+        setStagedAttachments((prev) => prev.filter((item) => item.documentId !== documentId));
+    };
+
+    const adjustChatTextareaHeight = () => {
+        const textarea = chatTextareaRef.current;
+        if (!textarea) return;
+        textarea.style.height = 'auto';
+        const scrollHeight = textarea.scrollHeight;
+        const maxHeight = 120; // roughly 5 lines (~24px per line)
+        textarea.style.height = `${Math.min(scrollHeight, maxHeight)}px`;
+        textarea.style.overflowY = scrollHeight > maxHeight ? 'auto' : 'hidden';
+    };
+
+    useEffect(() => {
+        adjustChatTextareaHeight();
+    }, [chatInputText]);
+
+    useEffect(() => {
+        if (activeTab === 'messages' && isDocumentRequest) {
+            chatEndReference.current?.scrollIntoView({ behavior: 'smooth' });
+        }
+    }, [activeTab, isDocumentRequest, requestMessages.length]);
+
+    const handleChatKeyDown = (e) => {
+        // Shift + Tab => insert new line
+        if (e.key === 'Tab' && e.shiftKey) {
+            e.preventDefault();
+            const textarea = e.target;
+            const start = textarea.selectionStart;
+            const end = textarea.selectionEnd;
+            const value = textarea.value;
+            const nextValue = value.substring(0, start) + '\n' + value.substring(end);
+            setChatInputText(nextValue);
+            setTimeout(() => {
+                textarea.selectionStart = textarea.selectionEnd = start + 1;
+                adjustChatTextareaHeight();
+            }, 0);
+            return;
+        }
+
+        // Shift + Enter => allow default multiline
+        if (e.key === 'Enter' && e.shiftKey) {
+            return;
+        }
+
+        // Enter without Shift => send message
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            handleSendMessage(e);
+        }
     };
 
     const handleSendMessage = async (formEvent) => {
-        formEvent.preventDefault();
-        if ((!chatInputText.trim() && !stagedAttachment) || !item) {
+        if (formEvent) formEvent.preventDefault();
+        const targetRequestId = activeItem?.id ?? item?.id;
+        if ((!chatInputText.trim() && stagedAttachments.length === 0) || !targetRequestId) {
             return;
         }
 
@@ -855,39 +964,55 @@ const Inspector = ({
         if (!activeUserId) {
             showToast({
                 title: 'Authentication Error',
-                description: 'You must be signed in to post a discussion message.',
+                description: 'You must be signed in to post a message.',
                 variant: 'error',
             });
             return;
         }
+
+        const currentStaged = [...stagedAttachments];
         const messageText =
             chatInputText.trim() ||
-            (stagedAttachment ? `Attached document: ${stagedAttachment.name}` : '');
+            (currentStaged.length > 0
+                ? `Shared ${currentStaged.length === 1 ? currentStaged[0].name : `${currentStaged.length} documents`}`
+                : '');
+
+        setChatInputText('');
+        setStagedAttachments([]);
+        if (chatTextareaRef.current) {
+            chatTextareaRef.current.style.height = 'auto';
+        }
 
         try {
-            if (stagedAttachment) {
-                await attachDocumentToRequest({
-                    documentRequestId: item.id,
-                    documentId:        stagedAttachment.documentId,
-                    attachedById:      activeUserId,
-                });
+            if (currentStaged.length > 0) {
+                for (const att of currentStaged) {
+                    await attachDocumentToRequest({
+                        documentRequestId: targetRequestId,
+                        documentId:        att.documentId,
+                        attachedById:      activeUserId,
+                        name:              att.name,
+                    });
+                }
             }
 
             await addRequestMessage({
-                documentRequestId: item.id,
+                documentRequestId: targetRequestId,
                 userId:            activeUserId,
                 message:           messageText,
             });
 
-            setChatInputText('');
-            setStagedAttachment(null);
             showToast({
                 title:       'Message Sent',
-                description: stagedAttachment
-                    ? 'Message and attached file posted to discussion thread.'
-                    : 'Your reply has been posted to the discussion thread.',
+                description: currentStaged.length > 0
+                    ? `Message and ${currentStaged.length} attached file${currentStaged.length === 1 ? '' : 's'} posted.`
+                    : 'Your message has been posted.',
                 variant:     'success',
             });
+
+            // Immediate fetch to synchronize server state
+            useDocumentStore.getState().fetchDocumentRequestMessages(targetRequestId).catch(() => {});
+            useDocumentStore.getState().fetchDocumentRequestAttachments(targetRequestId).catch(() => {});
+
             setTimeout(() => {
                 chatEndReference.current?.scrollIntoView({ behavior: 'smooth' });
             }, 100);
@@ -1052,6 +1177,7 @@ const Inspector = ({
                 {activeTab === 'information' && (
                     <div className="flex flex-col gap-4">
                         {!isCoordinatorRequest &&
+                            !isDocumentRequest &&
                             !isDepartment &&
                             !isUser &&
                             (!isFolder
@@ -1401,7 +1527,19 @@ const Inspector = ({
                                     </div>
                                 )}
 
-                                {item.requesterName && (
+                                {isDocumentRequest ? (
+                                    <div className={PROPERTY_ROW_STYLE}>
+                                        <span className={PROPERTY_LABEL_STYLE}>
+                                            <User className={ICON_STYLE} /> Requester
+                                        </span>
+                                        <span
+                                            className="font-medium text-text truncate max-w-48 cursor-default select-text"
+                                            title={activeItem.requesterName ?? (typeof activeItem.requester === 'string' ? activeItem.requester : '—')}
+                                        >
+                                            {activeItem.requesterName ?? (typeof activeItem.requester === 'string' ? activeItem.requester : '—')}
+                                        </span>
+                                    </div>
+                                ) : item.requesterName ? (
                                     <div className={PROPERTY_ROW_STYLE}>
                                         <span className={PROPERTY_LABEL_STYLE}>
                                             <User className={ICON_STYLE} /> Requester
@@ -1413,12 +1551,30 @@ const Inspector = ({
                                             {item.requesterName}
                                         </span>
                                     </div>
+                                ) : null}
+
+                                {isDocumentRequest && (
+                                    <div className={PROPERTY_ROW_STYLE}>
+                                        <span className={PROPERTY_LABEL_STYLE}>
+                                            <CheckCircle2 className={ICON_STYLE} /> Status
+                                        </span>
+                                        <Badge
+                                            variant={
+                                                (activeItem.status || '').toUpperCase().includes('RESOLV')
+                                                    ? 'success'
+                                                    : (activeItem.status || '').toUpperCase().includes('REJECT')
+                                                    ? 'error'
+                                                    : 'information'
+                                            }
+                                            label={activeItem.status ?? constants.DOCUMENT_REQUESTS_STATUS.OPEN}
+                                        />
+                                    </div>
                                 )}
 
                                 <div className={PROPERTY_ROW_STYLE}>
                                     <span className={PROPERTY_LABEL_STYLE}>
                                         <Calendar className={ICON_STYLE} />{' '}
-                                        {isCoordinatorRequest || isDocumentRequest
+                                        {isCoordinatorRequest
                                             ? 'Submitted Date'
                                             : 'Created At'}
                                     </span>
@@ -1433,7 +1589,7 @@ const Inspector = ({
                                 <div className={PROPERTY_ROW_STYLE}>
                                     <span className={PROPERTY_LABEL_STYLE}>
                                         <Clock className={ICON_STYLE} />{' '}
-                                        {isCoordinatorRequest || isDocumentRequest
+                                        {isCoordinatorRequest
                                             ? 'Last Updated'
                                             : 'Updated At'}
                                     </span>
@@ -2058,205 +2214,327 @@ const Inspector = ({
 
                 {activeTab === 'messages' && isDocumentRequest && (
                     <div className="flex flex-col h-full gap-3">
-                        <div className="flex items-center justify-between pb-2 border-b border-surface-border">
-                            <span className={SECTION_TITLE_STYLE}>Direct Discussion</span>
+                        <div className="flex items-center justify-between pb-2 border-b border-surface-border select-none">
+                            <span className={SECTION_TITLE_STYLE}>Message</span>
                             <span className="text-xs text-text-muted">
-                                {requestMessages.length} messages
+                                {requestMessages.length} {requestMessages.length === 1 ? 'message' : 'messages'}
                             </span>
                         </div>
 
-                        <div className="flex-1 flex flex-col gap-3 min-h-56">
-                            {requestMessages.length === 0 ? (
-                                <div className="h-full flex flex-col items-center justify-center p-6 text-center text-text-muted gap-2">
-                                    <MessageSquare className="h-6 w-6 text-text-muted" />
-                                    <span className="text-xs">No messages posted yet.</span>
-                                </div>
-                            ) : (
-                                requestMessages.map((message) => {
-                                    const msgUserId = message.user?.id ?? message.userId;
-                                    const sender = allUsers.find(
-                                        (userItem) => userItem.id === msgUserId
-                                    );
-                                    const isSenderActiveUser = msgUserId === activeUser?.id;
-                                    const isAdministrativeUser =
-                                        activeUser?.role === constants.USERS_ROLE.ADMINISTRATOR ||
-                                        activeUser?.role === constants.USERS_ROLE.COORDINATOR;
-                                    const isSenderAdministrative =
-                                        sender?.role === constants.USERS_ROLE.ADMINISTRATOR ||
-                                        sender?.role === constants.USERS_ROLE.COORDINATOR;
-                                    const isFellowAdmin =
-                                        !isSenderActiveUser &&
-                                        isAdministrativeUser &&
-                                        isSenderAdministrative;
-
-                                    const senderName = sender
-                                        ? `${sender.firstName} ${sender.lastName}`
-                                        : 'University Office';
-
-                                    const messageAttachments = requestAttachments.filter(
-                                        (att) => {
-                                            const attUserId = att.attachedBy?.id ?? att.attachedById;
-                                            return attUserId === msgUserId || (!attUserId && isSenderActiveUser);
-                                        }
-                                    );
-
-                                    const bubbleStyle = isSenderActiveUser
-                                        ? 'bg-accent text-text-inverted rounded-br-sm'
-                                        : isFellowAdmin
-                                            ? 'bg-warning-background border border-warning-border text-text rounded-bl-sm'
-                                            : 'bg-surface-hover border border-surface-border text-text rounded-bl-sm';
-
-                                    return (
-                                        <div
-                                            key={message.id}
-                                            className={`flex items-end gap-2 max-w-sm ${
-                                                isSenderActiveUser
-                                                    ? 'self-end flex-row-reverse'
-                                                    : 'self-start flex-row'
-                                            }`}
-                                        >
-                                            <Avatar
-                                                src={resolveUserAvatar(sender, activeUser)}
-                                                user={sender}
-                                                alt={senderName}
-                                                size="small"
-                                                className="mb-1 shrink-0"
-                                            />
-
-                                            <div
-                                                className={`flex flex-col gap-1 ${
-                                                    isSenderActiveUser
-                                                        ? 'items-end'
-                                                        : 'items-start'
-                                                }`}
-                                            >
-                                                <div className="flex items-center gap-2 text-xs text-text-muted px-1">
-                                                    <span className="font-semibold">{senderName}</span>
-                                                    {isFellowAdmin && (
-                                                        <Badge
-                                                            variant="warning"
-                                                            label={sender?.role}
-                                                        />
-                                                    )}
-                                                    <span>•</span>
-                                                    <span>{formatTimestamp(message.createdAt)}</span>
-                                                </div>
-
-                                                <div
-                                                    className={`p-3 rounded-2xl text-xs leading-relaxed break-words select-text ${bubbleStyle}`}
-                                                >
-                                                    <p>{message.message}</p>
-
-                                                    {messageAttachments.length > 0 && (
-                                                        <div className="mt-2 flex flex-col gap-2">
-                                                            {messageAttachments.map((attachment) => (
-                                                                <div
-                                                                    key={attachment.id}
-                                                                    className={`p-2 rounded-lg flex items-center justify-between gap-2 text-xs ${
-                                                                        isSenderActiveUser
-                                                                            ? 'bg-surface/20 text-text-inverted border border-white/20'
-                                                                            : 'bg-surface border border-surface-border text-text'
-                                                                    }`}
-                                                                >
-                                                                    <div className="flex items-center gap-2 min-w-0">
-                                                                        <Paperclip className="h-4 w-4 shrink-0" />
-                                                                        <div className="flex flex-col min-w-0">
-                                                                            <span
-                                                                                className="font-semibold truncate"
-                                                                                title={attachment.name}
-                                                                            >
-                                                                                {attachment.name}
-                                                                            </span>
-                                                                            <span className="text-xs opacity-75">
-                                                                                {attachment.sizeBytes
-                                                                                    ? formatBytes(attachment.sizeBytes)
-                                                                                    : 'Document'}
-                                                                            </span>
-                                                                        </div>
-                                                                    </div>
-                                                                    <button
-                                                                        type="button"
-                                                                        onClick={() =>
-                                                                            handleActionClick(
-                                                                                'download',
-                                                                                attachment
-                                                                            )
-                                                                        }
-                                                                        className={`p-1 rounded hover:bg-surface-hover cursor-pointer shrink-0 transition-colors ${
-                                                                            isSenderActiveUser
-                                                                                ? 'text-text-inverted'
-                                                                                : 'text-accent'
-                                                                        }`}
-                                                                        title="Download Attachment"
-                                                                    >
-                                                                        <Download className="h-4 w-4" />
-                                                                    </button>
-                                                                </div>
-                                                            ))}
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    );
-                                })
-                            )}
-                            <div ref={chatEndReference} />
-                        </div>
-
-                        <div className="pt-3 border-t border-surface-border flex flex-col gap-2 shrink-0">
-                            {stagedAttachment && (
-                                <div className="px-3 py-2 rounded-lg bg-accent-background border border-accent-border flex items-center justify-between text-xs text-accent">
-                                    <div className="flex items-center gap-2 min-w-0">
-                                        <Paperclip className="h-4 w-4 shrink-0" />
-                                        <span className="font-semibold truncate" title={stagedAttachment.name}>
-                                            {stagedAttachment.name}
+                        {/* WHOLE MESSAGE THREAD CALLOUT BOX */}
+                        <div className="flex-1 flex flex-col rounded-xl border border-surface-border bg-surface-hover/60 overflow-hidden shadow-2xs min-h-72">
+                            {/* THREAD HEADER INSIDE CALLOUT BOX */}
+                            <div className="p-3.5 bg-surface border-b border-surface-border flex flex-col gap-2 shrink-0 select-none">
+                                <div className="flex items-start justify-between gap-3">
+                                    <div className="flex flex-col min-w-0">
+                                        <span className="text-[10px] font-bold tracking-wider uppercase text-text-muted">
+                                            Subject
                                         </span>
-                                        <span className="text-xs opacity-80">
-                                            ({stagedAttachment.sizeBytes ? formatBytes(stagedAttachment.sizeBytes) : 'Document'})
+                                        <h4 className="text-xs font-bold text-text truncate mt-0.5" title={activeItem?.subject || activeItem?.title || 'Document Request'}>
+                                            {activeItem?.subject || activeItem?.title || 'Document Request'}
+                                        </h4>
+                                    </div>
+                                    <Badge
+                                        variant={
+                                            (activeItem?.status || '').toUpperCase().includes('RESOLV')
+                                                ? 'success'
+                                                : (activeItem?.status || '').toUpperCase().includes('REJECT')
+                                                ? 'error'
+                                                : 'information'
+                                        }
+                                        label={activeItem?.status ?? constants.DOCUMENT_REQUESTS_STATUS.OPEN}
+                                    />
+                                </div>
+
+                                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-text-muted pt-2 border-t border-surface-border/60">
+                                    <div className="flex items-center gap-1.5 min-w-0">
+                                        <User className="h-3.5 w-3.5 text-text-muted shrink-0" />
+                                        <span>Requester:</span>
+                                        <span className="font-semibold text-text truncate max-w-44" title={activeItem?.requesterName ?? (typeof activeItem?.requester === 'string' ? activeItem.requester : activeItem?.requester?.name || 'Institutional Requester')}>
+                                            {activeItem?.requesterName ?? (typeof activeItem?.requester === 'string' ? activeItem.requester : activeItem?.requester?.name || 'Institutional Requester')}
                                         </span>
                                     </div>
-                                    <button
-                                        type="button"
-                                        onClick={handleRemoveStagedAttachment}
-                                        className="p-1 rounded hover:bg-accent-background cursor-pointer text-accent shrink-0"
-                                        title="Remove staged attachment"
-                                    >
-                                        <X className="h-4 w-4" />
-                                    </button>
+                                    {activeItem?.createdAt && (
+                                        <div className="flex items-center gap-1.5 shrink-0">
+                                            <Clock className="h-3.5 w-3.5 text-text-muted shrink-0" />
+                                            <span>Requested:</span>
+                                            <span className="text-text font-medium">
+                                                {formatTimestamp(activeItem.createdAt)}
+                                            </span>
+                                        </div>
+                                    )}
+                                    {activeItem?.updatedAt && activeItem.updatedAt !== activeItem.createdAt && (
+                                        <div className="flex items-center gap-1.5 shrink-0">
+                                            <Calendar className="h-3.5 w-3.5 text-text-muted shrink-0" />
+                                            <span>Updated:</span>
+                                            <span className="text-text font-medium">
+                                                {formatMessageTime(activeItem.updatedAt)}
+                                            </span>
+                                        </div>
+                                    )}
                                 </div>
-                            )}
+                            </div>
 
-                            <form
-                                onSubmit={handleSendMessage}
-                                className="flex items-center gap-2"
-                            >
-                                <button
-                                    type="button"
-                                    onClick={handleOpenAttachModal}
-                                    className="p-2 rounded-md border border-surface-border bg-surface hover:bg-surface-hover text-text-muted hover:text-accent transition-colors cursor-pointer shrink-0"
-                                    title="Attach Document from Repository"
+                            {/* SCROLLABLE MESSAGE STREAM */}
+                            <div className="flex-1 flex flex-col gap-3.5 overflow-y-auto p-3.5">
+                                {requestMessages.length === 0 ? (
+                                    <div className="h-full min-h-[220px] flex flex-col items-center justify-center p-6 text-center text-text-muted gap-2.5 select-none">
+                                        <div className="p-3 rounded-full bg-surface border border-surface-border shadow-2xs text-accent">
+                                            <MessageSquare className="h-6 w-6" />
+                                        </div>
+                                        <span className="text-xs font-semibold text-text">No messages yet</span>
+                                        <p className="text-[11px] text-text-muted max-w-xs leading-relaxed">
+                                            Post a reply or inquiry below to communicate regarding this document request.
+                                        </p>
+                                    </div>
+                                ) : (
+                                    requestMessages.map((message) => {
+                                        const msgUserId = message.user?.id ?? message.userId;
+                                        const sender = allUsers.find(
+                                            (userItem) => userItem.id === msgUserId
+                                        ) || message.user;
+                                        const isSenderActiveUser = Boolean(
+                                            activeUser?.id && (msgUserId === activeUser.id || sender?.id === activeUser.id)
+                                        );
+
+                                        const requesterId = activeItem?.requesterId ?? activeItem?.requester?.id;
+                                        const isSenderRequester = Boolean(
+                                            requesterId && (msgUserId === requesterId || sender?.id === requesterId)
+                                        );
+                                        const senderRole = isSenderActiveUser
+                                            ? activeUser?.role
+                                            : (sender?.role || allUsers.find((u) => u.id === msgUserId)?.role);
+
+                                        const senderFullName = isSenderActiveUser
+                                            ? 'You'
+                                            : sender
+                                                ? `${sender.firstName || ''} ${sender.lastName || ''}`.trim() || sender.name || sender.title || 'Institutional Staff'
+                                                : 'University Office';
+
+                                        const msgTime = new Date(message.createdAt).getTime();
+                                        const messageAttachments = requestAttachments.filter((att) => {
+                                            const attUserId = att.attachedBy?.id ?? att.attachedById;
+                                            const attTime = new Date(att.createdAt).getTime();
+                                            const isSameUser = attUserId === msgUserId || (!attUserId && isSenderActiveUser);
+                                            const isNearTime = Math.abs(attTime - msgTime) < 30000;
+                                            const isMentioned = message.message && att.name && message.message.includes(att.name);
+                                            return isSameUser && (isNearTime || isMentioned);
+                                        });
+
+                                        return isSenderActiveUser ? (
+                                            /* RIGHT SIDE: YOU (ACCENTED) */
+                                            <div
+                                                key={message.id}
+                                                className="flex flex-col gap-1 items-end max-w-[85%] self-end"
+                                            >
+                                                {/* SENDER HEADER */}
+                                                <div className="flex items-center gap-1.5 text-[11px] text-text-muted pr-8 select-none">
+                                                    <span className="font-semibold text-text-muted">You</span>
+                                                    {renderMessageRoleBadge(senderRole, isSenderRequester)}
+                                                    <span>•</span>
+                                                    <span>{formatMessageTime(message.createdAt)}</span>
+                                                </div>
+
+                                                {/* BUBBLE ROW (AVATAR SITS DIRECTLY NEXT TO BOX) */}
+                                                <div className="flex items-end gap-2 flex-row-reverse w-full justify-start">
+                                                    <Avatar
+                                                        src={resolveUserAvatar(activeUser, activeUser)}
+                                                        user={activeUser}
+                                                        alt="You"
+                                                        size="small"
+                                                        className="shrink-0 mb-0.5"
+                                                    />
+                                                    <div className="px-3.5 py-2.5 rounded-2xl rounded-tr-xs text-xs leading-relaxed break-words select-text bg-accent text-text-inverted shadow-xs min-w-0">
+                                                        <p className="whitespace-pre-wrap">{message.message}</p>
+
+                                                        {messageAttachments.length > 0 && (
+                                                            <div className="mt-2 flex flex-col gap-1.5 pt-2 border-t border-white/20">
+                                                                {messageAttachments.map((attachment) => (
+                                                                    <div
+                                                                        key={attachment.id}
+                                                                        className="p-2 rounded-lg flex items-center justify-between gap-2.5 text-xs bg-black/15 border border-white/20 text-text-inverted"
+                                                                    >
+                                                                        <div className="flex items-center gap-2 min-w-0">
+                                                                            <div className="p-1 rounded bg-white/20 text-text-inverted shrink-0">
+                                                                                <FileText className="h-3.5 w-3.5" />
+                                                                            </div>
+                                                                            <div className="flex flex-col min-w-0">
+                                                                                <span
+                                                                                    className="font-semibold truncate text-xs"
+                                                                                    title={attachment.name}
+                                                                                >
+                                                                                    {attachment.name}
+                                                                                </span>
+                                                                                <span className="text-[10px] text-text-inverted/75">
+                                                                                    {attachment.sizeBytes
+                                                                                        ? formatBytes(attachment.sizeBytes)
+                                                                                        : 'Document'}
+                                                                                </span>
+                                                                            </div>
+                                                                        </div>
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() =>
+                                                                                handleActionClick('download', attachment)
+                                                                            }
+                                                                            className="p-1 rounded hover:bg-white/20 cursor-pointer text-text-inverted shrink-0 transition-colors"
+                                                                            title="Download Attachment"
+                                                                        >
+                                                                            <Download className="h-3.5 w-3.5" />
+                                                                        </button>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            /* LEFT SIDE: OTHER PARTY */
+                                            <div
+                                                key={message.id}
+                                                className="flex flex-col gap-1 items-start max-w-[85%] self-start"
+                                            >
+                                                {/* SENDER HEADER */}
+                                                <div className="flex items-center gap-1.5 text-[11px] text-text-muted pl-8 select-none">
+                                                    <span className="font-semibold text-text-muted">{senderFullName}</span>
+                                                    {renderMessageRoleBadge(senderRole, isSenderRequester)}
+                                                    <span>•</span>
+                                                    <span>{formatMessageTime(message.createdAt)}</span>
+                                                </div>
+
+                                                {/* BUBBLE ROW (AVATAR SITS DIRECTLY NEXT TO BOX) */}
+                                                <div className="flex items-end gap-2 flex-row w-full justify-start">
+                                                    <Avatar
+                                                        src={resolveUserAvatar(sender, activeUser)}
+                                                        user={sender}
+                                                        alt={senderFullName}
+                                                        size="small"
+                                                        className="shrink-0 mb-0.5"
+                                                    />
+                                                    <div className="px-3.5 py-2.5 rounded-2xl rounded-tl-xs text-xs leading-relaxed break-words select-text bg-surface border border-surface-border text-text shadow-2xs min-w-0">
+                                                        <p className="whitespace-pre-wrap">{message.message}</p>
+
+                                                        {messageAttachments.length > 0 && (
+                                                            <div className="mt-2 flex flex-col gap-1.5 pt-2 border-t border-surface-border">
+                                                                {messageAttachments.map((attachment) => (
+                                                                    <div
+                                                                        key={attachment.id}
+                                                                        className="p-2 rounded-lg flex items-center justify-between gap-2.5 text-xs bg-surface-hover/80 border border-surface-border text-text"
+                                                                    >
+                                                                        <div className="flex items-center gap-2 min-w-0">
+                                                                            <div className="p-1 rounded bg-accent/10 text-accent shrink-0">
+                                                                                <FileText className="h-3.5 w-3.5" />
+                                                                            </div>
+                                                                            <div className="flex flex-col min-w-0">
+                                                                                <span
+                                                                                    className="font-semibold truncate text-xs"
+                                                                                    title={attachment.name}
+                                                                                >
+                                                                                    {attachment.name}
+                                                                                </span>
+                                                                                <span className="text-[10px] text-text-muted">
+                                                                                    {attachment.sizeBytes
+                                                                                        ? formatBytes(attachment.sizeBytes)
+                                                                                        : 'Document'}
+                                                                                </span>
+                                                                            </div>
+                                                                        </div>
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() =>
+                                                                                handleActionClick('download', attachment)
+                                                                            }
+                                                                            className="p-1 rounded hover:bg-surface cursor-pointer text-accent shrink-0 transition-colors"
+                                                                            title="Download Attachment"
+                                                                        >
+                                                                            <Download className="h-3.5 w-3.5" />
+                                                                        </button>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })
+                                )}
+                                <div ref={chatEndReference} />
+                            </div>
+
+                            {/* MESSAGE COMPOSER DOCKED AT BOTTOM OF CALLOUT BOX */}
+                            <div className="p-2.5 border-t border-surface-border bg-surface flex flex-col gap-2 shrink-0">
+                                {stagedAttachments.length > 0 && (
+                                    <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto p-1">
+                                        {stagedAttachments.map((staged) => (
+                                            <div
+                                                key={staged.documentId}
+                                                className="px-2.5 py-1 rounded-lg bg-accent/10 border border-accent/20 flex items-center gap-2 text-xs text-accent"
+                                            >
+                                                <Paperclip className="h-3.5 w-3.5 shrink-0" />
+                                                <span className="font-semibold truncate max-w-44" title={staged.name}>
+                                                    {staged.name}
+                                                </span>
+                                                <span className="text-[10px] opacity-75 shrink-0">
+                                                    ({staged.sizeBytes ? formatBytes(staged.sizeBytes) : 'Document'})
+                                                </span>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleRemoveStagedAttachment(staged.documentId)}
+                                                    className="p-0.5 rounded hover:bg-accent/20 cursor-pointer text-accent shrink-0 transition-colors"
+                                                    title={`Remove ${staged.name}`}
+                                                >
+                                                    <X className="h-3.5 w-3.5" />
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+
+                                <form
+                                    onSubmit={handleSendMessage}
+                                    className="flex items-end gap-2"
                                 >
-                                    <Paperclip className="h-4 w-4" />
-                                </button>
+                                    {isStaff && (
+                                        <button
+                                            type="button"
+                                            onClick={handleOpenAttachModal}
+                                            className="h-10 w-10 flex items-center justify-center rounded-xl border border-surface-border bg-surface hover:bg-surface-hover hover:text-accent text-text-muted transition-colors shrink-0 cursor-pointer"
+                                            title="Attach Document from Repository"
+                                        >
+                                            <Paperclip className="h-4 w-4" />
+                                        </button>
+                                    )}
 
-                                <input
-                                    type="text"
-                                    value={chatInputText}
-                                    onChange={(changeEvent) => setChatInputText(changeEvent.target.value)}
-                                    placeholder={stagedAttachment ? 'Add a note with your attachment...' : 'Type a message or inquiry...'}
-                                    className="flex-1 px-3 py-2 text-xs rounded-md border border-surface-border bg-surface text-text focus:outline-hidden focus:border-accent focus:ring-1 focus:ring-accent"
-                                />
+                                    <div className="relative flex-1 flex items-center px-3 py-2 rounded-xl border border-surface-border bg-surface focus-within:border-accent focus-within:ring-1 focus-within:ring-accent transition-all">
+                                        <textarea
+                                            ref={chatTextareaRef}
+                                            value={chatInputText}
+                                            onChange={(e) => setChatInputText(e.target.value)}
+                                            onKeyDown={handleChatKeyDown}
+                                            rows={1}
+                                            placeholder={
+                                                stagedAttachments.length > 0
+                                                    ? `Add a message with ${stagedAttachments.length} staged ${stagedAttachments.length === 1 ? 'file' : 'files'}...`
+                                                    : 'Type a message... (Shift+Tab for new line)'
+                                            }
+                                            className="w-full bg-transparent border-0 resize-none outline-none focus:outline-none focus:ring-0 text-xs text-text placeholder:text-text-muted leading-relaxed p-0 min-h-[22px] max-h-[120px]"
+                                            style={{ maxHeight: '120px' }}
+                                        />
+                                    </div>
 
-                                <Button
-                                    type="submit"
-                                    variant="primary"
-                                    leadingIcon={Send}
-                                    isDisabled={!chatInputText.trim() && !stagedAttachment}
-                                >
-                                    Send
-                                </Button>
-                            </form>
+                                    <Button
+                                        type="submit"
+                                        variant="primary"
+                                        leadingIcon={Send}
+                                        isDisabled={!chatInputText.trim() && stagedAttachments.length === 0}
+                                        className="shrink-0 h-10 px-3.5 rounded-xl"
+                                    >
+                                        Send
+                                    </Button>
+                                </form>
+                            </div>
                         </div>
                     </div>
                 )}
@@ -2440,33 +2718,52 @@ const Inspector = ({
 
                 {isDocumentRequest && (
                     <div className="w-full">
-                        {item.status === constants.DOCUMENT_REQUESTS_STATUS.OPEN ? (
-                            <div className="grid grid-cols-2 gap-2 w-full">
+                        {isStaff ? (
+                            activeItem.status === constants.DOCUMENT_REQUESTS_STATUS.OPEN ? (
+                                <div className="grid grid-cols-2 gap-2 w-full">
+                                    <Button
+                                        variant="primary"
+                                        leadingIcon={CheckCircle2}
+                                        onClick={() => handleActionClick('resolve')}
+                                        isLoading={activeActionLoading === 'resolve'}
+                                        isDisabled={Boolean(activeActionLoading)}
+                                        className="justify-center truncate"
+                                    >
+                                        Resolve
+                                    </Button>
+                                    <Button
+                                        variant="destructive"
+                                        leadingIcon={XCircle}
+                                        onClick={() => handleActionClick('reject')}
+                                        isLoading={activeActionLoading === 'reject'}
+                                        isDisabled={Boolean(activeActionLoading)}
+                                        className="justify-center truncate"
+                                    >
+                                        Reject
+                                    </Button>
+                                </div>
+                            ) : (
                                 <Button
                                     variant="primary"
-                                    leadingIcon={FileCheck}
-                                    onClick={() => handleActionClick('resolve')}
-                                    className="justify-center truncate"
+                                    leadingIcon={RotateCcw}
+                                    onClick={() => handleActionClick('open_request')}
+                                    isLoading={activeActionLoading === 'open_request'}
+                                    isDisabled={Boolean(activeActionLoading)}
+                                    className="w-full justify-center"
                                 >
-                                    Resolve Request
+                                    Open
                                 </Button>
-                                <Button
-                                    variant="destructive"
-                                    leadingIcon={XCircle}
-                                    onClick={() => handleActionClick('reject')}
-                                    className="justify-center truncate"
-                                >
-                                    Reject Request
-                                </Button>
-                            </div>
+                            )
                         ) : (
                             <Button
-                                variant="primary"
-                                leadingIcon={Download}
-                                onClick={() => handleActionClick('download')}
+                                variant="destructive"
+                                leadingIcon={Trash2}
+                                onClick={() => handleActionClick('delete')}
+                                isLoading={activeActionLoading === 'delete'}
+                                isDisabled={Boolean(activeActionLoading)}
                                 className="w-full justify-center"
                             >
-                                Download Clearance Package
+                                Delete
                             </Button>
                         )}
                     </div>
@@ -2477,10 +2774,12 @@ const Inspector = ({
                 <Modal
                     isOpen={isAttachModalOpen}
                     onClose={handleCloseAttachModal}
-                    title="Attach Document from Repository"
-                    description="Select an institutional file to attach to this clearance thread."
+                    title="Attach Documents from Repository"
+                    description="Select institutional files to attach to this message thread."
                     size="md"
                     icon={Paperclip}
+                    confirmLabel={stagedAttachments.length > 0 ? `Done (${stagedAttachments.length} staged)` : 'Done'}
+                    onConfirm={handleCloseAttachModal}
                     cancelLabel="Cancel"
                     onCancel={handleCloseAttachModal}
                 >
@@ -2502,35 +2801,45 @@ const Inspector = ({
                                     No matching documents found in repository.
                                 </div>
                             ) : (
-                                attachableDocuments.map((doc) => (
-                                    <div
-                                        key={doc.id}
-                                        className="p-3 flex items-center justify-between gap-3 hover:bg-surface-hover transition-colors"
-                                    >
-                                        <div className="flex items-center gap-3 min-w-0">
-                                            <FileText className="h-4 w-4 text-accent shrink-0" />
-                                            <div className="flex flex-col min-w-0">
-                                                <span
-                                                    className="text-xs font-semibold text-text truncate"
-                                                    title={doc.name}
-                                                >
-                                                    {doc.name}
-                                                </span>
-                                                <span className="text-xs text-text-muted">
-                                                    {doc.sizeBytes ? formatBytes(doc.sizeBytes) : 'Document'} • {doc.classification ?? constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED}
-                                                </span>
-                                            </div>
-                                        </div>
-
-                                        <Button
-                                            variant="primary"
+                                attachableDocuments.map((doc) => {
+                                    const isStaged = stagedAttachments.some((att) => att.documentId === doc.id);
+                                    return (
+                                        <div
+                                            key={doc.id}
                                             onClick={() => handleSelectDocumentToAttach(doc)}
-                                            className="shrink-0 text-xs px-3"
+                                            className={`p-3 flex items-center justify-between gap-3 transition-colors cursor-pointer ${
+                                                isStaged ? 'bg-accent/10' : 'hover:bg-surface-hover'
+                                            }`}
                                         >
-                                            Attach
-                                        </Button>
-                                    </div>
-                                ))
+                                            <div className="flex items-center gap-3 min-w-0">
+                                                <FileText className={`h-4 w-4 shrink-0 ${isStaged ? 'text-accent' : 'text-text-muted'}`} />
+                                                <div className="flex flex-col min-w-0">
+                                                    <span
+                                                        className="text-xs font-semibold text-text truncate"
+                                                        title={doc.name}
+                                                    >
+                                                        {doc.name}
+                                                    </span>
+                                                    <span className="text-xs text-text-muted">
+                                                        {doc.sizeBytes ? formatBytes(doc.sizeBytes) : 'Document'} • {doc.classification ?? constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED}
+                                                    </span>
+                                                </div>
+                                            </div>
+
+                                            <Button
+                                                variant={isStaged ? 'secondary' : 'primary'}
+                                                leadingIcon={isStaged ? Check : undefined}
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleSelectDocumentToAttach(doc);
+                                                }}
+                                                className="shrink-0 text-xs px-3"
+                                            >
+                                                {isStaged ? 'Staged' : 'Attach'}
+                                            </Button>
+                                        </div>
+                                    );
+                                })
                             )}
                         </div>
                     </div>
@@ -2808,6 +3117,81 @@ const formatTimestamp = (timestampString) => {
     } catch {
         return null;
     }
+};
+
+const formatMessageTime = (timestampString) => {
+    if (!timestampString || timestampString === 'Invalid Date') {
+        return '';
+    }
+
+    try {
+        const date = new Date(timestampString);
+        if (isNaN(date.getTime())) {
+            return '';
+        }
+        const now = new Date();
+        const isToday = date.toDateString() === now.toDateString();
+        const timeStr = date.toLocaleTimeString(undefined, {
+            hour: 'numeric',
+            minute: '2-digit',
+        });
+        if (isToday) {
+            return timeStr;
+        }
+        const isThisYear = date.getFullYear() === now.getFullYear();
+        const dateStr = date.toLocaleDateString(undefined, {
+            month: 'short',
+            day: 'numeric',
+            ...(isThisYear ? {} : { year: '2-digit' }),
+        });
+        return `${dateStr}, ${timeStr}`;
+    } catch {
+        return '';
+    }
+};
+
+const renderMessageRoleBadge = (role, isRequester = false) => {
+    const badges = [];
+    if (isRequester) {
+        badges.push(
+            <span key="requester" className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-information-background text-information border border-information-border">
+                Requester
+            </span>
+        );
+    }
+    if (role === constants.USERS_ROLE.ADMINISTRATOR) {
+        badges.push(
+            <span key="admin" className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-accent/15 text-accent border border-accent/20">
+                Admin
+            </span>
+        );
+    } else if (role === constants.USERS_ROLE.COORDINATOR) {
+        badges.push(
+            <span key="coordinator" className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-warning-background text-warning border border-warning-border">
+                Coordinator
+            </span>
+        );
+    } else if (role === constants.USERS_ROLE.DIRECTOR) {
+        badges.push(
+            <span key="director" className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-information-background text-information border border-information-border">
+                Director
+            </span>
+        );
+    } else if (role === constants.USERS_ROLE.OFFICER && !isRequester) {
+        badges.push(
+            <span key="officer" className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-surface-hover text-text-muted border border-surface-border">
+                Officer
+            </span>
+        );
+    } else if (role === constants.USERS_ROLE.MEMBER && !isRequester) {
+        badges.push(
+            <span key="member" className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-surface-hover text-text-muted border border-surface-border">
+                Member
+            </span>
+        );
+    }
+    if (badges.length === 0) return null;
+    return <span className="inline-flex items-center gap-1">{badges}</span>;
 };
 
 const getMimeTypeFromExtension = (filename) => {

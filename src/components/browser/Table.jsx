@@ -1,5 +1,6 @@
 // --- IMPORTS ---
 import { MoreVertical } from 'lucide-react';
+import { Avatar } from '../Avatar';
 import {
     ICON_STYLE,
     renderItemIcon,
@@ -74,6 +75,19 @@ const Table = ({
                                                     className={`font-semibold whitespace-nowrap ${isSelected ? 'text-accent' : 'text-text'}`}
                                                 >
                                                     {item.title ?? item.name ?? item.subject}
+                                                </span>
+                                            </div>
+                                        ) : column.key === 'requester' ? (
+                                            <div className="flex items-center gap-2.5 whitespace-nowrap">
+                                                <Avatar
+                                                    src={item.requesterAvatar ?? item.requesterUser?.avatarPath ?? item.avatarPath}
+                                                    user={item.requesterUser ?? item.requester}
+                                                    alt={item.requesterName ?? (typeof item.requester === 'string' ? item.requester : 'Requester')}
+                                                    size="small"
+                                                    className="h-5 w-5 shrink-0"
+                                                />
+                                                <span className="font-medium text-text whitespace-nowrap">
+                                                    {item.requesterName ?? (typeof item.requester === 'string' ? item.requester : '—')}
                                                 </span>
                                             </div>
                                         ) : column.key === 'classification' || column.key === 'role' || column.key === 'status' ? (

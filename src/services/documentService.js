@@ -472,28 +472,57 @@ const documentService = {
     },
 
     insertDocumentRequest: async (payload) => {
+        const timestamp = payload.createdAt || new Date().toISOString();
         const data = await dataConnectService.executeMutation('InsertDocumentRequest', {
             requesterId: payload.requesterId,
             resolverId: payload.resolverId ?? null,
             subject: payload.subject,
             status: payload.status ?? constants.DOCUMENT_REQUESTS_STATUS.OPEN,
-            createdAt: payload.createdAt,
-            updatedAt: payload.updatedAt,
+            createdAt: timestamp,
+            updatedAt: payload.updatedAt || timestamp,
         });
 
-        return formatLiveDocumentRequest(data?.documentRequest_insert ?? data?.documentRequests_insert);
+        const raw = data?.documentRequest_insert ?? data?.documentRequests_insert;
+        const formatted = formatLiveDocumentRequest(raw);
+
+        return {
+            id: formatted?.id ?? raw?.id ?? (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `req-${Date.now()}`),
+            requesterId: payload.requesterId,
+            requester: payload.requester ?? { id: payload.requesterId },
+            resolverId: payload.resolverId ?? null,
+            resolver: payload.resolver ?? null,
+            subject: payload.subject,
+            status: payload.status ?? constants.DOCUMENT_REQUESTS_STATUS.OPEN,
+            createdAt: timestamp,
+            updatedAt: payload.updatedAt || timestamp,
+        };
     },
 
     updateDocumentRequest: async (id, payload) => {
+        const timestamp = payload.updatedAt || new Date().toISOString();
         const data = await dataConnectService.executeMutation('UpdateDocumentRequest', {
             id: id,
             resolverId: payload.resolverId,
             subject: payload.subject,
             status: payload.status,
-            updatedAt: payload.updatedAt,
+            updatedAt: timestamp,
         });
 
-        return formatLiveDocumentRequest(data?.documentRequest_update ?? data?.documentRequests_update);
+        const raw = data?.documentRequest_update ?? data?.documentRequests_update;
+        const formatted = raw ? formatLiveDocumentRequest(raw) : null;
+        const cleanFormatted = Object.fromEntries(
+            Object.entries(formatted || {}).filter(([_, v]) => v !== undefined && v !== null)
+        );
+        const cleanPayload = Object.fromEntries(
+            Object.entries(payload || {}).filter(([_, v]) => v !== undefined)
+        );
+
+        return {
+            id: id,
+            ...cleanPayload,
+            ...cleanFormatted,
+            updatedAt: timestamp,
+        };
     },
 
     deleteDocumentRequest: async (id) => {
@@ -515,14 +544,26 @@ const documentService = {
     },
 
     insertDocumentRequestMessage: async (payload) => {
+        const timestamp = payload.createdAt || new Date().toISOString();
         const data = await dataConnectService.executeMutation('InsertDocumentRequestMessage', {
             documentRequestId: payload.documentRequestId,
             userId: payload.userId ?? null,
             message: payload.message,
-            createdAt: payload.createdAt,
+            createdAt: timestamp,
         });
 
-        return formatLiveDocumentRequestMessage(data?.documentRequestMessage_insert ?? data?.documentRequestMessages_insert);
+        const raw = data?.documentRequestMessage_insert ?? data?.documentRequestMessages_insert;
+        const generatedId = raw?.id ?? (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `msg-${Date.now()}`);
+
+        return {
+            id: generatedId,
+            documentRequestId: payload.documentRequestId,
+            documentRequest: { id: payload.documentRequestId },
+            userId: payload.userId,
+            user: payload.user ?? (payload.userId ? { id: payload.userId } : null),
+            message: payload.message,
+            createdAt: timestamp,
+        };
     },
 
     deleteDocumentRequestMessage: async (id) => {
@@ -544,14 +585,28 @@ const documentService = {
     },
 
     insertDocumentRequestAttachment: async (payload) => {
+        const timestamp = payload.createdAt || new Date().toISOString();
         const data = await dataConnectService.executeMutation('InsertDocumentRequestAttachment', {
             documentRequestId: payload.documentRequestId,
             documentId: payload.documentId,
             attachedById: payload.attachedById,
-            createdAt: payload.createdAt,
+            createdAt: timestamp,
         });
 
-        return formatLiveDocumentRequestAttachment(data?.documentRequestAttachment_insert ?? data?.documentRequestAttachments_insert);
+        const raw = data?.documentRequestAttachment_insert ?? data?.documentRequestAttachments_insert;
+        const generatedId = raw?.id ?? (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `att-${Date.now()}`);
+
+        return {
+            id: generatedId,
+            documentRequestId: payload.documentRequestId,
+            documentRequest: { id: payload.documentRequestId },
+            documentId: payload.documentId,
+            document: payload.document ?? { id: payload.documentId, name: payload.name },
+            name: payload.name ?? payload.document?.name ?? 'Attachment',
+            attachedById: payload.attachedById,
+            attachedBy: payload.attachedBy ?? { id: payload.attachedById },
+            createdAt: timestamp,
+        };
     },
 
     deleteDocumentRequestAttachment: async (id) => {
@@ -635,10 +690,19 @@ function formatLiveDocumentRequest(rawRequest) {
         return null;
     }
 
+    const requesterId = typeof rawRequest.requester === 'object'
+        ? rawRequest.requester?.id
+        : (rawRequest.requesterId ?? rawRequest.requester);
+    const resolverId = typeof rawRequest.resolver === 'object'
+        ? rawRequest.resolver?.id
+        : (rawRequest.resolverId ?? rawRequest.resolver);
+
     return {
         id: rawRequest.id,
-        requester: rawRequest.requester,
-        resolver: rawRequest.resolver,
+        requester: rawRequest.requester ?? (requesterId ? { id: requesterId } : null),
+        requesterId: requesterId,
+        resolver: rawRequest.resolver ?? (resolverId ? { id: resolverId } : null),
+        resolverId: resolverId,
         subject: rawRequest.subject,
         status: rawRequest.status,
         createdAt: rawRequest.createdAt,
@@ -651,10 +715,19 @@ function formatLiveDocumentRequestMessage(rawMessage) {
         return null;
     }
 
+    const docReqId = typeof rawMessage.documentRequest === 'object'
+        ? rawMessage.documentRequest?.id
+        : (rawMessage.documentRequestId ?? rawMessage.documentRequest);
+    const userId = typeof rawMessage.user === 'object'
+        ? rawMessage.user?.id
+        : (rawMessage.userId ?? rawMessage.user);
+
     return {
         id: rawMessage.id,
-        documentRequest: rawMessage.documentRequest,
-        user: rawMessage.user,
+        documentRequest: rawMessage.documentRequest ?? (docReqId ? { id: docReqId } : null),
+        documentRequestId: docReqId,
+        user: rawMessage.user ?? (userId ? { id: userId } : null),
+        userId: userId,
         message: rawMessage.message,
         createdAt: rawMessage.createdAt,
     };
@@ -665,11 +738,26 @@ function formatLiveDocumentRequestAttachment(rawAttachment) {
         return null;
     }
 
+    const docReqId = typeof rawAttachment.documentRequest === 'object'
+        ? rawAttachment.documentRequest?.id
+        : (rawAttachment.documentRequestId ?? rawAttachment.documentRequest);
+    const docId = typeof rawAttachment.document === 'object'
+        ? rawAttachment.document?.id
+        : (rawAttachment.documentId ?? rawAttachment.document);
+    const attachedById = typeof rawAttachment.attachedBy === 'object'
+        ? rawAttachment.attachedBy?.id
+        : (rawAttachment.attachedById ?? rawAttachment.attachedBy);
+
     return {
         id: rawAttachment.id,
-        documentRequest: rawAttachment.documentRequest,
-        document: rawAttachment.document,
-        attachedBy: rawAttachment.attachedBy,
+        documentRequest: rawAttachment.documentRequest ?? (docReqId ? { id: docReqId } : null),
+        documentRequestId: docReqId,
+        document: rawAttachment.document ?? (docId ? { id: docId } : null),
+        documentId: docId,
+        name: rawAttachment.document?.name ?? rawAttachment.name ?? 'Attachment',
+        attachedBy: rawAttachment.attachedBy ?? (attachedById ? { id: attachedById } : null),
+        attachedById: attachedById,
+        attachedByName: rawAttachment.attachedBy ? `${rawAttachment.attachedBy.firstName ?? ''} ${rawAttachment.attachedBy.lastName ?? ''}`.trim() : null,
         createdAt: rawAttachment.createdAt,
     };
 }

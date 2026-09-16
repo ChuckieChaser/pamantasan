@@ -258,11 +258,13 @@ const DashboardPage = ({
                 </div>
 
                 <div className="flex items-center gap-3 shrink-0">
-                    <Button
-                        variant="secondary"
-                        label="Request Document"
-                        onClick={() => (onRequestDocument ? onRequestDocument() : onNavigate?.('request_document'))}
-                    />
+                    {!(currentUser?.role === constants.USERS_ROLE.ADMINISTRATOR || currentUser?.role === constants.USERS_ROLE.COORDINATOR) && (
+                        <Button
+                            variant="secondary"
+                            label="Request Document"
+                            onClick={() => (onRequestDocument ? onRequestDocument() : onNavigate?.('requests'))}
+                        />
+                    )}
                     <Button
                         variant="primary"
                         label="Browse Repository"
@@ -385,7 +387,13 @@ const DashboardPage = ({
                             pendingActionItems.map((item) => (
                                 <div
                                     key={item.id}
-                                    onClick={() => onNavigate?.('requests')}
+                                    onClick={() => {
+                                        if (item.badge === 'Coordinator Approval') {
+                                            onNavigate?.('coordinator');
+                                        } else {
+                                            onNavigate?.('requests');
+                                        }
+                                    }}
                                     className="p-3 rounded-lg border border-surface-border bg-surface-hover/30 flex flex-col gap-2 hover:bg-surface-hover transition-colors cursor-pointer"
                                 >
                                     <div className="flex items-center justify-between gap-2">
