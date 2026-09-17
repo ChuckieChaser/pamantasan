@@ -28,3 +28,8 @@ dist-ssr
 .firebase
 firebase-debug.log*
 .firebaserc.local
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]

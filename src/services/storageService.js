@@ -34,20 +34,32 @@ const storageService = {
         const isHttp = storagePath.startsWith('http://') || storagePath.startsWith('https://');
         if (storage && !isHttp) {
             const cleanPath = cleanStoragePath(storagePath);
+            // 1. Try Firebase Storage getBlob directly (fast & handles binary)
             try {
                 onProgress?.({ progress: 40, statusText: 'Fetching from Firebase Storage...' });
                 const fileReference = ref(storage, cleanPath);
-                const blobPromise = getBlob(fileReference);
-                const timeoutPromise = new Promise((_, reject) =>
-                    setTimeout(() => reject(new Error('Storage timeout')), 1200)
-                );
-                const blob = await Promise.race([blobPromise, timeoutPromise]);
-                if (blob) {
+                const blob = await getBlob(fileReference);
+                if (blob && blob.size > 0) {
                     return blob;
                 }
             } catch (error) {
-                // If object does not exist in bucket or timed out, fail fast without blocking
-                return null;
+                console.warn(`Firebase getBlob failed for "${cleanPath}", attempting via download URL:`, error?.message);
+            }
+
+            // 2. Fallback: Resolve signed download URL and fetch binary
+            try {
+                onProgress?.({ progress: 55, statusText: 'Resolving download URL...' });
+                const fileReference = ref(storage, cleanPath);
+                const downloadUrl = await getDownloadURL(fileReference);
+                if (downloadUrl) {
+                    URL_CACHE.set(cleanPath, downloadUrl);
+                    const response = await fetch(downloadUrl);
+                    if (response.ok) {
+                        return await response.blob();
+                    }
+                }
+            } catch (urlErr) {
+                console.warn(`Fetch via download URL failed for "${cleanPath}":`, urlErr?.message);
             }
         }
 
@@ -117,7 +129,7 @@ const storageService = {
         const storageReference = ref(storage, storagePath);
 
         const uploadResult = await uploadBytes(storageReference, file, {
-            contentType: file.type,
+            contentType: file.type || 'application/octet-stream',
             customMetadata: {
                 documentId: documentId,
                 version: String(versionNumber),
@@ -136,7 +148,7 @@ const storageService = {
             path: storageReference.fullPath,
             downloadUrl: downloadUrl,
             sizeBytes: actualSizeBytes,
-            mimeType: file.type,
+            mimeType: file.type || 'application/octet-stream',
         };
     },
 
@@ -159,6 +171,31 @@ const storageService = {
 
         onProgress?.({ progress: 20, statusText: 'Locating document in storage...' });
 
+        // 1. Direct Native Browser Download via Download URL (Fastest & 100% immune to CORS)
+        if (storagePath) {
+            try {
+                onProgress?.({ progress: 50, statusText: 'Resolving download URL...' });
+                const downloadUrl = await storageService.fetchDocument(storagePath);
+                if (downloadUrl) {
+                    onProgress?.({ progress: 85, statusText: 'Saving to laptop disk...' });
+                    const anchor = document.createElement('a');
+                    anchor.href = downloadUrl;
+                    anchor.download = effectiveFileName;
+                    anchor.target = '_blank';
+                    anchor.rel = 'noopener noreferrer';
+                    document.body.appendChild(anchor);
+                    anchor.click();
+                    setTimeout(() => {
+                        if (anchor.parentNode) anchor.parentNode.removeChild(anchor);
+                    }, 2000);
+                    onProgress?.({ progress: 100, isFinished: true, statusText: 'Saved to laptop' });
+                    return true;
+                }
+            } catch (urlErr) {
+                console.warn('Direct URL download attempt failed, falling back to blob:', urlErr);
+            }
+        }
+
         let blob = null;
         if (storagePath) {
             blob = await storageService.getFileBlob(storagePath, onProgress);
@@ -169,8 +206,8 @@ const storageService = {
             onProgress?.({ progress: 70, statusText: 'Generating institutional record...' });
             const fallbackContent = `Pamantasan Institutional Document\n\nFile: ${effectiveFileName}\nPath: ${storagePath || 'N/A'}\nDownloaded: ${new Date().toISOString()}\n`;
             blob = new Blob([fallbackContent], { type: 'text/plain;charset=utf-8' });
-            if (!effectiveFileName.includes('.')) {
-                effectiveFileName = `${effectiveFileName}.txt`;
+            if (!effectiveFileName.endsWith('.txt')) {
+                effectiveFileName = `${effectiveFileName.replace(/\.[^/.]+$/, '')}.txt`;
             }
         }
 

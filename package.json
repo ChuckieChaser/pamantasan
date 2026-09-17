@@ -10,7 +10,8 @@
         "preview": "vite preview",
         "deploy:dataconnect": "firebase deploy --only dataconnect",
         "deploy:functions": "firebase deploy --only functions",
-        "check:backend": "node scripts/checkFirebase.js"
+        "check:backend": "node scripts/checkFirebase.js",
+        "ocr": "node scripts/start_ocr.js"
     },
     "dependencies": {
         "@tailwindcss/vite": "^4.3.3",

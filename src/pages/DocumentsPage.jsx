@@ -21,6 +21,9 @@ import {
     FileCheck,
     Sparkles,
     Trash2,
+    ScanText,
+    Image as ImageIcon,
+    Crop,
 } from 'lucide-react';
 import {
     Browser,
@@ -31,6 +34,7 @@ import {
     AreaField,
     SelectField,
     DocumentViewerModal,
+    DocumentScannerModal,
 } from '../components';
 import { useToast } from '../hooks';
 import { constants } from '../constants';
@@ -38,6 +42,7 @@ import { useDocumentStore, useDepartmentStore } from '../stores';
 import {
     storageService,
     documentService,
+    ocrService,
 } from '../services';
 
 
@@ -130,6 +135,7 @@ const DocumentsPage = ({
 
     // STATES: STAGED ITEMS & FORMS
     const [stagedDroppedItems, setStagedDroppedItems] = useState([]);
+    const [scannerItem, setScannerItem] = useState(null);
     const [conflictModalItem, setConflictModalItem] = useState(null);
     const [fileError, setFileError] = useState('');
     const [folderTitle, setFolderTitle] = useState('');
@@ -775,13 +781,58 @@ const DocumentsPage = ({
         const folderCache = new Map();
 
         for (let itemIndex = 0; itemIndex < validItems.length; itemIndex++) {
-            const item = validItems[itemIndex];
+            let item = validItems[itemIndex];
 
             try {
-                toastProcess.updateItem(item.id, {
-                    progress: 25,
-                    statusText: 'Resolving folder location...',
-                });
+                // OCR PRE-PROCESSING IF CONVERTING IMAGE TO SEARCHABLE PDF
+                let ocrSummary = null;
+                if (item.isImage && item.ocrMode === 'ocr_pdf') {
+                    toastProcess.updateItem(item.id, {
+                        progress: 15,
+                        statusText: 'Running PaddleOCR text recognition...',
+                    });
+
+                    try {
+                        const ocrResult = await ocrService.convertImageToPdf(item.file, {
+                            customTitle: item.fileName || item.title,
+                        });
+
+                        item = {
+                            ...item,
+                            file: ocrResult.pdfFile,
+                            fileName: ocrResult.pdfFileName,
+                            title: ocrResult.pdfFileName,
+                            size: formatFileSize(ocrResult.sizeBytes),
+                            sizeBytes: ocrResult.sizeBytes,
+                            mimeType: 'application/pdf',
+                        };
+
+                        if (ocrResult.extractedText) {
+                            ocrSummary = ocrResult.extractedText.slice(0, 2000);
+                        }
+
+                        toastProcess.updateItem(item.id, {
+                            progress: 25,
+                            statusText: `OCR extracted ${ocrResult.linesCount} lines. Resolving location...`,
+                        });
+                    } catch (ocrErr) {
+                        console.warn('PaddleOCR processing failed or server offline, uploading as normal image:', ocrErr);
+                        toastProcess.updateItem(item.id, {
+                            progress: 25,
+                            statusText: 'OCR offline / failed. Uploading as normal image...',
+                        });
+                        showToast({
+                            type: 'warning',
+                            title: 'PaddleOCR Offline / Failed',
+                            description: `Could not connect to OCR service on localhost:5005 for "${item.fileName}". File will be uploaded as normal image. (Start OCR service with: npm run ocr).`,
+                        });
+                    }
+                } else {
+                    toastProcess.updateItem(item.id, {
+                        progress: 25,
+                        statusText: 'Resolving folder location...',
+                    });
+                }
 
                 // 1. Resolve folder hierarchy if nested
                 let targetParentId = rootTargetId;
@@ -859,10 +910,10 @@ const DocumentsPage = ({
                             version: nextVersionNum,
                             path: storageResult.path,
                             sizeBytes: storageResult.sizeBytes,
-                            mimeType: storageResult.mimeType || item.file.type || 'application/octet-stream',
+                            mimeType: storageResult.mimeType || item.mimeType || item.file.type || 'application/octet-stream',
                             classification: item.classification || constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED,
                             changeSummary: null,
-                            summary: null,
+                            summary: ocrSummary || null,
                         });
 
                         await documentService.updateDocument(targetDocumentId, {
@@ -924,10 +975,10 @@ const DocumentsPage = ({
                                 version: 1,
                                 path: storageResult.path,
                                 sizeBytes: storageResult.sizeBytes,
-                                mimeType: storageResult.mimeType || item.file.type || 'application/octet-stream',
+                                mimeType: storageResult.mimeType || item.mimeType || item.file.type || 'application/octet-stream',
                                 classification: item.classification || constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED,
                                 changeSummary: null,
-                                summary: null,
+                                summary: ocrSummary || null,
                             });
                         } catch (verErr) {
                             await storageService.deleteDocument(storageResult.path).catch(() => null);
@@ -998,26 +1049,31 @@ const DocumentsPage = ({
             return;
         }
 
-        const fallbackExtractedItems = selectedFiles.map((file) => ({
-            id: `doc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-            parentId: currentFolderId,
-            relativePath: `/${file.name}`,
-            fileName: file.name,
-            folderPathParts: [],
-            title: `/${file.name}`,
-            subtitle: `DOC-${new Date().getFullYear()}-GEN-${Math.floor(100 + Math.random() * 900)}`,
-            description: null,
-            category: 'Document',
-            classification: constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED,
-            version: 'v1.0',
-            size: formatFileSize(file.size),
-            sizeBytes: file.size,
-            status: constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL,
-            date: 'Just now',
-            isFolder: false,
-            file: file,
-            tags: [constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL, constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED],
-        }));
+        const fallbackExtractedItems = selectedFiles.map((file) => {
+            const isImage = ocrService.isImageFile(file);
+            return {
+                id: `doc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+                parentId: currentFolderId,
+                relativePath: `/${file.name}`,
+                fileName: file.name,
+                folderPathParts: [],
+                title: `/${file.name}`,
+                subtitle: `DOC-${new Date().getFullYear()}-GEN-${Math.floor(100 + Math.random() * 900)}`,
+                description: null,
+                category: isImage ? 'Image' : 'Document',
+                classification: constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED,
+                version: 'v1.0',
+                size: formatFileSize(file.size),
+                sizeBytes: file.size,
+                status: constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL,
+                date: 'Just now',
+                isFolder: false,
+                file: file,
+                isImage: isImage,
+                ocrMode: isImage ? 'ocr_pdf' : 'normal_image',
+                tags: [constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL, constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED],
+            };
+        });
 
         const annotated = annotateDuplicates(fallbackExtractedItems, currentFolderId, documents, documentVersions);
         setStagedDroppedItems((previousItems) => [...previousItems, ...annotated]);
@@ -1025,6 +1081,55 @@ const DocumentsPage = ({
         if (event.target) {
             event.target.value = '';
         }
+    };
+
+    const handleToggleOcrMode = (stagedId, mode) => {
+        setStagedDroppedItems((prev) =>
+            prev.map((item) =>
+                item.id === stagedId ? { ...item, ocrMode: mode } : item
+            )
+        );
+    };
+
+    const handleSetAllImagesOcrMode = (mode) => {
+        setStagedDroppedItems((prev) =>
+            prev.map((item) =>
+                item.isImage ? { ...item, ocrMode: mode } : item
+            )
+        );
+    };
+
+    const handleOpenScanner = (item) => {
+        setScannerItem(item);
+    };
+
+    const handleApplyScannerResults = ({ enhancedFile, enhancedBlob, filterMode, rotation, isEnhanced }) => {
+        if (!scannerItem) return;
+
+        setStagedDroppedItems((prev) =>
+            prev.map((item) => {
+                if (item.id === scannerItem.id) {
+                    const previewUrl = URL.createObjectURL(enhancedBlob);
+                    return {
+                        ...item,
+                        file: enhancedFile,
+                        previewUrl,
+                        isScannerEnhanced: true,
+                        scannerFilter: filterMode,
+                        size: formatFileSize(enhancedFile.size),
+                        sizeBytes: enhancedFile.size,
+                    };
+                }
+                return item;
+            })
+        );
+
+        showToast({
+            type: 'success',
+            title: 'Document Enhanced',
+            description: `Adjustments and paper whitening applied to "${scannerItem.fileName || scannerItem.title}".`,
+        });
+        setScannerItem(null);
     };
 
     const handleRemoveStagedItem = (stagedId) => {
@@ -1469,18 +1574,42 @@ const DocumentsPage = ({
                         {/* STAGED ITEMS QUEUE PREVIEW */}
                         {stagedDroppedItems.length > 0 && (
                             <div className="flex flex-col gap-2">
-                                <div className="flex items-center justify-between">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
                                     <span className="text-xs font-semibold text-text flex items-center gap-2">
                                         <Layers className="h-4 w-4 text-accent" />
                                         Staged for Upload ({stagedDroppedItems.length} {stagedDroppedItems.length === 1 ? 'item' : 'items'})
                                     </span>
-                                    <button
-                                        type="button"
-                                        onClick={handleClearAllStagedItems}
-                                        className="text-xs text-error hover:underline cursor-pointer"
-                                    >
-                                        Clear All
-                                    </button>
+                                    <div className="flex items-center gap-3">
+                                        {stagedDroppedItems.some((item) => item.isImage) && (
+                                            <div className="flex items-center gap-1.5 text-[11px] text-text-muted bg-surface-hover/60 px-2 py-0.5 rounded-md border border-surface-border">
+                                                <span className="font-medium">Images:</span>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleSetAllImagesOcrMode('ocr_pdf')}
+                                                    className="text-accent hover:underline font-semibold cursor-pointer"
+                                                    title="Set all images to convert to PDF via PaddleOCR"
+                                                >
+                                                    All OCR to PDF
+                                                </button>
+                                                <span>•</span>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleSetAllImagesOcrMode('normal_image')}
+                                                    className="hover:text-text hover:underline cursor-pointer"
+                                                    title="Set all images to upload as original image files"
+                                                >
+                                                    All Image Only
+                                                </button>
+                                            </div>
+                                        )}
+                                        <button
+                                            type="button"
+                                            onClick={handleClearAllStagedItems}
+                                            className="text-xs text-error hover:underline cursor-pointer"
+                                        >
+                                            Clear All
+                                        </button>
+                                    </div>
                                 </div>
 
                                 <div className="max-h-56 overflow-y-auto divide-y divide-surface-border border border-surface-border rounded-lg bg-surface">
@@ -1490,16 +1619,96 @@ const DocumentsPage = ({
                                             className="px-3 py-2.5 flex items-center justify-between text-xs hover:bg-surface-hover gap-3"
                                         >
                                             <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                                                <FileText className="h-4 w-4 text-accent shrink-0" />
-                                                <span className="truncate font-medium text-text font-mono text-[11px]" title={stagedItem.relativePath}>
-                                                    {stagedItem.relativePath}
-                                                </span>
-                                                <span className="text-[10px] text-text-muted shrink-0">
-                                                    ({stagedItem.size})
-                                                </span>
+                                                {stagedItem.previewUrl ? (
+                                                    <img
+                                                        src={stagedItem.previewUrl}
+                                                        alt="Document Preview"
+                                                        className="h-8 w-8 rounded object-cover border border-accent/40 shadow-xs shrink-0 cursor-pointer"
+                                                        onClick={() => handleOpenScanner(stagedItem)}
+                                                        title="Click to re-adjust crop/whitening"
+                                                    />
+                                                ) : stagedItem.isImage ? (
+                                                    stagedItem.ocrMode === 'ocr_pdf' ? (
+                                                        <ScanText className="h-4 w-4 text-accent shrink-0" />
+                                                    ) : (
+                                                        <ImageIcon className="h-4 w-4 text-information shrink-0" />
+                                                    )
+                                                ) : (
+                                                    <FileText className="h-4 w-4 text-accent shrink-0" />
+                                                )}
+                                                <div className="flex flex-col min-w-0">
+                                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                                        <span className="truncate font-medium text-text font-mono text-[11px]" title={stagedItem.relativePath}>
+                                                            {stagedItem.relativePath}
+                                                        </span>
+                                                        <span className="text-[10px] text-text-muted shrink-0">
+                                                            ({stagedItem.size})
+                                                        </span>
+                                                        {stagedItem.isScannerEnhanced && (
+                                                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-accent/15 text-accent border border-accent/30 flex items-center gap-0.5">
+                                                                <Sparkles className="h-2.5 w-2.5" />
+                                                                Whitened &amp; Cropped
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    {stagedItem.isImage && stagedItem.ocrMode === 'ocr_pdf' && (
+                                                        <span className="text-[10px] text-accent font-medium flex items-center gap-1">
+                                                            <span>➔ Will convert to <strong>{(stagedItem.fileName || '').replace(/\.[^/.]+$/, '')}.pdf</strong> via PaddleOCR</span>
+                                                        </span>
+                                                    )}
+                                                </div>
                                             </div>
 
                                             <div className="flex items-center gap-2 shrink-0">
+                                                {/* SCANNER ADJUST / CROP BUTTON FOR IMAGES */}
+                                                {stagedItem.isImage && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleOpenScanner(stagedItem)}
+                                                        className={`flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium border cursor-pointer transition-all shadow-xs ${
+                                                            stagedItem.isScannerEnhanced
+                                                                ? 'bg-accent/15 border-accent/40 text-accent hover:bg-accent/25'
+                                                                : 'bg-surface-hover hover:bg-surface-border text-text hover:text-accent border-surface-border'
+                                                        }`}
+                                                        title="Open Scanner Studio to adjust 8-point crop, rotate 90°, and whiten paper background"
+                                                    >
+                                                        <Crop className="h-3 w-3 text-accent" />
+                                                        <span>{stagedItem.isScannerEnhanced ? 'Re-crop / Whiten' : 'Adjust / Crop'}</span>
+                                                    </button>
+                                                )}
+
+                                                {/* OCR MODE TOGGLE BUTTONS FOR IMAGES */}
+                                                {stagedItem.isImage && (
+                                                    <div className="flex items-center gap-1 bg-surface-hover p-0.5 rounded-lg border border-surface-border">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleToggleOcrMode(stagedItem.id, 'ocr_pdf')}
+                                                            className={`flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] transition-colors cursor-pointer ${
+                                                                stagedItem.ocrMode === 'ocr_pdf'
+                                                                    ? 'bg-accent text-text-inverted font-semibold shadow-xs'
+                                                                    : 'text-text-muted hover:text-text'
+                                                            }`}
+                                                            title="Scan image text with PaddleOCR and convert into searchable PDF"
+                                                        >
+                                                            <ScanText className="h-3 w-3" />
+                                                            <span>OCR to PDF</span>
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleToggleOcrMode(stagedItem.id, 'normal_image')}
+                                                            className={`flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] transition-colors cursor-pointer ${
+                                                                stagedItem.ocrMode === 'normal_image'
+                                                                    ? 'bg-surface-border text-text font-semibold shadow-xs'
+                                                                    : 'text-text-muted hover:text-text'
+                                                            }`}
+                                                            title="Upload file directly as normal image"
+                                                        >
+                                                            <ImageIcon className="h-3 w-3" />
+                                                            <span>Image Only</span>
+                                                        </button>
+                                                    </div>
+                                                )}
+
                                                 {stagedItem.isDuplicate && !stagedItem.resolved ? (
                                                     <button
                                                         type="button"
@@ -1840,6 +2049,16 @@ const DocumentsPage = ({
                 item={previewingDocument}
                 onClose={() => setPreviewingDocument(null)}
             />
+
+            {/* DOCUMENT SCANNER STUDIO MODAL */}
+            {scannerItem && (
+                <DocumentScannerModal
+                    isOpen={Boolean(scannerItem)}
+                    file={scannerItem?.file}
+                    onClose={() => setScannerItem(null)}
+                    onApply={handleApplyScannerResults}
+                />
+            )}
         </Container>
     );
 };
@@ -1910,6 +2129,7 @@ async function traverseFileSystemEntry(entry, currentPathPrefix, folderPathParts
         if (!file) return;
 
         const fullRelativePath = currentPathPrefix ? `${currentPathPrefix}/${file.name}` : `/${file.name}`;
+        const isImage = ocrService.isImageFile(file);
 
         collectedItems.push({
             id: `doc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -1920,7 +2140,7 @@ async function traverseFileSystemEntry(entry, currentPathPrefix, folderPathParts
             title: fullRelativePath,
             subtitle: `DOC-${new Date().getFullYear()}-DIR-${Math.floor(100 + Math.random() * 900)}`,
             description: null,
-            category: 'Document',
+            category: isImage ? 'Image' : 'Document',
             classification: constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED,
             version: 'v1.0',
             size: formatFileSize(file.size),
@@ -1929,6 +2149,8 @@ async function traverseFileSystemEntry(entry, currentPathPrefix, folderPathParts
             date: 'Just now',
             isFolder: false,
             file: file,
+            isImage: isImage,
+            ocrMode: isImage ? 'ocr_pdf' : 'normal_image',
             tags: [constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL, constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED],
         });
     } else if (entry.isDirectory) {
@@ -2028,6 +2250,9 @@ function getUniqueFolderName(originalName, targetParentId, existingDocs = []) {
 function annotateDuplicates(extractedList, targetParentId, existingDocs, existingVersions) {
     const activeParent = targetParentId === 'root' ? null : targetParentId;
     return extractedList.map((item) => {
+        const isImage = item.isImage ?? ocrService.isImageFile(item.file || item.fileName);
+        const ocrMode = item.ocrMode || (isImage ? 'ocr_pdf' : 'normal_image');
+
         let resolvedParentId = activeParent;
         if (item.folderPathParts && item.folderPathParts.length > 0) {
             let currentP = activeParent;
@@ -2068,6 +2293,8 @@ function annotateDuplicates(extractedList, targetParentId, existingDocs, existin
 
                 return {
                     ...item,
+                    isImage,
+                    ocrMode,
                     isDuplicate: true,
                     existingDocumentId: matchingDoc.id,
                     currentVersion: currentVer,
@@ -2080,6 +2307,8 @@ function annotateDuplicates(extractedList, targetParentId, existingDocs, existin
 
         return {
             ...item,
+            isImage,
+            ocrMode,
             isDuplicate: false,
             action: 'new',
             resolved: true,
@@ -2118,6 +2347,7 @@ async function processDataTransferPayload(dataTransfer, targetParentId, userDepa
             for (let fileIndex = 0; fileIndex < dataTransfer.files.length; fileIndex++) {
                 const rawFile = dataTransfer.files[fileIndex];
                 if (rawFile) {
+                    const isImage = ocrService.isImageFile(rawFile);
                     collectedItems.push({
                         id: `doc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
                         parentId: targetParentId,
@@ -2127,7 +2357,7 @@ async function processDataTransferPayload(dataTransfer, targetParentId, userDepa
                         title: `/${rawFile.name}`,
                         subtitle: `DOC-${new Date().getFullYear()}-GEN-${Math.floor(100 + Math.random() * 900)}`,
                         description: null,
-                        category: 'Document',
+                        category: isImage ? 'Image' : 'Document',
                         classification: constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED,
                         version: 'v1.0',
                         size: formatFileSize(rawFile.size),
@@ -2136,6 +2366,8 @@ async function processDataTransferPayload(dataTransfer, targetParentId, userDepa
                         date: 'Just now',
                         isFolder: false,
                         file: rawFile,
+                        isImage: isImage,
+                        ocrMode: isImage ? 'ocr_pdf' : 'normal_image',
                         tags: [constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL, constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED],
                     });
                 }
@@ -2144,6 +2376,7 @@ async function processDataTransferPayload(dataTransfer, targetParentId, userDepa
     } else if (dataTransfer?.files && dataTransfer.files.length > 0) {
         for (let fileIndex = 0; fileIndex < dataTransfer.files.length; fileIndex++) {
             const rawFile = dataTransfer.files[fileIndex];
+            const isImage = ocrService.isImageFile(rawFile);
             collectedItems.push({
                 id: `doc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
                 parentId: targetParentId,
@@ -2153,7 +2386,7 @@ async function processDataTransferPayload(dataTransfer, targetParentId, userDepa
                 title: `/${rawFile.name}`,
                 subtitle: `DOC-${new Date().getFullYear()}-GEN-${Math.floor(100 + Math.random() * 900)}`,
                 description: null,
-                category: 'Document',
+                category: isImage ? 'Image' : 'Document',
                 classification: constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED,
                 version: 'v1.0',
                 size: formatFileSize(rawFile.size),
@@ -2162,6 +2395,8 @@ async function processDataTransferPayload(dataTransfer, targetParentId, userDepa
                 date: 'Just now',
                 isFolder: false,
                 file: rawFile,
+                isImage: isImage,
+                ocrMode: isImage ? 'ocr_pdf' : 'normal_image',
                 tags: [constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL, constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED],
             });
         }

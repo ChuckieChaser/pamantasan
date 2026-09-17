@@ -307,6 +307,30 @@ const DocumentViewerModal = ({
     const handleDownload = async () => {
         try {
             const targetPath = storagePath || resolvedDoc?.url || resolvedDoc?.downloadUrl;
+            const url = downloadUrl || (await storageService.getFileDownloadUrl(targetPath));
+            
+            if (url) {
+                const anchor = document.createElement('a');
+                anchor.href = url;
+                anchor.download = fileName || 'document.pdf';
+                anchor.target = '_blank';
+                anchor.rel = 'noopener noreferrer';
+                document.body.appendChild(anchor);
+                anchor.click();
+                setTimeout(() => {
+                    if (anchor.parentNode) {
+                        anchor.parentNode.removeChild(anchor);
+                    }
+                }, 1000);
+
+                showToast({
+                    type: 'success',
+                    title: 'Download Started',
+                    description: `Downloading "${fileName}".`,
+                });
+                return;
+            }
+
             await storageService.downloadDocument(targetPath, fileName);
             showToast({
                 type: 'success',
@@ -491,18 +515,6 @@ const DocumentViewerModal = ({
                                 </div>
                             )
                         )}
-
-                        {/* DOWNLOAD ACTION: UNIVERSAL */}
-                        <Button
-                            variant="secondary"
-                            size="sm"
-                            leadingIcon={Download}
-                            onClick={handleDownload}
-                            disabled={isLoading}
-                            title="Download file to computer"
-                        >
-                            <span className="hidden sm:inline">Download</span>
-                        </Button>
 
                         {/* OPEN IN NEW TAB (IF PUBLIC/RESOLVED) */}
                         {downloadUrl && (

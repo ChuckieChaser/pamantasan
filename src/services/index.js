@@ -7,3 +7,4 @@ export { coordinatorService } from './coordinatorService';
 export { notificationService } from './notificationService';
 export { auditService } from './auditService';
 export { storageService } from './storageService';
+export { ocrService } from './ocrService';
