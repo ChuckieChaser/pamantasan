@@ -468,11 +468,122 @@ const AppContent = () => {
         }
 
         if (actionKey === 'share') {
-            showToast({
-                type: 'information',
-                title: 'Share Settings',
-                description: `Permissions panel opened for ${item?.name ?? item?.title}.`,
-            });
+            const target = item || selectedItem;
+            if (target) {
+                useDocumentStore.getState().setShareModalDocument(target);
+            }
+            return;
+        }
+
+        if (['approve', 'unapprove', 'reject', 'publish', 'unpublish', 'stash', 'unstash', 'unshare'].includes(actionKey)) {
+            const targetDoc = item || selectedItem;
+            const allShares = useDocumentStore.getState().documentShares || [];
+            let shareRecord = targetDoc?.share;
+
+            if (!shareRecord) {
+                if (actionKey === 'unshare' && (targetDoc?.departmentId || targetDoc?.department)) {
+                    shareRecord = targetDoc;
+                } else if (currentUser?.departmentId) {
+                    shareRecord = allShares.find(
+                        (s) =>
+                            (s.document?.id ?? s.documentId) === targetDoc?.id &&
+                            (s.department?.id ?? s.departmentId) === currentUser.departmentId
+                    );
+                } else {
+                    shareRecord = allShares.find((s) => (s.document?.id ?? s.documentId) === targetDoc?.id);
+                }
+            }
+
+            const shareId = shareRecord?.id;
+            if (!shareId) {
+                showToast({
+                    type: 'error',
+                    title: 'Action Failed',
+                    description: 'No associated departmental share record found for this document.',
+                });
+                return;
+            }
+
+            try {
+                const store = useDocumentStore.getState();
+                const docTitle = targetDoc?.name || targetDoc?.title || 'document';
+
+                if (actionKey === 'approve') {
+                    await store.approveShare(shareId);
+                    showToast({
+                        type: 'success',
+                        title: 'Document Approved',
+                        description: `Approved "${docTitle}" for department director review.`,
+                    });
+                } else if (actionKey === 'unapprove') {
+                    await store.unapproveShare(shareId);
+                    showToast({
+                        type: 'information',
+                        title: 'Approval Revoked',
+                        description: `Reverted "${docTitle}" to pending approval.`,
+                    });
+                } else if (actionKey === 'reject') {
+                    await store.rejectShare(shareId);
+                    showToast({
+                        type: 'warning',
+                        title: 'Document Rejected',
+                        description: `Rejected "${docTitle}" and removed from department view.`,
+                    });
+                    setSelectedItem(null);
+                } else if (actionKey === 'publish') {
+                    await store.publishShare(shareId);
+                    showToast({
+                        type: 'success',
+                        title: 'Document Published',
+                        description: `Published "${docTitle}" to all department members.`,
+                    });
+                } else if (actionKey === 'unpublish') {
+                    await store.unpublishShare(shareId);
+                    showToast({
+                        type: 'information',
+                        title: 'Document Unpublished',
+                        description: `Unpublished "${docTitle}" from department members.`,
+                    });
+                } else if (actionKey === 'stash') {
+                    await store.stashShare(shareId);
+                    showToast({
+                        type: 'information',
+                        title: 'Document Stashed',
+                        description: `Stashed "${docTitle}" at upper management level.`,
+                    });
+                } else if (actionKey === 'unstash') {
+                    await store.unstashShare(shareId);
+                    showToast({
+                        type: 'success',
+                        title: 'Document Unstashed',
+                        description: `Restored "${docTitle}" to approved state.`,
+                    });
+                } else if (actionKey === 'unshare') {
+                    const deptId = shareRecord?.department?.id ?? shareRecord?.departmentId;
+                    if (targetDoc?.isFolder && deptId) {
+                        await store.unshareDocumentRecursive(targetDoc.id, deptId);
+                        showToast({
+                            type: 'success',
+                            title: 'Share Removed',
+                            description: `Removed folder "${docTitle}" and all nested contents from department.`,
+                        });
+                    } else {
+                        await store.unshareDocument(shareId);
+                        showToast({
+                            type: 'success',
+                            title: 'Share Removed',
+                            description: `Removed department share for "${docTitle}".`,
+                        });
+                    }
+                }
+            } catch (err) {
+                console.error(`Failed to execute ${actionKey}:`, err);
+                showToast({
+                    type: 'error',
+                    title: 'Action Failed',
+                    description: err?.message || `Could not complete ${actionKey} action.`,
+                });
+            }
             return;
         }
 

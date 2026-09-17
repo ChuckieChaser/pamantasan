@@ -107,7 +107,7 @@ const ArchivesPage = ({
     // DERIVED VALUES: ARCHIVED ITEMS ONLY
     const archivedItems = useMemo(() => {
         return repositoryItems.filter((item) => {
-            const matchesArchiveState = item.isArchived === true || item.status === constants.DOCUMENT_SHARES_STATUS.STASHED;
+            const matchesArchiveState = Boolean(item.isArchived);
             if (!matchesArchiveState) return false;
             // Internal contents of folders archived as a unit are hidden from root
             return item.directlyArchived !== false;

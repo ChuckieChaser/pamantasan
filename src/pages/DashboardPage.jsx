@@ -258,7 +258,7 @@ const DashboardPage = ({
                 </div>
 
                 <div className="flex items-center gap-3 shrink-0">
-                    {!(currentUser?.role === constants.USERS_ROLE.ADMINISTRATOR || currentUser?.role === constants.USERS_ROLE.COORDINATOR) && (
+                    {!constants.isStaffRole(currentUser?.role) && (
                         <Button
                             variant="secondary"
                             label="Request Document"

@@ -4,12 +4,15 @@ import { createPortal } from 'react-dom';
 import {
     Activity,
     Archive,
+    Check,
     CheckCircle2,
     Download,
     Edit3,
     Eye,
+    EyeOff,
     FileText,
     Folder,
+    Globe,
     Info,
     Layers,
     MessageSquare,
@@ -49,14 +52,17 @@ const Menu = ({
 
     // DERIVED VALUES
     const isFolder = item.isFolder;
-    const isArchived = item.isArchived || item.status === constants.DOCUMENT_SHARES_STATUS.STASHED;
+    const isArchived = Boolean(item.isArchived);
     const isSelfUser = Boolean(
         currentUser && (
             item.id === currentUser.id ||
             (item.universityId && currentUser.universityId === item.universityId)
         )
     );
-    const isStaff = currentUser?.role === constants.USERS_ROLE.ADMINISTRATOR || currentUser?.role === constants.USERS_ROLE.COORDINATOR;
+    const isStaff = constants.isStaffRole(currentUser?.role);
+    const isOfficer = constants.isOfficerRole(currentUser?.role);
+    const isDirector = constants.isDirectorRole(currentUser?.role);
+    const isMember = constants.isMemberRole(currentUser?.role);
 
     // SMART POSITIONING (DYNAMIC MEASUREMENT, AUTO-FLIP & VIEWPORT CLAMPING)
     const [position, setPosition] = useState(() => {
@@ -356,6 +362,232 @@ const Menu = ({
 
             {(resourceName === 'documents' || resourceName === 'archives' || resourceName === 'my_requests') && (() => {
                 const targetType = isFolder ? 'Folder' : 'File';
+
+                // MEMBER ROLE: Open, View Info, View Version, Download
+                if (isMember) {
+                    return (
+                        <>
+                            {!isArchived && (
+                                <button
+                                    type="button"
+                                    onClick={(event) => onActionClick?.(event, 'open', item)}
+                                    className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                >
+                                    {isFolder ? <Folder className={ICON_STYLE} /> : <FileText className={ICON_STYLE} />}
+                                    <span>{`Open ${targetType}`}</span>
+                                </button>
+                            )}
+
+                            <button
+                                type="button"
+                                onClick={(event) => onActionClick?.(event, 'view_information', item)}
+                                className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                            >
+                                <Info className={ICON_STYLE} />
+                                <span>View Information</span>
+                            </button>
+
+                            {!isFolder && (
+                                <button
+                                    type="button"
+                                    onClick={(event) => onActionClick?.(event, 'view_version', item)}
+                                    className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                >
+                                    <Layers className={ICON_STYLE} />
+                                    <span>View Version</span>
+                                </button>
+                            )}
+
+                            <div className="h-px bg-surface-border my-1" />
+
+                            <button
+                                type="button"
+                                onClick={(event) => onActionClick?.(event, 'download', item)}
+                                className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                            >
+                                <Download className={ICON_STYLE} />
+                                <span>{`Download ${targetType}`}</span>
+                            </button>
+                        </>
+                    );
+                }
+
+                // OFFICER ROLE: Approve/Unapprove + Reject (files only), View Info, View Version/Content — NO Download
+                if (isOfficer) {
+                    const isPending = item.status === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL;
+                    return (
+                        <>
+                            {!isArchived && (
+                                <button
+                                    type="button"
+                                    onClick={(event) => onActionClick?.(event, 'open', item)}
+                                    className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                >
+                                    {isFolder ? <Folder className={ICON_STYLE} /> : <FileText className={ICON_STYLE} />}
+                                    <span>{`Open ${targetType}`}</span>
+                                </button>
+                            )}
+
+                            {!isFolder && (
+                                <>
+                                    {isPending ? (
+                                        <button
+                                            type="button"
+                                            onClick={(event) => onActionClick?.(event, 'approve', item)}
+                                            className="flex items-center gap-2 px-3 py-2 rounded text-accent hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                        >
+                                            <Check className={ICON_STYLE} />
+                                            <span>Approve Document</span>
+                                        </button>
+                                    ) : (
+                                        <button
+                                            type="button"
+                                            onClick={(event) => onActionClick?.(event, 'unapprove', item)}
+                                            className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                        >
+                                            <RotateCcw className={ICON_STYLE} />
+                                            <span>Unapprove Document</span>
+                                        </button>
+                                    )}
+
+                                    <button
+                                        type="button"
+                                        onClick={(event) => onActionClick?.(event, 'reject', item)}
+                                        className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
+                                    >
+                                        <XCircle className={ICON_STYLE} />
+                                        <span>Reject Document</span>
+                                    </button>
+                                </>
+                            )}
+
+                            <div className="h-px bg-surface-border my-1" />
+
+                            <button
+                                type="button"
+                                onClick={(event) => onActionClick?.(event, 'view_information', item)}
+                                className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                            >
+                                <Info className={ICON_STYLE} />
+                                <span>View Information</span>
+                            </button>
+
+                            <button
+                                type="button"
+                                onClick={(event) => onActionClick?.(event, isFolder ? 'view_content' : 'view_version', item)}
+                                className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                            >
+                                {isFolder ? <Folder className={ICON_STYLE} /> : <Layers className={ICON_STYLE} />}
+                                <span>{isFolder ? 'View Content' : 'View Version'}</span>
+                            </button>
+
+                            <button
+                                type="button"
+                                onClick={(event) => onActionClick?.(event, 'download', item)}
+                                className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                            >
+                                <Download className={ICON_STYLE} />
+                                <span>{`Download ${targetType}`}</span>
+                            </button>
+                        </>
+                    );
+                }
+
+                // DIRECTOR ROLE: Publish/Unpublish + Stash/Unstash (files only), View Info, View Version/Content — NO Download
+                if (isDirector) {
+                    const isStashed = item.status === constants.DOCUMENT_SHARES_STATUS.STASHED;
+                    const isPublished = item.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED;
+
+                    return (
+                        <>
+                            {!isArchived && (
+                                <button
+                                    type="button"
+                                    onClick={(event) => onActionClick?.(event, 'open', item)}
+                                    className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                >
+                                    {isFolder ? <Folder className={ICON_STYLE} /> : <FileText className={ICON_STYLE} />}
+                                    <span>{`Open ${targetType}`}</span>
+                                </button>
+                            )}
+
+                            {!isFolder && (
+                                <>
+                                    {isPublished ? (
+                                        <button
+                                            type="button"
+                                            onClick={(event) => onActionClick?.(event, 'unpublish', item)}
+                                            className="flex items-center gap-2 px-3 py-2 rounded text-warning hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                        >
+                                            <EyeOff className={ICON_STYLE} />
+                                            <span>Unpublish Document</span>
+                                        </button>
+                                    ) : (
+                                        <button
+                                            type="button"
+                                            onClick={(event) => onActionClick?.(event, 'publish', item)}
+                                            className="flex items-center gap-2 px-3 py-2 rounded text-accent hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                        >
+                                            <Globe className={ICON_STYLE} />
+                                            <span>Publish Document</span>
+                                        </button>
+                                    )}
+
+                                    {isStashed ? (
+                                        <button
+                                            type="button"
+                                            onClick={(event) => onActionClick?.(event, 'unstash', item)}
+                                            className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                        >
+                                            <RotateCcw className={ICON_STYLE} />
+                                            <span>Unstash Document</span>
+                                        </button>
+                                    ) : (
+                                        <button
+                                            type="button"
+                                            onClick={(event) => onActionClick?.(event, 'stash', item)}
+                                            className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                        >
+                                            <Layers className={ICON_STYLE} />
+                                            <span>Stash Document</span>
+                                        </button>
+                                    )}
+                                </>
+                            )}
+
+                            <div className="h-px bg-surface-border my-1" />
+
+                            <button
+                                type="button"
+                                onClick={(event) => onActionClick?.(event, 'view_information', item)}
+                                className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                            >
+                                <Info className={ICON_STYLE} />
+                                <span>View Information</span>
+                            </button>
+
+                            <button
+                                type="button"
+                                onClick={(event) => onActionClick?.(event, isFolder ? 'view_content' : 'view_version', item)}
+                                className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                            >
+                                {isFolder ? <Folder className={ICON_STYLE} /> : <Layers className={ICON_STYLE} />}
+                                <span>{isFolder ? 'View Content' : 'View Version'}</span>
+                            </button>
+
+                            <button
+                                type="button"
+                                onClick={(event) => onActionClick?.(event, 'download', item)}
+                                className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                            >
+                                <Download className={ICON_STYLE} />
+                                <span>{`Download ${targetType}`}</span>
+                            </button>
+                        </>
+                    );
+                }
+
+                // ADMIN & COORDINATOR (STAFF): Open, Share, View Info, View Content/Version, View Share, Edit, Archive/Unarchive, Delete — NO Download
                 return (
                     <>
                         {!isArchived && (

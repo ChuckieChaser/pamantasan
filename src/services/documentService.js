@@ -117,7 +117,7 @@ const documentService = {
         while (queue.length > 0) {
             const currentParent = queue.shift();
             const children = allDocuments.filter(
-                (d) => (d.parent?.id ?? d.parentId) === currentParent
+                (d) => (d.parent?.id ?? d.parentId ?? d.parentFolderId) === currentParent
             );
             for (const child of children) {
                 if (!isArchived) {
@@ -186,7 +186,7 @@ const documentService = {
         while (queue.length > 0) {
             const currentParent = queue.shift();
             const children = allDocuments.filter(
-                (d) => (d.parent?.id ?? d.parentId) === currentParent
+                (d) => (d.parent?.id ?? d.parentId ?? d.parentFolderId) === currentParent
             );
             for (const child of children) {
                 targetIds.push(child.id);

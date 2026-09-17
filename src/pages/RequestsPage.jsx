@@ -133,7 +133,7 @@ const RequestsPage = ({
     // DERIVED VALUES: ACCESS & DATA
     const authUser = useAuthStore((state) => state.currentUser);
     const activeUser = currentUser ?? authUser;
-    const isStaff = activeUser?.role === constants.USERS_ROLE.ADMINISTRATOR || activeUser?.role === constants.USERS_ROLE.COORDINATOR;
+    const isStaff = constants.isStaffRole(activeUser?.role);
     const canCreateRequest = !isStaff;
 
     const formattedDocumentData = useMemo(() => {
@@ -584,12 +584,8 @@ const RequestsPage = ({
                                         ? `${messageUser.firstName} ${messageUser.lastName}`
                                         : 'Institutional Staff';
                                     const isCurrentUser = messageUserId === currentUser?.id;
-                                    const isAdministrativeUser =
-                                        currentUser?.role === constants.USERS_ROLE.ADMINISTRATOR ||
-                                        currentUser?.role === constants.USERS_ROLE.COORDINATOR;
-                                    const isSenderAdministrative =
-                                        messageUser?.role === constants.USERS_ROLE.ADMINISTRATOR ||
-                                        messageUser?.role === constants.USERS_ROLE.COORDINATOR;
+                                    const isAdministrativeUser = constants.isStaffRole(currentUser?.role);
+                                    const isSenderAdministrative = constants.isStaffRole(messageUser?.role);
                                     const isFellowAdmin =
                                         !isCurrentUser &&
                                         isAdministrativeUser &&

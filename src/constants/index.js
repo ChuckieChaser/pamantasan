@@ -191,6 +191,39 @@ const AUDIT_LOGS_ACTION = Object.freeze({
 });
 
 
+// --- ROLE HELPERS ---
+export const isStaffRole = (role) => {
+    if (!role) return false;
+    const r = String(role).trim().toUpperCase();
+    return (
+        r === USERS_ROLE.ADMINISTRATOR ||
+        r === USERS_ROLE.COORDINATOR ||
+        r === 'ADMIN' ||
+        r === 'COORD' ||
+        r.includes('ADMIN') ||
+        r.includes('COORD')
+    );
+};
+
+export const isOfficerRole = (role) => {
+    if (!role) return false;
+    const r = String(role).trim().toUpperCase();
+    return r === USERS_ROLE.OFFICER || r.includes('OFFICER');
+};
+
+export const isDirectorRole = (role) => {
+    if (!role) return false;
+    const r = String(role).trim().toUpperCase();
+    return r === USERS_ROLE.DIRECTOR || r.includes('DIRECTOR');
+};
+
+export const isMemberRole = (role) => {
+    if (!role) return false;
+    const r = String(role).trim().toUpperCase();
+    return r === USERS_ROLE.MEMBER || r.includes('MEMBER');
+};
+
+
 // --- EXPORTS ---
 export const constants = Object.freeze({
     INSTITUTIONAL_CONFIGURATION,
@@ -212,5 +245,10 @@ export const constants = Object.freeze({
     NOTIFICATIONS_ACTION,
     AUDIT_LOGS_ENTITY_TYPE,
     AUDIT_LOGS_ACTION,
+    isStaffRole,
+    isOfficerRole,
+    isDirectorRole,
+    isMemberRole,
 });
+
 

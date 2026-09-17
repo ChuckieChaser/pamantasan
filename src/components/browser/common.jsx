@@ -75,12 +75,12 @@ const renderItemBadge = (item, columnKey) => {
             return <span className="text-text-muted whitespace-nowrap">—</span>;
         }
         const upper = String(item.status).toUpperCase();
-        const variant = (upper.includes('VERIF') || upper.includes('APPROV') || upper.includes('RESOLV') || upper.includes('PUBLISH') || upper.includes('ACTIVE'))
+        const variant = (upper === 'PENDING_APPROVAL' || upper.includes('PENDING'))
+            ? 'warning'
+            : (upper.includes('VERIF') || upper.includes('APPROV') || upper.includes('RESOLV') || upper.includes('PUBLISH') || upper.includes('ACTIVE'))
             ? 'success'
             : (upper.includes('PENDING_SSO') || upper === 'OPEN' || upper.includes('OPEN'))
             ? 'information'
-            : (upper.includes('PENDING') || upper.includes('CONFIDENT'))
-            ? 'warning'
             : (upper.includes('REJECT') || upper.includes('SUSPEND') || upper.includes('RESTRICT'))
             ? 'error'
             : 'neutral';
@@ -118,12 +118,12 @@ const renderItemBadge = (item, columnKey) => {
 
     if (item.status) {
         const upper = String(item.status).toUpperCase();
-        const variant = (upper.includes('VERIF') || upper.includes('APPROV') || upper.includes('RESOLV') || upper.includes('PUBLISH') || upper.includes('ACTIVE'))
+        const variant = (upper === 'PENDING_APPROVAL' || upper.includes('PENDING'))
+            ? 'warning'
+            : (upper.includes('VERIF') || upper.includes('APPROV') || upper.includes('RESOLV') || upper.includes('PUBLISH') || upper.includes('ACTIVE'))
             ? 'success'
             : (upper.includes('PENDING_SSO') || upper === 'OPEN' || upper.includes('OPEN'))
             ? 'information'
-            : (upper.includes('PENDING') || upper.includes('RESTRICT'))
-            ? 'warning'
             : (upper.includes('REJECT') || upper.includes('SUSPEND') || upper.includes('CONFIDENT'))
             ? 'error'
             : 'neutral';

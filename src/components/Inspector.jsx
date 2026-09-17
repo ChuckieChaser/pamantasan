@@ -14,6 +14,8 @@ import {
     Copy,
     Download,
     Edit3,
+    Eye,
+    EyeOff,
     FileCheck,
     FileText,
     FileType,
@@ -21,6 +23,7 @@ import {
     FolderInput,
     FolderOpen,
     FolderTree,
+    Globe,
     HardDrive,
     Hash,
     Inbox,
@@ -180,7 +183,7 @@ const Inspector = ({
         setPreviousItemId(item?.id);
         setActiveTab(normalizeTab(targetTab || item?._targetTab || 'information'));
         setChatInputText('');
-        setStagedAttachment(null);
+        setStagedAttachments([]);
         setIsAttachModalOpen(false);
         setIsEditDepartmentModalOpen(false);
         setIsEditUserModalOpen(false);
@@ -200,7 +203,10 @@ const Inspector = ({
     const { showToast } = useToast();
     const { currentUser: authUser } = useAuth();
     const activeUser = currentUser ?? authUser;
-    const isStaff = activeUser?.role === constants.USERS_ROLE.ADMINISTRATOR || activeUser?.role === constants.USERS_ROLE.COORDINATOR;
+    const isStaff = constants.isStaffRole(activeUser?.role);
+    const isOfficer = constants.isOfficerRole(activeUser?.role);
+    const isDirector = constants.isDirectorRole(activeUser?.role);
+    const isMember = constants.isMemberRole(activeUser?.role);
 
     const allDocuments = useDocumentStore((state) => state.documents);
     const allDocumentVersions = useDocumentStore((state) => state.documentVersions ?? state.versions ?? []);
@@ -217,17 +223,19 @@ const Inspector = ({
 
     // DERIVED VALUES
     const isFolder = Boolean(item?.isFolder);
+    const isUser = Boolean(item?.universityId || item?.email || item?.role);
+    const isDepartment = Boolean(item?.code && !item?.universityId && !isUser);
     const isDocument = Boolean(
-        !isFolder &&
+        !isFolder && !isUser && !isDepartment &&
         (item?.classification ||
             item?.size ||
             item?.sizeBytes ||
             item?.mimeType ||
             item?.version !== undefined ||
-            item?.parentId !== undefined)
+            item?.parentId !== undefined ||
+            item?.name ||
+            item?.title)
     );
-    const isUser = Boolean(item?.universityId || item?.email || item?.role);
-    const isDepartment = Boolean(item?.code && !item?.universityId && !isUser);
 
     // FETCH VERSIONS DYNAMICALLY ON SELECTION
     useEffect(() => {
@@ -464,12 +472,12 @@ const Inspector = ({
     }, [item, isDocument, allDocumentVersions]);
 
     const documentShares = useMemo(() => {
-        if (!item || !isDocument) {
+        if (!item || (!isDocument && !isFolder)) {
             return [];
         }
 
         return allDocumentShares.filter((share) => share.document?.id === item.id || share.documentId === item.id);
-    }, [item, isDocument, allDocumentShares]);
+    }, [item, isDocument, isFolder, allDocumentShares]);
 
     const getFolderChildren = useMemo(() => {
         return (folderId) => {
@@ -1729,10 +1737,24 @@ const Inspector = ({
                                             </div>
                                             <div className="flex items-center justify-between text-xs text-text-muted pt-1 border-t border-surface-border">
                                                 <span>
-                                                    Shared by {sharer?.firstName ?? 'Dean'}{' '}
+                                                    Shared by {sharer?.firstName ?? 'Staff'}{' '}
                                                     {sharer?.lastName ?? ''}
                                                 </span>
-                                                <span>{formatTimestamp(shareItem.createdAt)}</span>
+                                                <div className="flex items-center gap-2">
+                                                    <span>{formatTimestamp(shareItem.createdAt)}</span>
+                                                    {isStaff && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                handleActionClick('unshare', shareItem);
+                                                            }}
+                                                            className="text-error hover:underline cursor-pointer font-medium ml-1"
+                                                        >
+                                                            Unshare
+                                                        </button>
+                                                    )}
+                                                </div>
                                             </div>
                                         </div>
                                     );
@@ -2592,40 +2614,181 @@ const Inspector = ({
             </div>
 
             <div className="pt-3 border-t border-surface-border shrink-0">
-                {(isDocument || isFolder) && (
-                    <div className={`grid ${item.isArchived ? 'grid-cols-2' : 'grid-cols-3'} gap-2 w-full`}>
-                        {!item.isArchived && (
+                {(isDocument || isFolder) && (() => {
+                    // 1. MEMBER ROLE: Download only
+                    if (isMember) {
+                        return (
+                            <div className="w-full">
+                                <Button
+                                    variant="secondary"
+                                    leadingIcon={Download}
+                                    isLoading={activeActionLoading === 'download'}
+                                    isDisabled={Boolean(activeActionLoading)}
+                                    onClick={() => handleActionClick('download')}
+                                    className="w-full justify-center truncate px-2"
+                                >
+                                    Download
+                                </Button>
+                            </div>
+                        );
+                    }
+
+                    // 2. OFFICER ROLE: Approve/Unapprove + Reject (files only; folders get Download)
+                    if (isOfficer) {
+                        if (isFolder) {
+                            return (
+                                <div className="w-full">
+                                    <Button
+                                        variant="secondary"
+                                        leadingIcon={Download}
+                                        isLoading={activeActionLoading === 'download'}
+                                        isDisabled={Boolean(activeActionLoading)}
+                                        onClick={() => handleActionClick('download')}
+                                        className="w-full justify-center truncate px-2"
+                                    >
+                                        Download
+                                    </Button>
+                                </div>
+                            );
+                        }
+                        const isPending = item.status === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL;
+                        return (
+                            <div className="grid grid-cols-2 gap-2 w-full">
+                                {isPending ? (
+                                    <Button
+                                        variant="primary"
+                                        leadingIcon={CheckCircle2}
+                                        isLoading={activeActionLoading === 'approve'}
+                                        isDisabled={Boolean(activeActionLoading)}
+                                        onClick={() => handleActionClick('approve')}
+                                        className="justify-center truncate px-2"
+                                    >
+                                        Approve
+                                    </Button>
+                                ) : (
+                                    <Button
+                                        variant="secondary"
+                                        leadingIcon={RotateCcw}
+                                        isLoading={activeActionLoading === 'unapprove'}
+                                        isDisabled={Boolean(activeActionLoading)}
+                                        onClick={() => handleActionClick('unapprove')}
+                                        className="justify-center truncate px-2"
+                                    >
+                                        Unapprove
+                                    </Button>
+                                )}
+                                <Button
+                                    variant="destructive"
+                                    leadingIcon={XCircle}
+                                    isLoading={activeActionLoading === 'reject'}
+                                    isDisabled={Boolean(activeActionLoading)}
+                                    onClick={() => handleActionClick('reject')}
+                                    className="justify-center truncate px-2"
+                                >
+                                    Reject
+                                </Button>
+                            </div>
+                        );
+                    }
+
+                    // 3. DIRECTOR ROLE: Publish/Unpublish + Stash/Unstash (files only; folders get Download)
+                    if (isDirector) {
+                        if (isFolder) {
+                            return (
+                                <div className="w-full">
+                                    <Button
+                                        variant="secondary"
+                                        leadingIcon={Download}
+                                        isLoading={activeActionLoading === 'download'}
+                                        isDisabled={Boolean(activeActionLoading)}
+                                        onClick={() => handleActionClick('download')}
+                                        className="w-full justify-center truncate px-2"
+                                    >
+                                        Download
+                                    </Button>
+                                </div>
+                            );
+                        }
+                        const isPublished = item.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED;
+                        const isStashed = item.status === constants.DOCUMENT_SHARES_STATUS.STASHED;
+                        return (
+                            <div className="grid grid-cols-2 gap-2 w-full">
+                                {isPublished ? (
+                                    <Button
+                                        variant="destructive"
+                                        leadingIcon={EyeOff}
+                                        isLoading={activeActionLoading === 'unpublish'}
+                                        isDisabled={Boolean(activeActionLoading)}
+                                        onClick={() => handleActionClick('unpublish')}
+                                        className="justify-center truncate px-2"
+                                    >
+                                        Unpublish
+                                    </Button>
+                                ) : (
+                                    <Button
+                                        variant="primary"
+                                        leadingIcon={Globe}
+                                        isLoading={activeActionLoading === 'publish'}
+                                        isDisabled={Boolean(activeActionLoading)}
+                                        onClick={() => handleActionClick('publish')}
+                                        className="justify-center truncate px-2"
+                                    >
+                                        Publish
+                                    </Button>
+                                )}
+                                {isStashed ? (
+                                    <Button
+                                        variant="secondary"
+                                        leadingIcon={RotateCcw}
+                                        isLoading={activeActionLoading === 'unstash'}
+                                        isDisabled={Boolean(activeActionLoading)}
+                                        onClick={() => handleActionClick('unstash')}
+                                        className="justify-center truncate px-2"
+                                    >
+                                        Unstash
+                                    </Button>
+                                ) : (
+                                    <Button
+                                        variant="secondary"
+                                        leadingIcon={Layers}
+                                        isLoading={activeActionLoading === 'stash'}
+                                        isDisabled={Boolean(activeActionLoading)}
+                                        onClick={() => handleActionClick('stash')}
+                                        className="justify-center truncate px-2"
+                                    >
+                                        Stash
+                                    </Button>
+                                )}
+                            </div>
+                        );
+                    }
+
+                    // 4. ADMIN & COORDINATOR (STAFF): Share + Delete (no Download)
+                    return (
+                        <div className="grid grid-cols-2 gap-2 w-full">
+                            {!item.isArchived && (
+                                <Button
+                                    variant="primary"
+                                    leadingIcon={Share2}
+                                    onClick={() => handleActionClick('share')}
+                                    className="justify-center truncate px-2"
+                                >
+                                    Share
+                                </Button>
+                            )}
                             <Button
-                                variant="primary"
-                                leadingIcon={Share2}
-                                onClick={() => handleActionClick('share')}
-                                className="justify-center truncate px-2"
+                                variant="destructive"
+                                leadingIcon={Trash2}
+                                isLoading={activeActionLoading === 'delete'}
+                                isDisabled={Boolean(activeActionLoading)}
+                                onClick={() => handleActionClick('delete')}
+                                className={`justify-center truncate px-2 ${item.isArchived ? 'col-span-2' : ''}`}
                             >
-                                Share
+                                Delete
                             </Button>
-                        )}
-                        <Button
-                            variant="secondary"
-                            leadingIcon={Download}
-                            isLoading={activeActionLoading === 'download'}
-                            isDisabled={Boolean(activeActionLoading)}
-                            onClick={() => handleActionClick('download')}
-                            className="justify-center truncate px-2"
-                        >
-                            Download
-                        </Button>
-                        <Button
-                            variant="destructive"
-                            leadingIcon={Archive}
-                            isLoading={activeActionLoading === 'archive' || activeActionLoading === 'restore'}
-                            isDisabled={Boolean(activeActionLoading)}
-                            onClick={() => handleActionClick(item.isArchived ? 'restore' : 'archive')}
-                            className="justify-center truncate px-2"
-                        >
-                            {item.isArchived ? 'Unarchive' : 'Archive'}
-                        </Button>
-                    </div>
-                )}
+                        </div>
+                    );
+                })()}
 
                 {isUser && (
                     <div className="grid grid-cols-2 gap-2 w-full">
