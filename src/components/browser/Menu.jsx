@@ -59,6 +59,7 @@ const Menu = ({
             (item.universityId && currentUser.universityId === item.universityId)
         )
     );
+    const isAdmin = constants.isAdminRole(currentUser?.role);
     const isStaff = constants.isStaffRole(currentUser?.role);
     const isOfficer = constants.isOfficerRole(currentUser?.role);
     const isDirector = constants.isDirectorRole(currentUser?.role);
@@ -328,7 +329,7 @@ const Menu = ({
                         <Eye className={ICON_STYLE} />
                         <span>Review Payload Details</span>
                     </button>
-                    {item.status === constants.COORDINATOR_REQUESTS_STATUS.PENDING && (
+                    {isAdmin && item.status === constants.COORDINATOR_REQUESTS_STATUS.PENDING && (
                         <>
                             <button
                                 type="button"
@@ -348,15 +349,19 @@ const Menu = ({
                             </button>
                         </>
                     )}
-                    <div className="h-px bg-surface-border my-1" />
-                    <button
-                        type="button"
-                        onClick={(event) => onActionClick?.(event, 'delete', item)}
-                        className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
-                    >
-                        <Trash2 className={ICON_STYLE} />
-                        <span>Delete Request</span>
-                    </button>
+                    {!isAdmin && (
+                        <>
+                            <div className="h-px bg-surface-border my-1" />
+                            <button
+                                type="button"
+                                onClick={(event) => onActionClick?.(event, 'delete', item)}
+                                className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
+                            >
+                                <Trash2 className={ICON_STYLE} />
+                                <span>Delete Request</span>
+                            </button>
+                        </>
+                    )}
                 </>
             )}
 

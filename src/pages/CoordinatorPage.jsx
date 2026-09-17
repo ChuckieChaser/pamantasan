@@ -16,13 +16,15 @@ import {
     Modal,
     formatDateTime,
 } from '../components';
-import { useToast } from '../hooks';
+import { useToast, useAuth } from '../hooks';
 import {
     useCoordinatorStore,
     useDepartmentStore,
     useUserStore,
+    useAuthStore,
 } from '../stores';
 import { constants } from '../constants';
+import { coordinatorApprovalService } from '../services';
 
 
 // --- CONFIGURATIONS ---
@@ -58,6 +60,10 @@ const CoordinatorPage = ({
 }) => {
     // STATES
     const [selectedRequestItem, setSelectedRequestItem] = useState(null);
+    const { currentUser: authUser } = useAuth();
+    const storeUser = useAuthStore((state) => state.currentUser);
+    const activeUser = currentUser ?? authUser ?? storeUser ?? useAuthStore.getState().currentUser;
+    const isAdmin = constants.isAdminRole(activeUser?.role);
 
     // MODAL STATES
     const [viewingCoordinatorRequest, setViewingCoordinatorRequest] = useState(null);
@@ -89,9 +95,32 @@ const CoordinatorPage = ({
         fetchDepartments?.().catch(() => {});
     }, [fetchCoordinatorRequests, fetchUsers, fetchDepartments]);
 
+    // LISTEN FOR EXTERNAL DELETE TRIGGER (E.G. FROM INSPECTOR QUICK ACTION)
+    useEffect(() => {
+        const handleDeleteCoordinatorRequestEvent = (event) => {
+            if (event.detail) {
+                const targetRequest = (coordinatorRequests || []).find((r) => r.id === event.detail.id) ?? event.detail;
+                setDeletingRequestItem(targetRequest);
+            }
+        };
+        window.addEventListener('pamantasan:delete-coordinator-request', handleDeleteCoordinatorRequestEvent);
+        return () => window.removeEventListener('pamantasan:delete-coordinator-request', handleDeleteCoordinatorRequestEvent);
+    }, [coordinatorRequests]);
+
     // DERIVED VALUES: DATA
     const formattedCoordinatorData = useMemo(() => {
-        return coordinatorRequests.map((request) => {
+        const activeId = activeUser?.id ?? currentUser?.id;
+        const visibleRequests = isAdmin
+            ? coordinatorRequests
+            : coordinatorRequests.filter((request) => {
+                if (!request) return false;
+                const reqId = typeof request.requester === 'object'
+                    ? request.requester?.id
+                    : (request.requesterId ?? request.requester);
+                return Boolean(activeId && reqId && String(reqId) === String(activeId));
+            });
+
+        return visibleRequests.map((request) => {
             const requesterId = typeof request.requester === 'object' ? request.requester?.id : (request.requesterId ?? request.requester);
             const requester = users.find((user) => user.id === requesterId);
             const department = departments.find((dept) => dept.id === requester?.departmentId);
@@ -105,10 +134,27 @@ const CoordinatorPage = ({
                 ? formatDateTime(createdAtDate)
                 : 'Recent';
 
+            const dataPayload = typeof request.data === 'string' ? JSON.parse(request.data || '{}') : (request.data || {});
+            let displayTitle = actionFormatted;
+            let displayDescription = `Coordinator request for ${actionFormatted}`;
+
+            if (request.action === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_ATTACH || request.action === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_ATTACH) {
+                const count = Array.isArray(dataPayload.attachments) ? dataPayload.attachments.length : 1;
+                displayTitle = 'DOCUMENT ATTACHMENT';
+                displayDescription = `Attach ${count} file${count === 1 ? '' : 's'} to "${dataPayload.documentRequestSubject || 'Document Request'}": "${dataPayload.message || ''}"`;
+            } else if (request.action === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_RESOLVE || request.action === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_REJECT) {
+                displayTitle = 'DOCUMENT RESOLUTION';
+                const isResolve = request.action === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_RESOLVE;
+                displayDescription = `Mark document request "${dataPayload.subject || dataPayload.documentRequestSubject || 'Document Request'}" as ${isResolve ? 'Resolved' : 'Rejected'}`;
+            } else if (request.action === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_REOPEN) {
+                displayTitle = 'DOCUMENT REOPEN';
+                displayDescription = `Reopen document request "${dataPayload.subject || dataPayload.documentRequestSubject || 'Document Request'}" (Status to Open)`;
+            }
+
             return {
                 ...request,
                 id: request.id,
-                title: actionFormatted,
+                title: displayTitle,
                 action: request.action,
                 requesterId: requesterId,
                 requesterName,
@@ -119,14 +165,14 @@ const CoordinatorPage = ({
                 data: request.data,
                 rejectionReason: request.rejectionReason ?? null,
                 metadata: `${requesterName} (${departmentCode})`,
-                description: `Coordinator request for ${actionFormatted}: ${JSON.stringify(request.data)}`,
+                description: displayDescription,
                 createdAt: createdAtDate,
                 updatedAt: updatedAtDate,
                 date: formattedDate,
                 badge: request.status,
             };
         });
-    }, [coordinatorRequests, users, departments]);
+    }, [coordinatorRequests, users, departments, isAdmin, activeUser?.id]);
 
     // DERIVED SELECTION: Stays reactive to store updates and formatted data
     const activeSelectedRequest = useMemo(() => {
@@ -139,8 +185,8 @@ const CoordinatorPage = ({
                 _targetTab: selectedItem?._targetTab ?? selectedRequestItem?._targetTab ?? 'information',
             };
         }
-        return selectedItem ?? selectedRequestItem;
-    }, [selectedItem, selectedRequestItem, formattedCoordinatorData]);
+        return isAdmin ? (selectedItem ?? selectedRequestItem) : null;
+    }, [selectedItem, selectedRequestItem, formattedCoordinatorData, isAdmin]);
 
     // HANDLERS
     const handleSelectRequest = (item, targetTab = 'information') => {
@@ -155,19 +201,23 @@ const CoordinatorPage = ({
 
     const handleApproveCoordinatorRequest = async (requestId) => {
         try {
-            const activeUserId = currentUser?.id;
+            const activeUserId = activeUser?.id;
             if (!activeUserId) {
                 throw new Error('Authentication required.');
             }
-            const updated = await updateCoordinatorRequest(requestId, {
-                reviewerId: activeUserId,
-                status: constants.COORDINATOR_REQUESTS_STATUS.APPROVED,
-            });
+            if (!isAdmin) {
+                throw new Error('Only administrators can approve coordinator requests.');
+            }
+            const targetReq = coordinatorRequests.find((r) => r.id === requestId) ?? viewingCoordinatorRequest ?? activeSelectedRequest;
+            if (!targetReq) {
+                throw new Error('Request not found.');
+            }
+            const updated = await coordinatorApprovalService.executeApprovedRequest(targetReq, activeUser);
 
             showToast({
                 type: 'success',
-                title: 'Request Approved',
-                description: 'Coordinator action approved and executed with administrative privileges.',
+                title: 'Request Approved & Executed',
+                description: `Action "${(targetReq.action ?? '').replace(/_/g, ' ')}" approved and executed with administrative privileges.`,
             });
 
             setViewingCoordinatorRequest(null);
@@ -197,27 +247,24 @@ const CoordinatorPage = ({
         }
 
         try {
-            const activeUserId = currentUser?.id;
+            const activeUserId = activeUser?.id;
             if (!activeUserId) {
                 throw new Error('Authentication required.');
             }
-            const updated = await updateCoordinatorRequest(rejectingCoordinatorRequest.id, {
-                reviewerId: activeUserId,
-                status: constants.COORDINATOR_REQUESTS_STATUS.REJECTED,
-                rejectionReason: rejectionReason.trim() || 'Request rejected by Administrator.',
-            });
+            if (!isAdmin) {
+                throw new Error('Only administrators can reject coordinator requests.');
+            }
+            await coordinatorApprovalService.rejectCoordinatorRequest(rejectingCoordinatorRequest);
 
             showToast({
                 type: 'success',
-                title: 'Request Rejected',
-                description: 'Coordinator action rejected with reason recorded.',
+                title: 'Request Rejected & Removed',
+                description: 'Coordinator action rejected and removed.',
             });
 
             if (activeSelectedRequest?.id === rejectingCoordinatorRequest.id) {
-                const targetTab = activeSelectedRequest?._targetTab ?? 'information';
-                const nextItem = { ...activeSelectedRequest, ...updated, status: constants.COORDINATOR_REQUESTS_STATUS.REJECTED, _targetTab: targetTab };
-                setSelectedRequestItem(nextItem);
-                onSelectRequest?.(nextItem, targetTab);
+                setSelectedRequestItem(null);
+                onSelectRequest?.(null);
             }
 
             setRejectingCoordinatorRequest(null);
@@ -285,8 +332,11 @@ const CoordinatorPage = ({
         <Container variant="page" className={`flex flex-col gap-6 ${className ?? ''}`} {...props}>
             <Browser
                 resourceName="coordinator_requests"
-                title="Coordinator Requests"
-                description="Administrator review and governance queue for departmental sharing and metadata actions."
+                title={isAdmin ? "Coordinator Requests" : "My Requests"}
+                description={isAdmin
+                    ? "Administrator review and governance queue for departmental sharing and metadata actions."
+                    : "Track the status of your actions pending administrator review and approval."
+                }
                 data={formattedCoordinatorData}
                 columns={COORDINATOR_COLUMNS}
                 sortOptions={COORDINATOR_SORT_OPTIONS}
@@ -319,7 +369,7 @@ const CoordinatorPage = ({
                                 onClick={() => setViewingCoordinatorRequest(null)}
                                 label="Close"
                             />
-                            {viewingCoordinatorRequest.status === constants.COORDINATOR_REQUESTS_STATUS.PENDING && (
+                            {viewingCoordinatorRequest.status === constants.COORDINATOR_REQUESTS_STATUS.PENDING && isAdmin && (
                                 <>
                                     <Button
                                         variant="destructive"
@@ -336,6 +386,17 @@ const CoordinatorPage = ({
                                         label="Approve & Execute"
                                     />
                                 </>
+                            )}
+                            {!isAdmin && (
+                                <Button
+                                    variant="destructive"
+                                    onClick={() => {
+                                        const requestToDelete = viewingCoordinatorRequest;
+                                        setViewingCoordinatorRequest(null);
+                                        setDeletingRequestItem(requestToDelete);
+                                    }}
+                                    label="Delete Request"
+                                />
                             )}
                         </div>
                     }
@@ -358,9 +419,34 @@ const CoordinatorPage = ({
 
                         <div className="flex flex-col gap-2">
                             <span className="text-xs font-semibold text-text-muted">Payload / Action Details:</span>
-                            <pre className="p-3 rounded-lg bg-surface border border-surface-border text-xs text-text overflow-x-auto">
-                                {JSON.stringify(viewingCoordinatorRequest.data, null, 2)}
-                            </pre>
+                            <div className="p-3 rounded-lg bg-surface border border-surface-border text-xs text-text overflow-x-auto flex flex-col gap-1.5 max-h-60 overflow-y-auto">
+                                {typeof viewingCoordinatorRequest.data === 'object' && viewingCoordinatorRequest.data !== null ? (
+                                    Object.entries(viewingCoordinatorRequest.data).map(([k, v]) => (
+                                        <div key={k} className="flex items-center justify-between gap-2 py-0.5 border-b border-surface-border/50">
+                                            <span className="font-semibold text-text-muted capitalize shrink-0">{k.replace(/_/g, ' ')}:</span>
+                                            {k === 'attachments' && Array.isArray(v) ? (
+                                                <div className="flex flex-col gap-0.5 items-end">
+                                                    {v.map((att, idx) => (
+                                                        <span key={idx} className="text-right text-text font-medium truncate">
+                                                            📎 {att.name || att.title || `Document #${idx + 1}`}
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                            ) : (
+                                                <span className="font-medium text-text text-right font-mono truncate">
+                                                    {typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v ?? '—')}
+                                                </span>
+                                            )}
+                                        </div>
+                                    ))
+                                ) : (
+                                    <pre className="text-xs text-text overflow-x-auto">
+                                        {typeof viewingCoordinatorRequest.data === 'string'
+                                            ? viewingCoordinatorRequest.data
+                                            : JSON.stringify(viewingCoordinatorRequest.data, null, 2)}
+                                    </pre>
+                                )}
+                            </div>
                         </div>
                     </div>
                 </Modal>

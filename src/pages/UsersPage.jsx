@@ -24,9 +24,9 @@ import {
     formatDateTime,
     resolveUserAvatar,
 } from '../components';
-import { useToast } from '../hooks';
-import { useUserStore, useDepartmentStore, useAuthStore } from '../stores';
-import { storageService, authService } from '../services';
+import { useToast, useAuth } from '../hooks';
+import { useUserStore, useDepartmentStore, useAuthStore, useCoordinatorStore } from '../stores';
+import { storageService, authService, coordinatorApprovalService } from '../services';
 import { constants } from '../constants';
 
 
@@ -61,6 +61,7 @@ const RMO_DEPARTMENT_RAW = 'd0000001000040008000000000000001';
 
 // --- COMPONENTS ---
 const UsersPage = ({
+    currentUser: propUser = null,
     onSelectUser = null,
     className,
     ...props
@@ -126,7 +127,10 @@ const UsersPage = ({
             setFormDepartmentId(resolvedRmoId);
         }
     };
-    const currentUser = useAuthStore((state) => state.currentUser);
+    const { currentUser: authUser } = useAuth();
+    const storeUser = useAuthStore((state) => state.currentUser);
+    const currentUser = propUser ?? authUser ?? storeUser ?? useAuthStore.getState().currentUser;
+    const isCoordinator = constants.isCoordinatorRole(currentUser?.role);
 
     // EFFECTS
     const [avatarVersion, setAvatarVersion] = useState(0);
@@ -306,6 +310,38 @@ const UsersPage = ({
             const targetEmail = formEmail.trim().toLowerCase();
             const tempPassword = targetUid;
 
+            if (isCoordinator) {
+                const userPayload = {
+                    universityId: targetUid,
+                    password: tempPassword,
+                    firstName: formFirstName.trim(),
+                    middleName: formMiddleName.trim() || null,
+                    lastName: formLastName.trim(),
+                    email: targetEmail,
+                    departmentId: finalDepartmentId,
+                    role: formRole,
+                    status: constants.USERS_STATUS.PENDING_PASSWORD,
+                    avatarPath: uploadedAvatarPath,
+                };
+
+                const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
+                await coordinatorApprovalService.submitCoordinatorRequest({
+                    action: constants.COORDINATOR_REQUESTS_ACTION.USER_CREATE,
+                    requesterId,
+                    data: userPayload,
+                });
+                useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
+
+                const fullName = `${formFirstName.trim()} ${formLastName.trim()}`.trim();
+                showToast({
+                    type: 'success',
+                    title: 'Request Submitted',
+                    description: `User registration request for "${fullName}" sent for Administrator approval.`,
+                });
+                handleCloseModals();
+                return;
+            }
+
             const minTimer = new Promise((resolve) => setTimeout(resolve, 500));
             const [newUser] = await Promise.all([
                 insertUser({
@@ -407,6 +443,45 @@ const UsersPage = ({
                 uploadedAvatarPath = uploadResult.path;
             }
 
+            if (isCoordinator) {
+                const userPayload = {
+                    userId: editingUser.id,
+                    old: {
+                        firstName: editingUser.firstName,
+                        middleName: editingUser.middleName,
+                        lastName: editingUser.lastName,
+                        email: editingUser.email,
+                        role: editingUser.role,
+                        departmentId: editingUser.departmentId,
+                    },
+                    new: {
+                        firstName: formFirstName.trim(),
+                        middleName: formMiddleName.trim() || null,
+                        lastName: formLastName.trim(),
+                        email: formEmail.trim().toLowerCase(),
+                        departmentId: finalDepartmentId,
+                        role: formRole,
+                        avatarPath: uploadedAvatarPath,
+                    },
+                };
+
+                const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
+                await coordinatorApprovalService.submitCoordinatorRequest({
+                    action: constants.COORDINATOR_REQUESTS_ACTION.USER_UPDATE,
+                    requesterId,
+                    data: userPayload,
+                });
+                useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
+
+                showToast({
+                    type: 'success',
+                    title: 'Request Submitted',
+                    description: `Profile update request for "${editingUser.universityId}" sent for Administrator approval.`,
+                });
+                handleCloseModals();
+                return;
+            }
+
             const minTimer = new Promise((resolve) => setTimeout(resolve, 500));
             const [updated] = await Promise.all([
                 updateUser(editingUser.id, {
@@ -474,6 +549,31 @@ const UsersPage = ({
             return;
         }
 
+        if (isCoordinator) {
+            const userPayload = {
+                userId: suspendingUser.id,
+                universityId: suspendingUser.universityId,
+                name: `${suspendingUser.firstName} ${suspendingUser.lastName}`.trim(),
+                status: newStatus,
+            };
+
+            const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
+            await coordinatorApprovalService.submitCoordinatorRequest({
+                action: constants.COORDINATOR_REQUESTS_ACTION.USER_SUSPEND,
+                requesterId,
+                data: userPayload,
+            });
+            useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
+
+            showToast({
+                type: 'success',
+                title: 'Request Submitted',
+                description: `User status change request for "${suspendingUser.universityId}" sent for Administrator approval.`,
+            });
+            setSuspendingUser(null);
+            return;
+        }
+
         setIsSuspendingLoading(true);
 
         try {
@@ -512,6 +612,30 @@ const UsersPage = ({
 
     const handleDeleteUser = async () => {
         if (!deletingUser) {
+            return;
+        }
+
+        if (isCoordinator) {
+            const userPayload = {
+                userId: deletingUser.id,
+                universityId: deletingUser.universityId,
+                name: `${deletingUser.firstName} ${deletingUser.lastName}`.trim(),
+            };
+
+            const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
+            await coordinatorApprovalService.submitCoordinatorRequest({
+                action: constants.COORDINATOR_REQUESTS_ACTION.USER_DELETE,
+                requesterId,
+                data: userPayload,
+            });
+            useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
+
+            showToast({
+                type: 'success',
+                title: 'Request Submitted',
+                description: `User deletion request for "${deletingUser.universityId}" sent for Administrator approval.`,
+            });
+            handleCloseModals();
             return;
         }
 

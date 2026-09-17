@@ -42,14 +42,22 @@ import {
     Avatar,
     resolveUserAvatar,
     formatDateTime,
+    getMimeTypeFromFilename,
 } from '../components';
-import { useToast } from '../hooks';
+import { useToast, useAuth } from '../hooks';
 import { constants } from '../constants';
-import { useDocumentStore, useDepartmentStore, useUserStore } from '../stores';
+import {
+    useDocumentStore,
+    useDepartmentStore,
+    useUserStore,
+    useCoordinatorStore,
+    useAuthStore,
+} from '../stores';
 import {
     storageService,
     documentService,
     aiService,
+    coordinatorApprovalService,
 } from '../services';
 
 
@@ -59,7 +67,6 @@ const DOCUMENT_COLUMNS = [
     { key: 'classification', label: 'Classification' },
     { key: 'version', label: 'Version' },
     { key: 'size', label: 'Size' },
-    { key: 'status', label: 'Status' },
     { key: 'date', label: 'Last Modified' },
 ];
 
@@ -115,12 +122,18 @@ const INITIAL_BREADCRUMBS = [
 
 // --- COMPONENTS ---
 const DocumentsPage = ({
-    currentUser = null,
+    currentUser: propUser = null,
     onUploadDocument = null,
     onSelectDocument,
     className,
     ...props
 }) => {
+    // AUTH RESOLUTION
+    const { currentUser: authUser } = useAuth();
+    const storeUser = useAuthStore((state) => state.currentUser);
+    const currentUser = propUser ?? authUser ?? storeUser ?? useAuthStore.getState().currentUser;
+    const isCoordinator = constants.isCoordinatorRole(currentUser?.role);
+
     // REFS
     const fileInputReference = useRef(null);
 
@@ -369,6 +382,12 @@ const DocumentsPage = ({
         return () => window.removeEventListener('pamantasan:archive-document', handleArchiveDocEvent);
     }, [documents]);
 
+    useEffect(() => {
+        if (isCreateModalOpen) {
+            setIsPageDragActive(false);
+        }
+    }, [isCreateModalOpen]);
+
     const handleOpenCreateModal = () => {
         setStagedDroppedItems([]);
         setFileError('');
@@ -601,11 +620,42 @@ const DocumentsPage = ({
 
         setIsSavingEdit(true);
         try {
+            if (isCoordinator) {
+                const docPayload = {
+                    documentId: editItem.id,
+                    documentTitle: editFormName.trim(),
+                    isFolder: Boolean(editItem.isFolder),
+                    new: {
+                        name: editFormName.trim(),
+                        comment: editFormComment.trim() || null,
+                        summary: editItem.isFolder ? null : (editFormSummary.trim() || null),
+                        classification: editItem.isFolder ? null : editFormClassification,
+                    },
+                };
+
+                const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
+                await coordinatorApprovalService.submitCoordinatorRequest({
+                    action: constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_UPDATE,
+                    requesterId,
+                    data: docPayload,
+                });
+                useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
+
+                showToast({
+                    type: 'success',
+                    title: 'Request Submitted',
+                    description: `Edit request for "${editFormName.trim()}" sent for Administrator approval.`,
+                });
+                setIsEditModalOpen(false);
+                return;
+            }
+
             await useDocumentStore.getState().updateDocument(editItem.id, {
                 name: editFormName.trim(),
                 comment: editFormComment.trim() || null,
             });
 
+            let updatedMimeType = editItem.mimeType;
             if (!editItem.isFolder) {
                 const vers = (documentVersions || []).filter(
                     (v) => (v.document?.id ?? v.documentId) === editItem.id
@@ -614,10 +664,13 @@ const DocumentsPage = ({
                     ? [...vers].sort((a, b) => b.version - a.version)[0]
                     : null;
                 if (latestVer) {
+                    const derivedMimeType = getMimeTypeFromFilename(editFormName.trim());
+                    updatedMimeType = derivedMimeType;
                     await useDocumentStore.getState().updateDocumentVersion(latestVer.id, {
                         summary: editFormSummary.trim() || null,
                         classification: editFormClassification,
                         changeSummary: 'Updated metadata via editor',
+                        ...(derivedMimeType ? { mimeType: derivedMimeType } : {}),
                     });
                 }
             }
@@ -633,6 +686,7 @@ const DocumentsPage = ({
                 description: editItem.isFolder ? (editFormComment.trim() || null) : (editFormSummary.trim() || null),
                 summary: editItem.isFolder ? null : (editFormSummary.trim() || null),
                 classification: editItem.isFolder ? '—' : editFormClassification,
+                mimeType: editItem.isFolder ? undefined : updatedMimeType,
                 updatedAt: timestamp,
                 date: formatDateTime(timestamp),
             };
@@ -936,6 +990,30 @@ const DocumentsPage = ({
 
     const performRestoreItem = async (item) => {
         try {
+            if (isCoordinator) {
+                const restorePayload = {
+                    documentId: item.id,
+                    documentTitle: item.title || item.name,
+                    isArchived: false,
+                    isFolder: Boolean(item.isFolder),
+                };
+
+                const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
+                await coordinatorApprovalService.submitCoordinatorRequest({
+                    action: constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_UNARCHIVE,
+                    requesterId,
+                    data: restorePayload,
+                });
+                useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
+
+                showToast({
+                    type: 'success',
+                    title: 'Request Submitted',
+                    description: `Restore request for "${item.title || item.name}" sent for Administrator approval.`,
+                });
+                return;
+            }
+
             await useDocumentStore.getState().archiveDocument(item.id, false);
             setLocalCreatedItems((previousItems) =>
                 previousItems.map((repositoryItem) => {
@@ -1025,6 +1103,31 @@ const DocumentsPage = ({
         }
         setIsArchivingItem(true);
         try {
+            if (isCoordinator) {
+                const archivePayload = {
+                    documentId: archivingItem.id,
+                    documentTitle: archivingItem.title || archivingItem.name,
+                    isArchived: true,
+                    isFolder: Boolean(archivingItem.isFolder),
+                };
+
+                const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
+                await coordinatorApprovalService.submitCoordinatorRequest({
+                    action: constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_ARCHIVE,
+                    requesterId,
+                    data: archivePayload,
+                });
+                useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
+
+                showToast({
+                    type: 'success',
+                    title: 'Request Submitted',
+                    description: `Archive request for "${archivingItem.title || archivingItem.name}" sent for Administrator approval.`,
+                });
+                setArchivingItem(null);
+                return;
+            }
+
             await useDocumentStore.getState().archiveDocument(archivingItem.id, true);
             setLocalCreatedItems((previousItems) =>
                 previousItems.map((repositoryItem) => {
@@ -1067,6 +1170,30 @@ const DocumentsPage = ({
         }
         setIsDeletingItemLoading(true);
         try {
+            if (isCoordinator) {
+                const deletePayload = {
+                    documentId: deletingItem.id,
+                    documentTitle: deletingItem.title || deletingItem.name,
+                    isFolder: Boolean(deletingItem.isFolder),
+                };
+
+                const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
+                await coordinatorApprovalService.submitCoordinatorRequest({
+                    action: constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_DELETE,
+                    requesterId,
+                    data: deletePayload,
+                });
+                useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
+
+                showToast({
+                    type: 'success',
+                    title: 'Request Submitted',
+                    description: `Delete request for "${deletingItem.title || deletingItem.name}" sent for Administrator approval.`,
+                });
+                setDeletingItem(null);
+                return;
+            }
+
             await useDocumentStore.getState().deleteDocument(deletingItem.id);
             setLocalCreatedItems((previousItems) =>
                 previousItems.filter((repositoryItem) => repositoryItem.id !== deletingItem.id)
@@ -1121,56 +1248,94 @@ const DocumentsPage = ({
 
         const activeUserId = currentUser?.id;
         const rootTargetId = destinationFolderId === 'root' ? null : destinationFolderId;
-        const folderCache = new Map();
+
+        // 1. COLLECT ALL UNIQUE ANCESTOR DIRECTORY PATHS ACROSS ALL DROPPED ITEMS
+        const directoryPrefixSet = new Set();
+        validItems.forEach((item) => {
+            if (item.folderPathParts && item.folderPathParts.length > 0) {
+                let acc = '';
+                item.folderPathParts.forEach((part) => {
+                    acc = acc ? `${acc}/${part}` : part;
+                    directoryPrefixSet.add(acc);
+                });
+            }
+        });
+
+        // 2. SORT UNIQUE DIRECTORIES BY DEPTH (SHALLOWEST FIRST)
+        const sortedDirectoryPaths = Array.from(directoryPrefixSet).sort((a, b) => {
+            const depthA = a.split('/').length;
+            const depthB = b.split('/').length;
+            return depthA - depthB;
+        });
+
+        // 3. SEQUENTIALLY RESOLVE OR CREATE ALL DIRECTORIES IN DATABASE (ZERO RACE CONDITIONS)
+        const folderPathToIdMap = new Map();
+        const knownDocs = [...documents];
+
+        for (const dirPath of sortedDirectoryPaths) {
+            const parts = dirPath.split('/');
+            const folderName = parts[parts.length - 1];
+            const parentPath = parts.length > 1 ? parts.slice(0, -1).join('/') : null;
+            const parentFolderId = parentPath ? folderPathToIdMap.get(parentPath) : rootTargetId;
+
+            let existingFolder = knownDocs.find(
+                (d) => d.isFolder && (d.parentId ?? null) === parentFolderId && !d.isArchived && d.name.toLowerCase() === folderName.toLowerCase()
+            );
+
+            if (existingFolder) {
+                folderPathToIdMap.set(dirPath, existingFolder.id);
+            } else if (activeUserId) {
+                try {
+                    const createdFolder = await documentService.insertDocument({
+                        name: folderName,
+                        isFolder: true,
+                        isArchived: false,
+                        parentId: parentFolderId,
+                        comment: null,
+                    });
+                    folderPathToIdMap.set(dirPath, createdFolder.id);
+                    knownDocs.push(createdFolder);
+                } catch (folderErr) {
+                    console.error(`Failed to create directory "${folderName}":`, folderErr);
+                }
+            }
+        }
 
         const CONCURRENCY_LIMIT = 2;
         let itemIndex = 0;
 
         const processItem = async (item) => {
             try {
+                // If item is an empty folder, its directory was already created above
+                if (item.isFolder) {
+                    toastProcess.updateItem(item.id, {
+                        progress: 100,
+                        isFinished: true,
+                        statusText: 'Folder created',
+                    });
+                    return;
+                }
+
                 toastProcess.updateItem(item.id, {
                     progress: 15,
                     statusText: 'Resolving folder location...',
                 });
 
-                // 1. Resolve folder hierarchy if nested
+                // 1. Resolve exact target parent folder ID from precomputed map
                 let targetParentId = rootTargetId;
                 if (item.folderPathParts && item.folderPathParts.length > 0) {
-                    let accumulated = '';
-                    let currentParent = rootTargetId;
-
-                    for (const folderName of item.folderPathParts) {
-                        accumulated += '/' + folderName;
-                        if (folderCache.has(accumulated)) {
-                            currentParent = folderCache.get(accumulated);
-                        } else {
-                            const existingFolder = documents.find(
-                                (d) => d.isFolder && (d.parentId ?? null) === currentParent && !d.isArchived && d.name.toLowerCase() === folderName.toLowerCase()
-                            );
-                            if (existingFolder) {
-                                currentParent = existingFolder.id;
-                            } else if (activeUserId) {
-                                const createdFolder = await documentService.insertDocument({
-                                    name: folderName,
-                                    isFolder: true,
-                                    isArchived: false,
-                                    parentId: currentParent,
-                                    comment: null,
-                                });
-                                currentParent = createdFolder.id;
-                            }
-                            folderCache.set(accumulated, currentParent);
-                        }
-                    }
-                    targetParentId = currentParent;
+                    const itemDirPath = item.folderPathParts.join('/');
+                    targetParentId = folderPathToIdMap.get(itemDirPath) ?? rootTargetId;
                 }
+
+                const finalFileName = item.fileName || item.file?.name || (item.title ? item.title.split('/').pop() : 'document');
 
                 // 2. Check if creating new version or new document
                 let targetDocumentId = item.action === 'create_new' ? null : item.existingDocumentId;
 
                 if (!targetDocumentId && activeUserId && item.action !== 'create_new') {
-                    const existingDoc = documents.find(
-                        (d) => !d.isFolder && (d.parentId ?? null) === targetParentId && !d.isArchived && d.name.toLowerCase() === (item.fileName || item.title).toLowerCase()
+                    const existingDoc = knownDocs.find(
+                        (d) => !d.isFolder && (d.parentId ?? null) === targetParentId && !d.isArchived && d.name.toLowerCase() === finalFileName.toLowerCase()
                     );
                     if (existingDoc) {
                         targetDocumentId = existingDoc.id;
@@ -1196,7 +1361,7 @@ const DocumentsPage = ({
                         targetDocumentId,
                         item.file,
                         nextVersionNum,
-                        item.fileName || item.title
+                        finalFileName
                     );
 
                     toastProcess.updateItem(item.id, {
@@ -1209,8 +1374,8 @@ const DocumentsPage = ({
                     try {
                         aiResult = await aiService.analyzeDocumentFile({
                             storagePath: storageResult.path,
-                            mimeType: storageResult.mimeType || item.file.type || 'application/octet-stream',
-                            fileName: item.fileName || item.title,
+                            mimeType: storageResult.mimeType || item.file.type || getMimeTypeFromFilename(finalFileName),
+                            fileName: finalFileName,
                             fileSize: storageResult.sizeBytes || item.file.size || 0,
                             isVersionUpdate: true,
                             previousStoragePath: latestPriorVer?.path || null,
@@ -1237,7 +1402,7 @@ const DocumentsPage = ({
                             version: nextVersionNum,
                             path: storageResult.path,
                             sizeBytes: storageResult.sizeBytes,
-                            mimeType: storageResult.mimeType || item.file.type || 'application/octet-stream',
+                            mimeType: storageResult.mimeType || item.file.type || getMimeTypeFromFilename(finalFileName),
                             classification: finalClassification,
                             changeSummary: aiResult?.changeSummary || `Version ${nextVersionNum}.0 update`,
                             summary: aiResult?.summary || null,
@@ -1258,13 +1423,14 @@ const DocumentsPage = ({
                     let createdDoc = null;
                     if (activeUserId) {
                         createdDoc = await documentService.insertDocument({
-                            name: item.fileName || item.title,
+                            name: finalFileName,
                             isFolder: false,
                             isArchived: false,
                             parentId: targetParentId,
                             comment: null,
                         });
                         targetDocumentId = createdDoc.id;
+                        knownDocs.push(createdDoc);
                     } else {
                         targetDocumentId = item.id;
                     }
@@ -1280,7 +1446,7 @@ const DocumentsPage = ({
                             targetDocumentId,
                             item.file,
                             1,
-                            item.fileName || item.title
+                            finalFileName
                         );
                     } catch (uploadErr) {
                         if (createdDoc?.id) {
@@ -1299,8 +1465,8 @@ const DocumentsPage = ({
                     try {
                         aiResult = await aiService.analyzeDocumentFile({
                             storagePath: storageResult.path,
-                            mimeType: storageResult.mimeType || item.file.type || 'application/octet-stream',
-                            fileName: item.fileName || item.title,
+                            mimeType: storageResult.mimeType || item.file.type || getMimeTypeFromFilename(finalFileName),
+                            fileName: finalFileName,
                             fileSize: storageResult.sizeBytes || item.file.size || 0,
                             isVersionUpdate: false,
                         });
@@ -1325,7 +1491,7 @@ const DocumentsPage = ({
                                 version: 1,
                                 path: storageResult.path,
                                 sizeBytes: storageResult.sizeBytes,
-                                mimeType: storageResult.mimeType || item.file.type || 'application/octet-stream',
+                                mimeType: storageResult.mimeType || item.file.type || getMimeTypeFromFilename(finalFileName),
                                 classification: finalClassification,
                                 changeSummary: aiResult?.changeSummary || 'Initial file upload',
                                 summary: aiResult?.summary || null,
@@ -1378,6 +1544,7 @@ const DocumentsPage = ({
         dragEvent.preventDefault();
         dragEvent.stopPropagation();
         setIsDropzoneDragActive(true);
+        setIsPageDragActive(false);
     };
 
     const handleDropzoneDragLeave = (dragEvent) => {
@@ -1390,6 +1557,7 @@ const DocumentsPage = ({
         dropEvent.preventDefault();
         dropEvent.stopPropagation();
         setIsDropzoneDragActive(false);
+        setIsPageDragActive(false);
 
         const extracted = await processDataTransferPayload(
             dropEvent.dataTransfer,
@@ -1454,7 +1622,7 @@ const DocumentsPage = ({
 
     // PAGE-LEVEL DRAG & DROP HANDLERS (DROP DIRECTLY ONTO REPOSITORY EXPLORER)
     const handlePageDragOver = (dragEvent) => {
-        if (!canUpload) {
+        if (!canUpload || isCreateModalOpen) {
             return;
         }
         dragEvent.preventDefault();
@@ -1469,7 +1637,7 @@ const DocumentsPage = ({
     };
 
     const handlePageDrop = async (dropEvent) => {
-        if (!canUpload) {
+        if (!canUpload || isCreateModalOpen) {
             return;
         }
         dropEvent.preventDefault();
@@ -1691,6 +1859,34 @@ const DocumentsPage = ({
             const targetCount = selectedShareDepartmentIds.length;
             const docTitle = shareModalDocument.title || shareModalDocument.name || 'document';
 
+            if (isCoordinator) {
+                const sharePayload = {
+                    documentId: shareModalDocument.id,
+                    documentTitle: docTitle,
+                    departmentIds: selectedShareDepartmentIds,
+                    isRecursive: isFolder,
+                };
+
+                const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
+                await coordinatorApprovalService.submitCoordinatorRequest({
+                    action: constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_SHARE,
+                    requesterId,
+                    data: sharePayload,
+                });
+                useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
+
+                showToast({
+                    type: 'success',
+                    title: 'Request Submitted',
+                    description: `Share request for "${docTitle}" sent for Administrator approval.`,
+                });
+
+                setSelectedShareDepartmentIds([]);
+                setDepartmentSearchQuery('');
+                setShareModalDocument(null);
+                return;
+            }
+
             if (isFolder) {
                 await shareDocumentRecursive(
                     shareModalDocument.id,
@@ -1736,6 +1932,31 @@ const DocumentsPage = ({
         try {
             const isFolder = Boolean(shareModalDocument?.isFolder);
             const docTitle = shareModalDocument?.title || shareModalDocument?.name || 'document';
+
+            if (isCoordinator) {
+                const unsharePayload = {
+                    shareId: shareId,
+                    documentId: shareModalDocument?.id,
+                    departmentId: deptId,
+                    departmentName: departmentName,
+                    isRecursive: isFolder,
+                };
+
+                const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
+                await coordinatorApprovalService.submitCoordinatorRequest({
+                    action: constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_UNSHARE,
+                    requesterId,
+                    data: unsharePayload,
+                });
+                useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
+
+                showToast({
+                    type: 'success',
+                    title: 'Request Submitted',
+                    description: `Unshare request for "${departmentName || 'department'}" sent for Administrator approval.`,
+                });
+                return;
+            }
 
             if (isFolder && deptId) {
                 await unshareDocumentRecursive(shareModalDocument.id, deptId);
@@ -3257,15 +3478,37 @@ async function traverseFileSystemEntry(entry, currentPathPrefix, folderPathParts
         const reader = entry.createReader();
         const subEntries = await readAllEntriesFromDirectoryReader(reader);
 
-        for (let subIndex = 0; subIndex < subEntries.length; subIndex++) {
-            await traverseFileSystemEntry(
-                subEntries[subIndex],
-                newPrefix,
-                newParts,
-                userDepartment,
-                targetParentId,
-                collectedItems
-            );
+        if (subEntries.length === 0) {
+            collectedItems.push({
+                id: `folder-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+                parentId: targetParentId,
+                relativePath: newPrefix,
+                fileName: entry.name,
+                folderPathParts: newParts,
+                title: newPrefix,
+                subtitle: `DIR-${new Date().getFullYear()}-${entry.name.slice(0, 3).toUpperCase()}`,
+                description: null,
+                category: 'Folder',
+                classification: null,
+                version: '—',
+                size: 'Folder',
+                sizeBytes: 0,
+                status: constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL,
+                date: 'Just now',
+                isFolder: true,
+                tags: ['Folder'],
+            });
+        } else {
+            for (let subIndex = 0; subIndex < subEntries.length; subIndex++) {
+                await traverseFileSystemEntry(
+                    subEntries[subIndex],
+                    newPrefix,
+                    newParts,
+                    userDepartment,
+                    targetParentId,
+                    collectedItems
+                );
+            }
         }
     }
 }

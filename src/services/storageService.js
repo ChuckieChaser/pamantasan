@@ -178,12 +178,39 @@ const storageService = {
             if (!effectiveFileName) {
                 effectiveFileName = storagePathOrItem.name || storagePathOrItem.title || 'document';
             }
+
+            // Fallback: If path is missing, try to resolve via targetDocId from store
+            if (!storagePath) {
+                const targetDocId = storagePathOrItem.documentId || storagePathOrItem.document?.id;
+                if (targetDocId && typeof window !== 'undefined') {
+                    try {
+                        const { useDocumentStore } = await import('../stores/useDocumentStore');
+                        const store = useDocumentStore.getState();
+                        let vers = (store.documentVersions || []).filter(
+                            (v) => (v.document?.id ?? v.documentId) === targetDocId
+                        );
+                        if (vers.length === 0 && store.fetchDocumentVersions) {
+                            vers = await store.fetchDocumentVersions(targetDocId);
+                        }
+                        const latest = vers && vers.length > 0
+                            ? [...vers].sort((a, b) => (b.version ?? 0) - (a.version ?? 0))[0]
+                            : null;
+                        storagePath = latest?.path || null;
+                    } catch (resolveErr) {
+                        console.warn('Failed to resolve document version path in storageService:', resolveErr);
+                    }
+                }
+            }
         } else {
             storagePath = storagePathOrItem;
         }
 
         if (!effectiveFileName) {
             effectiveFileName = (storagePath ? storagePath.split('/').pop() : 'document') || 'document';
+        }
+
+        if (!storagePath) {
+            throw new Error(`Storage path could not be located for "${effectiveFileName}".`);
         }
 
         onProgress?.({ progress: 20, statusText: 'Locating document in storage...' });

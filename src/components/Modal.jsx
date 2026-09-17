@@ -143,6 +143,12 @@ const Modal = ({
     return (
         <div
             onClick={handleBackdropClick}
+            onDragOver={(event) => {
+                event.stopPropagation();
+            }}
+            onDrop={(event) => {
+                event.stopPropagation();
+            }}
             className={BASE_BACKDROP_STYLE}
             role="dialog"
             aria-modal="true"

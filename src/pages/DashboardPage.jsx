@@ -20,7 +20,9 @@ import {
     useAuditStore,
     useUserStore,
     useCoordinatorStore,
+    useAuthStore,
 } from '../stores';
+import { useAuth } from '../hooks';
 import { constants } from '../constants';
 
 // --- CONFIGURATIONS ---
@@ -86,10 +88,26 @@ const DashboardPage = ({
     ]);
 
     // DERIVED VALUES
+    const { currentUser: authUser } = useAuth();
+    const storeUser = useAuthStore((state) => state.currentUser);
+    const activeUser = currentUser ?? authUser ?? storeUser ?? useAuthStore.getState().currentUser;
+    const isAdmin = constants.isAdminRole(activeUser?.role);
+    const activeUserId = activeUser?.id;
+
+    const visibleCoordinatorRequests = useMemo(() => {
+        const safe = Array.isArray(coordinatorRequests) ? coordinatorRequests : [];
+        if (isAdmin) return safe;
+        return safe.filter((request) => {
+            if (!request) return false;
+            const reqId = typeof request.requester === 'object' ? request.requester?.id : (request.requesterId ?? request.requester);
+            return Boolean(activeUserId && reqId && String(reqId) === String(activeUserId));
+        });
+    }, [coordinatorRequests, isAdmin, activeUserId]);
+
     const dynamicMetrics = useMemo(() => {
         const safeDocs = Array.isArray(documents) ? documents : [];
         const safeRequests = Array.isArray(requests) ? requests : [];
-        const safeCoordinator = Array.isArray(coordinatorRequests) ? coordinatorRequests : [];
+        const safeCoordinator = visibleCoordinatorRequests;
         const safeDepts = Array.isArray(departments) ? departments : [];
 
         const totalDocsCount = safeDocs.filter((item) => !item?.isFolder).length;
@@ -132,11 +150,11 @@ const DashboardPage = ({
                 trend: 'information',
             },
         ];
-    }, [documents, requests, coordinatorRequests, departments]);
+    }, [documents, requests, visibleCoordinatorRequests, departments]);
 
     const pendingActionItems = useMemo(() => {
         const safeRequests = Array.isArray(requests) ? requests : [];
-        const safeCoordinatorReqs = Array.isArray(coordinatorRequests) ? coordinatorRequests : [];
+        const safeCoordinatorReqs = visibleCoordinatorRequests;
         const safeUsers = Array.isArray(users) ? users : [];
 
         const openDocRequests = safeRequests

@@ -116,7 +116,9 @@ const renderItemBadge = (item, columnKey) => {
         return <Badge variant={variant} label={item.classification} />;
     }
 
-    if (item.status) {
+    const isDocumentOrFolder = item.isFolder || item.category === 'Document' || item.category === 'Folder';
+
+    if (item.status && !isDocumentOrFolder) {
         const upper = String(item.status).toUpperCase();
         const variant = (upper === 'PENDING_APPROVAL' || upper.includes('PENDING'))
             ? 'warning'
