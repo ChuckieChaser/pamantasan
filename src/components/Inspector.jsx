@@ -221,12 +221,44 @@ const Inspector = ({
     const allUsers = useUserStore((state) => state.users);
     const allAuditLogs = useAuditStore((state) => state.auditLogs);
 
-    // DERIVED VALUES
+    // DERIVED ENTITY TYPES (STRICTLY MUTUALLY EXCLUSIVE)
     const isFolder = Boolean(item?.isFolder);
-    const isUser = Boolean(item?.universityId || item?.email || item?.role);
-    const isDepartment = Boolean(item?.code && !item?.universityId && !isUser);
+    const isCoordinatorRequest = Boolean(
+        !isFolder &&
+        item?.action &&
+        typeof item.action === 'string' &&
+        (item.action.startsWith('USER_') ||
+            item.action.startsWith('DEPARTMENT_') ||
+            item.action.startsWith('DOCUMENT_'))
+    );
+    const isDocumentRequest = Boolean(
+        !isFolder &&
+        !isCoordinatorRequest &&
+        (item?.subject !== undefined ||
+            item?.requesterId !== undefined ||
+            item?.messages !== undefined ||
+            item?.attachments !== undefined)
+    );
+    const isUser = Boolean(
+        !isFolder &&
+        !isCoordinatorRequest &&
+        !isDocumentRequest &&
+        (item?.universityId || (item?.role && !item?.action) || (item?.email && !item?.action))
+    );
+    const isDepartment = Boolean(
+        !isFolder &&
+        !isUser &&
+        !isCoordinatorRequest &&
+        !isDocumentRequest &&
+        item?.code &&
+        !item?.universityId
+    );
     const isDocument = Boolean(
-        !isFolder && !isUser && !isDepartment &&
+        !isFolder &&
+        !isUser &&
+        !isDepartment &&
+        !isCoordinatorRequest &&
+        !isDocumentRequest &&
         (item?.classification ||
             item?.size ||
             item?.sizeBytes ||
@@ -279,14 +311,6 @@ const Inspector = ({
         }
         return currentU.department ?? '—';
     }, [isUser, activeUserRecord, item, allDepartments]);
-
-    const isCoordinatorRequest = Boolean(
-        item?.action &&
-        (item.action.startsWith('USER_') ||
-            item.action.startsWith('DEPARTMENT_') ||
-            item.action.startsWith('DOCUMENT_'))
-    );
-    const isDocumentRequest = Boolean(item?.subject && !isCoordinatorRequest);
 
     const activeItem = useMemo(() => {
         if (!item) return null;
@@ -397,14 +421,12 @@ const Inspector = ({
         }
         if (isDocumentRequest) {
             const matchedRequest = allDocumentRequests.find((r) => r.id === item.id);
-            if (matchedRequest) {
-                return {
-                    ...item,
-                    ...matchedRequest,
-                    status: matchedRequest.status ?? item.status,
-                    updatedAt: matchedRequest.updatedAt ?? item.updatedAt,
-                };
-            }
+            return {
+                ...item,
+                ...(matchedRequest || {}),
+                status: matchedRequest?.status ?? item.status,
+                updatedAt: matchedRequest?.updatedAt ?? item.updatedAt,
+            };
         }
         if (isCoordinatorRequest) {
             const matchedRequest = allCoordinatorRequests.find((r) => r.id === item.id);
@@ -560,9 +582,12 @@ const Inspector = ({
             return [];
         }
 
-        const messages = allRequestMessages.filter(
-            (message) => message.documentRequest?.id === item.id || message.documentRequestId === item.id
-        );
+        const messages = allRequestMessages.filter((message) => {
+            const msgReqId = typeof message.documentRequest === 'object'
+                ? message.documentRequest?.id
+                : (message.documentRequestId ?? message.documentRequest);
+            return msgReqId === item.id;
+        });
 
         if (messages.length > 0) {
             return messages.sort(
@@ -583,9 +608,12 @@ const Inspector = ({
             return [];
         }
 
-        const attachments = allRequestAttachments.filter(
-            (attachment) => attachment.documentRequest?.id === item.id || attachment.documentRequestId === item.id
-        );
+        const attachments = allRequestAttachments.filter((attachment) => {
+            const attReqId = typeof attachment.documentRequest === 'object'
+                ? attachment.documentRequest?.id
+                : (attachment.documentRequestId ?? attachment.documentRequest);
+            return attReqId === item.id;
+        });
 
         if (attachments.length > 0) {
             return attachments;
@@ -595,6 +623,21 @@ const Inspector = ({
     }, [item, isDocumentRequest, allRequestAttachments]);
 
     const tabOptions = useMemo(() => {
+        if (isDocumentRequest) {
+            return [
+                { value: 'information', label: 'Information', icon: Info },
+                { value: 'messages',    label: `Message (${requestMessages.length})`, icon: MessageSquare },
+                { value: 'attachments', label: `Attachments (${requestAttachments.length})`, icon: Paperclip },
+            ];
+        }
+
+        if (isCoordinatorRequest) {
+            return [
+                { value: 'information', label: 'Information', icon: Info },
+                { value: 'payload',     label: 'Payload', icon: Layers },
+            ];
+        }
+
         if (isDocument) {
             return [
                 { value: 'information', label: 'Information', icon: Info },
@@ -625,37 +668,28 @@ const Inspector = ({
             ];
         }
 
-        if (isCoordinatorRequest) {
-            return [
-                { value: 'information', label: 'Information', icon: Info },
-                { value: 'payload',     label: 'Payload', icon: Layers },
-            ];
-        }
-
-        if (isDocumentRequest) {
-            return [
-                { value: 'information', label: 'Information', icon: Info },
-                { value: 'messages',    label: `Message (${requestMessages.length})`, icon: MessageSquare },
-                { value: 'attachments', label: `Attachments (${requestAttachments.length})`, icon: Paperclip },
-            ];
-        }
-
         return [{ value: 'information', label: 'Information', icon: Info }];
     }, [
+        isDocumentRequest,
+        isCoordinatorRequest,
         isDocument,
         isFolder,
         isUser,
         isDepartment,
-        isCoordinatorRequest,
-        isDocumentRequest,
+        requestMessages.length,
+        requestAttachments.length,
         documentVersions.length,
         documentShares.length,
         folderContents.length,
         userActivities.length,
         departmentFaculty.length,
-        requestMessages.length,
-        requestAttachments.length,
     ]);
+
+    useEffect(() => {
+        if (tabOptions.length > 0 && !tabOptions.some((opt) => opt.value === activeTab)) {
+            setActiveTab(tabOptions[0]?.value || 'information');
+        }
+    }, [tabOptions, activeTab]);
 
     const attachableDocuments = useMemo(() => {
         return allDocuments
@@ -1062,7 +1096,17 @@ const Inspector = ({
         activeItem.universityId ??
         (activeItem.action ? activeItem.action.replace(/_/g, ' ') : null) ??
         activeItem.subtitle ??
-        (isFolder ? 'Folder' : isDocument ? 'Document' : isUser ? 'User' : 'Record');
+        (isFolder
+            ? 'Folder'
+            : isDocumentRequest
+                ? (activeItem.subject ?? 'Document Request')
+                : isCoordinatorRequest
+                    ? 'Coordinator Request'
+                    : isDocument
+                        ? 'Document'
+                        : isUser
+                            ? 'User'
+                            : 'Record');
     const formattedCreatedDate = formatTimestamp(
         activeItem.createdAt ?? activeItem.date ?? activeItem.timestamp
     ) ?? 'Just now';
