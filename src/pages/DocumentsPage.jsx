@@ -25,6 +25,9 @@ import {
     RotateCcw,
     XCircle,
     Search,
+    Users,
+    UserCheck,
+    Send,
 } from 'lucide-react';
 import {
     Badge,
@@ -36,11 +39,13 @@ import {
     AreaField,
     SelectField,
     DocumentViewerModal,
+    Avatar,
+    resolveUserAvatar,
     formatDateTime,
 } from '../components';
 import { useToast } from '../hooks';
 import { constants } from '../constants';
-import { useDocumentStore, useDepartmentStore } from '../stores';
+import { useDocumentStore, useDepartmentStore, useUserStore } from '../stores';
 import {
     storageService,
     documentService,
@@ -170,6 +175,12 @@ const DocumentsPage = ({
     const [isSharingDepartment, setIsSharingDepartment] = useState(false);
     const [unsharingShareId, setUnsharingShareId] = useState(null);
 
+    // STATES: PUBLISH TO MEMBERS MODAL
+    const [publishMode, setPublishMode] = useState('all'); // 'all' | 'specific'
+    const [selectedPublishMemberIds, setSelectedPublishMemberIds] = useState([]);
+    const [memberSearchQuery, setMemberSearchQuery] = useState('');
+    const [isPublishingMembers, setIsPublishingMembers] = useState(false);
+
     // HOOKS
     const { showToast, showProcessing } = useToast();
     const documents = useDocumentStore((state) => state.documents);
@@ -179,10 +190,16 @@ const DocumentsPage = ({
     const syncAllDocumentShares = useDocumentStore((state) => state.syncAllDocumentShares);
     const shareModalDocument = useDocumentStore((state) => state.shareModalDocument);
     const setShareModalDocument = useDocumentStore((state) => state.setShareModalDocument);
+    const publishModalDocument = useDocumentStore((state) => state.publishModalDocument);
+    const setPublishModalDocument = useDocumentStore((state) => state.setPublishModalDocument);
+    const publishDocumentToMembers = useDocumentStore((state) => state.publishDocumentToMembers);
+    const users = useUserStore((state) => state.users);
+    const fetchUsers = useUserStore((state) => state.fetchUsers);
     const shareDocument = useDocumentStore((state) => state.shareDocument);
     const shareDocumentRecursive = useDocumentStore((state) => state.shareDocumentRecursive);
     const unshareDocument = useDocumentStore((state) => state.unshareDocument);
     const unshareDocumentRecursive = useDocumentStore((state) => state.unshareDocumentRecursive);
+    const updateShareStatusRecursive = useDocumentStore((state) => state.updateShareStatusRecursive);
     const approveShare = useDocumentStore((state) => state.approveShare);
     const unapproveShare = useDocumentStore((state) => state.unapproveShare);
     const rejectShare = useDocumentStore((state) => state.rejectShare);
@@ -199,7 +216,34 @@ const DocumentsPage = ({
     useEffect(() => {
         fetchDocuments().catch(() => {});
         syncAllDocumentShares(currentUser, departments).catch(() => {});
-    }, [fetchDocuments, syncAllDocumentShares, currentUser, departments]);
+        fetchUsers().catch(() => {});
+    }, [fetchDocuments, syncAllDocumentShares, fetchUsers, currentUser, departments]);
+
+    useEffect(() => {
+        if (publishModalDocument) {
+            const existingSpecific = (documentShares || []).filter(
+                (s) =>
+                    (s.document?.id ?? s.documentId) === publishModalDocument.id &&
+                    (s.department?.id ?? s.departmentId) === currentUser?.departmentId &&
+                    (s.recipient?.id ?? s.recipientId)
+            );
+            if (existingSpecific.length > 0) {
+                setPublishMode('specific');
+                const validMemberIds = (users || [])
+                    .filter((u) => u.departmentId === currentUser?.departmentId && constants.isMemberRole(u.role))
+                    .map((u) => u.id);
+                setSelectedPublishMemberIds(
+                    existingSpecific
+                        .map((s) => s.recipient?.id ?? s.recipientId)
+                        .filter((id) => Boolean(id) && validMemberIds.includes(id))
+                );
+            } else {
+                setPublishMode('all');
+                setSelectedPublishMemberIds([]);
+            }
+            setMemberSearchQuery('');
+        }
+    }, [publishModalDocument, documentShares, currentUser, users]);
 
     // HANDLERS
     const handleBreadcrumbClick = (breadcrumbItem, breadcrumbIndex) => {
@@ -633,7 +677,12 @@ const DocumentsPage = ({
             return;
         }
 
-        if (['approve', 'unapprove', 'reject', 'publish', 'unpublish', 'stash', 'unstash', 'unshare'].includes(actionKey)) {
+        if (actionKey === 'publish') {
+            setPublishModalDocument(item);
+            return;
+        }
+
+        if (['approve', 'unapprove', 'reject', 'unpublish', 'stash', 'unstash', 'unshare'].includes(actionKey)) {
             let shareRecord = item.share;
             if (!shareRecord) {
                 if (actionKey === 'unshare' && (item.departmentId || item.department)) {
@@ -660,26 +709,39 @@ const DocumentsPage = ({
             }
 
             const docTitle = item.title || item.name || 'document';
+            const deptId = shareRecord?.department?.id ?? shareRecord?.departmentId ?? currentUser?.departmentId;
             try {
                 if (actionKey === 'approve') {
-                    await approveShare(shareId);
+                    if (item.isFolder && deptId) {
+                        await updateShareStatusRecursive(item.id, deptId, constants.DOCUMENT_SHARES_STATUS.APPROVED);
+                    } else {
+                        await approveShare(shareId);
+                    }
                     showToast({
                         type: 'success',
-                        title: 'Document Approved',
+                        title: item.isFolder ? 'Folder Approved' : 'Document Approved',
                         description: `Approved "${docTitle}" for department director review.`,
                     });
                 } else if (actionKey === 'unapprove') {
-                    await unapproveShare(shareId);
+                    if (item.isFolder && deptId) {
+                        await updateShareStatusRecursive(item.id, deptId, constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL);
+                    } else {
+                        await unapproveShare(shareId);
+                    }
                     showToast({
                         type: 'information',
                         title: 'Approval Revoked',
                         description: `Reverted "${docTitle}" to pending approval.`,
                     });
                 } else if (actionKey === 'reject') {
-                    await rejectShare(shareId);
+                    if (item.isFolder && deptId) {
+                        await unshareDocumentRecursive(item.id, deptId);
+                    } else {
+                        await rejectShare(shareId);
+                    }
                     showToast({
                         type: 'warning',
-                        title: 'Document Rejected',
+                        title: item.isFolder ? 'Folder Rejected' : 'Document Rejected',
                         description: `Rejected "${docTitle}" and removed from department view.`,
                     });
                     if (selectedDocument?.id === item.id) {
@@ -687,35 +749,55 @@ const DocumentsPage = ({
                         onSelectDocument?.(null);
                     }
                 } else if (actionKey === 'publish') {
-                    await publishShare(shareId);
+                    if (item.isFolder && deptId) {
+                        await updateShareStatusRecursive(item.id, deptId, constants.DOCUMENT_SHARES_STATUS.PUBLISHED);
+                    } else {
+                        await publishShare(shareId);
+                    }
                     showToast({
                         type: 'success',
-                        title: 'Document Published',
+                        title: item.isFolder ? 'Folder Published' : 'Document Published',
                         description: `Published "${docTitle}" to all department members.`,
                     });
                 } else if (actionKey === 'unpublish') {
-                    await unpublishShare(shareId);
+                    if (item.isFolder && deptId) {
+                        await updateShareStatusRecursive(item.id, deptId, constants.DOCUMENT_SHARES_STATUS.APPROVED);
+                    } else {
+                        await unpublishShare(shareId);
+                    }
                     showToast({
                         type: 'information',
-                        title: 'Document Unpublished',
+                        title: item.isFolder ? 'Folder Unpublished' : 'Document Unpublished',
                         description: `Unpublished "${docTitle}" from department members.`,
                     });
                 } else if (actionKey === 'stash') {
-                    await stashShare(shareId);
+                    if (item.isFolder && deptId) {
+                        await updateShareStatusRecursive(item.id, deptId, constants.DOCUMENT_SHARES_STATUS.STASHED);
+                    } else {
+                        await stashShare(shareId);
+                    }
                     showToast({
                         type: 'information',
-                        title: 'Document Stashed',
+                        title: item.isFolder ? 'Folder Stashed' : 'Document Stashed',
                         description: `Stashed "${docTitle}" at upper management level.`,
                     });
                 } else if (actionKey === 'unstash') {
-                    await unstashShare(shareId);
+                    if (item.isFolder && deptId) {
+                        await updateShareStatusRecursive(item.id, deptId, constants.DOCUMENT_SHARES_STATUS.APPROVED);
+                    } else {
+                        await unstashShare(shareId);
+                    }
                     showToast({
                         type: 'success',
-                        title: 'Document Unstashed',
+                        title: item.isFolder ? 'Folder Unstashed' : 'Document Unstashed',
                         description: `Restored "${docTitle}" to approved state.`,
                     });
                 } else if (actionKey === 'unshare') {
-                    await unshareDocument(shareId);
+                    if (item.isFolder && deptId) {
+                        await unshareDocumentRecursive(item.id, deptId);
+                    } else {
+                        await unshareDocument(shareId);
+                    }
                     showToast({
                         type: 'success',
                         title: 'Share Removed',
@@ -1682,13 +1764,87 @@ const DocumentsPage = ({
         }
     };
 
+    // HANDLERS: PUBLISH TO MEMBERS MODAL
+    const departmentMembers = useMemo(() => {
+        if (!currentUser?.departmentId) return [];
+        return (users || []).filter(
+            (u) =>
+                u.departmentId === currentUser.departmentId &&
+                u.id !== currentUser.id &&
+                u.status !== constants.USERS_STATUS.SUSPENDED &&
+                constants.isMemberRole(u.role)
+        );
+    }, [users, currentUser]);
+
+    const filteredDepartmentMembers = useMemo(() => {
+        if (!memberSearchQuery.trim()) return departmentMembers;
+        const q = memberSearchQuery.toLowerCase();
+        return departmentMembers.filter((m) => {
+            const fullName = `${m.firstName || ''} ${m.lastName || ''}`.toLowerCase();
+            const univId = (m.universityId || '').toLowerCase();
+            const email = (m.email || '').toLowerCase();
+            return fullName.includes(q) || univId.includes(q) || email.includes(q);
+        });
+    }, [departmentMembers, memberSearchQuery]);
+
+    const handleToggleMemberSelection = (memberId) => {
+        setSelectedPublishMemberIds((prev) =>
+            prev.includes(memberId) ? prev.filter((id) => id !== memberId) : [...prev, memberId]
+        );
+    };
+
+    const handleSelectAllMembers = () => {
+        if (selectedPublishMemberIds.length === filteredDepartmentMembers.length && filteredDepartmentMembers.length > 0) {
+            setSelectedPublishMemberIds([]);
+        } else {
+            setSelectedPublishMemberIds(filteredDepartmentMembers.map((m) => m.id));
+        }
+    };
+
+    const handlePublishSubmit = async () => {
+        if (!publishModalDocument || !currentUser?.departmentId) return;
+
+        setIsPublishingMembers(true);
+        const docTitle = publishModalDocument.title || publishModalDocument.name || 'document';
+        const isFolder = Boolean(publishModalDocument.isFolder);
+        const targetIds = publishMode === 'all' ? [] : selectedPublishMemberIds;
+
+        try {
+            await publishDocumentToMembers(
+                publishModalDocument.id,
+                currentUser.departmentId,
+                targetIds,
+                currentUser.id
+            );
+
+            showToast({
+                type: 'success',
+                title: isFolder ? 'Folder Published' : 'Document Published',
+                description:
+                    publishMode === 'all'
+                        ? `Published "${docTitle}" to all members in ${userDepartment}.`
+                        : `Published "${docTitle}" to ${targetIds.length} selected member${targetIds.length === 1 ? '' : 's'}.`,
+            });
+            setPublishModalDocument(null);
+            setSelectedPublishMemberIds([]);
+            setMemberSearchQuery('');
+        } catch (err) {
+            console.error('Failed to publish document to members:', err);
+            showToast({
+                type: 'error',
+                title: 'Publish Failed',
+                description: err?.message || 'Could not update publication settings.',
+            });
+        } finally {
+            setIsPublishingMembers(false);
+        }
+    };
+
     const repositoryItems = useMemo(() => {
-        // 1. Identify accessible file documents and their resolved share status
-        const accessibleFileMap = new Map(); // docId -> { status, share, shares }
+        // 1. Identify accessible documents and folders and their resolved share status
+        const accessibleItemMap = new Map(); // docId -> { status, share, shares }
 
         documents.forEach((doc) => {
-            if (doc.isFolder) return;
-
             const docShares = (documentShares || []).filter(
                 (s) => (s.document?.id ?? s.documentId) === doc.id
             );
@@ -1709,7 +1865,7 @@ const DocumentsPage = ({
                         resolvedStatus = docShares[0].status;
                     }
                 }
-                accessibleFileMap.set(doc.id, {
+                accessibleItemMap.set(doc.id, {
                     status: resolvedStatus,
                     share: docShares[0] || null,
                     shares: docShares,
@@ -1718,16 +1874,60 @@ const DocumentsPage = ({
             }
 
             // For departmental users (Officer, Director, Member):
-            // User MUST have a matching department share row
-            const deptShare = docShares.find(
+            // 1. Collect all shares for this document that belong to the user's department
+            const directDeptShares = docShares.filter(
                 (s) => (s.department?.id ?? s.departmentId) === currentUser?.departmentId
             );
 
-            if (!deptShare) {
-                // No share row for user's department -> locked out!
+            // 2. If no direct share row for this item, check if an ancestor folder has a share row for this department
+            let effectiveDeptShares = [...directDeptShares];
+            let isInheritedFromFolder = false;
+
+            if (effectiveDeptShares.length === 0) {
+                let pId = doc.parentId ?? doc.parentFolderId;
+                while (pId && pId !== 'root') {
+                    const parentDoc = documents.find((d) => d.id === pId);
+                    if (!parentDoc) break;
+                    const parentDeptShares = (documentShares || []).filter(
+                        (s) =>
+                            (s.document?.id ?? s.documentId) === parentDoc.id &&
+                            (s.department?.id ?? s.departmentId) === currentUser?.departmentId
+                    );
+                    if (parentDeptShares.length > 0) {
+                        effectiveDeptShares = parentDeptShares;
+                        isInheritedFromFolder = true;
+                        break;
+                    }
+                    pId = parentDoc.parentId ?? parentDoc.parentFolderId;
+                }
+            }
+
+            if (effectiveDeptShares.length === 0) {
+                // No share row for user's department directly or via enclosing folder -> not accessible!
                 return;
             }
 
+            // Determine priority status among effective shares:
+            // PUBLISHED > STASHED > APPROVED > PENDING_APPROVAL
+            let resolvedStatus = '—';
+            if (effectiveDeptShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED)) {
+                resolvedStatus = constants.DOCUMENT_SHARES_STATUS.PUBLISHED;
+            } else if (effectiveDeptShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.STASHED)) {
+                resolvedStatus = constants.DOCUMENT_SHARES_STATUS.STASHED;
+            } else if (effectiveDeptShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.APPROVED)) {
+                resolvedStatus = constants.DOCUMENT_SHARES_STATUS.APPROVED;
+            } else if (effectiveDeptShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL)) {
+                resolvedStatus = constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL;
+            } else {
+                resolvedStatus = effectiveDeptShares[0]?.status ?? '—';
+            }
+
+            const primaryShare = effectiveDeptShares.find((s) => s.status === resolvedStatus) || effectiveDeptShares[0];
+
+            // Role-based status gating:
+            // OFFICER: PENDING_APPROVAL, APPROVED, STASHED, PUBLISHED
+            // (When pending approve gets approved, the officer still has access and view to it!
+            //  When approved gets published or stashed, the officer still has access and view it!)
             if (isOfficer) {
                 if (
                     [
@@ -1735,76 +1935,89 @@ const DocumentsPage = ({
                         constants.DOCUMENT_SHARES_STATUS.APPROVED,
                         constants.DOCUMENT_SHARES_STATUS.STASHED,
                         constants.DOCUMENT_SHARES_STATUS.PUBLISHED,
-                    ].includes(deptShare.status)
+                    ].includes(resolvedStatus)
                 ) {
-                    accessibleFileMap.set(doc.id, {
-                        status: deptShare.status,
-                        share: deptShare,
-                        shares: [deptShare],
+                    accessibleItemMap.set(doc.id, {
+                        status: resolvedStatus,
+                        share: primaryShare,
+                        shares: effectiveDeptShares,
+                        isInherited: isInheritedFromFolder,
                     });
                 }
             } else if (isDirector) {
+                // DIRECTOR: APPROVED, STASHED, PUBLISHED
+                // (When pending approve gets approved, director gains access!
+                //  When approved gets published or stashed, director still has access and view it!)
                 if (
                     [
                         constants.DOCUMENT_SHARES_STATUS.APPROVED,
                         constants.DOCUMENT_SHARES_STATUS.STASHED,
                         constants.DOCUMENT_SHARES_STATUS.PUBLISHED,
-                    ].includes(deptShare.status)
+                    ].includes(resolvedStatus)
                 ) {
-                    accessibleFileMap.set(doc.id, {
-                        status: deptShare.status,
-                        share: deptShare,
-                        shares: [deptShare],
+                    accessibleItemMap.set(doc.id, {
+                        status: resolvedStatus,
+                        share: primaryShare,
+                        shares: effectiveDeptShares,
+                        isInherited: isInheritedFromFolder,
                     });
                 }
             } else if (isMember) {
-                if (deptShare.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED) {
-                    accessibleFileMap.set(doc.id, {
-                        status: deptShare.status,
-                        share: deptShare,
-                        shares: [deptShare],
-                    });
+                // MEMBER: PUBLISHED only.
+                // If there are specific recipient shares for the user's department, only those recipient members see it.
+                // Otherwise (broad publish, recipientId: null), all department members see it.
+                if (resolvedStatus === constants.DOCUMENT_SHARES_STATUS.PUBLISHED) {
+                    const memberSpecificShares = effectiveDeptShares.filter(
+                        (s) => s.recipient?.id ?? s.recipientId
+                    );
+
+                    if (memberSpecificShares.length > 0) {
+                        const userShare = memberSpecificShares.find(
+                            (s) => (s.recipient?.id ?? s.recipientId) === currentUser?.id
+                        );
+                        if (userShare && userShare.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED) {
+                            accessibleItemMap.set(doc.id, {
+                                status: userShare.status,
+                                share: userShare,
+                                shares: [userShare],
+                                isInherited: isInheritedFromFolder,
+                            });
+                        }
+                    } else {
+                        // Broad publication for all department members
+                        accessibleItemMap.set(doc.id, {
+                            status: resolvedStatus,
+                            share: primaryShare,
+                            shares: effectiveDeptShares,
+                            isInherited: isInheritedFromFolder,
+                        });
+                    }
                 }
             }
         });
 
         // 2. Determine folder accessibility
         // For staff: all folders visible.
-        // For department users: folder is visible if it contains at least one accessible document in its subtree.
+        // For department users: folder is visible if:
+        //   - it is directly accessible (has permitted share row for user's department)
+        //   - OR it is an ancestor of ANY item (file or subfolder) that is accessible
         const accessibleFolderIdSet = new Set();
         if (isStaff) {
             documents.forEach((d) => {
                 if (d.isFolder) accessibleFolderIdSet.add(d.id);
             });
         } else {
-            accessibleFileMap.forEach((_, fileId) => {
-                const fileDoc = documents.find((d) => d.id === fileId);
-                let pId = fileDoc?.parentId ?? fileDoc?.parentFolderId;
+            accessibleItemMap.forEach((_, itemId) => {
+                const itemDoc = documents.find((d) => d.id === itemId);
+                if (itemDoc?.isFolder) {
+                    accessibleFolderIdSet.add(itemDoc.id);
+                }
+                let pId = itemDoc?.parentId ?? itemDoc?.parentFolderId;
                 while (pId && pId !== 'root') {
                     accessibleFolderIdSet.add(pId);
                     const parentDoc = documents.find((d) => d.id === pId);
                     if (!parentDoc) break;
                     pId = parentDoc.parentId ?? parentDoc.parentFolderId;
-                }
-            });
-
-            // Check directly shared folders
-            documents.forEach((doc) => {
-                if (!doc.isFolder) return;
-                const folderShares = (documentShares || []).filter(
-                    (s) => (s.document?.id ?? s.documentId) === doc.id
-                );
-                const hasDeptShare = folderShares.some(
-                    (s) => (s.department?.id ?? s.departmentId) === currentUser?.departmentId
-                );
-                if (hasDeptShare) {
-                    let pId = doc.id;
-                    while (pId && pId !== 'root') {
-                        accessibleFolderIdSet.add(pId);
-                        const parentDoc = documents.find((d) => d.id === pId);
-                        if (!parentDoc) break;
-                        pId = parentDoc.parentId ?? parentDoc.parentFolderId;
-                    }
                 }
             });
         }
@@ -1814,7 +2027,7 @@ const DocumentsPage = ({
             if (doc.isFolder) {
                 return accessibleFolderIdSet.has(doc.id);
             }
-            return accessibleFileMap.has(doc.id);
+            return accessibleItemMap.has(doc.id);
         });
 
         // 4. Map into browser items
@@ -1847,16 +2060,31 @@ const DocumentsPage = ({
                 })()
                 : 'Repository Root';
 
-            const shareMeta = accessibleFileMap.get(doc.id) || (() => {
-                const docShares = (documentShares || []).filter(
-                    (s) => (s.document?.id ?? s.documentId) === doc.id
-                );
-                if (docShares.length > 0) {
-                    return {
-                        status: docShares[0].status,
-                        share: docShares[0],
-                        shares: docShares,
-                    };
+            const shareMeta = accessibleItemMap.get(doc.id) || (() => {
+                if (isStaff) {
+                    const docShares = (documentShares || []).filter(
+                        (s) => (s.document?.id ?? s.documentId) === doc.id
+                    );
+                    if (docShares.length > 0) {
+                        return {
+                            status: docShares[0].status,
+                            share: docShares[0],
+                            shares: docShares,
+                        };
+                    }
+                } else if (currentUser?.departmentId) {
+                    const deptShare = (documentShares || []).find(
+                        (s) =>
+                            (s.document?.id ?? s.documentId) === doc.id &&
+                            (s.department?.id ?? s.departmentId) === currentUser.departmentId
+                    );
+                    if (deptShare) {
+                        return {
+                            status: deptShare.status,
+                            share: deptShare,
+                            shares: [deptShare],
+                        };
+                    }
                 }
                 return { status: '—', share: null, shares: [] };
             })();
@@ -2704,6 +2932,229 @@ const DocumentsPage = ({
                                     })}
                                 </div>
                             )}
+                        </div>
+                    </div>
+                </Modal>
+            )}
+
+            {/* PUBLISH TO DEPARTMENT MEMBERS MODAL */}
+            {Boolean(publishModalDocument) && (
+                <Modal
+                    isOpen={Boolean(publishModalDocument)}
+                    onClose={() => {
+                        setPublishModalDocument(null);
+                        setSelectedPublishMemberIds([]);
+                        setMemberSearchQuery('');
+                    }}
+                    title={`Publish ${publishModalDocument.isFolder ? 'Folder' : 'Document'} to Department Members`}
+                    description={`Configure faculty member visibility within ${userDepartment}. You can publish to all department members or choose specific members.`}
+                    icon={Send}
+                    size="md"
+                    secondaryAction={{
+                        label: 'Cancel',
+                        onClick: () => {
+                            setPublishModalDocument(null);
+                            setSelectedPublishMemberIds([]);
+                            setMemberSearchQuery('');
+                        },
+                    }}
+                >
+                    <div className="flex flex-col gap-5">
+                        {/* RECURSIVE FOLDER CASCADE BANNER */}
+                        {publishModalDocument.isFolder && (
+                            <div className="p-3.5 rounded-xl border border-accent/20 bg-accent/5 flex items-start gap-3">
+                                <div className="p-2 rounded-lg bg-accent/10 text-accent shrink-0">
+                                    <Folder className="h-4 w-4" />
+                                </div>
+                                <div className="flex flex-col gap-0.5 text-xs">
+                                    <span className="font-semibold text-text">Recursive Folder Cascade</span>
+                                    <span className="text-text-muted leading-relaxed">
+                                        Publishing this folder will automatically publish all nested files and subfolders to the selected members with <strong className="text-text">Published</strong> status.
+                                    </span>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* AUDIENCE SELECTOR: ALL MEMBERS vs SPECIFIC MEMBERS */}
+                        <div className="flex flex-col gap-2">
+                            <span className="text-xs font-semibold text-text">
+                                Publication Scope
+                            </span>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                <div
+                                    onClick={() => setPublishMode('all')}
+                                    className={`p-3 rounded-xl border transition-all cursor-pointer flex items-start gap-3 ${
+                                        publishMode === 'all'
+                                            ? 'border-accent bg-accent/10 shadow-xs'
+                                            : 'border-surface-border bg-surface hover:border-surface-border-strong hover:bg-surface-hover'
+                                    }`}
+                                >
+                                    <div className="p-2 rounded-lg bg-surface border border-surface-border text-accent shrink-0">
+                                        <Users className="h-4 w-4" />
+                                    </div>
+                                    <div className="flex flex-col gap-0.5 min-w-0">
+                                        <span className="text-xs font-bold text-text">All Department Members</span>
+                                        <span className="text-[11px] text-text-muted leading-tight">
+                                            Every member in {userDepartment} can view and download.
+                                        </span>
+                                    </div>
+                                </div>
+
+                                <div
+                                    onClick={() => setPublishMode('specific')}
+                                    className={`p-3 rounded-xl border transition-all cursor-pointer flex items-start gap-3 ${
+                                        publishMode === 'specific'
+                                            ? 'border-accent bg-accent/10 shadow-xs'
+                                            : 'border-surface-border bg-surface hover:border-surface-border-strong hover:bg-surface-hover'
+                                    }`}
+                                >
+                                    <div className="p-2 rounded-lg bg-surface border border-surface-border text-accent shrink-0">
+                                        <UserCheck className="h-4 w-4" />
+                                    </div>
+                                    <div className="flex flex-col gap-0.5 min-w-0">
+                                        <span className="text-xs font-bold text-text">Select Specific Members</span>
+                                        <span className="text-[11px] text-text-muted leading-tight">
+                                            Only designated department members receive access.
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* SPECIFIC MEMBER PICKER */}
+                        {publishMode === 'specific' && (
+                            <div className="p-4 rounded-xl border border-surface-border bg-surface-hover flex flex-col gap-3">
+                                <div className="flex items-center justify-between gap-2">
+                                    <span className="text-xs font-semibold text-text">
+                                        Department Members ({selectedPublishMemberIds.length} of {departmentMembers.length} selected)
+                                    </span>
+                                    {departmentMembers.length > 0 && (
+                                        <div className="flex items-center gap-2">
+                                            <button
+                                                type="button"
+                                                onClick={handleSelectAllMembers}
+                                                className="text-xs text-accent hover:underline font-medium cursor-pointer"
+                                            >
+                                                {selectedPublishMemberIds.length === filteredDepartmentMembers.length && filteredDepartmentMembers.length > 0
+                                                    ? 'Deselect All'
+                                                    : 'Select All'}
+                                            </button>
+                                            {selectedPublishMemberIds.length > 0 && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setSelectedPublishMemberIds([])}
+                                                    className="text-xs text-text-muted hover:text-text cursor-pointer"
+                                                >
+                                                    Clear
+                                                </button>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+
+                                {departmentMembers.length === 0 ? (
+                                    <div className="p-3 rounded-lg border border-surface-border bg-surface text-center text-xs text-text-muted">
+                                        No other active members found in {userDepartment}.
+                                    </div>
+                                ) : (
+                                    <>
+                                        <div className="relative">
+                                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-text-muted" />
+                                            <input
+                                                type="text"
+                                                value={memberSearchQuery}
+                                                onChange={(e) => setMemberSearchQuery(e.target.value)}
+                                                placeholder="Search members by name, ID, or email..."
+                                                className="w-full pl-8.5 pr-3 py-1.5 text-xs bg-surface border border-surface-border rounded-lg text-text focus:outline-none focus:border-accent"
+                                            />
+                                        </div>
+
+                                        <div className="flex flex-col gap-1.5 max-h-56 overflow-y-auto pr-1">
+                                            {filteredDepartmentMembers.map((member) => {
+                                                const isSelected = selectedPublishMemberIds.includes(member.id);
+                                                const avatarSrc = resolveUserAvatar(member, currentUser);
+                                                const memberFullName = `${member.firstName || ''} ${member.lastName || ''}`.trim() || 'Faculty Member';
+
+                                                return (
+                                                    <div
+                                                        key={member.id}
+                                                        onClick={() => handleToggleMemberSelection(member.id)}
+                                                        className={`p-2.5 rounded-lg border transition-all cursor-pointer flex items-center justify-between gap-3 ${
+                                                            isSelected
+                                                                ? 'border-accent bg-accent/10 shadow-xs'
+                                                                : 'border-surface-border bg-surface hover:border-surface-border-strong hover:bg-surface-hover'
+                                                        }`}
+                                                    >
+                                                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                                                            <div
+                                                                className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${
+                                                                    isSelected
+                                                                        ? 'bg-accent border-accent text-accent-foreground'
+                                                                        : 'border-surface-border bg-surface'
+                                                                }`}
+                                                            >
+                                                                {isSelected && <Check className="h-3 w-3 stroke-[3]" />}
+                                                            </div>
+
+                                                            <Avatar
+                                                                src={avatarSrc}
+                                                                alt={memberFullName}
+                                                                size="sm"
+                                                                className="shrink-0"
+                                                            />
+
+                                                            <div className="flex flex-col min-w-0">
+                                                                <span className="text-xs font-semibold text-text truncate">
+                                                                    {memberFullName}
+                                                                </span>
+                                                                <span className="text-[10px] text-text-muted truncate">
+                                                                    {member.universityId || member.email}
+                                                                </span>
+                                                            </div>
+                                                        </div>
+
+                                                        <Badge
+                                                            variant="neutral"
+                                                            size="xs"
+                                                            label={member.role}
+                                                            className="shrink-0"
+                                                        />
+                                                    </div>
+                                                );
+                                            })}
+                                            {filteredDepartmentMembers.length === 0 && (
+                                                <div className="p-3 text-center text-xs text-text-muted">
+                                                    No members match &quot;{memberSearchQuery}&quot;.
+                                                </div>
+                                            )}
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                        )}
+
+                        {/* SUBMIT BUTTON */}
+                        <div className="flex items-center justify-between pt-1 gap-2 border-t border-surface-border">
+                            <span className="text-[11px] text-text-muted">
+                                Officers and Director retain persistent management access.
+                            </span>
+                            <Button
+                                variant="primary"
+                                size="sm"
+                                leadingIcon={Send}
+                                isLoading={isPublishingMembers}
+                                isDisabled={isPublishingMembers || (publishMode === 'specific' && selectedPublishMemberIds.length === 0)}
+                                onClick={handlePublishSubmit}
+                                className="shrink-0"
+                            >
+                                {publishMode === 'all'
+                                    ? 'Publish to All Members'
+                                    : selectedPublishMemberIds.length > 1
+                                    ? `Publish to ${selectedPublishMemberIds.length} Members`
+                                    : selectedPublishMemberIds.length === 1
+                                    ? 'Publish to 1 Member'
+                                    : 'Select Members'}
+                            </Button>
                         </div>
                     </div>
                 </Modal>

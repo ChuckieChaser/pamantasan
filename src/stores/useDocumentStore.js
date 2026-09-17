@@ -68,6 +68,7 @@ const useDocumentStore = create((set, get) => ({
     recipientDocumentShares: [],
     selectedDocumentShare: null,
     shareModalDocument: null,
+    publishModalDocument: null,
     documentRequests: [],
     requesterDocumentRequests: [],
     selectedDocumentRequest: null,
@@ -549,18 +550,36 @@ const useDocumentStore = create((set, get) => ({
         set({ isLoading: true, error: null });
 
         try {
-            const validatedPayload = mutationSchema.UpdateDocumentShareSchema.parse(payload);
+            const existing = (get().documentShares || []).find((item) => item.id === id);
+            const deptId = payload.departmentId || existing?.department?.id || existing?.departmentId;
+            const recId = payload.recipientId !== undefined ? payload.recipientId : (existing?.recipient?.id ?? existing?.recipientId ?? null);
+            const validatedPayload = mutationSchema.UpdateDocumentShareSchema.parse({
+                ...payload,
+                departmentId: deptId,
+                recipientId: recId,
+            });
             const updatedShare = await documentService.updateDocumentShare(id, validatedPayload);
+
+            const merged = {
+                ...existing,
+                ...updatedShare,
+                departmentId: deptId ?? updatedShare.departmentId,
+                department: updatedShare.department ?? existing?.department ?? (deptId ? { id: deptId } : null),
+                recipientId: recId,
+                recipient: updatedShare.recipient ?? existing?.recipient ?? (recId ? { id: recId } : null),
+                documentId: existing?.documentId ?? existing?.document?.id,
+                document: existing?.document ?? null,
+            };
 
             set((state) => ({
                 documentShares: state.documentShares.map((item) =>
-                    item.id === id ? updatedShare : item
+                    item.id === id ? merged : item
                 ),
                 isLoading: false,
                 error: null,
             }));
 
-            return updatedShare;
+            return merged;
         } catch (error) {
             const message = error?.errors?.[0]?.message ?? error?.message ?? 'Failed to update document share.';
             set({ isLoading: false, error: message });
@@ -596,6 +615,10 @@ const useDocumentStore = create((set, get) => ({
 
     setShareModalDocument: (doc) => {
         set({ shareModalDocument: doc });
+    },
+
+    setPublishModalDocument: (doc) => {
+        set({ publishModalDocument: doc });
     },
 
     syncAllDocumentShares: async (currentUser, departments = []) => {
@@ -791,21 +814,316 @@ const useDocumentStore = create((set, get) => ({
         }
     },
 
+    updateShareStatusRecursive: async (rootDocId, departmentId, nextStatus) => {
+        try {
+            const allDocs = get().documents || [];
+            const targetDoc = allDocs.find((d) => d.id === rootDocId);
+            const targetDocIds = targetDoc?.isFolder
+                ? getRecursiveDescendantDocIds(rootDocId, allDocs)
+                : [rootDocId];
+
+            const currentShares = get().documentShares || [];
+            const sharesToUpdate = currentShares.filter(
+                (s) =>
+                    targetDocIds.includes(s.document?.id ?? s.documentId) &&
+                    (s.department?.id ?? s.departmentId) === departmentId
+            );
+
+            if (sharesToUpdate.length === 0) {
+                return [];
+            }
+
+            const timestamp = new Date().toISOString();
+            await Promise.allSettled(
+                sharesToUpdate.map((s) => {
+                    const deptId = s.department?.id ?? s.departmentId ?? departmentId;
+                    const recId = s.recipient?.id ?? s.recipientId;
+                    return documentService.updateDocumentShare(s.id, {
+                        status: nextStatus,
+                        departmentId: deptId,
+                        recipientId: recId,
+                        updatedAt: timestamp,
+                    });
+                })
+            );
+
+            const targetShareIds = new Set(sharesToUpdate.map((s) => s.id));
+            set((state) => ({
+                documentShares: state.documentShares.map((item) => {
+                    if (targetShareIds.has(item.id)) {
+                        const deptId = item.department?.id ?? item.departmentId ?? departmentId;
+                        return {
+                            ...item,
+                            status: nextStatus,
+                            departmentId: deptId,
+                            department: item.department ?? (deptId ? { id: deptId } : null),
+                            updatedAt: timestamp,
+                        };
+                    }
+                    return item;
+                }),
+            }));
+
+            return sharesToUpdate.map((s) => ({
+                ...s,
+                status: nextStatus,
+                updatedAt: timestamp,
+            }));
+        } catch (error) {
+            console.error('Failed to update share status recursively:', error);
+            throw error;
+        }
+    },
+
+    publishDocumentToMembers: async (rootDocId, departmentId, targetMemberIds = [], publisherId) => {
+        try {
+            const allDocs = get().documents || [];
+            const targetDoc = allDocs.find((d) => d.id === rootDocId);
+            const targetDocIds = targetDoc?.isFolder
+                ? getRecursiveDescendantDocIds(rootDocId, allDocs)
+                : [rootDocId];
+
+            const currentShares = get().documentShares || [];
+            const timestamp = new Date().toISOString();
+
+            if (!targetMemberIds || targetMemberIds.length === 0) {
+                // 1. PUBLISH TO ALL DEPARTMENT MEMBERS
+                const sharesToUpdate = currentShares.filter(
+                    (s) =>
+                        targetDocIds.includes(s.document?.id ?? s.documentId) &&
+                        (s.department?.id ?? s.departmentId) === departmentId &&
+                        !s.recipientId &&
+                        !s.recipient
+                );
+
+                const updatedBaseShares = [];
+                for (const s of sharesToUpdate) {
+                    await documentService.updateDocumentShare(s.id, {
+                        status: constants.DOCUMENT_SHARES_STATUS.PUBLISHED,
+                        departmentId: departmentId,
+                        recipientId: null,
+                        updatedAt: timestamp,
+                    });
+                    updatedBaseShares.push({
+                        ...s,
+                        status: constants.DOCUMENT_SHARES_STATUS.PUBLISHED,
+                        departmentId: departmentId,
+                        department: s.department ?? (departmentId ? { id: departmentId } : null),
+                        recipientId: null,
+                        recipient: null,
+                        updatedAt: timestamp,
+                    });
+                }
+
+                const existingBaseDocIds = new Set(sharesToUpdate.map((s) => s.document?.id ?? s.documentId));
+                for (const docId of targetDocIds) {
+                    if (!existingBaseDocIds.has(docId)) {
+                        const newShare = await documentService.insertDocumentShare({
+                            documentId: docId,
+                            departmentId: departmentId,
+                            sharerId: publisherId,
+                            recipientId: null,
+                            status: constants.DOCUMENT_SHARES_STATUS.PUBLISHED,
+                            createdAt: timestamp,
+                            updatedAt: timestamp,
+                        });
+                        if (newShare) {
+                            updatedBaseShares.push({
+                                ...newShare,
+                                documentId: docId,
+                                departmentId: departmentId,
+                            });
+                        }
+                    }
+                }
+
+                // Delete any existing member-specific shares to revert to broad access
+                const existingSpecificShares = currentShares.filter(
+                    (s) =>
+                        targetDocIds.includes(s.document?.id ?? s.documentId) &&
+                        (s.department?.id ?? s.departmentId) === departmentId &&
+                        (s.recipient?.id ?? s.recipientId)
+                );
+                for (const ess of existingSpecificShares) {
+                    await documentService.deleteDocumentShare(ess.id);
+                }
+                const removedSpecificIds = new Set(existingSpecificShares.map((s) => s.id));
+
+                set((state) => ({
+                    documentShares: [
+                        ...state.documentShares
+                            .filter((s) => !removedSpecificIds.has(s.id))
+                            .map((s) => {
+                                const found = updatedBaseShares.find((u) => u.id === s.id);
+                                return found ? found : s;
+                            }),
+                        ...updatedBaseShares.filter((u) => !state.documentShares.some((s) => s.id === u.id)),
+                    ],
+                }));
+
+                return updatedBaseShares;
+            } else {
+                // 2. PUBLISH TO SPECIFIC MEMBERS
+                const createdOrUpdatedShares = [];
+
+                // Keep base departmental share updated to PUBLISHED (for Officer & Director visibility)
+                const baseShares = currentShares.filter(
+                    (s) =>
+                        targetDocIds.includes(s.document?.id ?? s.documentId) &&
+                        (s.department?.id ?? s.departmentId) === departmentId &&
+                        !s.recipientId &&
+                        !s.recipient
+                );
+                for (const bs of baseShares) {
+                    await documentService.updateDocumentShare(bs.id, {
+                        status: constants.DOCUMENT_SHARES_STATUS.PUBLISHED,
+                        departmentId: departmentId,
+                        recipientId: null,
+                        updatedAt: timestamp,
+                    });
+                    createdOrUpdatedShares.push({
+                        ...bs,
+                        status: constants.DOCUMENT_SHARES_STATUS.PUBLISHED,
+                        departmentId: departmentId,
+                        department: bs.department ?? (departmentId ? { id: departmentId } : null),
+                        recipientId: null,
+                        recipient: null,
+                        updatedAt: timestamp,
+                    });
+                }
+
+                const existingBaseDocIds = new Set(baseShares.map((s) => s.document?.id ?? s.documentId));
+                for (const docId of targetDocIds) {
+                    if (!existingBaseDocIds.has(docId)) {
+                        const newBase = await documentService.insertDocumentShare({
+                            documentId: docId,
+                            departmentId: departmentId,
+                            sharerId: publisherId,
+                            recipientId: null,
+                            status: constants.DOCUMENT_SHARES_STATUS.PUBLISHED,
+                            createdAt: timestamp,
+                            updatedAt: timestamp,
+                        });
+                        if (newBase) {
+                            createdOrUpdatedShares.push({
+                                ...newBase,
+                                documentId: docId,
+                                departmentId: departmentId,
+                                recipientId: null,
+                            });
+                        }
+                    }
+                }
+
+                // Insert or update shares for each chosen member
+                for (const memberId of targetMemberIds) {
+                    for (const docId of targetDocIds) {
+                        const existingMemberShare = currentShares.find(
+                            (s) =>
+                                (s.document?.id ?? s.documentId) === docId &&
+                                (s.department?.id ?? s.departmentId) === departmentId &&
+                                (s.recipient?.id ?? s.recipientId) === memberId
+                        );
+
+                        if (existingMemberShare) {
+                            await documentService.updateDocumentShare(existingMemberShare.id, {
+                                status: constants.DOCUMENT_SHARES_STATUS.PUBLISHED,
+                                departmentId: departmentId,
+                                recipientId: memberId,
+                                updatedAt: timestamp,
+                            });
+                            createdOrUpdatedShares.push({
+                                ...existingMemberShare,
+                                status: constants.DOCUMENT_SHARES_STATUS.PUBLISHED,
+                                departmentId: departmentId,
+                                recipientId: memberId,
+                                updatedAt: timestamp,
+                            });
+                        } else {
+                            const inserted = await documentService.insertDocumentShare({
+                                documentId: docId,
+                                departmentId: departmentId,
+                                recipientId: memberId,
+                                sharerId: publisherId,
+                                status: constants.DOCUMENT_SHARES_STATUS.PUBLISHED,
+                                createdAt: timestamp,
+                                updatedAt: timestamp,
+                            });
+                            if (inserted) {
+                                createdOrUpdatedShares.push({
+                                    ...inserted,
+                                    documentId: docId,
+                                    departmentId: departmentId,
+                                    recipientId: memberId,
+                                });
+                            }
+                        }
+                    }
+                }
+
+                // Remove shares for members who are no longer selected
+                const unselectedMemberShares = currentShares.filter(
+                    (s) =>
+                        targetDocIds.includes(s.document?.id ?? s.documentId) &&
+                        (s.department?.id ?? s.departmentId) === departmentId &&
+                        (s.recipient?.id ?? s.recipientId) &&
+                        !targetMemberIds.includes(s.recipient?.id ?? s.recipientId)
+                );
+                for (const ums of unselectedMemberShares) {
+                    await documentService.deleteDocumentShare(ums.id);
+                }
+                const removedIds = new Set(unselectedMemberShares.map((s) => s.id));
+
+                set((state) => ({
+                    documentShares: [
+                        ...state.documentShares
+                            .filter((s) => !removedIds.has(s.id))
+                            .map((s) => {
+                                const found = createdOrUpdatedShares.find((u) => u.id === s.id);
+                                return found ? found : s;
+                            }),
+                        ...createdOrUpdatedShares.filter((u) => !state.documentShares.some((s) => s.id === u.id)),
+                    ],
+                }));
+
+                return createdOrUpdatedShares;
+            }
+        } catch (error) {
+            console.error('Failed to publish document to members:', error);
+            throw error;
+        }
+    },
+
     approveShare: async (shareId) => {
         try {
-            const updated = await documentService.updateDocumentShare(shareId, {
+            const existing = (get().documentShares || []).find((s) => s.id === shareId);
+            const deptId = existing?.department?.id ?? existing?.departmentId;
+            const recId = existing?.recipient?.id ?? existing?.recipientId;
+            const timestamp = new Date().toISOString();
+
+            await documentService.updateDocumentShare(shareId, {
                 status: constants.DOCUMENT_SHARES_STATUS.APPROVED,
-                updatedAt: new Date().toISOString(),
+                departmentId: deptId,
+                recipientId: recId,
+                updatedAt: timestamp,
             });
 
-            if (updated) {
-                set((state) => ({
-                    documentShares: state.documentShares.map((item) =>
-                        item.id === shareId ? updated : item
-                    ),
-                }));
-            }
-            return updated;
+            const merged = {
+                ...existing,
+                status: constants.DOCUMENT_SHARES_STATUS.APPROVED,
+                departmentId: deptId,
+                department: existing?.department ?? (deptId ? { id: deptId } : null),
+                recipientId: recId,
+                updatedAt: timestamp,
+            };
+
+            set((state) => ({
+                documentShares: state.documentShares.map((item) =>
+                    item.id === shareId ? merged : item
+                ),
+            }));
+
+            return merged;
         } catch (error) {
             console.error('Failed to approve document share:', error);
             throw error;
@@ -814,19 +1132,34 @@ const useDocumentStore = create((set, get) => ({
 
     unapproveShare: async (shareId) => {
         try {
-            const updated = await documentService.updateDocumentShare(shareId, {
+            const existing = (get().documentShares || []).find((s) => s.id === shareId);
+            const deptId = existing?.department?.id ?? existing?.departmentId;
+            const recId = existing?.recipient?.id ?? existing?.recipientId;
+            const timestamp = new Date().toISOString();
+
+            await documentService.updateDocumentShare(shareId, {
                 status: constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL,
-                updatedAt: new Date().toISOString(),
+                departmentId: deptId,
+                recipientId: recId,
+                updatedAt: timestamp,
             });
 
-            if (updated) {
-                set((state) => ({
-                    documentShares: state.documentShares.map((item) =>
-                        item.id === shareId ? updated : item
-                    ),
-                }));
-            }
-            return updated;
+            const merged = {
+                ...existing,
+                status: constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL,
+                departmentId: deptId,
+                department: existing?.department ?? (deptId ? { id: deptId } : null),
+                recipientId: recId,
+                updatedAt: timestamp,
+            };
+
+            set((state) => ({
+                documentShares: state.documentShares.map((item) =>
+                    item.id === shareId ? merged : item
+                ),
+            }));
+
+            return merged;
         } catch (error) {
             console.error('Failed to unapprove document share:', error);
             throw error;
@@ -835,7 +1168,6 @@ const useDocumentStore = create((set, get) => ({
 
     rejectShare: async (shareId) => {
         try {
-            // Rejecting resets share status back to -- by deleting the departmental share record
             const isDeleted = await documentService.deleteDocumentShare(shareId);
             if (isDeleted) {
                 set((state) => ({
@@ -851,19 +1183,34 @@ const useDocumentStore = create((set, get) => ({
 
     publishShare: async (shareId) => {
         try {
-            const updated = await documentService.updateDocumentShare(shareId, {
+            const existing = (get().documentShares || []).find((s) => s.id === shareId);
+            const deptId = existing?.department?.id ?? existing?.departmentId;
+            const recId = existing?.recipient?.id ?? existing?.recipientId;
+            const timestamp = new Date().toISOString();
+
+            await documentService.updateDocumentShare(shareId, {
                 status: constants.DOCUMENT_SHARES_STATUS.PUBLISHED,
-                updatedAt: new Date().toISOString(),
+                departmentId: deptId,
+                recipientId: recId,
+                updatedAt: timestamp,
             });
 
-            if (updated) {
-                set((state) => ({
-                    documentShares: state.documentShares.map((item) =>
-                        item.id === shareId ? updated : item
-                    ),
-                }));
-            }
-            return updated;
+            const merged = {
+                ...existing,
+                status: constants.DOCUMENT_SHARES_STATUS.PUBLISHED,
+                departmentId: deptId,
+                department: existing?.department ?? (deptId ? { id: deptId } : null),
+                recipientId: recId,
+                updatedAt: timestamp,
+            };
+
+            set((state) => ({
+                documentShares: state.documentShares.map((item) =>
+                    item.id === shareId ? merged : item
+                ),
+            }));
+
+            return merged;
         } catch (error) {
             console.error('Failed to publish document share:', error);
             throw error;
@@ -872,19 +1219,34 @@ const useDocumentStore = create((set, get) => ({
 
     unpublishShare: async (shareId) => {
         try {
-            const updated = await documentService.updateDocumentShare(shareId, {
+            const existing = (get().documentShares || []).find((s) => s.id === shareId);
+            const deptId = existing?.department?.id ?? existing?.departmentId;
+            const recId = existing?.recipient?.id ?? existing?.recipientId;
+            const timestamp = new Date().toISOString();
+
+            await documentService.updateDocumentShare(shareId, {
                 status: constants.DOCUMENT_SHARES_STATUS.APPROVED,
-                updatedAt: new Date().toISOString(),
+                departmentId: deptId,
+                recipientId: recId,
+                updatedAt: timestamp,
             });
 
-            if (updated) {
-                set((state) => ({
-                    documentShares: state.documentShares.map((item) =>
-                        item.id === shareId ? updated : item
-                    ),
-                }));
-            }
-            return updated;
+            const merged = {
+                ...existing,
+                status: constants.DOCUMENT_SHARES_STATUS.APPROVED,
+                departmentId: deptId,
+                department: existing?.department ?? (deptId ? { id: deptId } : null),
+                recipientId: recId,
+                updatedAt: timestamp,
+            };
+
+            set((state) => ({
+                documentShares: state.documentShares.map((item) =>
+                    item.id === shareId ? merged : item
+                ),
+            }));
+
+            return merged;
         } catch (error) {
             console.error('Failed to unpublish document share:', error);
             throw error;
@@ -893,19 +1255,34 @@ const useDocumentStore = create((set, get) => ({
 
     stashShare: async (shareId) => {
         try {
-            const updated = await documentService.updateDocumentShare(shareId, {
+            const existing = (get().documentShares || []).find((s) => s.id === shareId);
+            const deptId = existing?.department?.id ?? existing?.departmentId;
+            const recId = existing?.recipient?.id ?? existing?.recipientId;
+            const timestamp = new Date().toISOString();
+
+            await documentService.updateDocumentShare(shareId, {
                 status: constants.DOCUMENT_SHARES_STATUS.STASHED,
-                updatedAt: new Date().toISOString(),
+                departmentId: deptId,
+                recipientId: recId,
+                updatedAt: timestamp,
             });
 
-            if (updated) {
-                set((state) => ({
-                    documentShares: state.documentShares.map((item) =>
-                        item.id === shareId ? updated : item
-                    ),
-                }));
-            }
-            return updated;
+            const merged = {
+                ...existing,
+                status: constants.DOCUMENT_SHARES_STATUS.STASHED,
+                departmentId: deptId,
+                department: existing?.department ?? (deptId ? { id: deptId } : null),
+                recipientId: recId,
+                updatedAt: timestamp,
+            };
+
+            set((state) => ({
+                documentShares: state.documentShares.map((item) =>
+                    item.id === shareId ? merged : item
+                ),
+            }));
+
+            return merged;
         } catch (error) {
             console.error('Failed to stash document share:', error);
             throw error;
@@ -914,19 +1291,34 @@ const useDocumentStore = create((set, get) => ({
 
     unstashShare: async (shareId) => {
         try {
-            const updated = await documentService.updateDocumentShare(shareId, {
+            const existing = (get().documentShares || []).find((s) => s.id === shareId);
+            const deptId = existing?.department?.id ?? existing?.departmentId;
+            const recId = existing?.recipient?.id ?? existing?.recipientId;
+            const timestamp = new Date().toISOString();
+
+            await documentService.updateDocumentShare(shareId, {
                 status: constants.DOCUMENT_SHARES_STATUS.APPROVED,
-                updatedAt: new Date().toISOString(),
+                departmentId: deptId,
+                recipientId: recId,
+                updatedAt: timestamp,
             });
 
-            if (updated) {
-                set((state) => ({
-                    documentShares: state.documentShares.map((item) =>
-                        item.id === shareId ? updated : item
-                    ),
-                }));
-            }
-            return updated;
+            const merged = {
+                ...existing,
+                status: constants.DOCUMENT_SHARES_STATUS.APPROVED,
+                departmentId: deptId,
+                department: existing?.department ?? (deptId ? { id: deptId } : null),
+                recipientId: recId,
+                updatedAt: timestamp,
+            };
+
+            set((state) => ({
+                documentShares: state.documentShares.map((item) =>
+                    item.id === shareId ? merged : item
+                ),
+            }));
+
+            return merged;
         } catch (error) {
             console.error('Failed to unstash document share:', error);
             throw error;

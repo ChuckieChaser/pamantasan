@@ -507,59 +507,79 @@ const AppContent = () => {
             try {
                 const store = useDocumentStore.getState();
                 const docTitle = targetDoc?.name || targetDoc?.title || 'document';
+                const deptId = shareRecord?.department?.id ?? shareRecord?.departmentId ?? currentUser?.departmentId;
 
                 if (actionKey === 'approve') {
-                    await store.approveShare(shareId);
+                    if (targetDoc?.isFolder && deptId) {
+                        await store.updateShareStatusRecursive(targetDoc.id, deptId, constants.DOCUMENT_SHARES_STATUS.APPROVED);
+                    } else {
+                        await store.approveShare(shareId);
+                    }
                     showToast({
                         type: 'success',
-                        title: 'Document Approved',
+                        title: targetDoc?.isFolder ? 'Folder Approved' : 'Document Approved',
                         description: `Approved "${docTitle}" for department director review.`,
                     });
                 } else if (actionKey === 'unapprove') {
-                    await store.unapproveShare(shareId);
+                    if (targetDoc?.isFolder && deptId) {
+                        await store.updateShareStatusRecursive(targetDoc.id, deptId, constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL);
+                    } else {
+                        await store.unapproveShare(shareId);
+                    }
                     showToast({
                         type: 'information',
                         title: 'Approval Revoked',
                         description: `Reverted "${docTitle}" to pending approval.`,
                     });
                 } else if (actionKey === 'reject') {
-                    await store.rejectShare(shareId);
+                    if (targetDoc?.isFolder && deptId) {
+                        await store.unshareDocumentRecursive(targetDoc.id, deptId);
+                    } else {
+                        await store.rejectShare(shareId);
+                    }
                     showToast({
                         type: 'warning',
-                        title: 'Document Rejected',
+                        title: targetDoc?.isFolder ? 'Folder Rejected' : 'Document Rejected',
                         description: `Rejected "${docTitle}" and removed from department view.`,
                     });
                     setSelectedItem(null);
                 } else if (actionKey === 'publish') {
-                    await store.publishShare(shareId);
-                    showToast({
-                        type: 'success',
-                        title: 'Document Published',
-                        description: `Published "${docTitle}" to all department members.`,
-                    });
+                    store.setPublishModalDocument(targetDoc);
+                    return;
                 } else if (actionKey === 'unpublish') {
-                    await store.unpublishShare(shareId);
+                    if (targetDoc?.isFolder && deptId) {
+                        await store.updateShareStatusRecursive(targetDoc.id, deptId, constants.DOCUMENT_SHARES_STATUS.APPROVED);
+                    } else {
+                        await store.unpublishShare(shareId);
+                    }
                     showToast({
                         type: 'information',
-                        title: 'Document Unpublished',
+                        title: targetDoc?.isFolder ? 'Folder Unpublished' : 'Document Unpublished',
                         description: `Unpublished "${docTitle}" from department members.`,
                     });
                 } else if (actionKey === 'stash') {
-                    await store.stashShare(shareId);
+                    if (targetDoc?.isFolder && deptId) {
+                        await store.updateShareStatusRecursive(targetDoc.id, deptId, constants.DOCUMENT_SHARES_STATUS.STASHED);
+                    } else {
+                        await store.stashShare(shareId);
+                    }
                     showToast({
                         type: 'information',
-                        title: 'Document Stashed',
+                        title: targetDoc?.isFolder ? 'Folder Stashed' : 'Document Stashed',
                         description: `Stashed "${docTitle}" at upper management level.`,
                     });
                 } else if (actionKey === 'unstash') {
-                    await store.unstashShare(shareId);
+                    if (targetDoc?.isFolder && deptId) {
+                        await store.updateShareStatusRecursive(targetDoc.id, deptId, constants.DOCUMENT_SHARES_STATUS.APPROVED);
+                    } else {
+                        await store.unstashShare(shareId);
+                    }
                     showToast({
                         type: 'success',
-                        title: 'Document Unstashed',
+                        title: targetDoc?.isFolder ? 'Folder Unstashed' : 'Document Unstashed',
                         description: `Restored "${docTitle}" to approved state.`,
                     });
                 } else if (actionKey === 'unshare') {
-                    const deptId = shareRecord?.department?.id ?? shareRecord?.departmentId;
                     if (targetDoc?.isFolder && deptId) {
                         await store.unshareDocumentRecursive(targetDoc.id, deptId);
                         showToast({

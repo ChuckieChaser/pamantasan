@@ -418,15 +418,52 @@ const documentService = {
     },
 
     updateDocumentShare: async (id, payload) => {
-        const data = await dataConnectService.executeMutation('UpdateDocumentShare', {
-            id: id,
-            recipientId: payload.recipientId,
-            departmentId: payload.departmentId,
-            status: payload.status,
-            updatedAt: payload.updatedAt,
-        });
+        let existing = null;
+        let deptId = payload.departmentId;
+        let recId = payload.recipientId;
 
-        return formatLiveDocumentShare(data?.documentShare_update ?? data?.documentShares_update);
+        if (!deptId) {
+            try {
+                existing = await documentService.fetchDocumentShareById(id);
+                if (existing) {
+                    deptId = existing.department?.id ?? existing.departmentId;
+                    if (recId === undefined) {
+                        recId = existing.recipient?.id ?? existing.recipientId ?? null;
+                    }
+                }
+            } catch (error) {
+                console.warn(`Failed to prefetch existing share "${id}" in updateDocumentShare:`, error);
+            }
+        }
+
+        const timestamp = payload.updatedAt || new Date().toISOString();
+        const mutationVars = {
+            id: id,
+            status: payload.status,
+            updatedAt: timestamp,
+        };
+        if (deptId) {
+            mutationVars.departmentId = deptId;
+        }
+        if (recId !== undefined) {
+            mutationVars.recipientId = recId;
+        }
+
+        const data = await dataConnectService.executeMutation('UpdateDocumentShare', mutationVars);
+        const rawUpdated = data?.documentShare_update ?? data?.documentShares_update;
+
+        return {
+            ...(existing || {}),
+            id: rawUpdated?.id ?? id,
+            status: payload.status ?? existing?.status,
+            departmentId: deptId ?? existing?.departmentId,
+            department: existing?.department ?? (deptId ? { id: deptId } : null),
+            recipientId: recId !== undefined ? recId : (existing?.recipientId ?? null),
+            recipient: existing?.recipient ?? (recId ? { id: recId } : null),
+            documentId: existing?.documentId ?? existing?.document?.id,
+            document: existing?.document ?? null,
+            updatedAt: timestamp,
+        };
     },
 
     deleteDocumentShare: async (id) => {
@@ -673,12 +710,21 @@ function formatLiveDocumentShare(rawShare) {
         return null;
     }
 
+    const docId = typeof rawShare.document === 'object' ? rawShare.document?.id : rawShare.documentId;
+    const deptId = typeof rawShare.department === 'object' ? rawShare.department?.id : rawShare.departmentId;
+    const recId = typeof rawShare.recipient === 'object' ? rawShare.recipient?.id : rawShare.recipientId;
+    const sharerId = typeof rawShare.sharer === 'object' ? rawShare.sharer?.id : rawShare.sharerId;
+
     return {
         id: rawShare.id,
-        document: rawShare.document,
-        sharer: rawShare.sharer,
-        recipient: rawShare.recipient,
-        department: rawShare.department,
+        document: rawShare.document ?? (docId ? { id: docId } : null),
+        documentId: docId,
+        sharer: rawShare.sharer ?? (sharerId ? { id: sharerId } : null),
+        sharerId: sharerId,
+        recipient: rawShare.recipient ?? (recId ? { id: recId } : null),
+        recipientId: recId,
+        department: rawShare.department ?? (deptId ? { id: deptId } : null),
+        departmentId: deptId,
         status: rawShare.status,
         createdAt: rawShare.createdAt,
         updatedAt: rawShare.updatedAt,

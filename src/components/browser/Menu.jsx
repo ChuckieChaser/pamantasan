@@ -412,7 +412,7 @@ const Menu = ({
                     );
                 }
 
-                // OFFICER ROLE: Approve/Unapprove + Reject (files only), View Info, View Version/Content — NO Download
+                // OFFICER ROLE: Approve/Unapprove + Reject, View Info, View Version/Content, Download
                 if (isOfficer) {
                     const isPending = item.status === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL;
                     return (
@@ -428,38 +428,34 @@ const Menu = ({
                                 </button>
                             )}
 
-                            {!isFolder && (
-                                <>
-                                    {isPending ? (
-                                        <button
-                                            type="button"
-                                            onClick={(event) => onActionClick?.(event, 'approve', item)}
-                                            className="flex items-center gap-2 px-3 py-2 rounded text-accent hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                        >
-                                            <Check className={ICON_STYLE} />
-                                            <span>Approve Document</span>
-                                        </button>
-                                    ) : (
-                                        <button
-                                            type="button"
-                                            onClick={(event) => onActionClick?.(event, 'unapprove', item)}
-                                            className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                        >
-                                            <RotateCcw className={ICON_STYLE} />
-                                            <span>Unapprove Document</span>
-                                        </button>
-                                    )}
-
-                                    <button
-                                        type="button"
-                                        onClick={(event) => onActionClick?.(event, 'reject', item)}
-                                        className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
-                                    >
-                                        <XCircle className={ICON_STYLE} />
-                                        <span>Reject Document</span>
-                                    </button>
-                                </>
+                            {isPending ? (
+                                <button
+                                    type="button"
+                                    onClick={(event) => onActionClick?.(event, 'approve', item)}
+                                    className="flex items-center gap-2 px-3 py-2 rounded text-accent hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                >
+                                    <Check className={ICON_STYLE} />
+                                    <span>{`Approve ${targetType}`}</span>
+                                </button>
+                            ) : (
+                                <button
+                                    type="button"
+                                    onClick={(event) => onActionClick?.(event, 'unapprove', item)}
+                                    className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                >
+                                    <RotateCcw className={ICON_STYLE} />
+                                    <span>{`Unapprove ${targetType}`}</span>
+                                </button>
                             )}
+
+                            <button
+                                type="button"
+                                onClick={(event) => onActionClick?.(event, 'reject', item)}
+                                className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
+                            >
+                                <XCircle className={ICON_STYLE} />
+                                <span>{`Reject ${targetType}`}</span>
+                            </button>
 
                             <div className="h-px bg-surface-border my-1" />
 
@@ -493,7 +489,7 @@ const Menu = ({
                     );
                 }
 
-                // DIRECTOR ROLE: Publish/Unpublish + Stash/Unstash (files only), View Info, View Version/Content — NO Download
+                // DIRECTOR ROLE: Publish/Unpublish + Stash/Unstash, View Info, View Version/Content, Download
                 if (isDirector) {
                     const isStashed = item.status === constants.DOCUMENT_SHARES_STATUS.STASHED;
                     const isPublished = item.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED;
@@ -511,48 +507,44 @@ const Menu = ({
                                 </button>
                             )}
 
-                            {!isFolder && (
-                                <>
-                                    {isPublished ? (
-                                        <button
-                                            type="button"
-                                            onClick={(event) => onActionClick?.(event, 'unpublish', item)}
-                                            className="flex items-center gap-2 px-3 py-2 rounded text-warning hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                        >
-                                            <EyeOff className={ICON_STYLE} />
-                                            <span>Unpublish Document</span>
-                                        </button>
-                                    ) : (
-                                        <button
-                                            type="button"
-                                            onClick={(event) => onActionClick?.(event, 'publish', item)}
-                                            className="flex items-center gap-2 px-3 py-2 rounded text-accent hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                        >
-                                            <Globe className={ICON_STYLE} />
-                                            <span>Publish Document</span>
-                                        </button>
-                                    )}
+                            {isPublished ? (
+                                <button
+                                    type="button"
+                                    onClick={(event) => onActionClick?.(event, 'unpublish', item)}
+                                    className="flex items-center gap-2 px-3 py-2 rounded text-warning hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                >
+                                    <EyeOff className={ICON_STYLE} />
+                                    <span>{`Unpublish ${targetType}`}</span>
+                                </button>
+                            ) : (
+                                <button
+                                    type="button"
+                                    onClick={(event) => onActionClick?.(event, 'publish', item)}
+                                    className="flex items-center gap-2 px-3 py-2 rounded text-accent hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                >
+                                    <Globe className={ICON_STYLE} />
+                                    <span>{`Publish ${targetType}`}</span>
+                                </button>
+                            )}
 
-                                    {isStashed ? (
-                                        <button
-                                            type="button"
-                                            onClick={(event) => onActionClick?.(event, 'unstash', item)}
-                                            className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                        >
-                                            <RotateCcw className={ICON_STYLE} />
-                                            <span>Unstash Document</span>
-                                        </button>
-                                    ) : (
-                                        <button
-                                            type="button"
-                                            onClick={(event) => onActionClick?.(event, 'stash', item)}
-                                            className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                        >
-                                            <Layers className={ICON_STYLE} />
-                                            <span>Stash Document</span>
-                                        </button>
-                                    )}
-                                </>
+                            {isStashed ? (
+                                <button
+                                    type="button"
+                                    onClick={(event) => onActionClick?.(event, 'unstash', item)}
+                                    className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                >
+                                    <RotateCcw className={ICON_STYLE} />
+                                    <span>{`Unstash ${targetType}`}</span>
+                                </button>
+                            ) : (
+                                <button
+                                    type="button"
+                                    onClick={(event) => onActionClick?.(event, 'stash', item)}
+                                    className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                >
+                                    <Layers className={ICON_STYLE} />
+                                    <span>{`Stash ${targetType}`}</span>
+                                </button>
                             )}
 
                             <div className="h-px bg-surface-border my-1" />

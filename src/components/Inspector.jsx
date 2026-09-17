@@ -2633,24 +2633,8 @@ const Inspector = ({
                         );
                     }
 
-                    // 2. OFFICER ROLE: Approve/Unapprove + Reject (files only; folders get Download)
+                    // 2. OFFICER ROLE: Approve/Unapprove + Reject
                     if (isOfficer) {
-                        if (isFolder) {
-                            return (
-                                <div className="w-full">
-                                    <Button
-                                        variant="secondary"
-                                        leadingIcon={Download}
-                                        isLoading={activeActionLoading === 'download'}
-                                        isDisabled={Boolean(activeActionLoading)}
-                                        onClick={() => handleActionClick('download')}
-                                        className="w-full justify-center truncate px-2"
-                                    >
-                                        Download
-                                    </Button>
-                                </div>
-                            );
-                        }
                         const isPending = item.status === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL;
                         return (
                             <div className="grid grid-cols-2 gap-2 w-full">
@@ -2691,24 +2675,8 @@ const Inspector = ({
                         );
                     }
 
-                    // 3. DIRECTOR ROLE: Publish/Unpublish + Stash/Unstash (files only; folders get Download)
+                    // 3. DIRECTOR ROLE: Publish/Unpublish + Stash/Unstash
                     if (isDirector) {
-                        if (isFolder) {
-                            return (
-                                <div className="w-full">
-                                    <Button
-                                        variant="secondary"
-                                        leadingIcon={Download}
-                                        isLoading={activeActionLoading === 'download'}
-                                        isDisabled={Boolean(activeActionLoading)}
-                                        onClick={() => handleActionClick('download')}
-                                        className="w-full justify-center truncate px-2"
-                                    >
-                                        Download
-                                    </Button>
-                                </div>
-                            );
-                        }
                         const isPublished = item.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED;
                         const isStashed = item.status === constants.DOCUMENT_SHARES_STATUS.STASHED;
                         return (
