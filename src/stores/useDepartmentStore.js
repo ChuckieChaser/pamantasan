@@ -2,7 +2,8 @@
 import { create } from 'zustand';
 
 import { mutationSchema } from '../schemas';
-import { departmentService } from '../services';
+import { departmentService, systemEventService } from '../services';
+import { constants } from '../constants';
 
 
 // --- STORE ---
@@ -148,6 +149,20 @@ const useDepartmentStore = create((set, get) => ({
             // Re-fetch with SERVER_ONLY to ensure complete consistency with backend SQL
             get().fetchDepartments().catch(() => {});
 
+            systemEventService.recordSystemEvent({
+                entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DEPARTMENT,
+                entityId: newDepartment.id,
+                action: constants.AUDIT_LOGS_ACTION.CREATED,
+                data: {
+                    name: newDepartment.name,
+                    code: newDepartment.code,
+                    title: `Department Created: ${newDepartment.name} (${newDepartment.code})`,
+                    description: `Department "${newDepartment.name}" (${newDepartment.code}) has been created in the institutional directory.`,
+                },
+                targetRoles: ['ADMINISTRATOR', 'COORDINATOR'],
+                isMajor: true,
+            }).catch(() => {});
+
             return newDepartment;
         } catch (error) {
             const message = error?.errors?.[0]?.message ?? error?.message ?? 'Failed to insert department.';
@@ -194,6 +209,20 @@ const useDepartmentStore = create((set, get) => ({
             }));
 
             get().fetchDepartments().catch(() => {});
+
+            systemEventService.recordSystemEvent({
+                entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DEPARTMENT,
+                entityId: id,
+                action: constants.AUDIT_LOGS_ACTION.UPDATED,
+                data: {
+                    name: updatedDepartment.name,
+                    code: updatedDepartment.code,
+                    title: `Department Updated: ${updatedDepartment.name} (${updatedDepartment.code})`,
+                    description: `Department details for "${updatedDepartment.name}" (${updatedDepartment.code}) were updated.`,
+                },
+                targetRoles: ['ADMINISTRATOR', 'COORDINATOR'],
+                isMajor: false,
+            }).catch(() => {});
 
             return updatedDepartment;
         } catch (error) {
@@ -244,6 +273,21 @@ const useDepartmentStore = create((set, get) => ({
                     error: null,
                 }));
                 get().fetchDepartments().catch(() => {});
+
+                systemEventService.recordSystemEvent({
+                    entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DEPARTMENT,
+                    entityId: id,
+                    action: constants.AUDIT_LOGS_ACTION.DELETED,
+                    data: {
+                        id,
+                        name: department?.name,
+                        code: department?.code,
+                        title: `Department Removed: ${department?.name || department?.code || id}`,
+                        description: `Department "${department?.name || department?.code || id}" was removed from the institution directory.`,
+                    },
+                    targetRoles: ['ADMINISTRATOR', 'COORDINATOR'],
+                    isMajor: true,
+                }).catch(() => {});
             } else {
                 set({ isLoading: false });
             }

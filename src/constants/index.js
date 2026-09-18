@@ -161,6 +161,8 @@ const NOTIFICATIONS_ACTION = Object.freeze({
     SUSPENDED: 'SUSPENDED',
     UNSUSPENDED: 'UNSUSPENDED',
     REVERTED: 'REVERTED',
+    READ: 'READ',
+    VIEWED: 'VIEWED',
 });
 
 const AUDIT_LOGS_ENTITY_TYPE = Object.freeze({
@@ -196,6 +198,8 @@ const AUDIT_LOGS_ACTION = Object.freeze({
     SUSPENDED: 'SUSPENDED',
     UNSUSPENDED: 'UNSUSPENDED',
     REVERTED: 'REVERTED',
+    READ: 'READ',
+    VIEWED: 'VIEWED',
 });
 
 

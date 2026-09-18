@@ -27,7 +27,7 @@ import { AreaField } from './Fields';
 import { formatDateTime } from './common';
 import { useToast, useKeyPress } from '../hooks';
 import { constants } from '../constants';
-import { storageService, aiService } from '../services';
+import { storageService, aiService, systemEventService } from '../services';
 import { useDocumentStore, useAuthStore } from '../stores';
 
 
@@ -277,6 +277,17 @@ const DocumentViewerModal = ({
             isMounted = false;
         };
     }, [isOpen, resolvedDoc, storagePath, isDocx, isSpreadsheet, isEditable]);
+
+    // RECORD DOCUMENT READ AUDIT EVENT (DEBOUNCED)
+    useEffect(() => {
+        if (isOpen && resolvedDoc && !isLoading && !loadError && currentUser?.id) {
+            systemEventService.recordDocumentRead({
+                document: resolvedDoc,
+                user: currentUser,
+                version: activeVersion?.version,
+            }).catch(() => {});
+        }
+    }, [isOpen, resolvedDoc?.id, isLoading, loadError, currentUser?.id, activeVersion?.version]);
 
     // RENDER DOCX VIA CLIENT-SIDE PARSER
     useEffect(() => {

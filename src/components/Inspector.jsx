@@ -57,7 +57,9 @@ import {
     useDepartmentStore,
     useDocumentStore,
     useUserStore,
+    getRecursiveDescendantDocIds,
 } from '../stores';
+import { ReadershipChart } from './ReadershipChart';
 import { Avatar, resolveUserAvatar } from './Avatar';
 import { Badge } from './Badge';
 import { Button } from './Button';
@@ -277,12 +279,21 @@ const Inspector = ({
             item?.title)
     );
 
-    // FETCH VERSIONS DYNAMICALLY ON SELECTION
+    // FETCH VERSIONS & SHARES DYNAMICALLY ON SELECTION
     useEffect(() => {
         if (item?.id && isDocument) {
             useDocumentStore.getState().fetchDocumentVersions(item.id).catch(() => {});
         }
-    }, [item?.id, isDocument]);
+        if (item?.id && (isDocument || isFolder)) {
+            useDocumentStore.getState().fetchDocumentShares(item.id).catch(() => {});
+        }
+    }, [item?.id, isDocument, isFolder]);
+
+    useEffect(() => {
+        if (activeTab === 'share' && item?.id && (isDocument || isFolder)) {
+            useDocumentStore.getState().fetchDocumentShares(item.id).catch(() => {});
+        }
+    }, [activeTab, item?.id, isDocument, isFolder]);
 
     // REACTIVE LIVE DEPARTMENT DATA
     const activeDepartment = useMemo(() => {
@@ -510,7 +521,13 @@ const Inspector = ({
             return [];
         }
 
-        const direct = allDocumentShares.filter((share) => (share.document?.id ?? share.documentId) === item.id);
+        const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
+        const itemCleanId = cleanId(item.id);
+
+        const direct = allDocumentShares.filter((share) => {
+            const sDocId = cleanId(share.document?.id ?? share.documentId);
+            return sDocId === itemCleanId;
+        });
         if (direct.length > 0) return direct;
 
         if (Array.isArray(item.shares) && item.shares.length > 0) {
@@ -523,11 +540,13 @@ const Inspector = ({
         // Inherited shares from parent folder
         let pId = item.parentId ?? item.parentFolderId;
         while (pId && pId !== 'root') {
-            const parentDoc = allDocuments.find((d) => d.id === pId);
+            const pCleanId = cleanId(pId);
+            const parentDoc = allDocuments.find((d) => cleanId(d.id) === pCleanId);
             if (!parentDoc) break;
-            const parentShares = allDocumentShares.filter(
-                (s) => (s.document?.id ?? s.documentId) === parentDoc.id
-            );
+            const parentShares = allDocumentShares.filter((s) => {
+                const sDocId = cleanId(s.document?.id ?? s.documentId);
+                return sDocId === pCleanId;
+            });
             if (parentShares.length > 0) {
                 return parentShares;
             }
@@ -1726,6 +1745,30 @@ const Inspector = ({
                                                 </div>
                                             );
                                         })()}
+
+                                        {/* TOTAL READS */}
+                                        {(() => {
+                                            const isFold = Boolean(item?.isFolder || item?.mimeType === 'folder');
+                                            const targetIds = isFold
+                                                ? new Set(getRecursiveDescendantDocIds(item?.id, allDocuments))
+                                                : new Set([item?.id]);
+                                            const readCount = (allAuditLogs || []).filter((log) => {
+                                                const isDoc = targetIds.has(log?.entityId) || targetIds.has(log?.document?.id);
+                                                const isRead = ['READ', 'VIEW', 'VIEWED'].includes(String(log?.action || '').toUpperCase());
+                                                return isDoc && isRead;
+                                            }).length;
+
+                                            return (
+                                                <div className={PROPERTY_ROW_STYLE}>
+                                                    <span className={PROPERTY_LABEL_STYLE}>
+                                                        <Eye className={ICON_STYLE} /> Total Reads
+                                                    </span>
+                                                    <span className={PROPERTY_VALUE_STYLE} title={`${readCount} total reads`}>
+                                                        {readCount} {readCount === 1 ? 'read' : 'reads'} {isFold ? '(combined)' : ''}
+                                                    </span>
+                                                </div>
+                                            );
+                                        })()}
                                     </>
                                 )}
 
@@ -2064,9 +2107,11 @@ const Inspector = ({
                                 {departmentShares.length > 0 && (
                                     <div className="flex flex-col gap-2">
                                     {departmentShares.map((shareItem) => {
+                                        const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
+                                        const targetDeptClean = cleanId(shareItem.department?.id ?? shareItem.departmentId);
                                         const shareDepartment = allDepartments.find(
-                                            (department) => department.id === (shareItem.department?.id ?? shareItem.departmentId)
-                                        );
+                                            (department) => cleanId(department.id) === targetDeptClean
+                                        ) ?? shareItem.department;
                                         const publisherName = resolvePublisherName(shareItem);
 
                                         return (
@@ -2281,6 +2326,56 @@ const Inspector = ({
                                                     );
                                                 })()}
 
+                                                {/* DEPARTMENT READERSHIP STATISTIC & READERSHIP CHART */}
+                                                {(() => {
+                                                    const deptId = shareDepartment?.id ?? shareItem.department?.id ?? shareItem.departmentId;
+                                                    const isFold = Boolean(item?.isFolder || item?.mimeType === 'folder');
+                                                    const targetDocIds = isFold
+                                                        ? new Set(getRecursiveDescendantDocIds(item?.id, allDocuments))
+                                                        : new Set([item?.id]);
+
+                                                    const deptAuditLogs = (allAuditLogs || []).filter((log) => {
+                                                        const isDoc = targetDocIds.has(log?.entityId) || targetDocIds.has(log?.document?.id);
+                                                        const isReadAction = ['READ', 'VIEW', 'VIEWED'].includes(String(log?.action || '').toUpperCase());
+                                                        if (!isDoc || !isReadAction) return false;
+
+                                                        const actorId = log?.actor?.id ?? log?.actorId;
+                                                        const actorUser = (allUsers || []).find((u) => u.id === actorId);
+                                                        let logDeptId = actorUser?.departmentId;
+                                                        if (!logDeptId && typeof log?.data === 'string') {
+                                                            try {
+                                                                const parsed = JSON.parse(log.data);
+                                                                logDeptId = parsed.departmentId;
+                                                            } catch {}
+                                                        }
+                                                        return Boolean(deptId && logDeptId && String(logDeptId) === String(deptId));
+                                                    });
+
+                                                    const deptReadCount = deptAuditLogs.length;
+                                                    const uniqueReadersCount = new Set(
+                                                        deptAuditLogs.map((l) => l?.actor?.id ?? l?.actorId).filter(Boolean)
+                                                    ).size;
+
+                                                    return (
+                                                        <div className="p-2.5 rounded-md border border-surface-border bg-surface/50 flex flex-col gap-1.5">
+                                                            <div className="flex items-center justify-between text-[11px]">
+                                                                <span className="font-semibold text-text-muted flex items-center gap-1.5">
+                                                                    <Eye className="h-3 w-3 text-accent" />
+                                                                    <span>Unit Readership</span>
+                                                                </span>
+                                                                <span className="text-[10px] font-medium text-text">
+                                                                    {deptReadCount} {deptReadCount === 1 ? 'read' : 'reads'}
+                                                                    {isFold ? ' (combined)' : ''}
+                                                                    {uniqueReadersCount > 0 ? ` • ${uniqueReadersCount} unique` : ''}
+                                                                </span>
+                                                            </div>
+                                                            <div className="w-full pt-1">
+                                                                <ReadershipChart logs={deptAuditLogs} compact={true} showPeak={false} />
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })()}
+
                                                 <div className="flex items-center justify-between text-xs text-text-muted pt-1 border-t border-surface-border">
                                                     <span>
                                                         Shared by {publisherName}
@@ -2316,8 +2411,10 @@ const Inspector = ({
                                 {userShares.length > 0 && (
                                     <div className="flex flex-col gap-1.5">
                                     {userShares.map((shareItem) => {
+                                        const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
                                         const recId = shareItem.recipient?.id ?? shareItem.recipientId;
-                                        const recipientUser = allUsers.find((u) => u.id === recId) ?? shareItem.recipient;
+                                        const recClean = cleanId(recId);
+                                        const recipientUser = allUsers.find((u) => cleanId(u.id) === recClean) ?? shareItem.recipient;
                                         const recipientName = recipientUser
                                             ? `${recipientUser.firstName || ''} ${recipientUser.lastName || ''}`.trim() || recipientUser.name || 'User'
                                             : 'User';

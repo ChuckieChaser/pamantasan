@@ -18,16 +18,32 @@ const auditService = {
     },
 
     insertAuditLog: async (payload) => {
-        const data = await dataConnectService.executeMutation('InsertAuditLog', {
+        const timestamp = payload.createdAt || new Date().toISOString();
+        let raw = null;
+        try {
+            const data = await dataConnectService.executeMutation('InsertAuditLog', {
+                actorId: payload.actorId ?? null,
+                entityType: payload.entityType,
+                entityId: payload.entityId,
+                action: payload.action,
+                data: payload.data,
+                createdAt: timestamp,
+            });
+            raw = data?.auditLog_insert ?? data?.auditLogs_insert;
+        } catch (error) {
+            console.warn('Failed to insert audit log to Firebase Data Connect, creating local fallback record:', error);
+        }
+
+        return {
+            id: raw?.id ?? `audit-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
             actorId: payload.actorId ?? null,
+            actor: payload.actorId ? { id: payload.actorId } : null,
             entityType: payload.entityType,
             entityId: payload.entityId,
             action: payload.action,
             data: payload.data,
-            createdAt: payload.createdAt,
-        });
-
-        return formatLiveAuditLog(data?.auditLog_insert ?? data?.auditLogs_insert);
+            createdAt: timestamp,
+        };
     },
 };
 

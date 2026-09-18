@@ -52,12 +52,14 @@ import {
     useUserStore,
     useCoordinatorStore,
     useAuthStore,
+    useAuditStore,
 } from '../stores';
 import {
     storageService,
     documentService,
     aiService,
     coordinatorApprovalService,
+    systemEventService,
 } from '../services';
 
 
@@ -221,6 +223,7 @@ const DocumentsPage = ({
     const stashShare = useDocumentStore((state) => state.stashShare);
     const unstashShare = useDocumentStore((state) => state.unstashShare);
     const departments = useDepartmentStore((state) => state.departments);
+    const fetchDepartments = useDepartmentStore((state) => state.fetchDepartments);
 
     const dynamicFilterOptions = useMemo(() => {
         return [...BASE_FILTER_OPTIONS];
@@ -228,9 +231,15 @@ const DocumentsPage = ({
 
     useEffect(() => {
         fetchDocuments().catch(() => {});
-        syncAllDocumentShares(currentUser, departments).catch(() => {});
+        fetchDepartments().catch(() => {});
         fetchUsers().catch(() => {});
-    }, [fetchDocuments, syncAllDocumentShares, fetchUsers, currentUser, departments]);
+    }, [fetchDocuments, fetchDepartments, fetchUsers]);
+
+    useEffect(() => {
+        if (currentUser) {
+            syncAllDocumentShares(currentUser, departments).catch(() => {});
+        }
+    }, [currentUser, departments?.length, syncAllDocumentShares]);
 
     useEffect(() => {
         if (publishModalDocument) {
@@ -1295,6 +1304,19 @@ const DocumentsPage = ({
                     });
                     folderPathToIdMap.set(dirPath, createdFolder.id);
                     knownDocs.push(createdFolder);
+                    useAuditStore.getState().insertAuditLog({
+                        actorId: activeUserId,
+                        entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT,
+                        entityId: String(createdFolder.id),
+                        action: constants.AUDIT_LOGS_ACTION.CREATED,
+                        data: JSON.stringify({
+                            title: folderName,
+                            isFolder: true,
+                            parentId: parentFolderId,
+                            location: currentDirectoryLabel,
+                        }),
+                        createdAt: new Date().toISOString(),
+                    }).catch(() => {});
                 } catch (folderErr) {
                     console.error(`Failed to create directory "${folderName}":`, folderErr);
                 }
@@ -1412,6 +1434,21 @@ const DocumentsPage = ({
                         await documentService.updateDocument(targetDocumentId, {
                             updatedAt: new Date().toISOString(),
                         }).catch(() => null);
+
+                        useAuditStore.getState().insertAuditLog({
+                            actorId: activeUserId,
+                            entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT,
+                            entityId: String(targetDocumentId),
+                            action: constants.AUDIT_LOGS_ACTION.UPDATED,
+                            data: JSON.stringify({
+                                title: finalFileName,
+                                version: nextVersionNum,
+                                isVersionUpdate: true,
+                                isFolder: false,
+                                location: currentDirectoryLabel,
+                            }),
+                            createdAt: new Date().toISOString(),
+                        }).catch(() => {});
                     }
                 } else {
                     // NEW DOCUMENT: Insert document row first, then upload, then insert version row
@@ -1497,6 +1534,21 @@ const DocumentsPage = ({
                                 summary: aiResult?.summary || null,
                                 embedding: aiResult?.embedding || null,
                             });
+
+                            useAuditStore.getState().insertAuditLog({
+                                actorId: activeUserId,
+                                entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT,
+                                entityId: String(targetDocumentId),
+                                action: constants.AUDIT_LOGS_ACTION.UPLOADED,
+                                data: JSON.stringify({
+                                    title: finalFileName,
+                                    version: 1,
+                                    isVersionUpdate: false,
+                                    isFolder: false,
+                                    location: currentDirectoryLabel,
+                                }),
+                                createdAt: new Date().toISOString(),
+                            }).catch(() => {});
                         } catch (verErr) {
                             await storageService.deleteDocument(storageResult.path).catch(() => null);
                             if (createdDoc?.id) {
@@ -1537,6 +1589,56 @@ const DocumentsPage = ({
 
         await fetchDocuments().catch(() => {});
         toastProcess.complete();
+
+        // DISPATCH NOTIFICATIONS TO RMO STAFF
+        if (activeUserId && validItems.length > 0) {
+            const fileItems = validItems.filter((i) => !i.isFolder);
+            const folderCount = sortedDirectoryPaths.length;
+            const primaryItem = validItems[0];
+            const primaryId = primaryItem?.existingDocumentId || (knownDocs.find((d) => d.name === (primaryItem?.fileName || primaryItem?.title))?.id) || rootTargetId;
+
+            if (validItems.length === 1 && fileItems.length === 1) {
+                const singleName = fileItems[0].fileName || fileItems[0].title || 'Document';
+                systemEventService.recordSystemEvent({
+                    actorId: activeUserId,
+                    entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT,
+                    entityId: String(primaryId || 'doc-upload'),
+                    action: primaryItem?.action === 'create_new' || !primaryItem?.existingDocumentId
+                        ? constants.AUDIT_LOGS_ACTION.UPLOADED
+                        : constants.AUDIT_LOGS_ACTION.UPDATED,
+                    data: {
+                        title: `Document Uploaded: ${singleName}`,
+                        description: `Document "${singleName}" was uploaded to ${currentDirectoryLabel}.`,
+                        fileName: singleName,
+                        location: currentDirectoryLabel,
+                    },
+                    targetRoles: ['RMO_STAFF'],
+                    isMajor: false,
+                }).catch(() => {});
+            } else {
+                const rootDirName = sortedDirectoryPaths.length > 0 ? sortedDirectoryPaths[0].split('/')[0] : null;
+                const summaryTitle = rootDirName
+                    ? `Folder Upload: ${rootDirName} (${fileItems.length} file${fileItems.length === 1 ? '' : 's'})`
+                    : `Batch Upload: ${fileItems.length} documents`;
+                const summaryDesc = `Uploaded ${fileItems.length} file${fileItems.length === 1 ? '' : 's'}${folderCount > 0 ? ` across ${folderCount} folder${folderCount === 1 ? '' : 's'}` : ''} to ${currentDirectoryLabel}.`;
+
+                systemEventService.recordSystemEvent({
+                    actorId: activeUserId,
+                    entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT,
+                    entityId: String(primaryId || 'batch-upload'),
+                    action: constants.AUDIT_LOGS_ACTION.UPLOADED,
+                    data: {
+                        title: summaryTitle,
+                        description: summaryDesc,
+                        fileCount: fileItems.length,
+                        folderCount: folderCount,
+                        location: currentDirectoryLabel,
+                    },
+                    targetRoles: ['RMO_STAFF'],
+                    isMajor: false,
+                }).catch(() => {});
+            }
+        }
     };
 
     // MODAL DROPZONE DRAG & DROP HANDLERS
@@ -1676,13 +1778,31 @@ const DocumentsPage = ({
         setIsCreatingFolder(true);
         try {
             if (activeUserId) {
-                await documentService.insertDocument({
+                const created = await documentService.insertDocument({
                     name: uniqueFolderName,
                     isFolder: true,
                     isArchived: false,
                     parentId: targetParentId,
                     comment: folderDescription.trim() || null,
                 });
+                if (created?.id) {
+                    systemEventService.recordSystemEvent({
+                        actorId: activeUserId,
+                        entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT,
+                        entityId: String(created.id),
+                        action: constants.AUDIT_LOGS_ACTION.CREATED,
+                        data: {
+                            name: uniqueFolderName,
+                            title: `Folder Created: ${uniqueFolderName}`,
+                            description: `Folder "${uniqueFolderName}" was created in ${currentDirectoryLabel}.`,
+                            isFolder: true,
+                            parentId: targetParentId,
+                            location: currentDirectoryLabel,
+                        },
+                        targetRoles: ['RMO_STAFF'],
+                        isMajor: false,
+                    }).catch(() => {});
+                }
                 await fetchDocuments();
             } else {
                 const newFolderItem = {
@@ -1806,17 +1926,20 @@ const DocumentsPage = ({
     // ACTIVE SHARES AND OPTIONS FOR SHARE MODAL
     const activeSharesForModalDoc = useMemo(() => {
         if (!shareModalDocument) return [];
+        const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
+        const modalClean = cleanId(shareModalDocument.id);
         return (documentShares || []).filter(
-            (s) => (s.document?.id ?? s.documentId) === shareModalDocument.id
+            (s) => cleanId(s.document?.id ?? s.documentId) === modalClean
         );
     }, [shareModalDocument, documentShares]);
 
     const availableDepartmentsToShare = useMemo(() => {
         if (!shareModalDocument) return [];
+        const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
         const sharedDeptIds = new Set(
-            activeSharesForModalDoc.map((s) => s.department?.id ?? s.departmentId)
+            activeSharesForModalDoc.map((s) => cleanId(s.department?.id ?? s.departmentId))
         );
-        return (departments || []).filter((d) => !sharedDeptIds.has(d.id));
+        return (departments || []).filter((d) => !sharedDeptIds.has(cleanId(d.id)));
     }, [departments, activeSharesForModalDoc, shareModalDocument]);
 
     const filteredAvailableDepartments = useMemo(() => {
@@ -2062,12 +2185,21 @@ const DocumentsPage = ({
     };
 
     const repositoryItems = useMemo(() => {
+        const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
+        const userDeptClean = cleanId(currentUser?.departmentId || currentUser?.department?.id);
+
         // 1. Identify accessible documents and folders and their resolved share status
         const accessibleItemMap = new Map(); // docId -> { status, share, shares }
+        const setAccessibleItem = (id, meta) => {
+            accessibleItemMap.set(id, meta);
+            const cId = cleanId(id);
+            if (cId) accessibleItemMap.set(cId, meta);
+        };
 
         documents.forEach((doc) => {
+            const docClean = cleanId(doc.id);
             const docShares = (documentShares || []).filter(
-                (s) => (s.document?.id ?? s.documentId) === doc.id
+                (s) => cleanId(s.document?.id ?? s.documentId) === docClean
             );
 
             if (isStaff) {
@@ -2086,7 +2218,7 @@ const DocumentsPage = ({
                         resolvedStatus = docShares[0].status;
                     }
                 }
-                accessibleItemMap.set(doc.id, {
+                setAccessibleItem(doc.id, {
                     status: resolvedStatus,
                     share: docShares[0] || null,
                     shares: docShares,
@@ -2097,7 +2229,7 @@ const DocumentsPage = ({
             // For departmental users (Officer, Director, Member):
             // 1. Collect all shares for this document that belong to the user's department
             const directDeptShares = docShares.filter(
-                (s) => (s.department?.id ?? s.departmentId) === currentUser?.departmentId
+                (s) => cleanId(s.department?.id ?? s.departmentId) === userDeptClean
             );
 
             // 2. If no direct share row for this item, check if an ancestor folder has a share row for this department
@@ -2107,12 +2239,13 @@ const DocumentsPage = ({
             if (effectiveDeptShares.length === 0) {
                 let pId = doc.parentId ?? doc.parentFolderId;
                 while (pId && pId !== 'root') {
-                    const parentDoc = documents.find((d) => d.id === pId);
+                    const parentDoc = documents.find((d) => cleanId(d.id) === cleanId(pId));
                     if (!parentDoc) break;
+                    const parentDocClean = cleanId(parentDoc.id);
                     const parentDeptShares = (documentShares || []).filter(
                         (s) =>
-                            (s.document?.id ?? s.documentId) === parentDoc.id &&
-                            (s.department?.id ?? s.departmentId) === currentUser?.departmentId
+                            cleanId(s.document?.id ?? s.documentId) === parentDocClean &&
+                            cleanId(s.department?.id ?? s.departmentId) === userDeptClean
                     );
                     if (parentDeptShares.length > 0) {
                         effectiveDeptShares = parentDeptShares;
@@ -2147,8 +2280,6 @@ const DocumentsPage = ({
 
             // Role-based status gating:
             // OFFICER: PENDING_APPROVAL, APPROVED, STASHED, PUBLISHED
-            // (When pending approve gets approved, the officer still has access and view to it!
-            //  When approved gets published or stashed, the officer still has access and view it!)
             if (isOfficer) {
                 if (
                     [
@@ -2158,7 +2289,7 @@ const DocumentsPage = ({
                         constants.DOCUMENT_SHARES_STATUS.PUBLISHED,
                     ].includes(resolvedStatus)
                 ) {
-                    accessibleItemMap.set(doc.id, {
+                    setAccessibleItem(doc.id, {
                         status: resolvedStatus,
                         share: primaryShare,
                         shares: effectiveDeptShares,
@@ -2167,8 +2298,6 @@ const DocumentsPage = ({
                 }
             } else if (isDirector) {
                 // DIRECTOR: APPROVED, STASHED, PUBLISHED
-                // (When pending approve gets approved, director gains access!
-                //  When approved gets published or stashed, director still has access and view it!)
                 if (
                     [
                         constants.DOCUMENT_SHARES_STATUS.APPROVED,
@@ -2176,7 +2305,7 @@ const DocumentsPage = ({
                         constants.DOCUMENT_SHARES_STATUS.PUBLISHED,
                     ].includes(resolvedStatus)
                 ) {
-                    accessibleItemMap.set(doc.id, {
+                    setAccessibleItem(doc.id, {
                         status: resolvedStatus,
                         share: primaryShare,
                         shares: effectiveDeptShares,
@@ -2185,8 +2314,6 @@ const DocumentsPage = ({
                 }
             } else if (isMember) {
                 // MEMBER: PUBLISHED only.
-                // If there are specific recipient shares for the user's department, only those recipient members see it.
-                // Otherwise (broad publish, recipientId: null), all department members see it.
                 if (resolvedStatus === constants.DOCUMENT_SHARES_STATUS.PUBLISHED) {
                     const memberSpecificShares = effectiveDeptShares.filter(
                         (s) => s.recipient?.id ?? s.recipientId
@@ -2194,10 +2321,10 @@ const DocumentsPage = ({
 
                     if (memberSpecificShares.length > 0) {
                         const userShare = memberSpecificShares.find(
-                            (s) => (s.recipient?.id ?? s.recipientId) === currentUser?.id
+                            (s) => cleanId(s.recipient?.id ?? s.recipientId) === cleanId(currentUser?.id)
                         );
                         if (userShare && userShare.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED) {
-                            accessibleItemMap.set(doc.id, {
+                            setAccessibleItem(doc.id, {
                                 status: userShare.status,
                                 share: userShare,
                                 shares: [userShare],
@@ -2206,7 +2333,7 @@ const DocumentsPage = ({
                         }
                     } else {
                         // Broad publication for all department members
-                        accessibleItemMap.set(doc.id, {
+                        setAccessibleItem(doc.id, {
                             status: resolvedStatus,
                             share: primaryShare,
                             shares: effectiveDeptShares,
@@ -2225,18 +2352,23 @@ const DocumentsPage = ({
         const accessibleFolderIdSet = new Set();
         if (isStaff) {
             documents.forEach((d) => {
-                if (d.isFolder) accessibleFolderIdSet.add(d.id);
+                if (d.isFolder) {
+                    accessibleFolderIdSet.add(d.id);
+                    accessibleFolderIdSet.add(cleanId(d.id));
+                }
             });
         } else {
             accessibleItemMap.forEach((_, itemId) => {
-                const itemDoc = documents.find((d) => d.id === itemId);
+                const itemDoc = documents.find((d) => cleanId(d.id) === cleanId(itemId));
                 if (itemDoc?.isFolder) {
                     accessibleFolderIdSet.add(itemDoc.id);
+                    accessibleFolderIdSet.add(cleanId(itemDoc.id));
                 }
                 let pId = itemDoc?.parentId ?? itemDoc?.parentFolderId;
                 while (pId && pId !== 'root') {
                     accessibleFolderIdSet.add(pId);
-                    const parentDoc = documents.find((d) => d.id === pId);
+                    accessibleFolderIdSet.add(cleanId(pId));
+                    const parentDoc = documents.find((d) => cleanId(d.id) === cleanId(pId));
                     if (!parentDoc) break;
                     pId = parentDoc.parentId ?? parentDoc.parentFolderId;
                 }
@@ -2246,15 +2378,16 @@ const DocumentsPage = ({
         // 3. Filter documents to accessible ones
         const accessibleDocs = documents.filter((doc) => {
             if (doc.isFolder) {
-                return accessibleFolderIdSet.has(doc.id);
+                return accessibleFolderIdSet.has(doc.id) || accessibleFolderIdSet.has(cleanId(doc.id));
             }
-            return accessibleItemMap.has(doc.id);
+            return accessibleItemMap.has(doc.id) || accessibleItemMap.has(cleanId(doc.id));
         });
 
         // 4. Map into browser items
         const liveItems = accessibleDocs.map((doc) => {
+            const docClean = cleanId(doc.id);
             const versionsForDoc = (documentVersions || []).filter(
-                (v) => (v.document?.id ?? v.documentId) === doc.id
+                (v) => cleanId(v.document?.id ?? v.documentId) === docClean
             );
             const latestVer = versionsForDoc.length > 0
                 ? [...versionsForDoc].sort((a, b) => b.version - a.version)[0]
@@ -2270,21 +2403,21 @@ const DocumentsPage = ({
             const originalLocation = doc.parentId && doc.parentId !== 'root'
                 ? (() => {
                     const chain = [];
-                    let curr = (documents || []).find((d) => d.id === doc.parentId);
+                    let curr = (documents || []).find((d) => cleanId(d.id) === cleanId(doc.parentId));
                     while (curr) {
                         chain.unshift(curr.name || curr.title || 'Folder');
                         const pId = curr.parentId ?? curr.parentFolderId;
                         if (!pId || pId === 'root') break;
-                        curr = (documents || []).find((d) => d.id === pId);
+                        curr = (documents || []).find((d) => cleanId(d.id) === cleanId(pId));
                     }
                     return chain.length > 0 ? chain.join(' / ') : 'Repository Root';
                 })()
                 : 'Repository Root';
 
-            const shareMeta = accessibleItemMap.get(doc.id) || (() => {
+            const shareMeta = accessibleItemMap.get(doc.id) || accessibleItemMap.get(docClean) || (() => {
                 if (isStaff) {
                     const docShares = (documentShares || []).filter(
-                        (s) => (s.document?.id ?? s.documentId) === doc.id
+                        (s) => cleanId(s.document?.id ?? s.documentId) === docClean
                     );
                     if (docShares.length > 0) {
                         return {
@@ -2293,11 +2426,11 @@ const DocumentsPage = ({
                             shares: docShares,
                         };
                     }
-                } else if (currentUser?.departmentId) {
+                } else if (userDeptClean) {
                     const deptShare = (documentShares || []).find(
                         (s) =>
-                            (s.document?.id ?? s.documentId) === doc.id &&
-                            (s.department?.id ?? s.departmentId) === currentUser.departmentId
+                            cleanId(s.document?.id ?? s.documentId) === docClean &&
+                            cleanId(s.department?.id ?? s.departmentId) === userDeptClean
                     );
                     if (deptShare) {
                         return {
@@ -2351,10 +2484,15 @@ const DocumentsPage = ({
     }, [documents, documentVersions, documentShares, localCreatedItems, currentUser, isStaff, isOfficer, isDirector, isMember]);
 
     const currentFolderItems = useMemo(() => {
+        const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
         return repositoryItems.filter((item) => {
             const matchesArchiveState = !item.isArchived;
             if (!matchesArchiveState) return false;
-            return (item.parentId ?? 'root') === currentFolderId;
+            const itemParent = item.parentId ?? 'root';
+            if (currentFolderId === 'root') {
+                return !itemParent || itemParent === 'root';
+            }
+            return cleanId(itemParent) === cleanId(currentFolderId);
         });
     }, [repositoryItems, currentFolderId]);
 

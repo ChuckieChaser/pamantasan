@@ -41,6 +41,7 @@ import {
 } from './components';
 import { useAuth, useToast, useInactivityTimeout } from './hooks';
 import {
+    useAuditStore,
     useAuthStore,
     useCoordinatorStore,
     useDepartmentStore,
@@ -98,19 +99,32 @@ const AppContent = () => {
     // STORES
     const notifications = useNotificationStore((state) => state.notifications);
     const unreadNotificationCount = notifications.filter((item) => !item.isRead).length;
+    const fetchNotifications = useNotificationStore((state) => state.fetchNotifications);
+    const fetchAuditLogs = useAuditStore((state) => state.fetchAuditLogs);
     const departments = useDepartmentStore((state) => state.departments);
     const fetchDepartments = useDepartmentStore((state) => state.fetchDepartments);
     const users = useUserStore((state) => state.users);
     const fetchUsers = useUserStore((state) => state.fetchUsers);
     const fetchDocuments = useDocumentStore((state) => state.fetchDocuments);
+    const syncAllDocumentShares = useDocumentStore((state) => state.syncAllDocumentShares);
 
     useEffect(() => {
         if (currentUser) {
             fetchDepartments().catch(() => {});
             fetchUsers().catch(() => {});
             fetchDocuments().catch(() => {});
+            fetchAuditLogs().catch(() => {});
+            if (currentUser.id) {
+                fetchNotifications(currentUser.id).catch(() => {});
+            }
         }
-    }, [currentUser, fetchDepartments, fetchUsers, fetchDocuments]);
+    }, [currentUser, fetchDepartments, fetchUsers, fetchDocuments, fetchAuditLogs, fetchNotifications]);
+
+    useEffect(() => {
+        if (currentUser) {
+            syncAllDocumentShares(currentUser, departments).catch(() => {});
+        }
+    }, [currentUser?.id, currentUser?.departmentId, currentUser?.role, departments?.length, syncAllDocumentShares]);
 
     // REACTIVE SYNC FOR SELECTED ITEM WHEN STORE DEPARTMENTS UPDATE
     useEffect(() => {

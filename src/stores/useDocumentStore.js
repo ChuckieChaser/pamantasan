@@ -3,7 +3,7 @@ import { create } from 'zustand';
 
 import { constants } from '../constants';
 import { mutationSchema } from '../schemas';
-import { documentService } from '../services';
+import { documentService, departmentService, systemEventService } from '../services';
 
 
 // --- CONFIGURATIONS ---
@@ -56,6 +56,10 @@ export const getRecursiveDescendantDocIds = (rootDocId, allDocuments = []) => {
 };
 
 
+// --- SYNC THROTTLES & MUTEX ---
+let inFlightSyncPromise = null;
+let lastSyncSharesTimestamp = 0;
+
 // --- STORE ---
 const useDocumentStore = create((set, get) => ({
     // STATES
@@ -87,14 +91,26 @@ const useDocumentStore = create((set, get) => ({
                 documentService.fetchAllDocumentVersions().catch(() => []),
             ]);
             const annotated = annotateDirectlyArchived(documents);
-            set({ documents: annotated, documentVersions: versions, isLoading: false, error: null });
-
-            return annotated;
+            if (annotated && annotated.length > 0) {
+                set({
+                    documents: annotated,
+                    documentVersions: versions && versions.length > 0 ? versions : get().documentVersions,
+                    isLoading: false,
+                    error: null,
+                });
+                return annotated;
+            } else if (get().documents.length > 0) {
+                set({ isLoading: false, error: null });
+                return get().documents;
+            } else {
+                set({ documents: [], documentVersions: versions || [], isLoading: false, error: null });
+                return [];
+            }
         } catch (error) {
             const message = error?.message ?? 'Failed to fetch documents.';
             set({ isLoading: false, error: message });
 
-            return [];
+            return get().documents || [];
         }
     },
 
@@ -131,6 +147,19 @@ const useDocumentStore = create((set, get) => ({
                 isLoading: false,
                 error: null,
             }));
+
+            systemEventService.recordSystemEvent({
+                entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT,
+                entityId: newDocument.id,
+                action: newDocument.isFolder ? constants.AUDIT_LOGS_ACTION.CREATED : constants.AUDIT_LOGS_ACTION.UPLOADED,
+                data: {
+                    title: newDocument.name || 'Document',
+                    departmentId: newDocument.departmentId,
+                    isFolder: newDocument.isFolder,
+                },
+                targetRoles: ['RMO_STAFF'],
+                isMajor: false,
+            }).catch(() => {});
 
             return newDocument;
         } catch (error) {
@@ -173,6 +202,18 @@ const useDocumentStore = create((set, get) => ({
                 error: null,
             }));
 
+            systemEventService.recordSystemEvent({
+                entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT,
+                entityId: id,
+                action: constants.AUDIT_LOGS_ACTION.UPDATED,
+                data: {
+                    title: updatedDocument.name || existingDoc?.name || 'Document',
+                    departmentId: updatedDocument.departmentId || existingDoc?.departmentId,
+                },
+                targetRoles: ['RMO_STAFF'],
+                isMajor: false,
+            }).catch(() => {});
+
             return updatedDocument;
         } catch (error) {
             const message = error?.errors?.[0]?.message ?? error?.message ?? 'Failed to update document.';
@@ -189,6 +230,7 @@ const useDocumentStore = create((set, get) => ({
             const allDocs = get().documents;
             const targetIds = await documentService.archiveDocumentRecursive(id, isArchived, allDocs);
             const timestamp = new Date().toISOString();
+            const targetDoc = allDocs.find((d) => d.id === id);
 
             set((state) => {
                 const updatedDocs = state.documents.map((doc) => {
@@ -221,6 +263,18 @@ const useDocumentStore = create((set, get) => ({
                 };
             });
 
+            systemEventService.recordSystemEvent({
+                entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT,
+                entityId: id,
+                action: isArchived ? constants.AUDIT_LOGS_ACTION.ARCHIVED : constants.AUDIT_LOGS_ACTION.UNARCHIVED,
+                data: {
+                    title: targetDoc?.name || 'Document',
+                    targetCount: targetIds.length,
+                },
+                targetRoles: ['RMO_STAFF'],
+                isMajor: false,
+            }).catch(() => {});
+
             return targetIds;
         } catch (error) {
             const message = error?.message ?? 'Failed to archive document.';
@@ -235,6 +289,7 @@ const useDocumentStore = create((set, get) => ({
 
         try {
             const allDocs = get().documents;
+            const targetDoc = allDocs.find((d) => d.id === id);
             const targetIds = await documentService.deleteDocumentRecursive(id, allDocs);
 
             set((state) => ({
@@ -248,6 +303,18 @@ const useDocumentStore = create((set, get) => ({
                 isLoading: false,
                 error: null,
             }));
+
+            systemEventService.recordSystemEvent({
+                entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT,
+                entityId: id,
+                action: constants.AUDIT_LOGS_ACTION.DELETED,
+                data: {
+                    title: targetDoc?.name || 'Document',
+                    targetCount: targetIds.length,
+                },
+                targetRoles: ['RMO_STAFF'],
+                isMajor: true,
+            }).catch(() => {});
 
             return true;
         } catch (error) {
@@ -445,6 +512,21 @@ const useDocumentStore = create((set, get) => ({
                 error: null,
             }));
 
+            const targetDoc = get().documents.find((d) => d.id === documentId);
+            systemEventService.recordSystemEvent({
+                actorId: uploaderId,
+                entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_VERSION,
+                entityId: documentId,
+                action: constants.AUDIT_LOGS_ACTION.REVERTED,
+                data: {
+                    title: targetDoc?.name || 'Document',
+                    targetVersion: targetVersion?.version,
+                    newVersion: newVersion?.version,
+                },
+                targetRoles: ['RMO_STAFF'],
+                isMajor: false,
+            }).catch(() => {});
+
             return newVersion;
         } catch (error) {
             const message = error?.message ?? 'Failed to revert document version.';
@@ -460,7 +542,18 @@ const useDocumentStore = create((set, get) => ({
 
         try {
             const shares = await documentService.fetchDocumentShares(documentId);
-            set({ documentShares: shares, isLoading: false, error: null });
+            set((state) => {
+                const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
+                const targetClean = cleanId(documentId);
+                const otherShares = (state.documentShares || []).filter(
+                    (s) => cleanId(s?.document?.id ?? s?.documentId) !== targetClean
+                );
+                return {
+                    documentShares: [...otherShares, ...shares],
+                    isLoading: false,
+                    error: null,
+                };
+            });
 
             return shares;
         } catch (error) {
@@ -537,6 +630,25 @@ const useDocumentStore = create((set, get) => ({
                 error: null,
             }));
 
+            const targetRecId = newShare.recipient?.id ?? newShare.recipientId;
+            const targetDeptId = newShare.department?.id ?? newShare.departmentId;
+            systemEventService.recordSystemEvent({
+                actorId: validatedPayload.sharerId,
+                entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_SHARE,
+                entityId: newShare.id,
+                action: constants.AUDIT_LOGS_ACTION.SHARED,
+                data: {
+                    documentId: validatedPayload.documentId,
+                    departmentId: targetDeptId,
+                    recipientId: targetRecId,
+                    status: newShare.status,
+                },
+                targetUserIds: targetRecId ? [targetRecId] : [],
+                targetRoles: targetRecId ? [] : ['DIRECTOR', 'OFFICER'],
+                targetDepartmentId: targetDeptId,
+                isMajor: true,
+            }).catch(() => {});
+
             return newShare;
         } catch (error) {
             const message = error?.errors?.[0]?.message ?? error?.message ?? 'Failed to insert document share.';
@@ -578,6 +690,30 @@ const useDocumentStore = create((set, get) => ({
                 isLoading: false,
                 error: null,
             }));
+
+            const targetRecId = merged.recipient?.id ?? merged.recipientId;
+            const targetDeptId = merged.department?.id ?? merged.departmentId;
+            let shareAction = constants.AUDIT_LOGS_ACTION.UPDATED;
+            const st = String(merged.status || '').toUpperCase();
+            if (st === constants.DOCUMENT_SHARES_STATUS.PUBLISHED) shareAction = constants.AUDIT_LOGS_ACTION.PUBLISHED;
+            else if (st === constants.DOCUMENT_SHARES_STATUS.STASHED) shareAction = constants.AUDIT_LOGS_ACTION.STASHED;
+            else if (st === constants.DOCUMENT_SHARES_STATUS.APPROVED) shareAction = constants.AUDIT_LOGS_ACTION.APPROVED;
+
+            systemEventService.recordSystemEvent({
+                entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_SHARE,
+                entityId: id,
+                action: shareAction,
+                data: {
+                    documentId: merged.documentId,
+                    departmentId: targetDeptId,
+                    recipientId: targetRecId,
+                    status: merged.status,
+                },
+                targetUserIds: targetRecId ? [targetRecId] : [],
+                targetRoles: targetRecId ? [] : ['DIRECTOR', 'OFFICER'],
+                targetDepartmentId: targetDeptId,
+                isMajor: true,
+            }).catch(() => {});
 
             return merged;
         } catch (error) {
@@ -622,46 +758,120 @@ const useDocumentStore = create((set, get) => ({
     },
 
     syncAllDocumentShares: async (currentUser, departments = []) => {
-        try {
-            if (!currentUser) return [];
+        if (!currentUser) return [];
 
-            const isStaff = constants.isStaffRole(currentUser.role);
+        // Return existing in-flight promise if currently fetching
+        if (inFlightSyncPromise) {
+            return inFlightSyncPromise;
+        }
 
-            if (isStaff) {
-                const deptsToFetch = departments && departments.length > 0 ? departments : [];
-                const results = await Promise.allSettled(
-                    deptsToFetch.map((dept) => documentService.fetchDocumentSharesByDepartmentId(dept.id))
-                );
+        const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
 
-                const aggregatedShares = [];
-                const shareIdSet = new Set();
+        inFlightSyncPromise = (async () => {
+            try {
+                const currentShares = get().documentShares || [];
+                const isStaff = constants.isStaffRole(currentUser.role);
 
-                results.forEach((result) => {
-                    if (result.status === 'fulfilled' && Array.isArray(result.value)) {
-                        result.value.forEach((share) => {
-                            if (!shareIdSet.has(share.id)) {
-                                shareIdSet.add(share.id);
-                                aggregatedShares.push(share);
+                if (isStaff) {
+                    let deptsToFetch = Array.isArray(departments) && departments.length > 0 ? departments : [];
+                    if (deptsToFetch.length === 0) {
+                        try {
+                            deptsToFetch = await departmentService.fetchDepartments();
+                        } catch {
+                            deptsToFetch = [];
+                        }
+                    }
+
+                    const aggregatedShares = [];
+                    const shareIdSet = new Set();
+
+                    // Seed with current store shares so existing shares are never lost
+                    currentShares.forEach((share) => {
+                        const cId = cleanId(share?.id);
+                        if (cId) {
+                            shareIdSet.add(cId);
+                            aggregatedShares.push(share);
+                        }
+                    });
+
+                    // Fetch department shares with bounded concurrency (max 2 at a time) to prevent PostgreSQL connection exhaustion
+                    const batchSize = 2;
+                    for (let i = 0; i < deptsToFetch.length; i += batchSize) {
+                        const batch = deptsToFetch.slice(i, i + batchSize);
+                        const results = await Promise.allSettled(
+                            batch.map((dept) => documentService.fetchDocumentSharesByDepartmentId(dept.id))
+                        );
+                        results.forEach((result) => {
+                            if (result.status === 'fulfilled' && Array.isArray(result.value)) {
+                                result.value.forEach((share) => {
+                                    const cId = cleanId(share?.id);
+                                    if (cId && !shareIdSet.has(cId)) {
+                                        shareIdSet.add(cId);
+                                        aggregatedShares.push(share);
+                                    }
+                                });
                             }
                         });
+                        if (i + batchSize < deptsToFetch.length) {
+                            await new Promise((res) => setTimeout(res, 30));
+                        }
                     }
-                });
 
-                set({ documentShares: aggregatedShares });
-                return aggregatedShares;
+                    if (aggregatedShares.length > 0) {
+                        lastSyncSharesTimestamp = Date.now();
+                        set({ documentShares: aggregatedShares });
+                    }
+                    return get().documentShares || [];
+                }
+
+                const targetDeptId = currentUser.departmentId || currentUser.department?.id;
+                const targetUserId = currentUser.id;
+
+                if (targetDeptId || targetUserId) {
+                    const fetchPromises = [];
+                    if (targetDeptId) {
+                        fetchPromises.push(documentService.fetchDocumentSharesByDepartmentId(targetDeptId));
+                    }
+                    if (targetUserId) {
+                        fetchPromises.push(documentService.fetchDocumentSharesByRecipientId(targetUserId));
+                    }
+
+                    const settled = await Promise.allSettled(fetchPromises);
+                    const allFetched = [];
+                    settled.forEach((res) => {
+                        if (res.status === 'fulfilled' && Array.isArray(res.value)) {
+                            allFetched.push(...res.value);
+                        }
+                    });
+
+                    if (allFetched.length > 0) {
+                        lastSyncSharesTimestamp = Date.now();
+                        const existingMap = new Map();
+                        currentShares.forEach((s) => {
+                            const cId = cleanId(s?.id);
+                            if (cId) existingMap.set(cId, s);
+                        });
+                        allFetched.forEach((s) => {
+                            const cId = cleanId(s?.id);
+                            if (cId) existingMap.set(cId, s);
+                        });
+                        const merged = Array.from(existingMap.values());
+                        set({ documentShares: merged, departmentDocumentShares: allFetched });
+                        return merged;
+                    }
+                    return currentShares;
+                }
+
+                return get().documentShares || [];
+            } catch (error) {
+                console.error('Failed to synchronize document shares:', error);
+                return get().documentShares || [];
+            } finally {
+                inFlightSyncPromise = null;
             }
+        })();
 
-            if (currentUser.departmentId) {
-                const shares = await documentService.fetchDocumentSharesByDepartmentId(currentUser.departmentId);
-                set({ documentShares: shares, departmentDocumentShares: shares });
-                return shares;
-            }
-
-            return [];
-        } catch (error) {
-            console.error('Failed to synchronize document shares:', error);
-            return [];
-        }
+        return inFlightSyncPromise;
     },
 
     shareDocument: async (documentId, departmentId, sharerId) => {
@@ -1392,6 +1602,19 @@ const useDocumentStore = create((set, get) => ({
                 error: null,
             }));
 
+            systemEventService.recordSystemEvent({
+                actorId: validatedPayload.requesterId,
+                entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_REQUEST,
+                entityId: newRequest.id,
+                action: constants.AUDIT_LOGS_ACTION.CREATED,
+                data: {
+                    subject: newRequest.subject || 'Document Request',
+                    requesterId: validatedPayload.requesterId,
+                },
+                targetRoles: ['RMO_STAFF'],
+                isMajor: true,
+            }).catch(() => {});
+
             return newRequest;
         } catch (error) {
             const message = error?.errors?.[0]?.message ?? error?.message ?? 'Failed to insert document request.';
@@ -1442,6 +1665,33 @@ const useDocumentStore = create((set, get) => ({
             }));
 
             get().fetchDocumentRequests().catch(() => {});
+
+            const reqStatus = String(payload.status || '').toUpperCase();
+            let actionType = constants.AUDIT_LOGS_ACTION.UPDATED;
+            if (reqStatus === constants.DOCUMENT_REQUESTS_STATUS.RESOLVED || reqStatus.includes('RESOLV')) {
+                actionType = constants.AUDIT_LOGS_ACTION.RESOLVED;
+            } else if (reqStatus === constants.DOCUMENT_REQUESTS_STATUS.REJECTED || reqStatus.includes('REJECT')) {
+                actionType = constants.AUDIT_LOGS_ACTION.REJECTED;
+            }
+
+            const requesterId = typeof mergedRequest.requester === 'object'
+                ? mergedRequest.requester?.id
+                : (mergedRequest.requesterId ?? mergedRequest.requester);
+
+            systemEventService.recordSystemEvent({
+                actorId: payload.resolverId || null,
+                entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_REQUEST,
+                entityId: id,
+                action: actionType,
+                data: {
+                    subject: mergedRequest.subject || 'Document Request',
+                    status: mergedRequest.status,
+                    rejectionReason: payload.rejectionReason || null,
+                },
+                targetUserIds: requesterId ? [requesterId] : [],
+                targetRoles: ['RMO_STAFF'],
+                isMajor: true,
+            }).catch(() => {});
 
             return mergedRequest;
         } catch (error) {
@@ -1521,6 +1771,24 @@ const useDocumentStore = create((set, get) => ({
             // Background fetch to sync with server
             get().fetchDocumentRequestMessages(payload.documentRequestId).catch(() => {});
 
+            const req = get().documentRequests.find((r) => r?.id === payload.documentRequestId);
+            const requesterId = req ? (typeof req.requester === 'object' ? req.requester?.id : (req.requesterId ?? req.requester)) : null;
+            const isSenderRequester = requesterId && String(requesterId) === String(payload.userId);
+
+            systemEventService.recordSystemEvent({
+                actorId: payload.userId,
+                entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_REQUEST,
+                entityId: payload.documentRequestId,
+                action: constants.AUDIT_LOGS_ACTION.COMMENTED,
+                data: {
+                    subject: req?.subject || 'Document Request',
+                    messageSnippet: typeof payload.message === 'string' ? payload.message.slice(0, 80) : 'Message',
+                },
+                targetUserIds: isSenderRequester ? [] : (requesterId ? [requesterId] : []),
+                targetRoles: isSenderRequester ? ['RMO_STAFF'] : [],
+                isMajor: false,
+            }).catch(() => {});
+
             return newMessage;
         } catch (error) {
             const message = error?.errors?.[0]?.message ?? error?.message ?? 'Failed to insert document request message.';
@@ -1598,6 +1866,25 @@ const useDocumentStore = create((set, get) => ({
 
             // Background fetch to sync with server
             get().fetchDocumentRequestAttachments(payload.documentRequestId).catch(() => {});
+
+            const req = get().documentRequests.find((r) => r?.id === payload.documentRequestId);
+            const requesterId = req ? (typeof req.requester === 'object' ? req.requester?.id : (req.requesterId ?? req.requester)) : null;
+
+            systemEventService.recordSystemEvent({
+                actorId: payload.attachedById,
+                entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_REQUEST_ATTACHMENT,
+                entityId: payload.documentRequestId,
+                action: constants.AUDIT_LOGS_ACTION.ATTACHED,
+                data: {
+                    subject: req?.subject || 'Document Request',
+                    fileName: payload.name || 'Clearance File',
+                },
+                targetUserIds: requesterId ? [requesterId] : [],
+                targetRoles: ['RMO_STAFF'],
+                isMajor: true,
+            }).catch(() => {});
+
+            return newAttachment;
 
             return newAttachment;
         } catch (error) {

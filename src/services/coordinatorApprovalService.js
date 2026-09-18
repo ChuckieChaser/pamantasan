@@ -6,6 +6,7 @@ import {
     useDocumentStore,
 } from '../stores';
 import { authService } from './authService';
+import { systemEventService } from './systemEventService';
 import { constants } from '../constants';
 
 
@@ -36,12 +37,27 @@ const coordinatorApprovalService = {
 
         const serializedData = typeof data === 'string' ? data : JSON.stringify(data);
 
-        return await useCoordinatorStore.getState().insertCoordinatorRequest({
+        const newReq = await useCoordinatorStore.getState().insertCoordinatorRequest({
             requesterId: requesterId,
             action: action,
             data: serializedData,
             status: constants.COORDINATOR_REQUESTS_STATUS.PENDING,
         });
+
+        systemEventService.recordSystemEvent({
+            actorId: requesterId,
+            entityType: constants.AUDIT_LOGS_ENTITY_TYPE.COORDINATOR_REQUEST,
+            entityId: newReq.id,
+            action: constants.AUDIT_LOGS_ACTION.PENDING_APPROVAL,
+            data: {
+                action: action,
+                requestedBy: requesterId,
+            },
+            targetRoles: ['ADMINISTRATOR'],
+            isMajor: true,
+        }).catch(() => {});
+
+        return newReq;
     },
 
     /**
@@ -301,6 +317,20 @@ const coordinatorApprovalService = {
             }
         );
 
+        systemEventService.recordSystemEvent({
+            actorId: adminUser.id,
+            entityType: constants.AUDIT_LOGS_ENTITY_TYPE.COORDINATOR_REQUEST,
+            entityId: coordinatorRequest.id,
+            action: constants.AUDIT_LOGS_ACTION.APPROVED,
+            data: {
+                action: action,
+                approvedBy: adminUser.id,
+                targetCoordinatorId: coordinatorId,
+            },
+            targetUserIds: coordinatorId ? [coordinatorId] : [],
+            isMajor: true,
+        }).catch(() => {});
+
         return updated;
     },
 
@@ -312,8 +342,27 @@ const coordinatorApprovalService = {
             throw new Error('Valid coordinator request is required.');
         }
 
+        const coordinatorId =
+            (typeof coordinatorRequest.requester === 'object'
+                ? coordinatorRequest.requester?.id
+                : coordinatorRequest.requesterId ?? coordinatorRequest.requester) || null;
+
         // Delete from store/database so it is cleanly removed
         const isDeleted = await useCoordinatorStore.getState().deleteCoordinatorRequest(coordinatorRequest.id);
+
+        systemEventService.recordSystemEvent({
+            actorId: null,
+            entityType: constants.AUDIT_LOGS_ENTITY_TYPE.COORDINATOR_REQUEST,
+            entityId: coordinatorRequest.id,
+            action: constants.AUDIT_LOGS_ACTION.REJECTED,
+            data: {
+                action: coordinatorRequest.action,
+                targetCoordinatorId: coordinatorId,
+            },
+            targetUserIds: coordinatorId ? [coordinatorId] : [],
+            isMajor: true,
+        }).catch(() => {});
+
         return isDeleted;
     },
 };

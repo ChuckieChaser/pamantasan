@@ -9,3 +9,4 @@ export { auditService } from './auditService';
 export { storageService } from './storageService';
 export { aiService } from './aiService';
 export { coordinatorApprovalService } from './coordinatorApprovalService';
+export { systemEventService } from './systemEventService';

@@ -1,7 +1,8 @@
 import { create } from 'zustand';
 
 import { mutationSchema } from '../schemas';
-import { userService } from '../services';
+import { userService, systemEventService } from '../services';
+import { constants } from '../constants';
 import { useAuthStore } from './useAuthStore';
 
 
@@ -173,6 +174,19 @@ const useUserStore = create((set, get) => ({
 
             get().fetchUsers().catch(() => {});
 
+            systemEventService.recordSystemEvent({
+                entityType: constants.AUDIT_LOGS_ENTITY_TYPE.USER,
+                entityId: newUser.id,
+                action: constants.AUDIT_LOGS_ACTION.CREATED,
+                data: {
+                    name: `${newUser.firstName || ''} ${newUser.lastName || ''}`.trim() || newUser.email,
+                    role: newUser.role,
+                    email: newUser.email,
+                },
+                targetRoles: ['ADMINISTRATOR'],
+                isMajor: true,
+            }).catch(() => {});
+
             return newUser;
         } catch (error) {
             const message = error?.errors?.[0]?.message ?? error?.message ?? 'Failed to insert user.';
@@ -260,6 +274,26 @@ const useUserStore = create((set, get) => ({
 
             get().fetchUsers().catch(() => {});
 
+            const isSuspended = validatedPayload.status === 'SUSPENDED';
+            const isUnsuspended = existingUser?.status === 'SUSPENDED' && validatedPayload.status && validatedPayload.status !== 'SUSPENDED';
+            let userAction = constants.AUDIT_LOGS_ACTION.UPDATED;
+            if (isSuspended) userAction = constants.AUDIT_LOGS_ACTION.SUSPENDED;
+            else if (isUnsuspended) userAction = constants.AUDIT_LOGS_ACTION.UNSUSPENDED;
+
+            systemEventService.recordSystemEvent({
+                entityType: constants.AUDIT_LOGS_ENTITY_TYPE.USER,
+                entityId: id,
+                action: userAction,
+                data: {
+                    name: `${mergedUser.firstName || ''} ${mergedUser.lastName || ''}`.trim() || mergedUser.email,
+                    role: mergedUser.role,
+                    status: mergedUser.status,
+                },
+                targetUserIds: [id],
+                targetRoles: ['ADMINISTRATOR'],
+                isMajor: isSuspended || isUnsuspended,
+            }).catch(() => {});
+
             return mergedUser;
         } catch (error) {
             const message = error?.errors?.[0]?.message ?? error?.message ?? 'Failed to update user.';
@@ -284,6 +318,15 @@ const useUserStore = create((set, get) => ({
                     isLoading: false,
                     error: null,
                 }));
+
+                systemEventService.recordSystemEvent({
+                    entityType: constants.AUDIT_LOGS_ENTITY_TYPE.USER,
+                    entityId: id,
+                    action: constants.AUDIT_LOGS_ACTION.DELETED,
+                    data: { id },
+                    targetRoles: ['ADMINISTRATOR'],
+                    isMajor: true,
+                }).catch(() => {});
             } else {
                 set({ isLoading: false });
             }
