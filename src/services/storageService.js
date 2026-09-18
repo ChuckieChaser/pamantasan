@@ -209,62 +209,45 @@ const storageService = {
             effectiveFileName = (storagePath ? storagePath.split('/').pop() : 'document') || 'document';
         }
 
+        // Ensure extension is retained from storage path if missing
+        if (storagePath) {
+            const clean = cleanStoragePath(storagePath);
+            const pathExt = clean.includes('.') ? '.' + clean.split('.').pop().split('?')[0] : '';
+            if (pathExt && !effectiveFileName.toLowerCase().endsWith(pathExt.toLowerCase())) {
+                effectiveFileName = `${effectiveFileName}${pathExt}`;
+            }
+        }
+
         if (!storagePath) {
             throw new Error(`Storage path could not be located for "${effectiveFileName}".`);
         }
 
-        onProgress?.({ progress: 20, statusText: 'Locating document in storage...' });
-
-        // 1. Direct Native Browser Download via Download URL (Fastest & 100% immune to CORS)
-        if (storagePath) {
-            try {
-                onProgress?.({ progress: 50, statusText: 'Resolving download URL...' });
-                const downloadUrl = await storageService.fetchDocument(storagePath);
-                if (downloadUrl) {
-                    onProgress?.({ progress: 85, statusText: 'Saving to laptop disk...' });
-                    const anchor = document.createElement('a');
-                    anchor.href = downloadUrl;
-                    anchor.download = effectiveFileName;
-                    anchor.target = '_blank';
-                    anchor.rel = 'noopener noreferrer';
-                    document.body.appendChild(anchor);
-                    anchor.click();
-                    setTimeout(() => {
-                        if (anchor.parentNode) anchor.parentNode.removeChild(anchor);
-                    }, 2000);
-                    onProgress?.({ progress: 100, isFinished: true, statusText: 'Saved to laptop' });
-                    return true;
-                }
-            } catch (urlErr) {
-                console.warn('Direct URL download attempt failed, falling back to blob:', urlErr);
-            }
-        }
+        onProgress?.({ progress: 25, statusText: 'Downloading document binary...' });
 
         let blob = null;
         if (storagePath) {
             blob = await storageService.getFileBlob(storagePath, onProgress);
         }
 
+        // If getFileBlob didn't succeed, try direct fetch through proxied or direct URL
+        if (!blob && storagePath) {
+            try {
+                onProgress?.({ progress: 50, statusText: 'Resolving download stream...' });
+                const directUrl = await storageService.fetchDocument(storagePath);
+                if (directUrl) {
+                    const targetUrl = toProxiedUrl(directUrl);
+                    const response = await fetch(targetUrl);
+                    if (response.ok) {
+                        blob = await response.blob();
+                    }
+                }
+            } catch (err) {
+                console.warn('Fallback direct fetch failed:', err);
+            }
+        }
+
         // Fallback: When remote storage object is not physically present (mock/seeded data)
         if (!blob) {
-            // Attempt direct download link via proxied URL before generating institutional placeholder
-            try {
-                const directUrl = await storageService.fetchDocument(storagePath);
-                if (directUrl && typeof window !== 'undefined') {
-                    const link = document.createElement('a');
-                    link.href = toProxiedUrl(directUrl);
-                    link.download = effectiveFileName;
-                    link.setAttribute('download', effectiveFileName);
-                    document.body.appendChild(link);
-                    link.click();
-                    setTimeout(() => link.remove(), 1000);
-                    onProgress?.({ progress: 100, isFinished: true, statusText: 'Saved to laptop' });
-                    return true;
-                }
-            } catch {
-                // Continue to placeholder if direct link unavailable
-            }
-
             onProgress?.({ progress: 70, statusText: 'Generating institutional record...' });
             const fallbackContent = `Pamantasan Institutional Document\n\nFile: ${effectiveFileName}\nPath: ${storagePath || 'N/A'}\nDownloaded: ${new Date().toISOString()}\n`;
             blob = new Blob([fallbackContent], { type: 'text/plain;charset=utf-8' });
@@ -273,11 +256,11 @@ const storageService = {
             }
         }
 
-        onProgress?.({ progress: 90, statusText: 'Saving to laptop disk...' });
+        onProgress?.({ progress: 90, statusText: 'Saving to your device...' });
 
-        // Guarantee actual file download to laptop disk (never open in browser tab)
+        // Guarantee actual file download to local device via Save As / File Explorer (never open in browser tab)
         await triggerBrowserDownload(blob, effectiveFileName);
-        onProgress?.({ progress: 100, isFinished: true, statusText: 'Saved to laptop' });
+        onProgress?.({ progress: 100, isFinished: true, statusText: 'Saved to device' });
         return true;
     },
 
@@ -454,6 +437,10 @@ const storageService = {
         }
         return 'avatars/defaultAvatar.png';
     },
+
+    triggerBrowserDownload: async (blob, fileName) => {
+        return triggerBrowserDownload(blob, fileName);
+    },
 };
 
 
@@ -509,15 +496,28 @@ async function triggerBrowserDownload(blob, fileName) {
         return;
     }
 
+    const dotIndex = fileName.lastIndexOf('.');
+    const ext = dotIndex !== -1 ? fileName.slice(dotIndex).toLowerCase() : '';
+    let mimeType = blob.type;
+    if (!mimeType || mimeType === 'application/octet-stream') {
+        if (ext === '.png') mimeType = 'image/png';
+        else if (ext === '.jpg' || ext === '.jpeg') mimeType = 'image/jpeg';
+        else if (ext === '.webp') mimeType = 'image/webp';
+        else if (ext === '.gif') mimeType = 'image/gif';
+        else if (ext === '.pdf') mimeType = 'application/pdf';
+        else if (ext === '.txt') mimeType = 'text/plain';
+        else if (ext === '.docx') mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+        else if (ext === '.xlsx') mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+        else mimeType = 'application/octet-stream';
+    }
+
     if (typeof window.showSaveFilePicker === 'function') {
         try {
-            const dotIndex = fileName.lastIndexOf('.');
-            const ext = dotIndex !== -1 ? fileName.slice(dotIndex) : '';
             const handle = await window.showSaveFilePicker({
                 suggestedName: fileName,
                 types: ext ? [{
-                    description: 'File',
-                    accept: { [blob.type || 'application/octet-stream']: [ext] },
+                    description: `${ext.slice(1).toUpperCase()} File`,
+                    accept: { [mimeType]: [ext] },
                 }] : undefined,
             });
             const writable = await handle.createWritable();

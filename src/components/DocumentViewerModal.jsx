@@ -575,36 +575,27 @@ const DocumentViewerModal = ({
 
     const handleDownload = async () => {
         try {
-            const targetPath = storagePath || resolvedDoc?.url || resolvedDoc?.downloadUrl;
-            const url = downloadUrl || (await storageService.getFileDownloadUrl(targetPath));
-            
-            if (url) {
-                const anchor = document.createElement('a');
-                anchor.href = url;
-                anchor.download = fileName || 'document.pdf';
-                anchor.target = '_blank';
-                anchor.rel = 'noopener noreferrer';
-                document.body.appendChild(anchor);
-                anchor.click();
-                setTimeout(() => {
-                    if (anchor.parentNode) {
-                        anchor.parentNode.removeChild(anchor);
-                    }
-                }, 1000);
+            let effectiveDownloadName = fileName || 'document';
+            if (fileExtension && !effectiveDownloadName.toLowerCase().endsWith(`.${fileExtension.toLowerCase()}`)) {
+                effectiveDownloadName = `${effectiveDownloadName}.${fileExtension}`;
+            }
 
+            if (fileBlob) {
+                await storageService.triggerBrowserDownload(fileBlob, effectiveDownloadName);
                 showToast({
                     type: 'success',
                     title: 'Download Started',
-                    description: `Downloading "${fileName}".`,
+                    description: `Saving "${effectiveDownloadName}" to your device.`,
                 });
                 return;
             }
 
-            await storageService.downloadDocument(targetPath, fileName);
+            const targetPath = storagePath || resolvedDoc?.path || resolvedDoc?.url || resolvedDoc?.downloadUrl;
+            await storageService.downloadDocument(targetPath, effectiveDownloadName);
             showToast({
                 type: 'success',
                 title: 'Download Started',
-                description: `Downloading "${fileName}".`,
+                description: `Saving "${effectiveDownloadName}" to your device.`,
             });
         } catch (err) {
             showToast({
