@@ -21,11 +21,19 @@ import {
     FileCheck,
     Sparkles,
     Trash2,
+    Share2,
+    RotateCcw,
+    XCircle,
+    Search,
+    Users,
+    UserCheck,
+    Send,
     ScanText,
     Image as ImageIcon,
     Crop,
 } from 'lucide-react';
 import {
+    Badge,
     Browser,
     Button,
     Container,
@@ -35,13 +43,27 @@ import {
     SelectField,
     DocumentViewerModal,
     DocumentScannerModal,
+    Avatar,
+    resolveUserAvatar,
+    formatDateTime,
+    getMimeTypeFromFilename,
 } from '../components';
-import { useToast } from '../hooks';
+import { useToast, useAuth } from '../hooks';
 import { constants } from '../constants';
-import { useDocumentStore, useDepartmentStore } from '../stores';
+import {
+    useDocumentStore,
+    useDepartmentStore,
+    useUserStore,
+    useCoordinatorStore,
+    useAuthStore,
+    useAuditStore,
+} from '../stores';
 import {
     storageService,
     documentService,
+    aiService,
+    coordinatorApprovalService,
+    systemEventService,
     ocrService,
 } from '../services';
 
@@ -52,7 +74,6 @@ const DOCUMENT_COLUMNS = [
     { key: 'classification', label: 'Classification' },
     { key: 'version', label: 'Version' },
     { key: 'size', label: 'Size' },
-    { key: 'status', label: 'Status' },
     { key: 'date', label: 'Last Modified' },
 ];
 
@@ -108,12 +129,18 @@ const INITIAL_BREADCRUMBS = [
 
 // --- COMPONENTS ---
 const DocumentsPage = ({
-    currentUser = null,
+    currentUser: propUser = null,
     onUploadDocument = null,
     onSelectDocument,
     className,
     ...props
 }) => {
+    // AUTH RESOLUTION
+    const { currentUser: authUser } = useAuth();
+    const storeUser = useAuthStore((state) => state.currentUser);
+    const currentUser = propUser ?? authUser ?? storeUser ?? useAuthStore.getState().currentUser;
+    const isCoordinator = constants.isCoordinatorRole(currentUser?.role);
+
     // REFS
     const fileInputReference = useRef(null);
 
@@ -161,13 +188,48 @@ const DocumentsPage = ({
     const [editFormComment, setEditFormComment] = useState('');
     const [editFormErrors, setEditFormErrors] = useState({});
     const [isSavingEdit, setIsSavingEdit] = useState(false);
+    const [isGeneratingAiSummary, setIsGeneratingAiSummary] = useState(false);
+
+    // STATES: SHARE MODAL
+    const [selectedShareDepartmentIds, setSelectedShareDepartmentIds] = useState([]);
+    const [departmentSearchQuery, setDepartmentSearchQuery] = useState('');
+    const [isSharingDepartment, setIsSharingDepartment] = useState(false);
+    const [unsharingShareId, setUnsharingShareId] = useState(null);
+
+    // STATES: PUBLISH TO MEMBERS MODAL
+    const [publishMode, setPublishMode] = useState('all'); // 'all' | 'specific'
+    const [selectedPublishMemberIds, setSelectedPublishMemberIds] = useState([]);
+    const [memberSearchQuery, setMemberSearchQuery] = useState('');
+    const [isPublishingMembers, setIsPublishingMembers] = useState(false);
 
     // HOOKS
     const { showToast, showProcessing } = useToast();
     const documents = useDocumentStore((state) => state.documents);
     const documentVersions = useDocumentStore((state) => state.documentVersions);
+    const documentShares = useDocumentStore((state) => state.documentShares);
     const fetchDocuments = useDocumentStore((state) => state.fetchDocuments);
+    const syncAllDocumentShares = useDocumentStore((state) => state.syncAllDocumentShares);
+    const shareModalDocument = useDocumentStore((state) => state.shareModalDocument);
+    const setShareModalDocument = useDocumentStore((state) => state.setShareModalDocument);
+    const publishModalDocument = useDocumentStore((state) => state.publishModalDocument);
+    const setPublishModalDocument = useDocumentStore((state) => state.setPublishModalDocument);
+    const publishDocumentToMembers = useDocumentStore((state) => state.publishDocumentToMembers);
+    const users = useUserStore((state) => state.users);
+    const fetchUsers = useUserStore((state) => state.fetchUsers);
+    const shareDocument = useDocumentStore((state) => state.shareDocument);
+    const shareDocumentRecursive = useDocumentStore((state) => state.shareDocumentRecursive);
+    const unshareDocument = useDocumentStore((state) => state.unshareDocument);
+    const unshareDocumentRecursive = useDocumentStore((state) => state.unshareDocumentRecursive);
+    const updateShareStatusRecursive = useDocumentStore((state) => state.updateShareStatusRecursive);
+    const approveShare = useDocumentStore((state) => state.approveShare);
+    const unapproveShare = useDocumentStore((state) => state.unapproveShare);
+    const rejectShare = useDocumentStore((state) => state.rejectShare);
+    const publishShare = useDocumentStore((state) => state.publishShare);
+    const unpublishShare = useDocumentStore((state) => state.unpublishShare);
+    const stashShare = useDocumentStore((state) => state.stashShare);
+    const unstashShare = useDocumentStore((state) => state.unstashShare);
     const departments = useDepartmentStore((state) => state.departments);
+    const fetchDepartments = useDepartmentStore((state) => state.fetchDepartments);
 
     const dynamicFilterOptions = useMemo(() => {
         return [...BASE_FILTER_OPTIONS];
@@ -175,7 +237,41 @@ const DocumentsPage = ({
 
     useEffect(() => {
         fetchDocuments().catch(() => {});
-    }, [fetchDocuments]);
+        fetchDepartments().catch(() => {});
+        fetchUsers().catch(() => {});
+    }, [fetchDocuments, fetchDepartments, fetchUsers]);
+
+    useEffect(() => {
+        if (currentUser) {
+            syncAllDocumentShares(currentUser, departments).catch(() => {});
+        }
+    }, [currentUser, departments?.length, syncAllDocumentShares]);
+
+    useEffect(() => {
+        if (publishModalDocument) {
+            const existingSpecific = (documentShares || []).filter(
+                (s) =>
+                    (s.document?.id ?? s.documentId) === publishModalDocument.id &&
+                    (s.department?.id ?? s.departmentId) === currentUser?.departmentId &&
+                    (s.recipient?.id ?? s.recipientId)
+            );
+            if (existingSpecific.length > 0) {
+                setPublishMode('specific');
+                const validMemberIds = (users || [])
+                    .filter((u) => u.departmentId === currentUser?.departmentId && constants.isMemberRole(u.role))
+                    .map((u) => u.id);
+                setSelectedPublishMemberIds(
+                    existingSpecific
+                        .map((s) => s.recipient?.id ?? s.recipientId)
+                        .filter((id) => Boolean(id) && validMemberIds.includes(id))
+                );
+            } else {
+                setPublishMode('all');
+                setSelectedPublishMemberIds([]);
+            }
+            setMemberSearchQuery('');
+        }
+    }, [publishModalDocument, documentShares, currentUser, users]);
 
     // HANDLERS
     const handleBreadcrumbClick = (breadcrumbItem, breadcrumbIndex) => {
@@ -222,6 +318,21 @@ const DocumentsPage = ({
                 description: 'Cannot view an archived document. Restore the document to view its contents.',
             });
             return;
+        }
+
+        // PERMISSION CLEARANCE CHECK FOR NON-ADMIN/COORD ROLES
+        const isStaffUser = constants.isStaffRole(currentUser?.role);
+
+        if (!isStaffUser) {
+            const hasAccess = repositoryItems.some((r) => r.id === item.id);
+            if (!hasAccess) {
+                showToast({
+                    type: 'error',
+                    title: 'Access Restricted',
+                    description: 'You do not have clearance to view this document.',
+                });
+                return;
+            }
         }
 
         // Navigate into its containing directory if needed, select the file, and open preview modal
@@ -286,6 +397,12 @@ const DocumentsPage = ({
         return () => window.removeEventListener('pamantasan:archive-document', handleArchiveDocEvent);
     }, [documents]);
 
+    useEffect(() => {
+        if (isCreateModalOpen) {
+            setIsPageDragActive(false);
+        }
+    }, [isCreateModalOpen]);
+
     const handleOpenCreateModal = () => {
         setStagedDroppedItems([]);
         setFileError('');
@@ -333,29 +450,155 @@ const DocumentsPage = ({
         setEditFormErrors({});
     };
 
-    const handleGenerateSummaryWithAI = () => {
-        if (!editFormName.trim()) {
+    const handleGenerateSummaryWithAI = async () => {
+        if (!editItem) return;
+        setIsGeneratingAiSummary(true);
+
+        try {
+            if (editItem.isFolder) {
+                // Folder summary synthesis
+                const childDocs = (documents || []).filter(
+                    (d) => (d.parentId ?? null) === editItem.id && !d.isArchived
+                );
+                const childMeta = childDocs.map((doc) => {
+                    const vers = (documentVersions || []).filter(
+                        (v) => (v.document?.id ?? v.documentId) === doc.id
+                    );
+                    const latest = vers.length > 0 ? [...vers].sort((a, b) => (b.version ?? 0) - (a.version ?? 0))[0] : null;
+                    return {
+                        name: doc.name || doc.title,
+                        mimeType: latest?.mimeType,
+                        summary: latest?.summary,
+                        classification: latest?.classification,
+                    };
+                });
+
+                showToast({
+                    type: 'information',
+                    title: 'Synthesizing Folder Overview',
+                    description: `Analyzing ${childDocs.length} items in "${editFormName || editItem.name}" with Vertex AI...`,
+                });
+
+                const res = await aiService.synthesizeFolderSummary({
+                    folderName: editFormName.trim() || editItem.name || 'Folder',
+                    childDocuments: childMeta,
+                });
+
+                if (res?.summary) {
+                    setEditFormSummary(res.summary);
+                    if (editFormErrors.summary) setEditFormErrors((prev) => ({ ...prev, summary: '' }));
+                    showToast({
+                        type: 'success',
+                        title: 'AI Summary Synthesized',
+                        description: 'Generated folder overview based on child repository items.',
+                    });
+                }
+            } else {
+                // File summary analysis
+                const vers = (documentVersions || []).filter(
+                    (v) => (v.document?.id ?? v.documentId) === editItem.id
+                );
+                const latestVer = vers.length > 0
+                    ? [...vers].sort((a, b) => (b.version ?? 0) - (a.version ?? 0))[0]
+                    : null;
+                const path = latestVer?.path || editItem.path;
+
+                if (path) {
+                    showToast({
+                        type: 'information',
+                        title: 'Analyzing Document with AI',
+                        description: `Reading content of "${editFormName || editItem.name}" via Vertex AI Gemini Flash...`,
+                    });
+
+                    const res = await aiService.analyzeDocumentFile({
+                        storagePath: path,
+                        mimeType: latestVer?.mimeType || 'application/octet-stream',
+                        fileName: editFormName.trim() || editItem.name || 'document',
+                        fileSize: latestVer?.sizeBytes || 0,
+                    });
+
+                    if (res?.summary) {
+                        setEditFormSummary(res.summary);
+                        if (editFormErrors.summary) setEditFormErrors((prev) => ({ ...prev, summary: '' }));
+                    }
+
+                    if (res?.classification && res.classification !== 'UNCLASSIFIED') {
+                        setEditFormClassification(res.classification);
+                        if (editFormErrors.classification) setEditFormErrors((prev) => ({ ...prev, classification: '' }));
+                    }
+
+                    showToast({
+                        type: 'success',
+                        title: 'AI Analysis Complete',
+                        description: `Summary and classification updated (${res?.classification || 'Analyzed'}).`,
+                    });
+                } else {
+                    const cleanedName = editFormName.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
+                    const generated = `Institutional documentation and operational records pertaining to ${cleanedName}.`;
+                    setEditFormSummary(generated);
+                    if (editFormErrors.summary) {
+                        setEditFormErrors((prev) => ({ ...prev, summary: '' }));
+                    }
+                    showToast({
+                        type: 'information',
+                        title: 'AI Summary Generated',
+                        description: 'Generated document summary based on filename.',
+                    });
+                }
+            }
+        } catch (err) {
+            console.error('AI summary error:', err);
             showToast({
-                type: 'warning',
-                title: 'Filename Required',
-                description: 'Please enter a document filename first to generate an AI summary.',
+                type: 'error',
+                title: 'AI Generation Failed',
+                description: err?.message || 'Could not generate AI summary.',
             });
-            return;
+        } finally {
+            setIsGeneratingAiSummary(false);
         }
-        const cleanedName = editFormName.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
-        const generated = `Institutional documentation and operational records pertaining to ${cleanedName}.`;
-        setEditFormSummary(generated);
-        if (editFormErrors.summary) {
-            setEditFormErrors((prev) => ({ ...prev, summary: '' }));
-        }
-        showToast({
-            type: 'information',
-            title: 'AI Summary Generated',
-            description: 'Generated document summary based on filename.',
-        });
     };
 
-    const handleAutoClassifyWithAI = () => {
+    const handleAutoClassifyWithAI = async () => {
+        if (!editItem) return;
+        const vers = (documentVersions || []).filter(
+            (v) => (v.document?.id ?? v.documentId) === editItem.id
+        );
+        const latestVer = vers.length > 0
+            ? [...vers].sort((a, b) => (b.version ?? 0) - (a.version ?? 0))[0]
+            : null;
+        const path = latestVer?.path || editItem.path;
+
+        if (path) {
+            showToast({
+                type: 'information',
+                title: 'Classifying Document',
+                description: 'Evaluating sensitivity level with Vertex AI...',
+            });
+            try {
+                const res = await aiService.analyzeDocumentFile({
+                    storagePath: path,
+                    mimeType: latestVer?.mimeType || 'application/octet-stream',
+                    fileName: editFormName.trim() || editItem.name || 'document',
+                    fileSize: latestVer?.sizeBytes || 0,
+                });
+                if (res?.classification && res.classification !== 'UNCLASSIFIED') {
+                    setEditFormClassification(res.classification);
+                    if (editFormErrors.classification) {
+                        setEditFormErrors((prev) => ({ ...prev, classification: '' }));
+                    }
+                    showToast({
+                        type: 'success',
+                        title: 'AI Classified',
+                        description: `Classified as ${res.classification} based on document content.`,
+                    });
+                    return;
+                }
+            } catch (err) {
+                console.warn('AI classification fallback to keywords:', err);
+            }
+        }
+
+        // Fallback keyword heuristic
         const lower = (editFormName + ' ' + editFormSummary).toLowerCase();
         let suggested = constants.DOCUMENT_VERSIONS_CLASSIFICATION.CONFIDENTIAL;
         if (lower.includes('public') || lower.includes('handbook') || lower.includes('memo') || lower.includes('calendar') || lower.includes('bulletin')) {
@@ -392,11 +635,42 @@ const DocumentsPage = ({
 
         setIsSavingEdit(true);
         try {
+            if (isCoordinator) {
+                const docPayload = {
+                    documentId: editItem.id,
+                    documentTitle: editFormName.trim(),
+                    isFolder: Boolean(editItem.isFolder),
+                    new: {
+                        name: editFormName.trim(),
+                        comment: editFormComment.trim() || null,
+                        summary: editItem.isFolder ? null : (editFormSummary.trim() || null),
+                        classification: editItem.isFolder ? null : editFormClassification,
+                    },
+                };
+
+                const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
+                await coordinatorApprovalService.submitCoordinatorRequest({
+                    action: constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_UPDATE,
+                    requesterId,
+                    data: docPayload,
+                });
+                useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
+
+                showToast({
+                    type: 'success',
+                    title: 'Request Submitted',
+                    description: `Edit request for "${editFormName.trim()}" sent for Administrator approval.`,
+                });
+                setIsEditModalOpen(false);
+                return;
+            }
+
             await useDocumentStore.getState().updateDocument(editItem.id, {
                 name: editFormName.trim(),
                 comment: editFormComment.trim() || null,
             });
 
+            let updatedMimeType = editItem.mimeType;
             if (!editItem.isFolder) {
                 const vers = (documentVersions || []).filter(
                     (v) => (v.document?.id ?? v.documentId) === editItem.id
@@ -405,10 +679,13 @@ const DocumentsPage = ({
                     ? [...vers].sort((a, b) => b.version - a.version)[0]
                     : null;
                 if (latestVer) {
+                    const derivedMimeType = getMimeTypeFromFilename(editFormName.trim());
+                    updatedMimeType = derivedMimeType;
                     await useDocumentStore.getState().updateDocumentVersion(latestVer.id, {
                         summary: editFormSummary.trim() || null,
                         classification: editFormClassification,
                         changeSummary: 'Updated metadata via editor',
+                        ...(derivedMimeType ? { mimeType: derivedMimeType } : {}),
                     });
                 }
             }
@@ -424,8 +701,9 @@ const DocumentsPage = ({
                 description: editItem.isFolder ? (editFormComment.trim() || null) : (editFormSummary.trim() || null),
                 summary: editItem.isFolder ? null : (editFormSummary.trim() || null),
                 classification: editItem.isFolder ? '—' : editFormClassification,
+                mimeType: editItem.isFolder ? undefined : updatedMimeType,
                 updatedAt: timestamp,
-                date: new Date(timestamp).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }),
+                date: formatDateTime(timestamp),
             };
 
             if (selectedDocument?.id === editItem.id) {
@@ -464,11 +742,145 @@ const DocumentsPage = ({
         }
 
         if (actionKey === 'share') {
-            showToast({
-                type: 'information',
-                title: 'Share Settings',
-                description: `Access link for "${item.title || item.name}" copied to clipboard.`,
-            });
+            setShareModalDocument(item);
+            return;
+        }
+
+        if (actionKey === 'publish') {
+            setPublishModalDocument(item);
+            return;
+        }
+
+        if (['approve', 'unapprove', 'reject', 'unpublish', 'stash', 'unstash', 'unshare'].includes(actionKey)) {
+            let shareRecord = item.share;
+            if (!shareRecord) {
+                if (actionKey === 'unshare' && (item.departmentId || item.department)) {
+                    shareRecord = item;
+                } else if (currentUser?.departmentId) {
+                    shareRecord = (documentShares || []).find(
+                        (s) =>
+                            (s.document?.id ?? s.documentId) === item.id &&
+                            (s.department?.id ?? s.departmentId) === currentUser.departmentId
+                    );
+                } else {
+                    shareRecord = (documentShares || []).find((s) => (s.document?.id ?? s.documentId) === item.id);
+                }
+            }
+
+            const shareId = shareRecord?.id;
+            if (!shareId) {
+                showToast({
+                    type: 'error',
+                    title: 'Action Failed',
+                    description: 'No associated departmental share found for this document.',
+                });
+                return;
+            }
+
+            const docTitle = item.title || item.name || 'document';
+            const deptId = shareRecord?.department?.id ?? shareRecord?.departmentId ?? currentUser?.departmentId;
+            try {
+                if (actionKey === 'approve') {
+                    if (item.isFolder && deptId) {
+                        await updateShareStatusRecursive(item.id, deptId, constants.DOCUMENT_SHARES_STATUS.APPROVED);
+                    } else {
+                        await approveShare(shareId);
+                    }
+                    showToast({
+                        type: 'success',
+                        title: item.isFolder ? 'Folder Approved' : 'Document Approved',
+                        description: `Approved "${docTitle}" for department director review.`,
+                    });
+                } else if (actionKey === 'unapprove') {
+                    if (item.isFolder && deptId) {
+                        await updateShareStatusRecursive(item.id, deptId, constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL);
+                    } else {
+                        await unapproveShare(shareId);
+                    }
+                    showToast({
+                        type: 'information',
+                        title: 'Approval Revoked',
+                        description: `Reverted "${docTitle}" to pending approval.`,
+                    });
+                } else if (actionKey === 'reject') {
+                    if (item.isFolder && deptId) {
+                        await unshareDocumentRecursive(item.id, deptId);
+                    } else {
+                        await rejectShare(shareId);
+                    }
+                    showToast({
+                        type: 'warning',
+                        title: item.isFolder ? 'Folder Rejected' : 'Document Rejected',
+                        description: `Rejected "${docTitle}" and removed from department view.`,
+                    });
+                    if (selectedDocument?.id === item.id) {
+                        setSelectedDocument(null);
+                        onSelectDocument?.(null);
+                    }
+                } else if (actionKey === 'publish') {
+                    if (item.isFolder && deptId) {
+                        await updateShareStatusRecursive(item.id, deptId, constants.DOCUMENT_SHARES_STATUS.PUBLISHED);
+                    } else {
+                        await publishShare(shareId);
+                    }
+                    showToast({
+                        type: 'success',
+                        title: item.isFolder ? 'Folder Published' : 'Document Published',
+                        description: `Published "${docTitle}" to all department members.`,
+                    });
+                } else if (actionKey === 'unpublish') {
+                    if (item.isFolder && deptId) {
+                        await updateShareStatusRecursive(item.id, deptId, constants.DOCUMENT_SHARES_STATUS.APPROVED);
+                    } else {
+                        await unpublishShare(shareId);
+                    }
+                    showToast({
+                        type: 'information',
+                        title: item.isFolder ? 'Folder Unpublished' : 'Document Unpublished',
+                        description: `Unpublished "${docTitle}" from department members.`,
+                    });
+                } else if (actionKey === 'stash') {
+                    if (item.isFolder && deptId) {
+                        await updateShareStatusRecursive(item.id, deptId, constants.DOCUMENT_SHARES_STATUS.STASHED);
+                    } else {
+                        await stashShare(shareId);
+                    }
+                    showToast({
+                        type: 'information',
+                        title: item.isFolder ? 'Folder Stashed' : 'Document Stashed',
+                        description: `Stashed "${docTitle}" at upper management level.`,
+                    });
+                } else if (actionKey === 'unstash') {
+                    if (item.isFolder && deptId) {
+                        await updateShareStatusRecursive(item.id, deptId, constants.DOCUMENT_SHARES_STATUS.APPROVED);
+                    } else {
+                        await unstashShare(shareId);
+                    }
+                    showToast({
+                        type: 'success',
+                        title: item.isFolder ? 'Folder Unstashed' : 'Document Unstashed',
+                        description: `Restored "${docTitle}" to approved state.`,
+                    });
+                } else if (actionKey === 'unshare') {
+                    if (item.isFolder && deptId) {
+                        await unshareDocumentRecursive(item.id, deptId);
+                    } else {
+                        await unshareDocument(shareId);
+                    }
+                    showToast({
+                        type: 'success',
+                        title: 'Share Removed',
+                        description: `Removed department share for "${docTitle}".`,
+                    });
+                }
+            } catch (err) {
+                console.error(`Failed to execute ${actionKey}:`, err);
+                showToast({
+                    type: 'error',
+                    title: 'Action Failed',
+                    description: err?.message || `Could not complete ${actionKey}.`,
+                });
+            }
             return;
         }
 
@@ -593,6 +1005,30 @@ const DocumentsPage = ({
 
     const performRestoreItem = async (item) => {
         try {
+            if (isCoordinator) {
+                const restorePayload = {
+                    documentId: item.id,
+                    documentTitle: item.title || item.name,
+                    isArchived: false,
+                    isFolder: Boolean(item.isFolder),
+                };
+
+                const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
+                await coordinatorApprovalService.submitCoordinatorRequest({
+                    action: constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_UNARCHIVE,
+                    requesterId,
+                    data: restorePayload,
+                });
+                useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
+
+                showToast({
+                    type: 'success',
+                    title: 'Request Submitted',
+                    description: `Restore request for "${item.title || item.name}" sent for Administrator approval.`,
+                });
+                return;
+            }
+
             await useDocumentStore.getState().archiveDocument(item.id, false);
             setLocalCreatedItems((previousItems) =>
                 previousItems.map((repositoryItem) => {
@@ -682,6 +1118,31 @@ const DocumentsPage = ({
         }
         setIsArchivingItem(true);
         try {
+            if (isCoordinator) {
+                const archivePayload = {
+                    documentId: archivingItem.id,
+                    documentTitle: archivingItem.title || archivingItem.name,
+                    isArchived: true,
+                    isFolder: Boolean(archivingItem.isFolder),
+                };
+
+                const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
+                await coordinatorApprovalService.submitCoordinatorRequest({
+                    action: constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_ARCHIVE,
+                    requesterId,
+                    data: archivePayload,
+                });
+                useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
+
+                showToast({
+                    type: 'success',
+                    title: 'Request Submitted',
+                    description: `Archive request for "${archivingItem.title || archivingItem.name}" sent for Administrator approval.`,
+                });
+                setArchivingItem(null);
+                return;
+            }
+
             await useDocumentStore.getState().archiveDocument(archivingItem.id, true);
             setLocalCreatedItems((previousItems) =>
                 previousItems.map((repositoryItem) => {
@@ -724,6 +1185,30 @@ const DocumentsPage = ({
         }
         setIsDeletingItemLoading(true);
         try {
+            if (isCoordinator) {
+                const deletePayload = {
+                    documentId: deletingItem.id,
+                    documentTitle: deletingItem.title || deletingItem.name,
+                    isFolder: Boolean(deletingItem.isFolder),
+                };
+
+                const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
+                await coordinatorApprovalService.submitCoordinatorRequest({
+                    action: constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_DELETE,
+                    requesterId,
+                    data: deletePayload,
+                });
+                useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
+
+                showToast({
+                    type: 'success',
+                    title: 'Request Submitted',
+                    description: `Delete request for "${deletingItem.title || deletingItem.name}" sent for Administrator approval.`,
+                });
+                setDeletingItem(null);
+                return;
+            }
+
             await useDocumentStore.getState().deleteDocument(deletingItem.id);
             setLocalCreatedItems((previousItems) =>
                 previousItems.filter((repositoryItem) => repositoryItem.id !== deletingItem.id)
@@ -778,12 +1263,87 @@ const DocumentsPage = ({
 
         const activeUserId = currentUser?.id;
         const rootTargetId = destinationFolderId === 'root' ? null : destinationFolderId;
-        const folderCache = new Map();
 
-        for (let itemIndex = 0; itemIndex < validItems.length; itemIndex++) {
-            let item = validItems[itemIndex];
+        // 1. COLLECT ALL UNIQUE ANCESTOR DIRECTORY PATHS ACROSS ALL DROPPED ITEMS
+        const directoryPrefixSet = new Set();
+        validItems.forEach((item) => {
+            if (item.folderPathParts && item.folderPathParts.length > 0) {
+                let acc = '';
+                item.folderPathParts.forEach((part) => {
+                    acc = acc ? `${acc}/${part}` : part;
+                    directoryPrefixSet.add(acc);
+                });
+            }
+        });
 
+        // 2. SORT UNIQUE DIRECTORIES BY DEPTH (SHALLOWEST FIRST)
+        const sortedDirectoryPaths = Array.from(directoryPrefixSet).sort((a, b) => {
+            const depthA = a.split('/').length;
+            const depthB = b.split('/').length;
+            return depthA - depthB;
+        });
+
+        // 3. SEQUENTIALLY RESOLVE OR CREATE ALL DIRECTORIES IN DATABASE (ZERO RACE CONDITIONS)
+        const folderPathToIdMap = new Map();
+        const knownDocs = [...documents];
+
+        for (const dirPath of sortedDirectoryPaths) {
+            const parts = dirPath.split('/');
+            const folderName = parts[parts.length - 1];
+            const parentPath = parts.length > 1 ? parts.slice(0, -1).join('/') : null;
+            const parentFolderId = parentPath ? folderPathToIdMap.get(parentPath) : rootTargetId;
+
+            let existingFolder = knownDocs.find(
+                (d) => d.isFolder && (d.parentId ?? null) === parentFolderId && !d.isArchived && d.name.toLowerCase() === folderName.toLowerCase()
+            );
+
+            if (existingFolder) {
+                folderPathToIdMap.set(dirPath, existingFolder.id);
+            } else if (activeUserId) {
+                try {
+                    const createdFolder = await documentService.insertDocument({
+                        name: folderName,
+                        isFolder: true,
+                        isArchived: false,
+                        parentId: parentFolderId,
+                        comment: null,
+                    });
+                    folderPathToIdMap.set(dirPath, createdFolder.id);
+                    knownDocs.push(createdFolder);
+                    useAuditStore.getState().insertAuditLog({
+                        actorId: activeUserId,
+                        entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT,
+                        entityId: String(createdFolder.id),
+                        action: constants.AUDIT_LOGS_ACTION.CREATED,
+                        data: JSON.stringify({
+                            title: folderName,
+                            isFolder: true,
+                            parentId: parentFolderId,
+                            location: currentDirectoryLabel,
+                        }),
+                        createdAt: new Date().toISOString(),
+                    }).catch(() => {});
+                } catch (folderErr) {
+                    console.error(`Failed to create directory "${folderName}":`, folderErr);
+                }
+            }
+        }
+
+        const CONCURRENCY_LIMIT = 2;
+        let itemIndex = 0;
+
+        const processItem = async (item) => {
             try {
+                // If item is an empty folder, its directory was already created above
+                if (item.isFolder) {
+                    toastProcess.updateItem(item.id, {
+                        progress: 100,
+                        isFinished: true,
+                        statusText: 'Folder created',
+                    });
+                    return;
+                }
+
                 // OCR PRE-PROCESSING IF CONVERTING IMAGE TO SEARCHABLE PDF
                 let ocrSummary = null;
                 if (item.isImage && item.ocrMode === 'ocr_pdf') {
@@ -829,50 +1389,26 @@ const DocumentsPage = ({
                     }
                 } else {
                     toastProcess.updateItem(item.id, {
-                        progress: 25,
+                        progress: 15,
                         statusText: 'Resolving folder location...',
                     });
                 }
 
-                // 1. Resolve folder hierarchy if nested
+                // 1. Resolve exact target parent folder ID from precomputed map
                 let targetParentId = rootTargetId;
                 if (item.folderPathParts && item.folderPathParts.length > 0) {
-                    let accumulated = '';
-                    let currentParent = rootTargetId;
-
-                    for (const folderName of item.folderPathParts) {
-                        accumulated += '/' + folderName;
-                        if (folderCache.has(accumulated)) {
-                            currentParent = folderCache.get(accumulated);
-                        } else {
-                            const existingFolder = documents.find(
-                                (d) => d.isFolder && (d.parentId ?? null) === currentParent && !d.isArchived && d.name.toLowerCase() === folderName.toLowerCase()
-                            );
-                            if (existingFolder) {
-                                currentParent = existingFolder.id;
-                            } else if (activeUserId) {
-                                const createdFolder = await documentService.insertDocument({
-                                    name: folderName,
-                                    uploaderId: activeUserId,
-                                    isFolder: true,
-                                    isArchived: false,
-                                    parentId: currentParent,
-                                    comment: null,
-                                });
-                                currentParent = createdFolder.id;
-                            }
-                            folderCache.set(accumulated, currentParent);
-                        }
-                    }
-                    targetParentId = currentParent;
+                    const itemDirPath = item.folderPathParts.join('/');
+                    targetParentId = folderPathToIdMap.get(itemDirPath) ?? rootTargetId;
                 }
+
+                const finalFileName = item.fileName || item.file?.name || (item.title ? item.title.split('/').pop() : 'document');
 
                 // 2. Check if creating new version or new document
                 let targetDocumentId = item.action === 'create_new' ? null : item.existingDocumentId;
 
                 if (!targetDocumentId && activeUserId && item.action !== 'create_new') {
-                    const existingDoc = documents.find(
-                        (d) => !d.isFolder && (d.parentId ?? null) === targetParentId && !d.isArchived && d.name.toLowerCase() === (item.fileName || item.title).toLowerCase()
+                    const existingDoc = knownDocs.find(
+                        (d) => !d.isFolder && (d.parentId ?? null) === targetParentId && !d.isArchived && d.name.toLowerCase() === finalFileName.toLowerCase()
                     );
                     if (existingDoc) {
                         targetDocumentId = existingDoc.id;
@@ -885,9 +1421,12 @@ const DocumentsPage = ({
                         (v) => (v.document?.id ?? v.documentId) === targetDocumentId
                     );
                     const nextVersionNum = item.nextVersion || (docVersions.length > 0 ? Math.max(...docVersions.map((v) => v.version || 1)) + 1 : 2);
+                    const latestPriorVer = docVersions.length > 0
+                        ? [...docVersions].sort((a, b) => (b.version ?? 0) - (a.version ?? 0))[0]
+                        : null;
 
                     toastProcess.updateItem(item.id, {
-                        progress: 50,
+                        progress: 35,
                         statusText: `Uploading version ${nextVersionNum}.0 to Firebase Storage...`,
                     });
 
@@ -895,56 +1434,98 @@ const DocumentsPage = ({
                         targetDocumentId,
                         item.file,
                         nextVersionNum,
-                        item.fileName || item.title
+                        finalFileName
                     );
 
                     toastProcess.updateItem(item.id, {
-                        progress: 80,
-                        statusText: `Saving version ${nextVersionNum}.0 in database...`,
+                        progress: 65,
+                        statusText: `AI analyzing document & version differences...`,
+                    });
+
+                    // Call Vertex AI for version diffing, OCR/summary, and embeddings
+                    let aiResult = null;
+                    try {
+                        aiResult = await aiService.analyzeDocumentFile({
+                            storagePath: storageResult.path,
+                            mimeType: storageResult.mimeType || item.file.type || getMimeTypeFromFilename(finalFileName),
+                            fileName: finalFileName,
+                            fileSize: storageResult.sizeBytes || item.file.size || 0,
+                            isVersionUpdate: true,
+                            previousStoragePath: latestPriorVer?.path || null,
+                            previousMimeType: latestPriorVer?.mimeType || null,
+                            nextVersion: nextVersionNum,
+                        });
+                    } catch (aiErr) {
+                        console.warn('AI analysis error on version update:', aiErr);
+                    }
+
+                    toastProcess.updateItem(item.id, {
+                        progress: 85,
+                        statusText: `Saving version ${nextVersionNum}.0 and embeddings in database...`,
                     });
 
                     if (activeUserId) {
+                        const finalClassification = (item.classification && item.classification !== constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED)
+                            ? item.classification
+                            : (aiResult?.classification || constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED);
+
                         await documentService.insertDocumentVersion({
                             documentId: targetDocumentId,
                             uploaderId: activeUserId,
                             version: nextVersionNum,
                             path: storageResult.path,
                             sizeBytes: storageResult.sizeBytes,
-                            mimeType: storageResult.mimeType || item.mimeType || item.file.type || 'application/octet-stream',
-                            classification: item.classification || constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED,
-                            changeSummary: null,
-                            summary: ocrSummary || null,
+                            mimeType: storageResult.mimeType || item.file.type || getMimeTypeFromFilename(finalFileName),
+                            classification: finalClassification,
+                            changeSummary: aiResult?.changeSummary || `Version ${nextVersionNum}.0 update`,
+                            summary: aiResult?.summary || null,
+                            embedding: aiResult?.embedding || null,
                         });
 
                         await documentService.updateDocument(targetDocumentId, {
                             updatedAt: new Date().toISOString(),
                         }).catch(() => null);
+
+                        useAuditStore.getState().insertAuditLog({
+                            actorId: activeUserId,
+                            entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT,
+                            entityId: String(targetDocumentId),
+                            action: constants.AUDIT_LOGS_ACTION.UPDATED,
+                            data: JSON.stringify({
+                                title: finalFileName,
+                                version: nextVersionNum,
+                                isVersionUpdate: true,
+                                isFolder: false,
+                                location: currentDirectoryLabel,
+                            }),
+                            createdAt: new Date().toISOString(),
+                        }).catch(() => {});
                     }
                 } else {
                     // NEW DOCUMENT: Insert document row first, then upload, then insert version row
                     toastProcess.updateItem(item.id, {
-                        progress: 35,
+                        progress: 25,
                         statusText: 'Creating document in database...',
                     });
 
                     let createdDoc = null;
                     if (activeUserId) {
                         createdDoc = await documentService.insertDocument({
-                            name: item.fileName || item.title,
-                            uploaderId: activeUserId,
+                            name: finalFileName,
                             isFolder: false,
                             isArchived: false,
                             parentId: targetParentId,
                             comment: null,
                         });
                         targetDocumentId = createdDoc.id;
+                        knownDocs.push(createdDoc);
                     } else {
                         targetDocumentId = item.id;
                     }
 
                     toastProcess.updateItem(item.id, {
-                        progress: 60,
-                        statusText: 'Uploading binary to Firebase Storage...',
+                        progress: 45,
+                        statusText: 'Uploading file to Firebase Storage...',
                     });
 
                     let storageResult;
@@ -953,7 +1534,7 @@ const DocumentsPage = ({
                             targetDocumentId,
                             item.file,
                             1,
-                            item.fileName || item.title
+                            finalFileName
                         );
                     } catch (uploadErr) {
                         if (createdDoc?.id) {
@@ -963,11 +1544,34 @@ const DocumentsPage = ({
                     }
 
                     toastProcess.updateItem(item.id, {
-                        progress: 85,
-                        statusText: 'Saving version record in database...',
+                        progress: 70,
+                        statusText: 'AI reading & analyzing document...',
+                    });
+
+                    // Call Vertex AI for multimodal analysis, OCR, classification, and embeddings
+                    let aiResult = null;
+                    try {
+                        aiResult = await aiService.analyzeDocumentFile({
+                            storagePath: storageResult.path,
+                            mimeType: storageResult.mimeType || item.file.type || getMimeTypeFromFilename(finalFileName),
+                            fileName: finalFileName,
+                            fileSize: storageResult.sizeBytes || item.file.size || 0,
+                            isVersionUpdate: false,
+                        });
+                    } catch (aiErr) {
+                        console.warn('AI analysis error on initial upload:', aiErr);
+                    }
+
+                    toastProcess.updateItem(item.id, {
+                        progress: 90,
+                        statusText: 'Saving version record & embeddings in database...',
                     });
 
                     if (activeUserId) {
+                        const finalClassification = (item.classification && item.classification !== constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED)
+                            ? item.classification
+                            : (aiResult?.classification || constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED);
+
                         try {
                             await documentService.insertDocumentVersion({
                                 documentId: targetDocumentId,
@@ -975,11 +1579,27 @@ const DocumentsPage = ({
                                 version: 1,
                                 path: storageResult.path,
                                 sizeBytes: storageResult.sizeBytes,
-                                mimeType: storageResult.mimeType || item.mimeType || item.file.type || 'application/octet-stream',
-                                classification: item.classification || constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED,
-                                changeSummary: null,
-                                summary: ocrSummary || null,
+                                mimeType: storageResult.mimeType || item.file.type || getMimeTypeFromFilename(finalFileName),
+                                classification: finalClassification,
+                                changeSummary: aiResult?.changeSummary || 'Initial file upload',
+                                summary: aiResult?.summary || null,
+                                embedding: aiResult?.embedding || null,
                             });
+
+                            useAuditStore.getState().insertAuditLog({
+                                actorId: activeUserId,
+                                entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT,
+                                entityId: String(targetDocumentId),
+                                action: constants.AUDIT_LOGS_ACTION.UPLOADED,
+                                data: JSON.stringify({
+                                    title: finalFileName,
+                                    version: 1,
+                                    isVersionUpdate: false,
+                                    isFolder: false,
+                                    location: currentDirectoryLabel,
+                                }),
+                                createdAt: new Date().toISOString(),
+                            }).catch(() => {});
                         } catch (verErr) {
                             await storageService.deleteDocument(storageResult.path).catch(() => null);
                             if (createdDoc?.id) {
@@ -1003,10 +1623,73 @@ const DocumentsPage = ({
                     statusText: 'Upload error',
                 });
             }
-        }
+        };
+
+        const worker = async () => {
+            while (itemIndex < validItems.length) {
+                const currentIdx = itemIndex++;
+                await processItem(validItems[currentIdx]);
+            }
+        };
+
+        const workers = Array.from(
+            { length: Math.min(CONCURRENCY_LIMIT, validItems.length) },
+            () => worker()
+        );
+        await Promise.all(workers);
 
         await fetchDocuments().catch(() => {});
         toastProcess.complete();
+
+        // DISPATCH NOTIFICATIONS TO RMO STAFF
+        if (activeUserId && validItems.length > 0) {
+            const fileItems = validItems.filter((i) => !i.isFolder);
+            const folderCount = sortedDirectoryPaths.length;
+            const primaryItem = validItems[0];
+            const primaryId = primaryItem?.existingDocumentId || (knownDocs.find((d) => d.name === (primaryItem?.fileName || primaryItem?.title))?.id) || rootTargetId;
+
+            if (validItems.length === 1 && fileItems.length === 1) {
+                const singleName = fileItems[0].fileName || fileItems[0].title || 'Document';
+                systemEventService.recordSystemEvent({
+                    actorId: activeUserId,
+                    entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT,
+                    entityId: String(primaryId || 'doc-upload'),
+                    action: primaryItem?.action === 'create_new' || !primaryItem?.existingDocumentId
+                        ? constants.AUDIT_LOGS_ACTION.UPLOADED
+                        : constants.AUDIT_LOGS_ACTION.UPDATED,
+                    data: {
+                        title: `Document Uploaded: ${singleName}`,
+                        description: `Document "${singleName}" was uploaded to ${currentDirectoryLabel}.`,
+                        fileName: singleName,
+                        location: currentDirectoryLabel,
+                    },
+                    targetRoles: ['RMO_STAFF'],
+                    isMajor: false,
+                }).catch(() => {});
+            } else {
+                const rootDirName = sortedDirectoryPaths.length > 0 ? sortedDirectoryPaths[0].split('/')[0] : null;
+                const summaryTitle = rootDirName
+                    ? `Folder Upload: ${rootDirName} (${fileItems.length} file${fileItems.length === 1 ? '' : 's'})`
+                    : `Batch Upload: ${fileItems.length} documents`;
+                const summaryDesc = `Uploaded ${fileItems.length} file${fileItems.length === 1 ? '' : 's'}${folderCount > 0 ? ` across ${folderCount} folder${folderCount === 1 ? '' : 's'}` : ''} to ${currentDirectoryLabel}.`;
+
+                systemEventService.recordSystemEvent({
+                    actorId: activeUserId,
+                    entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT,
+                    entityId: String(primaryId || 'batch-upload'),
+                    action: constants.AUDIT_LOGS_ACTION.UPLOADED,
+                    data: {
+                        title: summaryTitle,
+                        description: summaryDesc,
+                        fileCount: fileItems.length,
+                        folderCount: folderCount,
+                        location: currentDirectoryLabel,
+                    },
+                    targetRoles: ['RMO_STAFF'],
+                    isMajor: false,
+                }).catch(() => {});
+            }
+        }
     };
 
     // MODAL DROPZONE DRAG & DROP HANDLERS
@@ -1014,6 +1697,7 @@ const DocumentsPage = ({
         dragEvent.preventDefault();
         dragEvent.stopPropagation();
         setIsDropzoneDragActive(true);
+        setIsPageDragActive(false);
     };
 
     const handleDropzoneDragLeave = (dragEvent) => {
@@ -1026,6 +1710,7 @@ const DocumentsPage = ({
         dropEvent.preventDefault();
         dropEvent.stopPropagation();
         setIsDropzoneDragActive(false);
+        setIsPageDragActive(false);
 
         const extracted = await processDataTransferPayload(
             dropEvent.dataTransfer,
@@ -1144,7 +1829,7 @@ const DocumentsPage = ({
 
     // PAGE-LEVEL DRAG & DROP HANDLERS (DROP DIRECTLY ONTO REPOSITORY EXPLORER)
     const handlePageDragOver = (dragEvent) => {
-        if (!canUpload) {
+        if (!canUpload || isCreateModalOpen) {
             return;
         }
         dragEvent.preventDefault();
@@ -1159,7 +1844,7 @@ const DocumentsPage = ({
     };
 
     const handlePageDrop = async (dropEvent) => {
-        if (!canUpload) {
+        if (!canUpload || isCreateModalOpen) {
             return;
         }
         dropEvent.preventDefault();
@@ -1198,14 +1883,31 @@ const DocumentsPage = ({
         setIsCreatingFolder(true);
         try {
             if (activeUserId) {
-                await documentService.insertDocument({
+                const created = await documentService.insertDocument({
                     name: uniqueFolderName,
-                    uploaderId: activeUserId,
                     isFolder: true,
                     isArchived: false,
                     parentId: targetParentId,
                     comment: folderDescription.trim() || null,
                 });
+                if (created?.id) {
+                    systemEventService.recordSystemEvent({
+                        actorId: activeUserId,
+                        entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT,
+                        entityId: String(created.id),
+                        action: constants.AUDIT_LOGS_ACTION.CREATED,
+                        data: {
+                            name: uniqueFolderName,
+                            title: `Folder Created: ${uniqueFolderName}`,
+                            description: `Folder "${uniqueFolderName}" was created in ${currentDirectoryLabel}.`,
+                            isFolder: true,
+                            parentId: targetParentId,
+                            location: currentDirectoryLabel,
+                        },
+                        targetRoles: ['RMO_STAFF'],
+                        isMajor: false,
+                    }).catch(() => {});
+                }
                 await fetchDocuments();
             } else {
                 const newFolderItem = {
@@ -1320,14 +2022,477 @@ const DocumentsPage = ({
     // DERIVED VALUES
     const userDepartment = currentUser?.department ?? 'General Repository';
     const userRole = currentUser?.role ?? constants.USERS_ROLE.MEMBER;
-    const canUpload =
-        userRole === constants.USERS_ROLE.ADMINISTRATOR ||
-        userRole === constants.USERS_ROLE.COORDINATOR;
+    const isStaff = constants.isStaffRole(userRole);
+    const isOfficer = constants.isOfficerRole(userRole);
+    const isDirector = constants.isDirectorRole(userRole);
+    const isMember = constants.isMemberRole(userRole);
+    const canUpload = isStaff;
+
+    // ACTIVE SHARES AND OPTIONS FOR SHARE MODAL
+    const activeSharesForModalDoc = useMemo(() => {
+        if (!shareModalDocument) return [];
+        const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
+        const modalClean = cleanId(shareModalDocument.id);
+        return (documentShares || []).filter(
+            (s) => cleanId(s.document?.id ?? s.documentId) === modalClean
+        );
+    }, [shareModalDocument, documentShares]);
+
+    const availableDepartmentsToShare = useMemo(() => {
+        if (!shareModalDocument) return [];
+        const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
+        const sharedDeptIds = new Set(
+            activeSharesForModalDoc.map((s) => cleanId(s.department?.id ?? s.departmentId))
+        );
+        return (departments || []).filter((d) => !sharedDeptIds.has(cleanId(d.id)));
+    }, [departments, activeSharesForModalDoc, shareModalDocument]);
+
+    const filteredAvailableDepartments = useMemo(() => {
+        if (!departmentSearchQuery.trim()) return availableDepartmentsToShare;
+        const q = departmentSearchQuery.toLowerCase();
+        return availableDepartmentsToShare.filter(
+            (d) =>
+                (d.name || '').toLowerCase().includes(q) ||
+                (d.code || '').toLowerCase().includes(q)
+        );
+    }, [availableDepartmentsToShare, departmentSearchQuery]);
+
+    const handleToggleDepartmentSelection = (deptId) => {
+        setSelectedShareDepartmentIds((prev) =>
+            prev.includes(deptId) ? prev.filter((id) => id !== deptId) : [...prev, deptId]
+        );
+    };
+
+    const handleSelectAllDepartments = () => {
+        if (selectedShareDepartmentIds.length === filteredAvailableDepartments.length) {
+            setSelectedShareDepartmentIds([]);
+        } else {
+            setSelectedShareDepartmentIds(filteredAvailableDepartments.map((d) => d.id));
+        }
+    };
+
+    const handleShareSubmit = async () => {
+        if (!shareModalDocument || selectedShareDepartmentIds.length === 0) {
+            showToast({
+                type: 'warning',
+                title: 'Select Department',
+                description: 'Please select at least one department to share with.',
+            });
+            return;
+        }
+
+        setIsSharingDepartment(true);
+        try {
+            const isFolder = Boolean(shareModalDocument.isFolder);
+            const targetCount = selectedShareDepartmentIds.length;
+            const docTitle = shareModalDocument.title || shareModalDocument.name || 'document';
+
+            if (isCoordinator) {
+                const sharePayload = {
+                    documentId: shareModalDocument.id,
+                    documentTitle: docTitle,
+                    departmentIds: selectedShareDepartmentIds,
+                    isRecursive: isFolder,
+                };
+
+                const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
+                await coordinatorApprovalService.submitCoordinatorRequest({
+                    action: constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_SHARE,
+                    requesterId,
+                    data: sharePayload,
+                });
+                useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
+
+                showToast({
+                    type: 'success',
+                    title: 'Request Submitted',
+                    description: `Share request for "${docTitle}" sent for Administrator approval.`,
+                });
+
+                setSelectedShareDepartmentIds([]);
+                setDepartmentSearchQuery('');
+                setShareModalDocument(null);
+                return;
+            }
+
+            if (isFolder) {
+                await shareDocumentRecursive(
+                    shareModalDocument.id,
+                    selectedShareDepartmentIds,
+                    currentUser.id
+                );
+                showToast({
+                    type: 'success',
+                    title: 'Folder Shared with Cascade',
+                    description: `Folder "${docTitle}" and all nested contents shared with ${targetCount} department${targetCount > 1 ? 's' : ''}. Status set to Pending Approval.`,
+                });
+            } else {
+                await Promise.all(
+                    selectedShareDepartmentIds.map((deptId) =>
+                        shareDocument(shareModalDocument.id, deptId, currentUser.id)
+                    )
+                );
+                showToast({
+                    type: 'success',
+                    title: 'Document Shared',
+                    description: `Shared "${docTitle}" with ${targetCount} department${targetCount > 1 ? 's' : ''}. Status set to Pending Approval.`,
+                });
+            }
+
+            setSelectedShareDepartmentIds([]);
+            setDepartmentSearchQuery('');
+        } catch (err) {
+            console.error('Failed to share document/folder:', err);
+            showToast({
+                type: 'error',
+                title: 'Share Failed',
+                description: err?.message || 'Could not complete department share.',
+            });
+        } finally {
+            setIsSharingDepartment(false);
+        }
+    };
+
+    const handleUnshareClick = async (shareItem, departmentName) => {
+        const shareId = shareItem?.id;
+        const deptId = shareItem?.department?.id ?? shareItem?.departmentId;
+        setUnsharingShareId(shareId || deptId);
+        try {
+            const isFolder = Boolean(shareModalDocument?.isFolder);
+            const docTitle = shareModalDocument?.title || shareModalDocument?.name || 'document';
+
+            if (isCoordinator) {
+                const unsharePayload = {
+                    shareId: shareId,
+                    documentId: shareModalDocument?.id,
+                    departmentId: deptId,
+                    departmentName: departmentName,
+                    isRecursive: isFolder,
+                };
+
+                const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
+                await coordinatorApprovalService.submitCoordinatorRequest({
+                    action: constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_UNSHARE,
+                    requesterId,
+                    data: unsharePayload,
+                });
+                useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
+
+                showToast({
+                    type: 'success',
+                    title: 'Request Submitted',
+                    description: `Unshare request for "${departmentName || 'department'}" sent for Administrator approval.`,
+                });
+                return;
+            }
+
+            if (isFolder && deptId) {
+                await unshareDocumentRecursive(shareModalDocument.id, deptId);
+                showToast({
+                    type: 'success',
+                    title: 'Share Removed',
+                    description: `Removed "${docTitle}" and all nested contents from ${departmentName || 'department'}.`,
+                });
+            } else if (shareId) {
+                await unshareDocument(shareId);
+                showToast({
+                    type: 'success',
+                    title: 'Share Removed',
+                    description: `Removed share for ${departmentName || 'department'}.`,
+                });
+            }
+        } catch (err) {
+            console.error('Failed to remove share:', err);
+            showToast({
+                type: 'error',
+                title: 'Unshare Failed',
+                description: err?.message || 'Could not remove department share.',
+            });
+        } finally {
+            setUnsharingShareId(null);
+        }
+    };
+
+    // HANDLERS: PUBLISH TO MEMBERS MODAL
+    const departmentMembers = useMemo(() => {
+        if (!currentUser?.departmentId) return [];
+        return (users || []).filter(
+            (u) =>
+                u.departmentId === currentUser.departmentId &&
+                u.id !== currentUser.id &&
+                u.status !== constants.USERS_STATUS.SUSPENDED &&
+                constants.isMemberRole(u.role)
+        );
+    }, [users, currentUser]);
+
+    const filteredDepartmentMembers = useMemo(() => {
+        if (!memberSearchQuery.trim()) return departmentMembers;
+        const q = memberSearchQuery.toLowerCase();
+        return departmentMembers.filter((m) => {
+            const fullName = `${m.firstName || ''} ${m.lastName || ''}`.toLowerCase();
+            const univId = (m.universityId || '').toLowerCase();
+            const email = (m.email || '').toLowerCase();
+            return fullName.includes(q) || univId.includes(q) || email.includes(q);
+        });
+    }, [departmentMembers, memberSearchQuery]);
+
+    const handleToggleMemberSelection = (memberId) => {
+        setSelectedPublishMemberIds((prev) =>
+            prev.includes(memberId) ? prev.filter((id) => id !== memberId) : [...prev, memberId]
+        );
+    };
+
+    const handleSelectAllMembers = () => {
+        if (selectedPublishMemberIds.length === filteredDepartmentMembers.length && filteredDepartmentMembers.length > 0) {
+            setSelectedPublishMemberIds([]);
+        } else {
+            setSelectedPublishMemberIds(filteredDepartmentMembers.map((m) => m.id));
+        }
+    };
+
+    const handlePublishSubmit = async () => {
+        if (!publishModalDocument || !currentUser?.departmentId) return;
+
+        setIsPublishingMembers(true);
+        const docTitle = publishModalDocument.title || publishModalDocument.name || 'document';
+        const isFolder = Boolean(publishModalDocument.isFolder);
+        const targetIds = publishMode === 'all' ? [] : selectedPublishMemberIds;
+
+        try {
+            await publishDocumentToMembers(
+                publishModalDocument.id,
+                currentUser.departmentId,
+                targetIds,
+                currentUser.id
+            );
+
+            showToast({
+                type: 'success',
+                title: isFolder ? 'Folder Published' : 'Document Published',
+                description:
+                    publishMode === 'all'
+                        ? `Published "${docTitle}" to all members in ${userDepartment}.`
+                        : `Published "${docTitle}" to ${targetIds.length} selected member${targetIds.length === 1 ? '' : 's'}.`,
+            });
+            setPublishModalDocument(null);
+            setSelectedPublishMemberIds([]);
+            setMemberSearchQuery('');
+        } catch (err) {
+            console.error('Failed to publish document to members:', err);
+            showToast({
+                type: 'error',
+                title: 'Publish Failed',
+                description: err?.message || 'Could not update publication settings.',
+            });
+        } finally {
+            setIsPublishingMembers(false);
+        }
+    };
 
     const repositoryItems = useMemo(() => {
-        const liveItems = documents.map((doc) => {
+        const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
+        const userDeptClean = cleanId(currentUser?.departmentId || currentUser?.department?.id);
+
+        // 1. Identify accessible documents and folders and their resolved share status
+        const accessibleItemMap = new Map(); // docId -> { status, share, shares }
+        const setAccessibleItem = (id, meta) => {
+            accessibleItemMap.set(id, meta);
+            const cId = cleanId(id);
+            if (cId) accessibleItemMap.set(cId, meta);
+        };
+
+        documents.forEach((doc) => {
+            const docClean = cleanId(doc.id);
+            const docShares = (documentShares || []).filter(
+                (s) => cleanId(s.document?.id ?? s.documentId) === docClean
+            );
+
+            if (isStaff) {
+                // Admin and Coord see everything
+                let resolvedStatus = '—';
+                if (docShares.length > 0) {
+                    if (docShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED)) {
+                        resolvedStatus = constants.DOCUMENT_SHARES_STATUS.PUBLISHED;
+                    } else if (docShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.APPROVED)) {
+                        resolvedStatus = constants.DOCUMENT_SHARES_STATUS.APPROVED;
+                    } else if (docShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL)) {
+                        resolvedStatus = constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL;
+                    } else if (docShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.STASHED)) {
+                        resolvedStatus = constants.DOCUMENT_SHARES_STATUS.STASHED;
+                    } else {
+                        resolvedStatus = docShares[0].status;
+                    }
+                }
+                setAccessibleItem(doc.id, {
+                    status: resolvedStatus,
+                    share: docShares[0] || null,
+                    shares: docShares,
+                });
+                return;
+            }
+
+            // For departmental users (Officer, Director, Member):
+            // 1. Collect all shares for this document that belong to the user's department
+            const directDeptShares = docShares.filter(
+                (s) => cleanId(s.department?.id ?? s.departmentId) === userDeptClean
+            );
+
+            // 2. If no direct share row for this item, check if an ancestor folder has a share row for this department
+            let effectiveDeptShares = [...directDeptShares];
+            let isInheritedFromFolder = false;
+
+            if (effectiveDeptShares.length === 0) {
+                let pId = doc.parentId ?? doc.parentFolderId;
+                while (pId && pId !== 'root') {
+                    const parentDoc = documents.find((d) => cleanId(d.id) === cleanId(pId));
+                    if (!parentDoc) break;
+                    const parentDocClean = cleanId(parentDoc.id);
+                    const parentDeptShares = (documentShares || []).filter(
+                        (s) =>
+                            cleanId(s.document?.id ?? s.documentId) === parentDocClean &&
+                            cleanId(s.department?.id ?? s.departmentId) === userDeptClean
+                    );
+                    if (parentDeptShares.length > 0) {
+                        effectiveDeptShares = parentDeptShares;
+                        isInheritedFromFolder = true;
+                        break;
+                    }
+                    pId = parentDoc.parentId ?? parentDoc.parentFolderId;
+                }
+            }
+
+            if (effectiveDeptShares.length === 0) {
+                // No share row for user's department directly or via enclosing folder -> not accessible!
+                return;
+            }
+
+            // Determine priority status among effective shares:
+            // PUBLISHED > STASHED > APPROVED > PENDING_APPROVAL
+            let resolvedStatus = '—';
+            if (effectiveDeptShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED)) {
+                resolvedStatus = constants.DOCUMENT_SHARES_STATUS.PUBLISHED;
+            } else if (effectiveDeptShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.STASHED)) {
+                resolvedStatus = constants.DOCUMENT_SHARES_STATUS.STASHED;
+            } else if (effectiveDeptShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.APPROVED)) {
+                resolvedStatus = constants.DOCUMENT_SHARES_STATUS.APPROVED;
+            } else if (effectiveDeptShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL)) {
+                resolvedStatus = constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL;
+            } else {
+                resolvedStatus = effectiveDeptShares[0]?.status ?? '—';
+            }
+
+            const primaryShare = effectiveDeptShares.find((s) => s.status === resolvedStatus) || effectiveDeptShares[0];
+
+            // Role-based status gating:
+            // OFFICER: PENDING_APPROVAL, APPROVED, STASHED, PUBLISHED
+            if (isOfficer) {
+                if (
+                    [
+                        constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL,
+                        constants.DOCUMENT_SHARES_STATUS.APPROVED,
+                        constants.DOCUMENT_SHARES_STATUS.STASHED,
+                        constants.DOCUMENT_SHARES_STATUS.PUBLISHED,
+                    ].includes(resolvedStatus)
+                ) {
+                    setAccessibleItem(doc.id, {
+                        status: resolvedStatus,
+                        share: primaryShare,
+                        shares: effectiveDeptShares,
+                        isInherited: isInheritedFromFolder,
+                    });
+                }
+            } else if (isDirector) {
+                // DIRECTOR: APPROVED, STASHED, PUBLISHED
+                if (
+                    [
+                        constants.DOCUMENT_SHARES_STATUS.APPROVED,
+                        constants.DOCUMENT_SHARES_STATUS.STASHED,
+                        constants.DOCUMENT_SHARES_STATUS.PUBLISHED,
+                    ].includes(resolvedStatus)
+                ) {
+                    setAccessibleItem(doc.id, {
+                        status: resolvedStatus,
+                        share: primaryShare,
+                        shares: effectiveDeptShares,
+                        isInherited: isInheritedFromFolder,
+                    });
+                }
+            } else if (isMember) {
+                // MEMBER: PUBLISHED only.
+                if (resolvedStatus === constants.DOCUMENT_SHARES_STATUS.PUBLISHED) {
+                    const memberSpecificShares = effectiveDeptShares.filter(
+                        (s) => s.recipient?.id ?? s.recipientId
+                    );
+
+                    if (memberSpecificShares.length > 0) {
+                        const userShare = memberSpecificShares.find(
+                            (s) => cleanId(s.recipient?.id ?? s.recipientId) === cleanId(currentUser?.id)
+                        );
+                        if (userShare && userShare.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED) {
+                            setAccessibleItem(doc.id, {
+                                status: userShare.status,
+                                share: userShare,
+                                shares: [userShare],
+                                isInherited: isInheritedFromFolder,
+                            });
+                        }
+                    } else {
+                        // Broad publication for all department members
+                        setAccessibleItem(doc.id, {
+                            status: resolvedStatus,
+                            share: primaryShare,
+                            shares: effectiveDeptShares,
+                            isInherited: isInheritedFromFolder,
+                        });
+                    }
+                }
+            }
+        });
+
+        // 2. Determine folder accessibility
+        // For staff: all folders visible.
+        // For department users: folder is visible if:
+        //   - it is directly accessible (has permitted share row for user's department)
+        //   - OR it is an ancestor of ANY item (file or subfolder) that is accessible
+        const accessibleFolderIdSet = new Set();
+        if (isStaff) {
+            documents.forEach((d) => {
+                if (d.isFolder) {
+                    accessibleFolderIdSet.add(d.id);
+                    accessibleFolderIdSet.add(cleanId(d.id));
+                }
+            });
+        } else {
+            accessibleItemMap.forEach((_, itemId) => {
+                const itemDoc = documents.find((d) => cleanId(d.id) === cleanId(itemId));
+                if (itemDoc?.isFolder) {
+                    accessibleFolderIdSet.add(itemDoc.id);
+                    accessibleFolderIdSet.add(cleanId(itemDoc.id));
+                }
+                let pId = itemDoc?.parentId ?? itemDoc?.parentFolderId;
+                while (pId && pId !== 'root') {
+                    accessibleFolderIdSet.add(pId);
+                    accessibleFolderIdSet.add(cleanId(pId));
+                    const parentDoc = documents.find((d) => cleanId(d.id) === cleanId(pId));
+                    if (!parentDoc) break;
+                    pId = parentDoc.parentId ?? parentDoc.parentFolderId;
+                }
+            });
+        }
+
+        // 3. Filter documents to accessible ones
+        const accessibleDocs = documents.filter((doc) => {
+            if (doc.isFolder) {
+                return accessibleFolderIdSet.has(doc.id) || accessibleFolderIdSet.has(cleanId(doc.id));
+            }
+            return accessibleItemMap.has(doc.id) || accessibleItemMap.has(cleanId(doc.id));
+        });
+
+        // 4. Map into browser items
+        const liveItems = accessibleDocs.map((doc) => {
+            const docClean = cleanId(doc.id);
             const versionsForDoc = (documentVersions || []).filter(
-                (v) => (v.document?.id ?? v.documentId) === doc.id
+                (v) => cleanId(v.document?.id ?? v.documentId) === docClean
             );
             const latestVer = versionsForDoc.length > 0
                 ? [...versionsForDoc].sort((a, b) => b.version - a.version)[0]
@@ -1343,16 +2508,46 @@ const DocumentsPage = ({
             const originalLocation = doc.parentId && doc.parentId !== 'root'
                 ? (() => {
                     const chain = [];
-                    let curr = (documents || []).find((d) => d.id === doc.parentId);
+                    let curr = (documents || []).find((d) => cleanId(d.id) === cleanId(doc.parentId));
                     while (curr) {
                         chain.unshift(curr.name || curr.title || 'Folder');
                         const pId = curr.parentId ?? curr.parentFolderId;
                         if (!pId || pId === 'root') break;
-                        curr = (documents || []).find((d) => d.id === pId);
+                        curr = (documents || []).find((d) => cleanId(d.id) === cleanId(pId));
                     }
                     return chain.length > 0 ? chain.join(' / ') : 'Repository Root';
                 })()
                 : 'Repository Root';
+
+            const shareMeta = accessibleItemMap.get(doc.id) || accessibleItemMap.get(docClean) || (() => {
+                if (isStaff) {
+                    const docShares = (documentShares || []).filter(
+                        (s) => cleanId(s.document?.id ?? s.documentId) === docClean
+                    );
+                    if (docShares.length > 0) {
+                        return {
+                            status: docShares[0].status,
+                            share: docShares[0],
+                            shares: docShares,
+                        };
+                    }
+                } else if (userDeptClean) {
+                    const deptShare = (documentShares || []).find(
+                        (s) =>
+                            cleanId(s.document?.id ?? s.documentId) === docClean &&
+                            cleanId(s.department?.id ?? s.departmentId) === userDeptClean
+                    );
+                    if (deptShare) {
+                        return {
+                            status: deptShare.status,
+                            share: deptShare,
+                            shares: [deptShare],
+                        };
+                    }
+                }
+                return { status: '—', share: null, shares: [] };
+            })();
+            const itemStatus = shareMeta?.status ?? '—';
 
             return {
                 id: doc.id,
@@ -1371,9 +2566,11 @@ const DocumentsPage = ({
                 size: formattedSize,
                 sizeBytes: doc.isFolder ? folderSizeBytes : (latestVer?.sizeBytes ?? 0),
                 path: latestVer?.path ?? null,
-                status: '—',
-                date: doc.createdAt && !isNaN(new Date(doc.createdAt).getTime())
-                    ? new Date(doc.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
+                status: itemStatus,
+                share: shareMeta?.share ?? null,
+                shares: shareMeta?.shares ?? [],
+                date: (doc.updatedAt || latestVer?.createdAt || doc.createdAt) && !isNaN(new Date(doc.updatedAt || latestVer?.createdAt || doc.createdAt).getTime())
+                    ? formatDateTime(doc.updatedAt || latestVer?.createdAt || doc.createdAt)
                     : 'Active',
                 isFolder: Boolean(doc.isFolder),
                 isArchived: Boolean(doc.isArchived),
@@ -1381,17 +2578,26 @@ const DocumentsPage = ({
                 originalLocation: originalLocation,
                 tags: doc.isFolder
                     ? ['Folder']
-                    : [latestVer?.classification ?? constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED],
+                    : [
+                        latestVer?.classification ?? constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED,
+                        ...(itemStatus && itemStatus !== '—' ? [itemStatus] : []),
+                    ],
             };
         });
+
         return [...localCreatedItems, ...liveItems];
-    }, [documents, documentVersions, localCreatedItems, currentUser]);
+    }, [documents, documentVersions, documentShares, localCreatedItems, currentUser, isStaff, isOfficer, isDirector, isMember]);
 
     const currentFolderItems = useMemo(() => {
+        const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
         return repositoryItems.filter((item) => {
-            const matchesArchiveState = !item.isArchived && item.status !== constants.DOCUMENT_SHARES_STATUS.STASHED;
+            const matchesArchiveState = !item.isArchived;
             if (!matchesArchiveState) return false;
-            return (item.parentId ?? 'root') === currentFolderId;
+            const itemParent = item.parentId ?? 'root';
+            if (currentFolderId === 'root') {
+                return !itemParent || itemParent === 'root';
+            }
+            return cleanId(itemParent) === cleanId(currentFolderId);
         });
     }, [repositoryItems, currentFolderId]);
 
@@ -1948,8 +3154,8 @@ const DocumentsPage = ({
                             </div>
                         )}
 
-                        {/* 3. FOR FILES ONLY: SUMMARY WITH SPARKLES AI BUTTON */}
-                        {!editItem.isFolder && (
+                        {/* 3. SUMMARY / OVERVIEW WITH SPARKLES AI BUTTON */}
+                        {!editItem.isFolder ? (
                             <div className="flex flex-col gap-1.5">
                                 <div className="flex items-center justify-between">
                                     <label className="text-xs font-semibold text-text">
@@ -1958,11 +3164,12 @@ const DocumentsPage = ({
                                     <button
                                         type="button"
                                         onClick={handleGenerateSummaryWithAI}
-                                        className="flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-medium bg-surface-hover hover:bg-surface-border text-text-muted hover:text-text border border-surface-border cursor-pointer transition-colors"
-                                        title="Generate AI summary based on document name"
+                                        disabled={isGeneratingAiSummary}
+                                        className="flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-medium bg-surface-hover hover:bg-surface-border text-text-muted hover:text-text border border-surface-border cursor-pointer transition-colors disabled:opacity-50"
+                                        title="Generate AI summary with Vertex AI"
                                     >
-                                        <Sparkles className="h-3 w-3 text-text-muted" />
-                                        <span>Generate with AI</span>
+                                        <Sparkles className={`h-3 w-3 text-text-muted ${isGeneratingAiSummary ? 'animate-spin' : ''}`} />
+                                        <span>{isGeneratingAiSummary ? 'Analyzing...' : 'Generate with AI'}</span>
                                     </button>
                                 </div>
                                 <AreaField
@@ -1976,9 +3183,37 @@ const DocumentsPage = ({
                                     rows={3}
                                 />
                             </div>
+                        ) : (
+                            <div className="flex flex-col gap-1.5">
+                                <div className="flex items-center justify-between">
+                                    <label className="text-xs font-semibold text-text">
+                                        Folder Overview
+                                    </label>
+                                    <button
+                                        type="button"
+                                        onClick={handleGenerateSummaryWithAI}
+                                        disabled={isGeneratingAiSummary}
+                                        className="flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-medium bg-surface-hover hover:bg-surface-border text-text-muted hover:text-text border border-surface-border cursor-pointer transition-colors disabled:opacity-50"
+                                        title="Synthesize overview of child records with Vertex AI"
+                                    >
+                                        <Sparkles className={`h-3 w-3 text-text-muted ${isGeneratingAiSummary ? 'animate-spin' : ''}`} />
+                                        <span>{isGeneratingAiSummary ? 'Synthesizing...' : 'Synthesize with AI'}</span>
+                                    </button>
+                                </div>
+                                <AreaField
+                                    placeholder="Overview of records stored in this folder..."
+                                    value={editFormSummary}
+                                    onChange={(event) => {
+                                        setEditFormSummary(event.target.value);
+                                        if (editFormErrors.summary) setEditFormErrors((prev) => ({ ...prev, summary: '' }));
+                                    }}
+                                    error={editFormErrors.summary}
+                                    rows={3}
+                                />
+                            </div>
                         )}
 
-                        {/* 4. COMMENT (FOR BOTH) */}
+                        {/* 4. COMMENT (FOR BOTH - STRICTLY 100% HUMAN-ONLY, NO AI BUTTON) */}
                         <AreaField
                             label="Comment"
                             placeholder="Add administrative comment or notes..."
@@ -2058,6 +3293,449 @@ const DocumentsPage = ({
                     onClose={() => setScannerItem(null)}
                     onApply={handleApplyScannerResults}
                 />
+            )}
+
+            {/* SHARE TO DEPARTMENT MODAL */}
+            {Boolean(shareModalDocument) && (
+                <Modal
+                    isOpen={Boolean(shareModalDocument)}
+                    onClose={() => {
+                        setShareModalDocument(null);
+                        setSelectedShareDepartmentIds([]);
+                        setDepartmentSearchQuery('');
+                    }}
+                    title={`Share ${shareModalDocument.isFolder ? 'Folder' : 'Document'} to Departments`}
+                    description={`Configure department access and review permissions for "${shareModalDocument.title || shareModalDocument.name}".`}
+                    icon={Share2}
+                    size="md"
+                    secondaryAction={{
+                        label: 'Done',
+                        onClick: () => {
+                            setShareModalDocument(null);
+                            setSelectedShareDepartmentIds([]);
+                            setDepartmentSearchQuery('');
+                        },
+                    }}
+                >
+                    <div className="flex flex-col gap-5">
+                        {/* FOLDER CASCADING SHARE BANNER */}
+                        {shareModalDocument.isFolder && (
+                            <div className="p-3.5 rounded-xl border border-accent/20 bg-accent/5 flex items-start gap-3">
+                                <div className="p-2 rounded-lg bg-accent/10 text-accent shrink-0">
+                                    <Folder className="h-4 w-4" />
+                                </div>
+                                <div className="flex flex-col gap-0.5 text-xs">
+                                    <span className="font-semibold text-text">Recursive Folder Cascade</span>
+                                    <span className="text-text-muted leading-relaxed">
+                                        Sharing this folder will automatically share all nested files and subfolders to the selected departments with <strong className="text-text">Pending Approval</strong> status.
+                                    </span>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* 1. SELECT TARGET DEPARTMENTS (MULTI-SELECT) */}
+                        <div className="p-4 rounded-xl border border-surface-border bg-surface-hover flex flex-col gap-3">
+                            <div className="flex items-center justify-between gap-2">
+                                <span className="text-xs font-semibold text-text">
+                                    Target Departments ({selectedShareDepartmentIds.length} of {availableDepartmentsToShare.length} selected)
+                                </span>
+                                {availableDepartmentsToShare.length > 0 && (
+                                    <div className="flex items-center gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={handleSelectAllDepartments}
+                                            className="text-xs text-accent hover:underline font-medium cursor-pointer"
+                                        >
+                                            {selectedShareDepartmentIds.length === filteredAvailableDepartments.length && filteredAvailableDepartments.length > 0
+                                                ? 'Deselect All'
+                                                : 'Select All'}
+                                        </button>
+                                        {selectedShareDepartmentIds.length > 0 && (
+                                            <button
+                                                type="button"
+                                                onClick={() => setSelectedShareDepartmentIds([])}
+                                                className="text-xs text-text-muted hover:text-text cursor-pointer"
+                                            >
+                                                Clear
+                                            </button>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+
+                            {availableDepartmentsToShare.length === 0 ? (
+                                <div className="p-3 rounded-lg border border-surface-border bg-surface text-center text-xs text-text-muted">
+                                    All available departments already have access to this {shareModalDocument.isFolder ? 'folder' : 'document'}.
+                                </div>
+                            ) : (
+                                <>
+                                    {availableDepartmentsToShare.length > 4 && (
+                                        <div className="relative">
+                                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-text-muted" />
+                                            <input
+                                                type="text"
+                                                value={departmentSearchQuery}
+                                                onChange={(e) => setDepartmentSearchQuery(e.target.value)}
+                                                placeholder="Filter departments..."
+                                                className="w-full pl-8.5 pr-3 py-1.5 text-xs bg-surface border border-surface-border rounded-lg text-text focus:outline-none focus:border-accent"
+                                            />
+                                        </div>
+                                    )}
+
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto pr-1">
+                                        {filteredAvailableDepartments.map((dept) => {
+                                            const isSelected = selectedShareDepartmentIds.includes(dept.id);
+                                            return (
+                                                <div
+                                                    key={dept.id}
+                                                    onClick={() => handleToggleDepartmentSelection(dept.id)}
+                                                    className={`p-2.5 rounded-lg border transition-all cursor-pointer flex items-center justify-between gap-2 ${
+                                                        isSelected
+                                                            ? 'border-accent bg-accent/10 shadow-xs'
+                                                            : 'border-surface-border bg-surface hover:border-surface-border-strong hover:bg-surface-hover'
+                                                    }`}
+                                                >
+                                                    <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                                                        <div
+                                                            className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${
+                                                                isSelected
+                                                                    ? 'bg-accent border-accent text-accent-foreground'
+                                                                    : 'border-surface-border bg-surface'
+                                                            }`}
+                                                        >
+                                                            {isSelected && <Check className="h-3 w-3 stroke-[3]" />}
+                                                        </div>
+                                                        <div className="flex flex-col min-w-0">
+                                                            <span className="text-xs font-semibold text-text truncate">
+                                                                {dept.name}
+                                                            </span>
+                                                            <span className="text-[10px] text-text-muted">
+                                                                {dept.code}
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                    <Badge variant="neutral" size="xs" label={dept.code} />
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+
+                                    <div className="flex items-center justify-between pt-1 gap-2">
+                                        <span className="text-[11px] text-text-muted">
+                                            Routes to Department Officers for approval before director review.
+                                        </span>
+                                        <Button
+                                            variant="primary"
+                                            size="sm"
+                                            leadingIcon={Share2}
+                                            isLoading={isSharingDepartment}
+                                            isDisabled={selectedShareDepartmentIds.length === 0 || isSharingDepartment}
+                                            onClick={handleShareSubmit}
+                                            className="shrink-0"
+                                        >
+                                            {selectedShareDepartmentIds.length > 1
+                                                ? `Share to ${selectedShareDepartmentIds.length} Departments`
+                                                : selectedShareDepartmentIds.length === 1
+                                                ? 'Share to 1 Department'
+                                                : 'Share'}
+                                        </Button>
+                                    </div>
+                                </>
+                            )}
+                        </div>
+
+                        {/* 2. ACTIVE SHARES LIST */}
+                        <div className="flex flex-col gap-2">
+                            <div className="flex items-center justify-between">
+                                <span className="text-xs font-semibold text-text">
+                                    Current Department Shares ({activeSharesForModalDoc.length})
+                                </span>
+                            </div>
+
+                            {activeSharesForModalDoc.length === 0 ? (
+                                <div className="p-4 rounded-xl border border-surface-border bg-surface text-center text-xs text-text-muted">
+                                    This {shareModalDocument.isFolder ? 'folder' : 'document'} is currently unshared (status: —). Only Administrators and Coordinators have access.
+                                </div>
+                            ) : (
+                                <div className="flex flex-col gap-2 max-h-60 overflow-y-auto pr-1">
+                                    {activeSharesForModalDoc.map((share) => {
+                                        const dept = departments.find(
+                                            (d) => d.id === (share.department?.id ?? share.departmentId)
+                                        );
+                                        const badgeVariant =
+                                            share.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED
+                                                ? 'success'
+                                                : share.status === constants.DOCUMENT_SHARES_STATUS.APPROVED
+                                                ? 'success'
+                                                : share.status === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL
+                                                ? 'warning'
+                                                : 'neutral';
+
+                                        const shareKey = share.id || (share.department?.id ?? share.departmentId);
+                                        const isUnsharing = unsharingShareId === share.id || unsharingShareId === (share.department?.id ?? share.departmentId);
+
+                                        return (
+                                            <div
+                                                key={shareKey}
+                                                className="p-3 rounded-xl border border-surface-border bg-surface flex items-center justify-between gap-3"
+                                            >
+                                                <div className="flex flex-col gap-1 min-w-0 flex-1">
+                                                    <div className="flex items-center gap-2 flex-wrap">
+                                                        <span className="font-semibold text-xs text-text truncate">
+                                                            {dept?.name || 'Department'}
+                                                        </span>
+                                                        <Badge variant={badgeVariant} label={share.status} />
+                                                        {shareModalDocument.isFolder && (
+                                                            <Badge variant="neutral" size="xs" label="Cascading" />
+                                                        )}
+                                                    </div>
+                                                    <span className="text-[11px] text-text-muted">
+                                                        Shared {formatDateTime(share.createdAt)}
+                                                    </span>
+                                                </div>
+
+                                                <Button
+                                                    variant="destructive"
+                                                    size="xs"
+                                                    leadingIcon={Trash2}
+                                                    isLoading={isUnsharing}
+                                                    isDisabled={Boolean(unsharingShareId)}
+                                                    onClick={() => handleUnshareClick(share, dept?.name)}
+                                                    className="shrink-0"
+                                                >
+                                                    Unshare
+                                                </Button>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </Modal>
+            )}
+
+            {/* PUBLISH TO DEPARTMENT MEMBERS MODAL */}
+            {Boolean(publishModalDocument) && (
+                <Modal
+                    isOpen={Boolean(publishModalDocument)}
+                    onClose={() => {
+                        setPublishModalDocument(null);
+                        setSelectedPublishMemberIds([]);
+                        setMemberSearchQuery('');
+                    }}
+                    title={`Publish ${publishModalDocument.isFolder ? 'Folder' : 'Document'} to Department Members`}
+                    description={`Configure faculty member visibility within ${userDepartment}. You can publish to all department members or choose specific members.`}
+                    icon={Send}
+                    size="md"
+                    secondaryAction={{
+                        label: 'Cancel',
+                        onClick: () => {
+                            setPublishModalDocument(null);
+                            setSelectedPublishMemberIds([]);
+                            setMemberSearchQuery('');
+                        },
+                    }}
+                >
+                    <div className="flex flex-col gap-5">
+                        {/* RECURSIVE FOLDER CASCADE BANNER */}
+                        {publishModalDocument.isFolder && (
+                            <div className="p-3.5 rounded-xl border border-accent/20 bg-accent/5 flex items-start gap-3">
+                                <div className="p-2 rounded-lg bg-accent/10 text-accent shrink-0">
+                                    <Folder className="h-4 w-4" />
+                                </div>
+                                <div className="flex flex-col gap-0.5 text-xs">
+                                    <span className="font-semibold text-text">Recursive Folder Cascade</span>
+                                    <span className="text-text-muted leading-relaxed">
+                                        Publishing this folder will automatically publish all nested files and subfolders to the selected members with <strong className="text-text">Published</strong> status.
+                                    </span>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* AUDIENCE SELECTOR: ALL MEMBERS vs SPECIFIC MEMBERS */}
+                        <div className="flex flex-col gap-2">
+                            <span className="text-xs font-semibold text-text">
+                                Publication Scope
+                            </span>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                <div
+                                    onClick={() => setPublishMode('all')}
+                                    className={`p-3 rounded-xl border transition-all cursor-pointer flex items-start gap-3 ${
+                                        publishMode === 'all'
+                                            ? 'border-accent bg-accent/10 shadow-xs'
+                                            : 'border-surface-border bg-surface hover:border-surface-border-strong hover:bg-surface-hover'
+                                    }`}
+                                >
+                                    <div className="p-2 rounded-lg bg-surface border border-surface-border text-accent shrink-0">
+                                        <Users className="h-4 w-4" />
+                                    </div>
+                                    <div className="flex flex-col gap-0.5 min-w-0">
+                                        <span className="text-xs font-bold text-text">All Department Members</span>
+                                        <span className="text-[11px] text-text-muted leading-tight">
+                                            Every member in {userDepartment} can view and download.
+                                        </span>
+                                    </div>
+                                </div>
+
+                                <div
+                                    onClick={() => setPublishMode('specific')}
+                                    className={`p-3 rounded-xl border transition-all cursor-pointer flex items-start gap-3 ${
+                                        publishMode === 'specific'
+                                            ? 'border-accent bg-accent/10 shadow-xs'
+                                            : 'border-surface-border bg-surface hover:border-surface-border-strong hover:bg-surface-hover'
+                                    }`}
+                                >
+                                    <div className="p-2 rounded-lg bg-surface border border-surface-border text-accent shrink-0">
+                                        <UserCheck className="h-4 w-4" />
+                                    </div>
+                                    <div className="flex flex-col gap-0.5 min-w-0">
+                                        <span className="text-xs font-bold text-text">Select Specific Members</span>
+                                        <span className="text-[11px] text-text-muted leading-tight">
+                                            Only designated department members receive access.
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* SPECIFIC MEMBER PICKER */}
+                        {publishMode === 'specific' && (
+                            <div className="p-4 rounded-xl border border-surface-border bg-surface-hover flex flex-col gap-3">
+                                <div className="flex items-center justify-between gap-2">
+                                    <span className="text-xs font-semibold text-text">
+                                        Department Members ({selectedPublishMemberIds.length} of {departmentMembers.length} selected)
+                                    </span>
+                                    {departmentMembers.length > 0 && (
+                                        <div className="flex items-center gap-2">
+                                            <button
+                                                type="button"
+                                                onClick={handleSelectAllMembers}
+                                                className="text-xs text-accent hover:underline font-medium cursor-pointer"
+                                            >
+                                                {selectedPublishMemberIds.length === filteredDepartmentMembers.length && filteredDepartmentMembers.length > 0
+                                                    ? 'Deselect All'
+                                                    : 'Select All'}
+                                            </button>
+                                            {selectedPublishMemberIds.length > 0 && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setSelectedPublishMemberIds([])}
+                                                    className="text-xs text-text-muted hover:text-text cursor-pointer"
+                                                >
+                                                    Clear
+                                                </button>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+
+                                {departmentMembers.length === 0 ? (
+                                    <div className="p-3 rounded-lg border border-surface-border bg-surface text-center text-xs text-text-muted">
+                                        No other active members found in {userDepartment}.
+                                    </div>
+                                ) : (
+                                    <>
+                                        <div className="relative">
+                                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-text-muted" />
+                                            <input
+                                                type="text"
+                                                value={memberSearchQuery}
+                                                onChange={(e) => setMemberSearchQuery(e.target.value)}
+                                                placeholder="Search members by name, ID, or email..."
+                                                className="w-full pl-8.5 pr-3 py-1.5 text-xs bg-surface border border-surface-border rounded-lg text-text focus:outline-none focus:border-accent"
+                                            />
+                                        </div>
+
+                                        <div className="flex flex-col gap-1.5 max-h-56 overflow-y-auto pr-1">
+                                            {filteredDepartmentMembers.map((member) => {
+                                                const isSelected = selectedPublishMemberIds.includes(member.id);
+                                                const avatarSrc = resolveUserAvatar(member, currentUser);
+                                                const memberFullName = `${member.firstName || ''} ${member.lastName || ''}`.trim() || 'Faculty Member';
+
+                                                return (
+                                                    <div
+                                                        key={member.id}
+                                                        onClick={() => handleToggleMemberSelection(member.id)}
+                                                        className={`p-2.5 rounded-lg border transition-all cursor-pointer flex items-center justify-between gap-3 ${
+                                                            isSelected
+                                                                ? 'border-accent bg-accent/10 shadow-xs'
+                                                                : 'border-surface-border bg-surface hover:border-surface-border-strong hover:bg-surface-hover'
+                                                        }`}
+                                                    >
+                                                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                                                            <div
+                                                                className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${
+                                                                    isSelected
+                                                                        ? 'bg-accent border-accent text-accent-foreground'
+                                                                        : 'border-surface-border bg-surface'
+                                                                }`}
+                                                            >
+                                                                {isSelected && <Check className="h-3 w-3 stroke-[3]" />}
+                                                            </div>
+
+                                                            <Avatar
+                                                                src={avatarSrc}
+                                                                alt={memberFullName}
+                                                                size="sm"
+                                                                className="shrink-0"
+                                                            />
+
+                                                            <div className="flex flex-col min-w-0">
+                                                                <span className="text-xs font-semibold text-text truncate">
+                                                                    {memberFullName}
+                                                                </span>
+                                                                <span className="text-[10px] text-text-muted truncate">
+                                                                    {member.universityId || member.email}
+                                                                </span>
+                                                            </div>
+                                                        </div>
+
+                                                        <Badge
+                                                            variant="neutral"
+                                                            size="xs"
+                                                            label={member.role}
+                                                            className="shrink-0"
+                                                        />
+                                                    </div>
+                                                );
+                                            })}
+                                            {filteredDepartmentMembers.length === 0 && (
+                                                <div className="p-3 text-center text-xs text-text-muted">
+                                                    No members match &quot;{memberSearchQuery}&quot;.
+                                                </div>
+                                            )}
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                        )}
+
+                        {/* SUBMIT BUTTON */}
+                        <div className="flex items-center justify-between pt-1 gap-2 border-t border-surface-border">
+                            <span className="text-[11px] text-text-muted">
+                                Officers and Director retain persistent management access.
+                            </span>
+                            <Button
+                                variant="primary"
+                                size="sm"
+                                leadingIcon={Send}
+                                isLoading={isPublishingMembers}
+                                isDisabled={isPublishingMembers || (publishMode === 'specific' && selectedPublishMemberIds.length === 0)}
+                                onClick={handlePublishSubmit}
+                                className="shrink-0"
+                            >
+                                {publishMode === 'all'
+                                    ? 'Publish to All Members'
+                                    : selectedPublishMemberIds.length > 1
+                                    ? `Publish to ${selectedPublishMemberIds.length} Members`
+                                    : selectedPublishMemberIds.length === 1
+                                    ? 'Publish to 1 Member'
+                                    : 'Select Members'}
+                            </Button>
+                        </div>
+                    </div>
+                </Modal>
             )}
         </Container>
     );
@@ -2160,15 +3838,37 @@ async function traverseFileSystemEntry(entry, currentPathPrefix, folderPathParts
         const reader = entry.createReader();
         const subEntries = await readAllEntriesFromDirectoryReader(reader);
 
-        for (let subIndex = 0; subIndex < subEntries.length; subIndex++) {
-            await traverseFileSystemEntry(
-                subEntries[subIndex],
-                newPrefix,
-                newParts,
-                userDepartment,
-                targetParentId,
-                collectedItems
-            );
+        if (subEntries.length === 0) {
+            collectedItems.push({
+                id: `folder-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+                parentId: targetParentId,
+                relativePath: newPrefix,
+                fileName: entry.name,
+                folderPathParts: newParts,
+                title: newPrefix,
+                subtitle: `DIR-${new Date().getFullYear()}-${entry.name.slice(0, 3).toUpperCase()}`,
+                description: null,
+                category: 'Folder',
+                classification: null,
+                version: '—',
+                size: 'Folder',
+                sizeBytes: 0,
+                status: constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL,
+                date: 'Just now',
+                isFolder: true,
+                tags: ['Folder'],
+            });
+        } else {
+            for (let subIndex = 0; subIndex < subEntries.length; subIndex++) {
+                await traverseFileSystemEntry(
+                    subEntries[subIndex],
+                    newPrefix,
+                    newParts,
+                    userDepartment,
+                    targetParentId,
+                    collectedItems
+                );
+            }
         }
     }
 }

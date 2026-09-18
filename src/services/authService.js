@@ -191,9 +191,28 @@ const authService = {
                 throw new Error('Google SSO verification failed: Account not linked.');
             }
 
-            // Save Google photo URL if available
-            if (userCredential.user?.photoURL && typeof localStorage !== 'undefined') {
-                localStorage.setItem(`pamantasan_google_photo_url_${databaseUser.id}`, userCredential.user.photoURL);
+            // Save Google photo URL if available and sync with database user
+            const googlePhotoUrl = userCredential.user?.photoURL;
+            if (googlePhotoUrl) {
+                if (typeof localStorage !== 'undefined') {
+                    localStorage.setItem(`pamantasan_google_photo_url_${databaseUser.id}`, googlePhotoUrl);
+                }
+                databaseUser.googlePhotoUrl = googlePhotoUrl;
+
+                try {
+                    const settings = await userService.fetchUserSettingsByUserId(databaseUser.id);
+                    const shouldSyncGoogleAvatar = settings?.avatar === constants.USER_SETTINGS_AVATAR.GOOGLE ||
+                        !databaseUser.avatarPath ||
+                        databaseUser.avatarPath === 'avatars/defaultAvatar.png' ||
+                        databaseUser.avatarPath.startsWith('http');
+
+                    if (shouldSyncGoogleAvatar && databaseUser.avatarPath !== googlePhotoUrl) {
+                        await userService.updateUser(databaseUser.id, { avatarPath: googlePhotoUrl });
+                        databaseUser.avatarPath = googlePhotoUrl;
+                    }
+                } catch (avatarSyncErr) {
+                    console.warn('Failed to sync Google avatar into user record:', avatarSyncErr);
+                }
             }
 
             // --- CONCURRENCY GUARD: 1 ACTIVE USER SESSION AT A TIME ---
@@ -304,20 +323,43 @@ const authService = {
                 googleId: googleUid,
             });
 
-            // Save Google photo URL if available
-            if (userCredential.user?.photoURL && typeof localStorage !== 'undefined') {
-                localStorage.setItem(`pamantasan_google_photo_url_${targetUser.id}`, userCredential.user.photoURL);
+            // Save Google photo URL if available and sync with database user
+            const googlePhotoUrl = userCredential.user?.photoURL;
+            let updatedUser = targetUser;
+
+            if (googlePhotoUrl) {
+                if (typeof localStorage !== 'undefined') {
+                    localStorage.setItem(`pamantasan_google_photo_url_${targetUser.id}`, googlePhotoUrl);
+                }
+                targetUser.googlePhotoUrl = googlePhotoUrl;
+                updatedUser = { ...updatedUser, googlePhotoUrl: googlePhotoUrl };
+
+                try {
+                    const settings = await userService.fetchUserSettingsByUserId(targetUser.id);
+                    const shouldSyncGoogleAvatar = settings?.avatar === constants.USER_SETTINGS_AVATAR.GOOGLE ||
+                        !targetUser.avatarPath ||
+                        targetUser.avatarPath === 'avatars/defaultAvatar.png' ||
+                        targetUser.avatarPath.startsWith('http');
+
+                    if (shouldSyncGoogleAvatar) {
+                        const res = await userService.updateUser(targetUser.id, { avatarPath: googlePhotoUrl });
+                        if (res) {
+                            updatedUser = { ...updatedUser, ...res, avatarPath: googlePhotoUrl };
+                        }
+                    }
+                } catch (avatarSyncErr) {
+                    console.warn('Failed to sync Google avatar during linking:', avatarSyncErr);
+                }
             }
 
             // If user status is PENDING_SSO, promote to VERIFIED
-            let updatedUser = targetUser;
             if (targetUser.status === constants.USERS_STATUS.PENDING_SSO) {
                 try {
                     const res = await userService.updateUser(targetUser.id, {
                         status: constants.USERS_STATUS.VERIFIED,
                     });
                     if (res) {
-                        updatedUser = { ...targetUser, ...res, status: constants.USERS_STATUS.VERIFIED };
+                        updatedUser = { ...updatedUser, ...res, status: constants.USERS_STATUS.VERIFIED };
                     }
                 } catch (statusErr) {
                     console.warn('Failed to promote user status to VERIFIED:', statusErr);
@@ -327,7 +369,7 @@ const authService = {
             notifyAuthListeners(updatedUser);
             await safeSignOutFirebase(secondaryAuth);
 
-            return { googleId: googleUid, email: selectedEmail };
+            return { googleId: googleUid, email: selectedEmail, photoURL: googlePhotoUrl };
         } catch (error) {
             console.error('Google linking failed:', error);
             await safeSignOutFirebase(secondaryAuth);
@@ -473,6 +515,35 @@ const authService = {
 
     requestPasswordReset: async (email) => {
         return await authService.sendPasswordResetOtp(email);
+    },
+
+    sendUserProvisionEmail: async ({ email, recipientName, universityId, temporaryPassword, loginUrl }) => {
+        const cleanEmail = email?.trim().toLowerCase() ?? '';
+        if (!cleanEmail) {
+            throw new Error('Institutional email is required.');
+        }
+
+        if (!functions) {
+            console.warn('Firebase Functions is not configured. Provisioning email was skipped.');
+            return { simulated: true };
+        }
+
+        try {
+            const sendProvision = httpsCallable(functions, 'sendUserProvisionEmail');
+            const result = await sendProvision({
+                email: cleanEmail,
+                recipientName,
+                universityId,
+                temporaryPassword,
+                loginUrl: (loginUrl && !loginUrl.includes('localhost') && !loginUrl.includes('127.0.0.1'))
+                    ? loginUrl
+                    : 'https://pamantasan-records-210fe.web.app/login',
+            });
+            return result?.data ?? { success: true };
+        } catch (error) {
+            console.warn('Cloud Function sendUserProvisionEmail failed:', error);
+            return { error: error?.message, success: false };
+        }
     },
 
     changePassword: async (currentPassword, newPassword) => {

@@ -20,8 +20,9 @@ import { Container } from '../Container';
 import { Modal } from '../Modal';
 import { PasswordField } from '../Fields';
 import { SegmentSelection } from '../Selections';
-import { authService, userService } from '../../services';
+import { authService, userService, storageService } from '../../services';
 import { useToast } from '../../hooks';
+import { useUserStore } from '../../stores';
 import { constants } from '../../constants';
 
 // --- CONFIGURATIONS ---
@@ -70,11 +71,6 @@ const Settings = ({
     className,
     ...props
 }) => {
-    // GUARD CLAUSES
-    if (!isOpen) {
-        return null;
-    }
-
     // STATES
     const [activeSection, setActiveSection] = useState('preferences');
     const [sessions, setSessions] = useState([]);
@@ -109,16 +105,88 @@ const Settings = ({
         }).catch(() => {});
     }, [isOpen, currentUser?.id]);
 
-    const handleAvatarSourceChange = (newSource) => {
-        if (!isVerifiedOrLinked) return;
-        setAvatarSource(newSource);
-        if (typeof localStorage !== 'undefined' && currentUser?.id) {
-            localStorage.setItem(`pamantasan_avatar_source_${currentUser.id}`, newSource);
+    const handleAvatarSourceChange = async (newSource) => {
+        if (!isVerifiedOrLinked || !currentUser?.id) return;
+
+        if (newSource === constants.USER_SETTINGS_AVATAR.GOOGLE) {
+            let googlePhoto = typeof localStorage !== 'undefined'
+                ? localStorage.getItem(`pamantasan_google_photo_url_${currentUser.id}`)
+                : null;
+            if (!googlePhoto && currentUser.googlePhotoUrl) {
+                googlePhoto = currentUser.googlePhotoUrl;
+            }
+
+            // If Google photo is not yet known on this device, prompt linking/sync
+            if (!googlePhoto) {
+                setIsLinkingGoogle(true);
+                try {
+                    const linkRes = await authService.linkGoogleAccount(currentUser.email);
+                    if (linkRes?.googleId) {
+                        setLinkedGoogleId(linkRes.googleId);
+                    }
+                    if (linkRes?.photoURL) {
+                        googlePhoto = linkRes.photoURL;
+                    }
+                } catch (linkErr) {
+                    setIsLinkingGoogle(false);
+                    showToast({
+                        variant: 'error',
+                        title: 'Google Profile Sync',
+                        description: linkErr?.message || 'Please link your Google account to use your Google profile photo.',
+                    });
+                    return;
+                } finally {
+                    setIsLinkingGoogle(false);
+                }
+            }
+
+            setAvatarSource(constants.USER_SETTINGS_AVATAR.GOOGLE);
+            if (typeof localStorage !== 'undefined') {
+                localStorage.setItem(`pamantasan_avatar_source_${currentUser.id}`, constants.USER_SETTINGS_AVATAR.GOOGLE);
+                if (googlePhoto) {
+                    localStorage.setItem(`pamantasan_google_photo_url_${currentUser.id}`, googlePhoto);
+                }
+            }
+
+            userService.upsertUserSetting(currentUser.id, { avatar: constants.USER_SETTINGS_AVATAR.GOOGLE }).catch(() => {});
+
+            if (googlePhoto) {
+                try {
+                    await userService.updateUser(currentUser.id, { avatarPath: googlePhoto });
+                    useUserStore.getState().updateUser(currentUser.id, { avatarPath: googlePhoto });
+                } catch (updateErr) {
+                    console.warn('Failed to update avatarPath in database:', updateErr);
+                }
+            }
+
             window.dispatchEvent(new Event('pamantasan-avatar-changed'));
-        }
-        if (currentUser?.id) {
-            userService.upsertUserSetting(currentUser.id, { avatar: newSource }).catch((err) => {
-                console.warn('Failed to update avatar setting in database:', err);
+            showToast({
+                variant: 'success',
+                title: 'Avatar Preference Updated',
+                description: 'Profile photo set to Google profile.',
+            });
+        } else {
+            // SYSTEM AVATAR
+            setAvatarSource(constants.USER_SETTINGS_AVATAR.SYSTEM);
+            if (typeof localStorage !== 'undefined') {
+                localStorage.setItem(`pamantasan_avatar_source_${currentUser.id}`, constants.USER_SETTINGS_AVATAR.SYSTEM);
+            }
+
+            userService.upsertUserSetting(currentUser.id, { avatar: constants.USER_SETTINGS_AVATAR.SYSTEM }).catch(() => {});
+
+            try {
+                const sysAvatarPath = await storageService.getLatestUserAvatarPath(currentUser.id);
+                await userService.updateUser(currentUser.id, { avatarPath: sysAvatarPath });
+                useUserStore.getState().updateUser(currentUser.id, { avatarPath: sysAvatarPath });
+            } catch (updateErr) {
+                console.warn('Failed to restore system avatarPath in database:', updateErr);
+            }
+
+            window.dispatchEvent(new Event('pamantasan-avatar-changed'));
+            showToast({
+                variant: 'success',
+                title: 'Avatar Preference Updated',
+                description: 'Profile photo set to System avatar.',
             });
         }
     };
@@ -197,9 +265,14 @@ const Settings = ({
     };
 
     useEffect(() => {
+        if (isOpen && currentUser?.id) {
+            loadUserCredentials();
+        }
+    }, [isOpen, currentUser?.id]);
+
+    useEffect(() => {
         if (isOpen && activeSection === 'security') {
             loadSessions();
-            loadUserCredentials();
         }
     }, [isOpen, activeSection, currentUser?.id]);
 
@@ -227,6 +300,15 @@ const Settings = ({
         try {
             const result = await authService.linkGoogleAccount(currentUser.email);
             setLinkedGoogleId(result.googleId);
+            if (result.photoURL) {
+                if (typeof localStorage !== 'undefined') {
+                    localStorage.setItem(`pamantasan_google_photo_url_${currentUser.id}`, result.photoURL);
+                }
+                if (avatarSource === constants.USER_SETTINGS_AVATAR.GOOGLE) {
+                    useUserStore.getState().updateUser(currentUser.id, { avatarPath: result.photoURL });
+                    window.dispatchEvent(new Event('pamantasan-avatar-changed'));
+                }
+            }
             showToast({
                 variant: 'success',
                 title: 'Google SSO Linked',
@@ -387,6 +469,11 @@ const Settings = ({
             setIsTerminatingSession(false);
         }
     };
+
+    // GUARD CLAUSES (Executed AFTER all hooks to adhere to React Rules of Hooks)
+    if (!isOpen) {
+        return null;
+    }
 
     // RENDER
     return (

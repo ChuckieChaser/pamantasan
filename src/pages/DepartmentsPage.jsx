@@ -11,9 +11,12 @@ import {
     Container,
     Modal,
     TextField,
+    formatDateTime,
 } from '../components';
-import { useDepartmentStore, useUserStore } from '../stores';
-import { useToast } from '../hooks';
+import { useDepartmentStore, useUserStore, useAuthStore, useCoordinatorStore } from '../stores';
+import { useToast, useAuth } from '../hooks';
+import { coordinatorApprovalService } from '../services';
+import { constants } from '../constants';
 
 // --- CONFIGURATIONS ---
 const DEPARTMENT_COLUMNS = [
@@ -32,6 +35,7 @@ const DEPARTMENT_SORT_OPTIONS = [
 
 // --- COMPONENTS ---
 const DepartmentsPage = ({
+    currentUser: propUser = null,
     onSelectDepartment = null,
     className,
     ...props
@@ -43,6 +47,10 @@ const DepartmentsPage = ({
     const updateDepartment = useDepartmentStore((state) => state.updateDepartment);
     const deleteDepartment = useDepartmentStore((state) => state.deleteDepartment);
     const users = useUserStore((state) => state.users);
+    const { currentUser: authUser } = useAuth();
+    const storeUser = useAuthStore((state) => state.currentUser);
+    const currentUser = propUser ?? authUser ?? storeUser ?? useAuthStore.getState().currentUser;
+    const isCoordinator = constants.isCoordinatorRole(currentUser?.role);
 
     // EFFECTS
     useEffect(() => {
@@ -148,6 +156,29 @@ const DepartmentsPage = ({
         setIsCreatingDepartment(true);
         setFormErrors({});
         try {
+            if (isCoordinator) {
+                const deptPayload = {
+                    code: formCode.trim().toUpperCase(),
+                    name: formName.trim(),
+                };
+
+                const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
+                await coordinatorApprovalService.submitCoordinatorRequest({
+                    action: constants.COORDINATOR_REQUESTS_ACTION.DEPARTMENT_CREATE,
+                    requesterId: requesterId,
+                    data: deptPayload,
+                });
+
+                showToast({
+                    type: 'success',
+                    title: 'Request Submitted',
+                    description: `Department creation request for "${formCode.toUpperCase()}" sent for Administrator approval.`,
+                });
+                useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
+                handleCloseModals();
+                return;
+            }
+
             const minTimer = new Promise((resolve) => setTimeout(resolve, 500));
             await Promise.all([
                 insertDepartment({
@@ -187,6 +218,36 @@ const DepartmentsPage = ({
         setIsUpdatingDepartment(true);
         setEditFormErrors({});
         try {
+            if (isCoordinator) {
+                const deptPayload = {
+                    departmentId: editingDepartment.id,
+                    old: {
+                        code: editingDepartment.code,
+                        name: editingDepartment.name,
+                    },
+                    new: {
+                        code: formCode.trim().toUpperCase(),
+                        name: formName.trim(),
+                    },
+                };
+
+                const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
+                await coordinatorApprovalService.submitCoordinatorRequest({
+                    action: constants.COORDINATOR_REQUESTS_ACTION.DEPARTMENT_UPDATE,
+                    requesterId: requesterId,
+                    data: deptPayload,
+                });
+
+                showToast({
+                    type: 'success',
+                    title: 'Request Submitted',
+                    description: `Department update request for "${formCode.toUpperCase()}" sent for Administrator approval.`,
+                });
+                useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
+                handleCloseModals();
+                return;
+            }
+
             const minTimer = new Promise((resolve) => setTimeout(resolve, 500));
             const [updated] = await Promise.all([
                 updateDepartment(editingDepartment.id, {
@@ -249,6 +310,30 @@ const DepartmentsPage = ({
 
         setIsDeletingDepartmentLoading(true);
         try {
+            if (isCoordinator) {
+                const deptPayload = {
+                    departmentId: deletingDepartment.id,
+                    code: deletingDepartment.code,
+                    name: deletingDepartment.name,
+                };
+
+                const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
+                await coordinatorApprovalService.submitCoordinatorRequest({
+                    action: constants.COORDINATOR_REQUESTS_ACTION.DEPARTMENT_DELETE,
+                    requesterId: requesterId,
+                    data: deptPayload,
+                });
+
+                showToast({
+                    type: 'success',
+                    title: 'Request Submitted',
+                    description: `Department deletion request for "${deletingDepartment.code}" sent for Administrator approval.`,
+                });
+                useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
+                handleCloseModals();
+                return;
+            }
+
             const minTimer = new Promise((resolve) => setTimeout(resolve, 500));
             await Promise.all([
                 deleteDepartment(deletingDepartment.id),
@@ -309,12 +394,8 @@ const DepartmentsPage = ({
                 metadata: `${department.code ?? ''} · ${count} personnel`,
                 createdAt: createdAtDate,
                 updatedAt: updatedAtDate,
-                date: createdAtDate && !isNaN(new Date(createdAtDate).getTime())
-                    ? new Date(createdAtDate).toLocaleDateString([], {
-                        month: 'short',
-                        day: 'numeric',
-                        year: 'numeric',
-                    })
+                date: (updatedAtDate || createdAtDate) && !isNaN(new Date(updatedAtDate || createdAtDate).getTime())
+                    ? formatDateTime(updatedAtDate || createdAtDate)
                     : 'Active',
                 badge: department.code ?? '',
             };

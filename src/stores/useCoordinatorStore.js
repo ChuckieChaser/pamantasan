@@ -93,21 +93,45 @@ const useCoordinatorStore = create((set, get) => ({
         set({ isLoading: true, error: null });
 
         try {
-            const validatedPayload = mutationSchema.UpdateCoordinatorRequestSchema.parse(payload);
-            const updatedRequest = await coordinatorService.updateCoordinatorRequest(id, validatedPayload);
+            const timestamp = new Date().toISOString();
+            const payloadWithUpdate = {
+                ...payload,
+                updatedAt: payload?.updatedAt ?? timestamp,
+            };
+            const validatedPayload = mutationSchema.UpdateCoordinatorRequestSchema.parse(payloadWithUpdate);
+            const existingRequest = get().coordinatorRequests.find((item) => item?.id === id) ?? {};
+
+            const result = await coordinatorService.updateCoordinatorRequest(id, validatedPayload);
+
+            const cleanResult = Object.fromEntries(
+                Object.entries(result || {}).filter(([_, v]) => v !== undefined && v !== null)
+            );
+            const cleanPayload = Object.fromEntries(
+                Object.entries(validatedPayload || {}).filter(([_, v]) => v !== undefined)
+            );
+
+            const mergedRequest = {
+                ...existingRequest,
+                ...cleanPayload,
+                ...cleanResult,
+                id: id,
+                updatedAt: validatedPayload.updatedAt ?? timestamp,
+            };
 
             set((state) => ({
                 coordinatorRequests: state.coordinatorRequests.map((item) =>
-                    item.id === id ? updatedRequest : item
+                    item?.id === id ? mergedRequest : item
                 ),
                 selectedCoordinatorRequest: state.selectedCoordinatorRequest?.id === id
-                    ? updatedRequest
+                    ? mergedRequest
                     : state.selectedCoordinatorRequest,
                 isLoading: false,
                 error: null,
             }));
 
-            return updatedRequest;
+            get().fetchCoordinatorRequests().catch(() => {});
+
+            return mergedRequest;
         } catch (error) {
             const message = error?.errors?.[0]?.message ?? error?.message ?? 'Failed to update coordinator request.';
             set({ isLoading: false, error: message });

@@ -38,6 +38,11 @@ export function resolveUserAvatar(user, currentUser = null) {
         return googlePhoto;
     }
 
+    // Direct HTTP/HTTPS URL from database (e.g., Google Profile avatar)
+    if (user.avatarPath && (user.avatarPath.startsWith('http://') || user.avatarPath.startsWith('https://'))) {
+        return user.avatarPath;
+    }
+
     return user.avatarPath ?? user.avatar ?? null;
 }
 

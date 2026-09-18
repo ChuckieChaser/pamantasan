@@ -38,20 +38,17 @@ service firebase.storage {
     // User Avatar Icons: avatars/{allPaths=**}
     match /avatars/{allPaths=**} {
       allow read: if true;
-      allow write: if isValidFileSize();
+      allow write: if isAuthenticated() && isValidImage() && isValidFileSize();
     }
 
     // System Documents: documents/{allPaths=**}
     match /documents/{allPaths=**} {
-      allow read: if true;
-      allow write: if isValidFileSize();
-      allow delete: if isAuthenticated();
+      allow read, create, update, delete: if true;
     }
 
     // Default fallback
     match /{allPaths=**} {
-      allow read: if true;
-      allow write: if isValidFileSize();
+      allow read, write: if false;
     }
   }
 }

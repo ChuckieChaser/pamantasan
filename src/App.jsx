@@ -17,6 +17,7 @@ import {
     Inbox,
     AlertTriangle,
     Archive,
+    UserCheck,
 } from 'lucide-react';
 import {
     LoginPage,
@@ -27,6 +28,7 @@ import {
     UsersPage,
     DepartmentsPage,
     RequestsPage,
+    CoordinatorPage,
     OnboardingPage,
 } from './pages';
 import { MainLayout } from './layouts';
@@ -39,13 +41,15 @@ import {
 } from './components';
 import { useAuth, useToast, useInactivityTimeout } from './hooks';
 import {
+    useAuditStore,
+    useAuthStore,
     useCoordinatorStore,
     useDepartmentStore,
     useDocumentStore,
     useNotificationStore,
     useUserStore,
 } from './stores';
-import { authService, storageService } from './services';
+import { authService, storageService, coordinatorApprovalService } from './services';
 import { constants } from './constants';
 
 
@@ -57,7 +61,8 @@ const PAGE_TITLES = {
     request_document: 'Manage Document Requests',
     departments: 'Manage Departments',
     users: 'Manage Users',
-    requests: 'Manage Requests',
+    requests: 'Manage Document Requests',
+    coordinator: 'Coordinator Requests',
 };
 
 
@@ -94,19 +99,32 @@ const AppContent = () => {
     // STORES
     const notifications = useNotificationStore((state) => state.notifications);
     const unreadNotificationCount = notifications.filter((item) => !item.isRead).length;
+    const fetchNotifications = useNotificationStore((state) => state.fetchNotifications);
+    const fetchAuditLogs = useAuditStore((state) => state.fetchAuditLogs);
     const departments = useDepartmentStore((state) => state.departments);
     const fetchDepartments = useDepartmentStore((state) => state.fetchDepartments);
     const users = useUserStore((state) => state.users);
     const fetchUsers = useUserStore((state) => state.fetchUsers);
     const fetchDocuments = useDocumentStore((state) => state.fetchDocuments);
+    const syncAllDocumentShares = useDocumentStore((state) => state.syncAllDocumentShares);
 
     useEffect(() => {
         if (currentUser) {
             fetchDepartments().catch(() => {});
             fetchUsers().catch(() => {});
             fetchDocuments().catch(() => {});
+            fetchAuditLogs().catch(() => {});
+            if (currentUser.id) {
+                fetchNotifications(currentUser.id).catch(() => {});
+            }
         }
-    }, [currentUser, fetchDepartments, fetchUsers, fetchDocuments]);
+    }, [currentUser, fetchDepartments, fetchUsers, fetchDocuments, fetchAuditLogs, fetchNotifications]);
+
+    useEffect(() => {
+        if (currentUser) {
+            syncAllDocumentShares(currentUser, departments).catch(() => {});
+        }
+    }, [currentUser?.id, currentUser?.departmentId, currentUser?.role, departments?.length, syncAllDocumentShares]);
 
     // REACTIVE SYNC FOR SELECTED ITEM WHEN STORE DEPARTMENTS UPDATE
     useEffect(() => {
@@ -201,8 +219,11 @@ const AppContent = () => {
         if (path.startsWith('/archives')) {
             return 'archives';
         }
-        if (path.startsWith('/request-document')) {
-            return 'request_document';
+        if (path.startsWith('/coordinator')) {
+            return 'coordinator';
+        }
+        if (path.startsWith('/request-document') || path.startsWith('/requests')) {
+            return 'requests';
         }
         if (path.startsWith('/departments')) {
             return 'departments';
@@ -210,20 +231,16 @@ const AppContent = () => {
         if (path.startsWith('/users')) {
             return 'users';
         }
-        if (path.startsWith('/requests')) {
-            return 'requests';
-        }
         return 'dashboard';
     }, [location.pathname]);
 
     const userRole = currentUser?.role ?? constants.USERS_ROLE.MEMBER;
-    const isAdmin = userRole === constants.USERS_ROLE.ADMINISTRATOR;
-    const isCoordinator = userRole === constants.USERS_ROLE.COORDINATOR;
-    const canRequestDocument = !isAdmin && !isCoordinator;
+    const isAdmin = constants.isAdminRole(currentUser?.role);
+    const isCoordinator = constants.isCoordinatorRole(currentUser?.role);
     const pageTitle = PAGE_TITLES[activeNavigationKey] ?? 'Dashboard';
 
     const generalNavigationItems = useMemo(() => {
-        const items = [
+        return [
             {
                 key: 'dashboard',
                 value: 'dashboard',
@@ -245,20 +262,15 @@ const AppContent = () => {
                 title: 'Archived Documents',
                 icon: Archive,
             },
-        ];
-
-        if (canRequestDocument) {
-            items.push({
-                key: 'request_document',
-                value: 'request_document',
+            {
+                key: 'requests',
+                value: 'requests',
                 label: 'Document Requests',
                 title: 'Manage Document Requests',
                 icon: FilePlus,
-            });
-        }
-
-        return items;
-    }, [canRequestDocument]);
+            },
+        ];
+    }, []);
 
     const adminNavigationItems = useMemo(() => {
         if (!isAdmin && !isCoordinator) {
@@ -281,11 +293,11 @@ const AppContent = () => {
                 icon: Users,
             },
             {
-                key: 'requests',
-                value: 'requests',
-                label: 'Requests',
-                title: 'Manage Requests',
-                icon: Inbox,
+                key: 'coordinator',
+                value: 'coordinator',
+                label: 'Coordinator Requests',
+                title: 'Coordinator Requests',
+                icon: UserCheck,
             },
         ];
     }, [isAdmin, isCoordinator]);
@@ -378,8 +390,8 @@ const AppContent = () => {
         setSelectedItem(null);
         setInspectorTab('information');
         const targetPath =
-            navigationKey === 'request_document'
-                ? '/request-document'
+            navigationKey === 'request_document' || navigationKey === 'requests'
+                ? '/requests'
                 : `/${navigationKey}`;
         navigate(targetPath);
     };
@@ -407,6 +419,110 @@ const AppContent = () => {
     };
 
     const handleDetailAction = async (actionKey, item) => {
+        const targetItem = item || selectedItem;
+        const isCoordinatorReq = Boolean(
+            targetItem?.action &&
+            typeof targetItem.action === 'string' &&
+            (targetItem.action.startsWith('USER_') ||
+             targetItem.action.startsWith('DEPARTMENT_') ||
+             targetItem.action.startsWith('DOCUMENT_'))
+        );
+
+        if (isCoordinatorReq) {
+            if (actionKey === 'approve') {
+                if (!currentUser?.id) {
+                    showToast({
+                        type: 'error',
+                        title: 'Approval Failed',
+                        description: 'Authentication required to approve request.',
+                    });
+                    return;
+                }
+                if (!constants.isAdminRole(currentUser?.role)) {
+                    showToast({
+                        type: 'error',
+                        title: 'Permission Denied',
+                        description: 'Only administrators can approve coordinator requests.',
+                    });
+                    return;
+                }
+                try {
+                    const approved = await coordinatorApprovalService.executeApprovedRequest(targetItem, currentUser);
+                    setSelectedItem(approved);
+                    showToast({
+                        type: 'success',
+                        title: 'Request Approved & Executed',
+                        description: `Action "${String(targetItem.action).replace(/_/g, ' ')}" has been executed with Administrator privileges.`,
+                    });
+                } catch (error) {
+                    showToast({
+                        type: 'error',
+                        title: 'Approval Failed',
+                        description: error?.message ?? 'Could not approve request.',
+                    });
+                }
+                return;
+            }
+
+            if (actionKey === 'reject') {
+                if (!currentUser?.id) {
+                    showToast({
+                        type: 'error',
+                        title: 'Rejection Failed',
+                        description: 'Authentication required to reject request.',
+                    });
+                    return;
+                }
+                if (!constants.isAdminRole(currentUser?.role)) {
+                    showToast({
+                        type: 'error',
+                        title: 'Permission Denied',
+                        description: 'Only administrators can reject coordinator requests.',
+                    });
+                    return;
+                }
+                try {
+                    await coordinatorApprovalService.rejectCoordinatorRequest(targetItem);
+                    setSelectedItem(null);
+                    showToast({
+                        type: 'success',
+                        title: 'Request Rejected & Removed',
+                        description: `Action "${String(targetItem.action).replace(/_/g, ' ')}" request was removed.`,
+                    });
+                } catch (error) {
+                    showToast({
+                        type: 'error',
+                        title: 'Rejection Failed',
+                        description: error?.message ?? 'Could not reject request.',
+                    });
+                }
+                return;
+            }
+
+            if (actionKey === 'delete') {
+                if (window.location.pathname.includes('/coordinator')) {
+                    window.dispatchEvent(new CustomEvent('pamantasan:delete-coordinator-request', { detail: targetItem }));
+                    return;
+                }
+                try {
+                    await useCoordinatorStore.getState().deleteCoordinatorRequest(targetItem.id);
+                    setSelectedItem(null);
+                    showToast({
+                        type: 'success',
+                        title: 'Request Deleted',
+                        description: 'Coordinator request removed from queue.',
+                    });
+                } catch (error) {
+                    showToast({
+                        type: 'error',
+                        title: 'Deletion Failed',
+                        description: error?.message ?? 'Could not delete request.',
+                    });
+                }
+                return;
+            }
+        }
+
         if (actionKey === 'revert_version') {
             try {
                 const activeDocId = item?.documentId ?? item?.document?.id ?? selectedItem?.id;
@@ -437,7 +553,11 @@ const AppContent = () => {
         }
 
         if (actionKey === 'download' || actionKey === 'download_version') {
-            const fileName = item?.name || item?.title || item?.document?.name || (item?.path ? item.path.split('/').pop() : 'document');
+            const targetDocId = item?.documentId ?? item?.document?.id ?? item?.id;
+            const allDocs = useDocumentStore.getState().documents ?? [];
+            const matchedDoc = allDocs.find((d) => d.id === targetDocId);
+            const fileName = item?.name || matchedDoc?.name || item?.title || item?.document?.name || (item?.path ? item.path.split('/').pop() : 'document');
+
             try {
                 if (item?.isFolder) {
                     await storageService.downloadFolder(
@@ -446,7 +566,42 @@ const AppContent = () => {
                         useDocumentStore.getState().documentVersions
                     );
                 } else {
-                    const rawPath = item?.path ?? item?.url ?? item?.downloadUrl;
+                    let allVersions = useDocumentStore.getState().documentVersions ?? [];
+                    let vers = allVersions.filter(
+                        (v) => (v.document?.id ?? v.documentId) === targetDocId
+                    );
+
+                    if (vers.length === 0 && targetDocId) {
+                        try {
+                            const fetched = await useDocumentStore.getState().fetchDocumentVersions(targetDocId);
+                            if (fetched && fetched.length > 0) {
+                                vers = fetched;
+                            }
+                        } catch (e) {
+                            console.warn('Failed to fetch document versions:', e);
+                        }
+                    }
+
+                    if (vers.length === 0) {
+                        try {
+                            const allFetched = await useDocumentStore.getState().fetchAllDocumentVersions();
+                            if (allFetched && allFetched.length > 0) {
+                                vers = allFetched.filter((v) => (v.document?.id ?? v.documentId) === targetDocId);
+                            }
+                        } catch (e) {
+                            console.warn('Failed to fetch all document versions:', e);
+                        }
+                    }
+
+                    const latestVer = vers.length > 0
+                        ? [...vers].sort((a, b) => (b.version ?? 0) - (a.version ?? 0))[0]
+                        : null;
+                    const rawPath = item?.path ?? latestVer?.path ?? item?.url ?? item?.downloadUrl ?? matchedDoc?.path;
+
+                    if (!rawPath) {
+                        throw new Error(`Could not find storage path for "${fileName}".`);
+                    }
+
                     await storageService.downloadDocument(
                         rawPath,
                         fileName
@@ -464,11 +619,181 @@ const AppContent = () => {
         }
 
         if (actionKey === 'share') {
-            showToast({
-                type: 'information',
-                title: 'Share Settings',
-                description: `Permissions panel opened for ${item?.name ?? item?.title}.`,
-            });
+            const target = item || selectedItem;
+            if (target) {
+                useDocumentStore.getState().setShareModalDocument(target);
+            }
+            return;
+        }
+
+        if (!isCoordinatorReq && ['approve', 'unapprove', 'reject', 'publish', 'unpublish', 'stash', 'unstash', 'unshare'].includes(actionKey)) {
+            const targetDoc = item || selectedItem;
+            const allShares = useDocumentStore.getState().documentShares || [];
+            let shareRecord = targetDoc?.share;
+
+            if (!shareRecord) {
+                if ((actionKey === 'unshare' || actionKey === 'unpublish') && (targetDoc?.departmentId || targetDoc?.department || targetDoc?.recipientId || targetDoc?.recipient)) {
+                    shareRecord = targetDoc;
+                } else if (currentUser?.departmentId) {
+                    shareRecord = allShares.find(
+                        (s) =>
+                            (s.document?.id ?? s.documentId) === targetDoc?.id &&
+                            (s.department?.id ?? s.departmentId) === currentUser.departmentId
+                    );
+                } else {
+                    shareRecord = allShares.find((s) => (s.document?.id ?? s.documentId) === targetDoc?.id);
+                }
+            }
+
+            const shareId = shareRecord?.id;
+            if (!shareId) {
+                showToast({
+                    type: 'error',
+                    title: 'Action Failed',
+                    description: 'No associated departmental share record found for this document.',
+                });
+                return;
+            }
+
+            try {
+                const store = useDocumentStore.getState();
+                const docTitle = targetDoc?.name || targetDoc?.title || selectedItem?.name || selectedItem?.title || 'document';
+                const deptId = shareRecord?.department?.id ?? shareRecord?.departmentId ?? currentUser?.departmentId;
+                const isUserShare = Boolean(shareRecord?.recipientId || shareRecord?.recipient);
+
+                if (actionKey === 'approve') {
+                    if (targetDoc?.isFolder && deptId) {
+                        await store.updateShareStatusRecursive(targetDoc.id, deptId, constants.DOCUMENT_SHARES_STATUS.APPROVED);
+                    } else {
+                        await store.approveShare(shareId);
+                    }
+                    showToast({
+                        type: 'success',
+                        title: targetDoc?.isFolder ? 'Folder Approved' : 'Document Approved',
+                        description: `Approved "${docTitle}" for department director review.`,
+                    });
+                } else if (actionKey === 'unapprove') {
+                    if (targetDoc?.isFolder && deptId) {
+                        await store.updateShareStatusRecursive(targetDoc.id, deptId, constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL);
+                    } else {
+                        await store.unapproveShare(shareId);
+                    }
+                    showToast({
+                        type: 'information',
+                        title: 'Approval Revoked',
+                        description: `Reverted "${docTitle}" to pending approval.`,
+                    });
+                } else if (actionKey === 'reject') {
+                    if (targetDoc?.isFolder && deptId) {
+                        await store.unshareDocumentRecursive(targetDoc.id, deptId);
+                    } else {
+                        await store.rejectShare(shareId);
+                    }
+                    showToast({
+                        type: 'warning',
+                        title: targetDoc?.isFolder ? 'Folder Rejected' : 'Document Rejected',
+                        description: `Rejected "${docTitle}" and removed from department view.`,
+                    });
+                    setSelectedItem(null);
+                } else if (actionKey === 'publish') {
+                    store.setPublishModalDocument(targetDoc);
+                    return;
+                } else if (actionKey === 'unpublish') {
+                    if (isUserShare) {
+                        await store.unshareDocument(shareId);
+                        showToast({
+                            type: 'success',
+                            title: 'User Unpublished',
+                            description: `Unpublished "${docTitle}" for recipient.`,
+                        });
+                    } else if (targetDoc?.isFolder && deptId) {
+                        await store.updateShareStatusRecursive(targetDoc.id, deptId, constants.DOCUMENT_SHARES_STATUS.APPROVED);
+                        showToast({
+                            type: 'information',
+                            title: targetDoc?.isFolder ? 'Folder Unpublished' : 'Document Unpublished',
+                            description: `Unpublished "${docTitle}" from department members.`,
+                        });
+                    } else {
+                        await store.unpublishShare(shareId);
+                        showToast({
+                            type: 'information',
+                            title: targetDoc?.isFolder ? 'Folder Unpublished' : 'Document Unpublished',
+                            description: `Unpublished "${docTitle}" from department members.`,
+                        });
+                    }
+                } else if (actionKey === 'stash') {
+                    if (targetDoc?.isFolder && deptId) {
+                        await store.updateShareStatusRecursive(targetDoc.id, deptId, constants.DOCUMENT_SHARES_STATUS.STASHED);
+                    } else {
+                        await store.stashShare(shareId);
+                    }
+                    showToast({
+                        type: 'information',
+                        title: targetDoc?.isFolder ? 'Folder Stashed' : 'Document Stashed',
+                        description: `Stashed "${docTitle}" at upper management level.`,
+                    });
+                } else if (actionKey === 'unstash') {
+                    if (targetDoc?.isFolder && deptId) {
+                        await store.updateShareStatusRecursive(targetDoc.id, deptId, constants.DOCUMENT_SHARES_STATUS.APPROVED);
+                    } else {
+                        await store.unstashShare(shareId);
+                    }
+                    showToast({
+                        type: 'success',
+                        title: targetDoc?.isFolder ? 'Folder Unstashed' : 'Document Unstashed',
+                        description: `Restored "${docTitle}" to approved state.`,
+                    });
+                } else if (actionKey === 'unshare') {
+                    if (constants.isCoordinatorRole(currentUser?.role)) {
+                        const unsharePayload = {
+                            shareId: shareId,
+                            documentId: targetDoc?.id,
+                            departmentId: deptId,
+                            isRecursive: Boolean(targetDoc?.isFolder),
+                        };
+
+                        const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
+                        await coordinatorApprovalService.submitCoordinatorRequest({
+                            action: constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_UNSHARE,
+                            requesterId,
+                            data: unsharePayload,
+                        });
+                        useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
+
+                        showToast({
+                            type: 'success',
+                            title: 'Request Submitted',
+                            description: `Unshare request for "${docTitle}" sent for Administrator approval.`,
+                        });
+                        return;
+                    }
+
+                    if (targetDoc?.isFolder && deptId) {
+                        await store.unshareDocumentRecursive(targetDoc.id, deptId);
+                        showToast({
+                            type: 'success',
+                            title: 'Share Removed',
+                            description: `Removed folder "${docTitle}" and all nested contents from department.`,
+                        });
+                    } else {
+                        await store.unshareDocument(shareId);
+                        showToast({
+                            type: 'success',
+                            title: 'Share Removed',
+                            description: isUserShare
+                                ? `Removed user share for "${docTitle}".`
+                                : `Removed department share for "${docTitle}".`,
+                        });
+                    }
+                }
+            } catch (err) {
+                console.error(`Failed to execute ${actionKey}:`, err);
+                showToast({
+                    type: 'error',
+                    title: 'Action Failed',
+                    description: err?.message || `Could not complete ${actionKey} action.`,
+                });
+            }
             return;
         }
 
@@ -504,6 +829,10 @@ const AppContent = () => {
         }
 
         if (actionKey === 'open' || actionKey === 'open_folder') {
+            if (item?.action) {
+                navigate('/coordinator');
+                return;
+            }
             if (item?.subject) {
                 navigate('/requests');
                 return;
@@ -611,6 +940,10 @@ const AppContent = () => {
                 window.dispatchEvent(new CustomEvent('pamantasan:delete-department', { detail: item }));
                 return;
             }
+            if (item?.subject) {
+                window.dispatchEvent(new CustomEvent('pamantasan:delete-document-request', { detail: item }));
+                return;
+            }
             showToast({
                 type: 'error',
                 title: 'Deletion Requested',
@@ -620,34 +953,6 @@ const AppContent = () => {
         }
 
         if (actionKey === 'approve') {
-            if (item?.action && item?.data) {
-                if (!currentUser?.id) {
-                    throw new Error('Authentication required to approve request.');
-                }
-                try {
-                    const approved = await useCoordinatorStore.getState().updateCoordinatorRequest(
-                        item.id,
-                        {
-                            reviewerId: currentUser.id,
-                            status: constants.COORDINATOR_REQUESTS_STATUS.APPROVED,
-                        }
-                    );
-                    setSelectedItem(approved);
-                    showToast({
-                        type: 'success',
-                        title: 'Request Approved & Executed',
-                        description: `Action "${item.action}" has been executed with Administrator privileges.`,
-                    });
-                } catch (error) {
-                    showToast({
-                        type: 'error',
-                        title: 'Approval Failed',
-                        description: error?.message ?? 'Could not approve request.',
-                    });
-                }
-                return;
-            }
-
             showToast({
                 type: 'success',
                 title: 'Request Approved',
@@ -657,43 +962,51 @@ const AppContent = () => {
         }
 
         if (actionKey === 'reject') {
-            if (item?.action && item?.data) {
-                if (!currentUser?.id) {
-                    throw new Error('Authentication required to reject request.');
-                }
-                try {
-                    const rejected = await useCoordinatorStore.getState().updateCoordinatorRequest(
-                        item.id,
-                        {
-                            reviewerId: currentUser.id,
-                            status: constants.COORDINATOR_REQUESTS_STATUS.REJECTED,
-                            rejectionReason: 'Declined by administrator during record review.',
-                        }
-                    );
-                    setSelectedItem(rejected);
-                    showToast({
-                        type: 'warning',
-                        title: 'Request Rejected',
-                        description: `Action "${item.action}" was rejected.`,
-                    });
-                } catch (error) {
-                    showToast({
-                        type: 'error',
-                        title: 'Rejection Failed',
-                        description: error?.message ?? 'Could not reject request.',
-                    });
-                }
-                return;
-            }
 
             if (item?.subject) {
+                const isCoordinator = constants.isCoordinatorRole(currentUser?.role);
+                if (isCoordinator) {
+                    try {
+                        const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
+                        await coordinatorApprovalService.submitCoordinatorRequest({
+                            action: constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_REJECT,
+                            requesterId,
+                            data: {
+                                documentRequestId: item.id,
+                                subject: item.subject || item.title || 'Document Request',
+                                requesterName: item.requesterName || 'Member',
+                                status: constants.DOCUMENT_REQUESTS_STATUS.REJECTED,
+                            },
+                        });
+                        useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
+                        showToast({
+                            type: 'success',
+                            title: 'Request Submitted',
+                            description: 'Document request rejection sent for Administrator approval.',
+                        });
+                        return;
+                    } catch (error) {
+                        showToast({
+                            type: 'error',
+                            title: 'Request Failed',
+                            description: error?.message ?? 'Could not submit rejection request.',
+                        });
+                        return;
+                    }
+                }
+
                 try {
-                    await useDocumentStore.getState().updateDocumentRequest(
-                        item.id,
-                        {
-                            status: constants.DOCUMENT_REQUESTS_STATUS.REJECTED,
-                        }
-                    );
+                    const minTimer = new Promise((resolve) => setTimeout(resolve, 500));
+                    const [updated] = await Promise.all([
+                        useDocumentStore.getState().updateDocumentRequest(
+                            item.id,
+                            {
+                                status: constants.DOCUMENT_REQUESTS_STATUS.REJECTED,
+                            }
+                        ),
+                        minTimer,
+                    ]);
+                    setSelectedItem((prev) => (prev && String(prev.id) === String(item.id) ? { ...prev, ...updated, status: constants.DOCUMENT_REQUESTS_STATUS.REJECTED } : prev));
                     showToast({
                         type: 'warning',
                         title: 'Document Request Rejected',
@@ -718,14 +1031,50 @@ const AppContent = () => {
         }
 
         if (actionKey === 'resolve') {
+            const isCoordinator = constants.isCoordinatorRole(currentUser?.role);
+            if (isCoordinator && item?.id) {
+                try {
+                    const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
+                    await coordinatorApprovalService.submitCoordinatorRequest({
+                        action: constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_RESOLVE,
+                        requesterId,
+                        data: {
+                            documentRequestId: item.id,
+                            subject: item.subject || item.title || 'Document Request',
+                            requesterName: item.requesterName || 'Member',
+                            status: constants.DOCUMENT_REQUESTS_STATUS.RESOLVED,
+                        },
+                    });
+                    useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
+                    showToast({
+                        type: 'success',
+                        title: 'Request Submitted',
+                        description: 'Document request resolution sent for Administrator approval.',
+                    });
+                    return;
+                } catch (error) {
+                    showToast({
+                        type: 'error',
+                        title: 'Request Failed',
+                        description: error?.message ?? 'Could not submit resolution request.',
+                    });
+                    return;
+                }
+            }
+
             try {
                 if (item?.id) {
-                    await useDocumentStore.getState().updateDocumentRequest(
-                        item.id,
-                        {
-                            status: constants.DOCUMENT_REQUESTS_STATUS.RESOLVED,
-                        }
-                    );
+                    const minTimer = new Promise((resolve) => setTimeout(resolve, 500));
+                    const [updated] = await Promise.all([
+                        useDocumentStore.getState().updateDocumentRequest(
+                            item.id,
+                            {
+                                status: constants.DOCUMENT_REQUESTS_STATUS.RESOLVED,
+                            }
+                        ),
+                        minTimer,
+                    ]);
+                    setSelectedItem((prev) => (prev && String(prev.id) === String(item.id) ? { ...prev, ...updated, status: constants.DOCUMENT_REQUESTS_STATUS.RESOLVED } : prev));
                 }
                 showToast({
                     type: 'success',
@@ -737,6 +1086,69 @@ const AppContent = () => {
                     type: 'error',
                     title: 'Resolve Failed',
                     description: error?.message ?? 'Could not resolve request.',
+                });
+            }
+            return;
+        }
+
+        if (actionKey === 'open_request' || (actionKey === 'reopen' && item?.subject)) {
+            const isCoordinator = constants.isCoordinatorRole(currentUser?.role);
+            const isReopen = item?.status === constants.DOCUMENT_REQUESTS_STATUS.RESOLVED || item?.status === constants.DOCUMENT_REQUESTS_STATUS.REJECTED;
+
+            if (isCoordinator && isReopen) {
+                try {
+                    const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
+                    await coordinatorApprovalService.submitCoordinatorRequest({
+                        action: constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_REOPEN,
+                        requesterId,
+                        data: {
+                            documentRequestId: item.id,
+                            subject: item.subject || item.title || 'Document Request',
+                            requesterName: item.requesterName || 'Member',
+                            status: constants.DOCUMENT_REQUESTS_STATUS.OPEN,
+                        },
+                    });
+                    useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
+                    showToast({
+                        type: 'success',
+                        title: 'Request Submitted',
+                        description: 'Document request reopening sent for Administrator approval.',
+                    });
+                    return;
+                } catch (error) {
+                    showToast({
+                        type: 'error',
+                        title: 'Request Failed',
+                        description: error?.message ?? 'Could not submit reopen request.',
+                    });
+                    return;
+                }
+            }
+
+            try {
+                if (item?.id) {
+                    const minTimer = new Promise((resolve) => setTimeout(resolve, 500));
+                    const [updated] = await Promise.all([
+                        useDocumentStore.getState().updateDocumentRequest(
+                            item.id,
+                            {
+                                status: constants.DOCUMENT_REQUESTS_STATUS.OPEN,
+                            }
+                        ),
+                        minTimer,
+                    ]);
+                    setSelectedItem((prev) => (prev && prev.id === item.id ? { ...prev, ...updated, status: constants.DOCUMENT_REQUESTS_STATUS.OPEN } : prev));
+                    showToast({
+                        type: 'success',
+                        title: 'Request Reopened',
+                        description: 'Document request status set to OPEN.',
+                    });
+                }
+            } catch (error) {
+                showToast({
+                    type: 'error',
+                    title: 'Reopen Failed',
+                    description: error?.message ?? 'Could not reopen request.',
                 });
             }
             return;
@@ -812,7 +1224,7 @@ const AppContent = () => {
     };
 
     const handleRequestDocument = () => {
-        navigate('/request-document');
+        navigate('/requests');
     };
 
     // RENDER
@@ -938,14 +1350,18 @@ const AppContent = () => {
                     }
                 />
                 <Route
-                    path="/request-document"
+                    path="/requests"
                     element={
                         <RequestsPage
                             currentUser={currentUser}
-                            initialTab="document"
+                            selectedItem={selectedItem}
                             onSelectRequest={handleSelectActivity}
                         />
                     }
+                />
+                <Route
+                    path="/request-document"
+                    element={<Navigate to="/requests" replace />}
                 />
 
                 {/* ADMINISTRATIVE PROTECTED SUB-ROUTES (ADMINISTRATOR & COORDINATOR ONLY) */}
@@ -962,6 +1378,7 @@ const AppContent = () => {
                         path="/departments"
                         element={
                             <DepartmentsPage
+                                currentUser={currentUser}
                                 onSelectDepartment={handleSelectActivity}
                             />
                         }
@@ -970,16 +1387,17 @@ const AppContent = () => {
                         path="/users"
                         element={
                             <UsersPage
+                                currentUser={currentUser}
                                 onSelectUser={handleSelectActivity}
                             />
                         }
                     />
                     <Route
-                        path="/requests"
+                        path="/coordinator"
                         element={
-                            <RequestsPage
+                            <CoordinatorPage
                                 currentUser={currentUser}
-                                initialTab="coordinator"
+                                selectedItem={selectedItem}
                                 onSelectRequest={handleSelectActivity}
                             />
                         }

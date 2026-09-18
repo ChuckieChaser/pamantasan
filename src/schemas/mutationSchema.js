@@ -31,6 +31,7 @@ const InsertUserSchema = z.object({
     middleName: z.string().max(constants.INSTITUTIONAL_CONFIGURATION.MAX_USER_NAME_LENGTH).nullable().optional(),
     lastName: z.string().min(1).max(constants.INSTITUTIONAL_CONFIGURATION.MAX_USER_NAME_LENGTH),
     status: common.UsersStatusSchema.default(constants.USERS_STATUS.PENDING_PASSWORD),
+    password: z.string().optional(),
     createdAt: common.IsoTimestampSchema.optional(),
     updatedAt: common.IsoTimestampSchema.optional(),
 });
@@ -90,7 +91,6 @@ const InsertUserSessionSchema = z.object({
 // --- DOCUMENT SCHEMAS ---
 const InsertDocumentSchema = z.object({
     parentId: z.string().nullable().optional(),
-    uploaderId: z.string(),
     name: z.string().min(1).max(constants.INSTITUTIONAL_CONFIGURATION.MAX_NAME_LENGTH),
     comment: z.string().nullable().optional(),
     isFolder: z.boolean().default(false),
@@ -125,6 +125,7 @@ const InsertDocumentVersionSchema = z.object({
     changeSummary: z.string().nullable().optional(),
     rejectionReason: z.string().nullable().optional(),
     summary: z.string().nullable().optional(),
+    embedding: z.array(z.number()).nullable().optional(),
     textHash: z.string().length(constants.INSTITUTIONAL_CONFIGURATION.CHECKSUM_HEX_LENGTH).nullable().optional(),
     createdAt: common.IsoTimestampSchema.optional(),
     updatedAt: common.IsoTimestampSchema.optional(),
@@ -142,6 +143,7 @@ const UpdateDocumentVersionSchema = z.object({
     changeSummary: z.string().nullable().optional(),
     rejectionReason: z.string().nullable().optional(),
     summary: z.string().nullable().optional(),
+    embedding: z.array(z.number()).nullable().optional(),
     textHash: z.string().length(constants.INSTITUTIONAL_CONFIGURATION.CHECKSUM_HEX_LENGTH).nullable().optional(),
     updatedAt: common.IsoTimestampSchema.optional(),
 });

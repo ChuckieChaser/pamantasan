@@ -43,6 +43,7 @@ const coordinatorService = {
     },
 
     insertCoordinatorRequest: async (payload) => {
+        const timestamp = payload.createdAt || new Date().toISOString();
         const data = await dataConnectService.executeMutation('InsertCoordinatorRequest', {
             requesterId: payload.requesterId,
             reviewerId: payload.reviewerId ?? null,
@@ -50,14 +51,43 @@ const coordinatorService = {
             data: payload.data,
             status: payload.status ?? constants.COORDINATOR_REQUESTS_STATUS.PENDING,
             rejectionReason: payload.rejectionReason ?? null,
-            createdAt: payload.createdAt,
-            updatedAt: payload.updatedAt,
+            createdAt: timestamp,
+            updatedAt: payload.updatedAt || timestamp,
         });
 
-        return formatLiveCoordinatorRequest(data?.coordinatorRequest_insert ?? data?.coordinatorRequests_insert);
+        const raw = data?.coordinatorRequest_insert ?? data?.coordinatorRequests_insert;
+        const formatted = raw ? formatLiveCoordinatorRequest(raw) : null;
+        const cleanFormatted = Object.fromEntries(
+            Object.entries(formatted || {}).filter(([_, v]) => v !== undefined && v !== null)
+        );
+
+        let parsedData = payload.data;
+        if (typeof parsedData === 'string') {
+            try {
+                parsedData = JSON.parse(parsedData);
+            } catch {
+                parsedData = payload.data;
+            }
+        }
+
+        return {
+            id: raw?.id ?? cleanFormatted?.id,
+            requesterId: payload.requesterId,
+            requester: { id: payload.requesterId },
+            reviewerId: payload.reviewerId ?? null,
+            reviewer: payload.reviewerId ? { id: payload.reviewerId } : null,
+            action: payload.action,
+            data: parsedData,
+            status: payload.status ?? constants.COORDINATOR_REQUESTS_STATUS.PENDING,
+            rejectionReason: payload.rejectionReason ?? null,
+            createdAt: timestamp,
+            updatedAt: payload.updatedAt || timestamp,
+            ...cleanFormatted,
+        };
     },
 
     updateCoordinatorRequest: async (id, payload) => {
+        const timestamp = payload.updatedAt || new Date().toISOString();
         const data = await dataConnectService.executeMutation('UpdateCoordinatorRequest', {
             id: id,
             reviewerId: payload.reviewerId,
@@ -65,10 +95,24 @@ const coordinatorService = {
             data: payload.data,
             status: payload.status,
             rejectionReason: payload.rejectionReason,
-            updatedAt: payload.updatedAt,
+            updatedAt: timestamp,
         });
 
-        return formatLiveCoordinatorRequest(data?.coordinatorRequest_update ?? data?.coordinatorRequests_update);
+        const raw = data?.coordinatorRequest_update ?? data?.coordinatorRequests_update;
+        const formatted = raw ? formatLiveCoordinatorRequest(raw) : null;
+        const cleanFormatted = Object.fromEntries(
+            Object.entries(formatted || {}).filter(([_, v]) => v !== undefined && v !== null)
+        );
+        const cleanPayload = Object.fromEntries(
+            Object.entries(payload || {}).filter(([_, v]) => v !== undefined)
+        );
+
+        return {
+            id: id,
+            ...cleanPayload,
+            ...cleanFormatted,
+            updatedAt: timestamp,
+        };
     },
 
     deleteCoordinatorRequest: async (id) => {
@@ -84,14 +128,31 @@ function formatLiveCoordinatorRequest(rawCoordinatorRequest) {
         return null;
     }
 
+    let parsedData = rawCoordinatorRequest.data;
+    if (typeof parsedData === 'string') {
+        try {
+            parsedData = JSON.parse(parsedData);
+        } catch {
+            parsedData = rawCoordinatorRequest.data;
+        }
+    }
+
+    const requesterObj = typeof rawCoordinatorRequest.requester === 'object' ? rawCoordinatorRequest.requester : null;
+    const requesterId = requesterObj?.id ?? rawCoordinatorRequest.requesterId ?? (typeof rawCoordinatorRequest.requester === 'string' ? rawCoordinatorRequest.requester : null);
+
+    const reviewerObj = typeof rawCoordinatorRequest.reviewer === 'object' ? rawCoordinatorRequest.reviewer : null;
+    const reviewerId = reviewerObj?.id ?? rawCoordinatorRequest.reviewerId ?? (typeof rawCoordinatorRequest.reviewer === 'string' ? rawCoordinatorRequest.reviewer : null);
+
     return {
         id: rawCoordinatorRequest.id,
-        requester: rawCoordinatorRequest.requester,
-        reviewer: rawCoordinatorRequest.reviewer,
+        requester: rawCoordinatorRequest.requester ?? (requesterId ? { id: requesterId } : null),
+        requesterId: requesterId,
+        reviewer: rawCoordinatorRequest.reviewer ?? (reviewerObj ? reviewerObj : null),
+        reviewerId: reviewerId,
         action: rawCoordinatorRequest.action,
-        data: rawCoordinatorRequest.data,
+        data: parsedData,
         status: rawCoordinatorRequest.status,
-        rejectionReason: rawCoordinatorRequest.rejectionReason,
+        rejectionReason: rawCoordinatorRequest.rejectionReason ?? null,
         createdAt: rawCoordinatorRequest.createdAt,
         updatedAt: rawCoordinatorRequest.updatedAt,
     };

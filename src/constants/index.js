@@ -107,14 +107,22 @@ const COORDINATOR_REQUESTS_ACTION = Object.freeze({
     USER_CREATE: 'USER_CREATE',
     USER_UPDATE: 'USER_UPDATE',
     USER_SUSPEND: 'USER_SUSPEND',
+    USER_DELETE: 'USER_DELETE',
     DEPARTMENT_CREATE: 'DEPARTMENT_CREATE',
     DEPARTMENT_UPDATE: 'DEPARTMENT_UPDATE',
+    DEPARTMENT_DELETE: 'DEPARTMENT_DELETE',
     DOCUMENT_UPLOAD: 'DOCUMENT_UPLOAD',
     DOCUMENT_UPDATE: 'DOCUMENT_UPDATE',
     DOCUMENT_DELETE: 'DOCUMENT_DELETE',
     DOCUMENT_SHARE: 'DOCUMENT_SHARE',
+    DOCUMENT_UNSHARE: 'DOCUMENT_UNSHARE',
     DOCUMENT_ARCHIVE: 'DOCUMENT_ARCHIVE',
+    DOCUMENT_UNARCHIVE: 'DOCUMENT_UNARCHIVE',
     DOCUMENT_ATTACH: 'DOCUMENT_ATTACH',
+    DOCUMENT_REQUEST_ATTACH: 'DOCUMENT_REQUEST_ATTACH',
+    DOCUMENT_REQUEST_RESOLVE: 'DOCUMENT_REQUEST_RESOLVE',
+    DOCUMENT_REQUEST_REJECT: 'DOCUMENT_REQUEST_REJECT',
+    DOCUMENT_REQUEST_REOPEN: 'DOCUMENT_REQUEST_REOPEN',
 });
 
 const COORDINATOR_REQUESTS_STATUS = Object.freeze({
@@ -153,6 +161,8 @@ const NOTIFICATIONS_ACTION = Object.freeze({
     SUSPENDED: 'SUSPENDED',
     UNSUSPENDED: 'UNSUSPENDED',
     REVERTED: 'REVERTED',
+    READ: 'READ',
+    VIEWED: 'VIEWED',
 });
 
 const AUDIT_LOGS_ENTITY_TYPE = Object.freeze({
@@ -188,7 +198,54 @@ const AUDIT_LOGS_ACTION = Object.freeze({
     SUSPENDED: 'SUSPENDED',
     UNSUSPENDED: 'UNSUSPENDED',
     REVERTED: 'REVERTED',
+    READ: 'READ',
+    VIEWED: 'VIEWED',
 });
+
+
+// --- ROLE HELPERS ---
+export const isStaffRole = (role) => {
+    if (!role) return false;
+    const r = String(role).trim().toUpperCase();
+    return (
+        r === USERS_ROLE.ADMINISTRATOR ||
+        r === USERS_ROLE.COORDINATOR ||
+        r === 'ADMIN' ||
+        r === 'COORD' ||
+        r.includes('ADMIN') ||
+        r.includes('COORD')
+    );
+};
+
+export const isCoordinatorRole = (role) => {
+    if (!role) return false;
+    const r = String(role).trim().toUpperCase();
+    return r === USERS_ROLE.COORDINATOR || r === 'COORD' || r.includes('COORD');
+};
+
+export const isAdminRole = (role) => {
+    if (!role) return false;
+    const r = String(role).trim().toUpperCase();
+    return r === USERS_ROLE.ADMINISTRATOR || r === 'ADMIN' || r.includes('ADMIN');
+};
+
+export const isOfficerRole = (role) => {
+    if (!role) return false;
+    const r = String(role).trim().toUpperCase();
+    return r === USERS_ROLE.OFFICER || r.includes('OFFICER');
+};
+
+export const isDirectorRole = (role) => {
+    if (!role) return false;
+    const r = String(role).trim().toUpperCase();
+    return r === USERS_ROLE.DIRECTOR || r.includes('DIRECTOR');
+};
+
+export const isMemberRole = (role) => {
+    if (!role) return false;
+    const r = String(role).trim().toUpperCase();
+    return r === USERS_ROLE.MEMBER || r.includes('MEMBER');
+};
 
 
 // --- EXPORTS ---
@@ -212,5 +269,12 @@ export const constants = Object.freeze({
     NOTIFICATIONS_ACTION,
     AUDIT_LOGS_ENTITY_TYPE,
     AUDIT_LOGS_ACTION,
+    isStaffRole,
+    isCoordinatorRole,
+    isAdminRole,
+    isOfficerRole,
+    isDirectorRole,
+    isMemberRole,
 });
+
 

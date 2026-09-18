@@ -21,11 +21,12 @@ import {
     SelectField,
     TextField,
     formatUniversityId,
+    formatDateTime,
     resolveUserAvatar,
 } from '../components';
-import { useToast } from '../hooks';
-import { useUserStore, useDepartmentStore, useAuthStore } from '../stores';
-import { storageService } from '../services';
+import { useToast, useAuth } from '../hooks';
+import { useUserStore, useDepartmentStore, useAuthStore, useCoordinatorStore } from '../stores';
+import { storageService, authService, coordinatorApprovalService } from '../services';
 import { constants } from '../constants';
 
 
@@ -60,6 +61,7 @@ const RMO_DEPARTMENT_RAW = 'd0000001000040008000000000000001';
 
 // --- COMPONENTS ---
 const UsersPage = ({
+    currentUser: propUser = null,
     onSelectUser = null,
     className,
     ...props
@@ -125,7 +127,10 @@ const UsersPage = ({
             setFormDepartmentId(resolvedRmoId);
         }
     };
-    const currentUser = useAuthStore((state) => state.currentUser);
+    const { currentUser: authUser } = useAuth();
+    const storeUser = useAuthStore((state) => state.currentUser);
+    const currentUser = propUser ?? authUser ?? storeUser ?? useAuthStore.getState().currentUser;
+    const isCoordinator = constants.isCoordinatorRole(currentUser?.role);
 
     // EFFECTS
     const [avatarVersion, setAvatarVersion] = useState(0);
@@ -301,14 +306,51 @@ const UsersPage = ({
                 uploadedAvatarPath = uploadResult.path;
             }
 
-            const minTimer = new Promise((resolve) => setTimeout(resolve, 500));
-            const [newUser] = await Promise.all([
-                insertUser({
-                    universityId: formUniversityId.trim(),
+            const targetUid = formUniversityId.trim();
+            const targetEmail = formEmail.trim().toLowerCase();
+            const tempPassword = targetUid;
+
+            if (isCoordinator) {
+                const userPayload = {
+                    universityId: targetUid,
+                    password: tempPassword,
                     firstName: formFirstName.trim(),
                     middleName: formMiddleName.trim() || null,
                     lastName: formLastName.trim(),
-                    email: formEmail.trim().toLowerCase(),
+                    email: targetEmail,
+                    departmentId: finalDepartmentId,
+                    role: formRole,
+                    status: constants.USERS_STATUS.PENDING_PASSWORD,
+                    avatarPath: uploadedAvatarPath,
+                };
+
+                const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
+                await coordinatorApprovalService.submitCoordinatorRequest({
+                    action: constants.COORDINATOR_REQUESTS_ACTION.USER_CREATE,
+                    requesterId,
+                    data: userPayload,
+                });
+                useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
+
+                const fullName = `${formFirstName.trim()} ${formLastName.trim()}`.trim();
+                showToast({
+                    type: 'success',
+                    title: 'Request Submitted',
+                    description: `User registration request for "${fullName}" sent for Administrator approval.`,
+                });
+                handleCloseModals();
+                return;
+            }
+
+            const minTimer = new Promise((resolve) => setTimeout(resolve, 500));
+            const [newUser] = await Promise.all([
+                insertUser({
+                    universityId: targetUid,
+                    password: tempPassword,
+                    firstName: formFirstName.trim(),
+                    middleName: formMiddleName.trim() || null,
+                    lastName: formLastName.trim(),
+                    email: targetEmail,
                     departmentId: finalDepartmentId,
                     role: formRole,
                     status: constants.USERS_STATUS.PENDING_PASSWORD,
@@ -319,11 +361,23 @@ const UsersPage = ({
 
             const targetFirstName = newUser?.firstName || formFirstName.trim();
             const targetLastName = newUser?.lastName || formLastName.trim();
+            const fullName = `${targetFirstName} ${targetLastName}`.trim();
+
+            // Dispatch official user provisioning email with credentials
+            authService.sendUserProvisionEmail({
+                email: targetEmail,
+                recipientName: fullName,
+                universityId: targetUid,
+                temporaryPassword: tempPassword,
+                loginUrl: 'https://pamantasan-records-210fe.web.app/login',
+            }).catch((emailErr) => {
+                console.warn('Background provision email dispatch encountered error:', emailErr);
+            });
 
             showToast({
                 type: 'success',
                 title: 'User Registered',
-                description: `${targetFirstName} ${targetLastName} registered.`,
+                description: `${fullName} registered. Credentials sent to ${targetEmail}.`,
             });
             handleCloseModals();
         } catch (error) {
@@ -387,6 +441,45 @@ const UsersPage = ({
             if (formAvatarFile) {
                 const uploadResult = await storageService.uploadAvatar(editingUser.id, formAvatarFile);
                 uploadedAvatarPath = uploadResult.path;
+            }
+
+            if (isCoordinator) {
+                const userPayload = {
+                    userId: editingUser.id,
+                    old: {
+                        firstName: editingUser.firstName,
+                        middleName: editingUser.middleName,
+                        lastName: editingUser.lastName,
+                        email: editingUser.email,
+                        role: editingUser.role,
+                        departmentId: editingUser.departmentId,
+                    },
+                    new: {
+                        firstName: formFirstName.trim(),
+                        middleName: formMiddleName.trim() || null,
+                        lastName: formLastName.trim(),
+                        email: formEmail.trim().toLowerCase(),
+                        departmentId: finalDepartmentId,
+                        role: formRole,
+                        avatarPath: uploadedAvatarPath,
+                    },
+                };
+
+                const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
+                await coordinatorApprovalService.submitCoordinatorRequest({
+                    action: constants.COORDINATOR_REQUESTS_ACTION.USER_UPDATE,
+                    requesterId,
+                    data: userPayload,
+                });
+                useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
+
+                showToast({
+                    type: 'success',
+                    title: 'Request Submitted',
+                    description: `Profile update request for "${editingUser.universityId}" sent for Administrator approval.`,
+                });
+                handleCloseModals();
+                return;
             }
 
             const minTimer = new Promise((resolve) => setTimeout(resolve, 500));
@@ -456,6 +549,31 @@ const UsersPage = ({
             return;
         }
 
+        if (isCoordinator) {
+            const userPayload = {
+                userId: suspendingUser.id,
+                universityId: suspendingUser.universityId,
+                name: `${suspendingUser.firstName} ${suspendingUser.lastName}`.trim(),
+                status: newStatus,
+            };
+
+            const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
+            await coordinatorApprovalService.submitCoordinatorRequest({
+                action: constants.COORDINATOR_REQUESTS_ACTION.USER_SUSPEND,
+                requesterId,
+                data: userPayload,
+            });
+            useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
+
+            showToast({
+                type: 'success',
+                title: 'Request Submitted',
+                description: `User status change request for "${suspendingUser.universityId}" sent for Administrator approval.`,
+            });
+            setSuspendingUser(null);
+            return;
+        }
+
         setIsSuspendingLoading(true);
 
         try {
@@ -494,6 +612,30 @@ const UsersPage = ({
 
     const handleDeleteUser = async () => {
         if (!deletingUser) {
+            return;
+        }
+
+        if (isCoordinator) {
+            const userPayload = {
+                userId: deletingUser.id,
+                universityId: deletingUser.universityId,
+                name: `${deletingUser.firstName} ${deletingUser.lastName}`.trim(),
+            };
+
+            const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
+            await coordinatorApprovalService.submitCoordinatorRequest({
+                action: constants.COORDINATOR_REQUESTS_ACTION.USER_DELETE,
+                requesterId,
+                data: userPayload,
+            });
+            useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
+
+            showToast({
+                type: 'success',
+                title: 'Request Submitted',
+                description: `User deletion request for "${deletingUser.universityId}" sent for Administrator approval.`,
+            });
+            handleCloseModals();
             return;
         }
 
@@ -593,11 +735,7 @@ const UsersPage = ({
                 createdAt: createdAt ?? null,
                 updatedAt: user.updatedAt ?? createdAt ?? null,
                 date: createdAt && !isNaN(new Date(createdAt).getTime())
-                    ? new Date(createdAt).toLocaleDateString([], {
-                        month: 'short',
-                        day: 'numeric',
-                        year: 'numeric',
-                    })
+                    ? formatDateTime(createdAt)
                     : 'Active Member',
             };
         });
@@ -609,6 +747,7 @@ const UsersPage = ({
             <Browser
                 resourceName="users"
                 title="Manage Users"
+                description="Manage institutional accounts, academic roles, and departmental access permissions."
                 data={formattedUserData}
                 columns={USER_COLUMNS}
                 sortOptions={USER_SORT_OPTIONS}

@@ -54,11 +54,14 @@ const useNotificationStore = create((set, get) => ({
             const validatedPayload = mutationSchema.InsertNotificationSchema.parse(payload);
             const newNotification = await notificationService.insertNotification(validatedPayload);
 
-            set((state) => ({
-                notifications: [newNotification, ...state.notifications],
-                isLoading: false,
-                error: null,
-            }));
+            set((state) => {
+                const shouldAddToLocal = !state.recipientId || String(state.recipientId) === String(payload.recipientId);
+                return {
+                    notifications: shouldAddToLocal ? [newNotification, ...state.notifications] : state.notifications,
+                    isLoading: false,
+                    error: null,
+                };
+            });
 
             return newNotification;
         } catch (error) {
@@ -66,6 +69,38 @@ const useNotificationStore = create((set, get) => ({
             set({ isLoading: false, error: message });
 
             throw error;
+        }
+    },
+
+    markNotificationAsRead: async (id) => {
+        // Optimistic local update
+        set((state) => ({
+            notifications: state.notifications.map((n) =>
+                n.id === id ? { ...n, isRead: true } : n
+            ),
+        }));
+
+        try {
+            await notificationService.updateNotification(id, { isRead: true });
+        } catch (error) {
+            console.warn(`Failed to mark notification ${id} as read:`, error);
+        }
+    },
+
+    markAllNotificationsAsRead: async (recipientId) => {
+        const unreadList = get().notifications.filter((n) => !n.isRead);
+
+        // Optimistic local update
+        set((state) => ({
+            notifications: state.notifications.map((n) => ({ ...n, isRead: true })),
+        }));
+
+        try {
+            await Promise.allSettled(
+                unreadList.map((n) => notificationService.updateNotification(n.id, { isRead: true }))
+            );
+        } catch (error) {
+            console.warn('Failed to mark all notifications as read:', error);
         }
     },
 

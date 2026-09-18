@@ -8,11 +8,12 @@ import {
     Browser,
     Container,
     Modal,
+    formatDateTime,
 } from '../components';
-import { useToast } from '../hooks';
+import { useToast, useAuth } from '../hooks';
 import { constants } from '../constants';
-import { useDocumentStore, useDepartmentStore } from '../stores';
-import { storageService } from '../services';
+import { useDocumentStore, useDepartmentStore, useCoordinatorStore, useAuthStore } from '../stores';
+import { storageService, coordinatorApprovalService } from '../services';
 
 
 // --- CONFIGURATIONS ---
@@ -28,11 +29,16 @@ const DOCUMENT_COLUMNS = [
 
 // --- COMPONENTS ---
 const ArchivesPage = ({
-    currentUser = null,
+    currentUser: propUser = null,
     onSelectDocument = null,
     className,
     ...props
 }) => {
+    // AUTH RESOLUTION
+    const { currentUser: authUser } = useAuth();
+    const storeUser = useAuthStore((state) => state.currentUser);
+    const currentUser = propUser ?? authUser ?? storeUser ?? useAuthStore.getState().currentUser;
+    const isCoordinator = constants.isCoordinatorRole(currentUser?.role);
     // STORES
     const documents = useDocumentStore((state) => state.documents);
     const documentVersions = useDocumentStore((state) => state.documentVersions ?? state.versions ?? []);
@@ -75,7 +81,7 @@ const ArchivesPage = ({
 
             const dateValue = doc.updatedAt || latestVer?.createdAt || doc.createdAt;
             const formattedDate = dateValue && !isNaN(new Date(dateValue).getTime())
-                ? new Date(dateValue).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
+                ? formatDateTime(dateValue)
                 : 'Active';
 
             return {
@@ -106,7 +112,7 @@ const ArchivesPage = ({
     // DERIVED VALUES: ARCHIVED ITEMS ONLY
     const archivedItems = useMemo(() => {
         return repositoryItems.filter((item) => {
-            const matchesArchiveState = item.isArchived === true || item.status === constants.DOCUMENT_SHARES_STATUS.STASHED;
+            const matchesArchiveState = Boolean(item.isArchived);
             if (!matchesArchiveState) return false;
             // Internal contents of folders archived as a unit are hidden from root
             return item.directlyArchived !== false;
@@ -155,6 +161,30 @@ const ArchivesPage = ({
 
     const performRestoreItem = async (item) => {
         try {
+            if (isCoordinator) {
+                const restorePayload = {
+                    documentId: item.id,
+                    documentTitle: item.title || item.name,
+                    isArchived: false,
+                    isFolder: Boolean(item.isFolder),
+                };
+
+                const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
+                await coordinatorApprovalService.submitCoordinatorRequest({
+                    action: constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_UNARCHIVE,
+                    requesterId,
+                    data: restorePayload,
+                });
+                useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
+
+                showToast({
+                    type: 'success',
+                    title: 'Request Submitted',
+                    description: `Restore request for "${item.title || item.name}" sent for Administrator approval.`,
+                });
+                return;
+            }
+
             await useDocumentStore.getState().archiveDocument(item.id, false);
             if (selectedDocument?.id === item.id) {
                 const updated = {
@@ -289,6 +319,30 @@ const ArchivesPage = ({
         if (!deletingItem) return;
         setIsDeletingItemLoading(true);
         try {
+            if (isCoordinator) {
+                const deletePayload = {
+                    documentId: deletingItem.id,
+                    documentTitle: deletingItem.title || deletingItem.name,
+                    isFolder: Boolean(deletingItem.isFolder),
+                };
+
+                const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
+                await coordinatorApprovalService.submitCoordinatorRequest({
+                    action: constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_DELETE,
+                    requesterId,
+                    data: deletePayload,
+                });
+                useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
+
+                showToast({
+                    type: 'success',
+                    title: 'Request Submitted',
+                    description: `Delete request for "${deletingItem.title || deletingItem.name}" sent for Administrator approval.`,
+                });
+                setDeletingItem(null);
+                return;
+            }
+
             await useDocumentStore.getState().deleteDocument(deletingItem.id);
             showToast({
                 type: 'success',

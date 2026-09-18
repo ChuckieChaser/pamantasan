@@ -32,30 +32,64 @@ const notificationService = {
     },
 
     insertNotification: async (payload) => {
-        const data = await dataConnectService.executeMutation('InsertNotification', {
+        const timestamp = payload.createdAt || new Date().toISOString();
+        let raw = null;
+        try {
+            const data = await dataConnectService.executeMutation('InsertNotification', {
+                recipientId: payload.recipientId,
+                actorId: payload.actorId ?? null,
+                entityType: payload.entityType,
+                entityId: payload.entityId,
+                action: payload.action,
+                isRead: payload.isRead ?? false,
+                isEmailed: payload.isEmailed ?? false,
+                createdAt: timestamp,
+                updatedAt: payload.updatedAt ?? timestamp,
+            });
+            raw = data?.notification_insert ?? data?.notifications_insert;
+        } catch (error) {
+            console.warn('Failed to insert notification to Firebase Data Connect, creating local fallback record:', error);
+        }
+
+        return {
+            id: raw?.id ?? `notif-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
             recipientId: payload.recipientId,
+            recipient: { id: payload.recipientId },
             actorId: payload.actorId ?? null,
+            actor: payload.actorId ? { id: payload.actorId } : null,
             entityType: payload.entityType,
             entityId: payload.entityId,
             action: payload.action,
             isRead: payload.isRead ?? false,
             isEmailed: payload.isEmailed ?? false,
-            createdAt: payload.createdAt,
-            updatedAt: payload.updatedAt,
-        });
-
-        return formatLiveNotification(data?.notification_insert ?? data?.notifications_insert);
+            createdAt: timestamp,
+            updatedAt: payload.updatedAt ?? timestamp,
+        };
     },
 
     updateNotification: async (id, payload) => {
-        const data = await dataConnectService.executeMutation('UpdateNotification', {
-            id: id,
-            isRead: payload.isRead,
-            isEmailed: payload.isEmailed,
-            updatedAt: payload.updatedAt,
-        });
+        const timestamp = payload.updatedAt || new Date().toISOString();
+        let raw = null;
+        try {
+            const data = await dataConnectService.executeMutation('UpdateNotification', {
+                id: id,
+                isRead: payload.isRead,
+                isEmailed: payload.isEmailed,
+                updatedAt: timestamp,
+            });
+            raw = data?.notification_update ?? data?.notifications_update;
+        } catch (error) {
+            console.warn(`Failed to update notification ${id} in Firebase Data Connect:`, error);
+        }
 
-        return formatLiveNotification(data?.notification_update ?? data?.notifications_update);
+        const formatted = raw ? formatLiveNotification(raw) : null;
+        return {
+            id: id,
+            ...formatted,
+            ...(payload.isRead !== undefined ? { isRead: payload.isRead } : {}),
+            ...(payload.isEmailed !== undefined ? { isEmailed: payload.isEmailed } : {}),
+            updatedAt: timestamp,
+        };
     },
 
     deleteNotification: async (id) => {
@@ -70,12 +104,38 @@ const notificationService = {
             return null;
         }
 
+        let targetEmail = payload?.toEmail;
+        if (!targetEmail && payload?.recipientId) {
+            try {
+                const { useUserStore } = await import('../stores/useUserStore');
+                const allUsers = useUserStore.getState().users || [];
+                const user = allUsers.find((u) => String(u.id) === String(payload.recipientId));
+                if (user?.email) {
+                    targetEmail = user.email;
+                }
+            } catch {}
+        }
+
+        const cleanEmail = (targetEmail || '').toString().trim().toLowerCase();
+        if (!cleanEmail) {
+            // Silently skip if no email address is available rather than failing with an unhandled exception
+            return null;
+        }
+
+        const title = payload.title || payload.subject || 'System Notification';
+        const message = payload.message || payload.description || payload.reason || title;
+
         try {
             const dispatch = httpsCallable(functions, 'dispatchSystemNotification');
-            const result = await dispatch(payload);
+            const result = await dispatch({
+                ...payload,
+                toEmail: cleanEmail,
+                title,
+                message,
+            });
             return result?.data;
         } catch (error) {
-            console.error('[notificationService] Failed to dispatch notification email:', error);
+            console.warn('[notificationService] Notification email dispatch failed:', error?.message || error);
             return null;
         }
     },

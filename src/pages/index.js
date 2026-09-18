@@ -6,5 +6,6 @@ export { DocumentsPage } from './DocumentsPage';
 export { DepartmentsPage } from './DepartmentsPage';
 export { UsersPage } from './UsersPage';
 export { RequestsPage } from './RequestsPage';
+export { CoordinatorPage } from './CoordinatorPage';
 export { OnboardingPage } from './OnboardingPage';
 export { ArchivesPage } from './ArchivesPage';

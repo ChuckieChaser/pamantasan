@@ -181,12 +181,6 @@ query FetchDocuments(
             id
             name
         }
-        uploader {
-            id
-            firstName
-            lastName
-            email
-        }
         name
         comment
         isFolder
@@ -203,12 +197,6 @@ query FetchAllDocuments @auth(level: PUBLIC) {
         parent {
             id
             name
-        }
-        uploader {
-            id
-            firstName
-            lastName
-            email
         }
         name
         comment
@@ -228,12 +216,6 @@ query FetchDocumentById(
         parent {
             id
             name
-        }
-        uploader {
-            id
-            firstName
-            lastName
-            email
         }
         name
         comment

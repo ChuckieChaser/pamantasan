@@ -14,6 +14,8 @@ import {
     Copy,
     Download,
     Edit3,
+    Eye,
+    EyeOff,
     FileCheck,
     FileText,
     FileType,
@@ -21,11 +23,13 @@ import {
     FolderInput,
     FolderOpen,
     FolderTree,
+    Globe,
     HardDrive,
     Hash,
     Inbox,
     Info,
     Layers,
+    Lock,
     MessageSquare,
     Paperclip,
     RotateCcw,
@@ -33,6 +37,7 @@ import {
     Send,
     Share2,
     Shield,
+    ShieldCheck,
     Sparkles,
     Tag,
     Trash2,
@@ -47,10 +52,14 @@ import {
 import { useAuth, useToast } from '../hooks';
 import {
     useAuditStore,
+    useAuthStore,
+    useCoordinatorStore,
     useDepartmentStore,
     useDocumentStore,
     useUserStore,
+    getRecursiveDescendantDocIds,
 } from '../stores';
+import { ReadershipChart } from './ReadershipChart';
 import { Avatar, resolveUserAvatar } from './Avatar';
 import { Badge } from './Badge';
 import { Button } from './Button';
@@ -59,7 +68,7 @@ import { SelectField, TextField } from './Fields';
 import { SegmentSelection } from './Selections';
 import { Account } from './ui/Account';
 import { constants } from '../constants';
-import { storageService } from '../services';
+import { storageService, coordinatorApprovalService } from '../services';
 
 
 // --- CONFIGURATIONS ---
@@ -96,7 +105,7 @@ const STATUS_BADGE_VARIANT = {
     [constants.USERS_STATUS.PENDING_PASSWORD]: 'warning',
     [constants.USERS_STATUS.PENDING_SSO]: 'information',
     [constants.USERS_STATUS.SUSPENDED]: 'error',
-    [constants.DOCUMENT_REQUESTS_STATUS.OPEN]: 'warning',
+    [constants.DOCUMENT_REQUESTS_STATUS.OPEN]: 'information',
     [constants.DOCUMENT_REQUESTS_STATUS.RESOLVED]: 'success',
     [constants.DOCUMENT_REQUESTS_STATUS.REJECTED]: 'error',
     [constants.COORDINATOR_REQUESTS_STATUS.PENDING]: 'warning',
@@ -115,6 +124,8 @@ const normalizeTab = (tab) => {
     if (tab === 'version' || tab === 'versions' || tab === 'view_version') return 'version';
     if (tab === 'share' || tab === 'shares' || tab === 'view_share') return 'share';
     if (tab === 'view_information') return 'information';
+    if (tab === 'view_message' || tab === 'message' || tab === 'messages' || tab === 'discussion') return 'messages';
+    if (tab === 'view_attachment' || tab === 'attachment' || tab === 'attachments') return 'attachments';
     return tab;
 };
 
@@ -131,12 +142,13 @@ const Inspector = ({
 }) => {
     // REFS
     const chatEndReference = useRef(null);
+    const chatTextareaRef = useRef(null);
 
     // STATES
     const [activeTab, setActiveTab] = useState(normalizeTab(targetTab || item?._targetTab || 'information'));
     const [copiedPropertyKey, setCopiedPropertyKey] = useState(null);
     const [chatInputText, setChatInputText] = useState('');
-    const [stagedAttachment, setStagedAttachment] = useState(null);
+    const [stagedAttachments, setStagedAttachments] = useState([]);
     const [isAttachModalOpen, setIsAttachModalOpen] = useState(false);
     const [attachSearchTerm, setAttachSearchTerm] = useState('');
     const [previousItemId, setPreviousItemId] = useState(item?.id);
@@ -172,11 +184,24 @@ const Inspector = ({
     const [expandedFolderIds, setExpandedFolderIds] = useState(() => new Set());
     const [selectedTreeItemId, setSelectedTreeItemId] = useState(null);
 
+    // HOOKS
+    const { showToast } = useToast();
+    const { currentUser: authUser } = useAuth();
+    const storeUser = useAuthStore((state) => state.currentUser);
+    const activeUser = currentUser ?? authUser ?? storeUser ?? useAuthStore.getState().currentUser;
+    const isStaff = constants.isStaffRole(activeUser?.role);
+    const isAdmin = constants.isAdminRole(activeUser?.role);
+    const isCoordinator = constants.isCoordinatorRole(activeUser?.role);
+    const isOfficer = constants.isOfficerRole(activeUser?.role);
+    const isDirector = constants.isDirectorRole(activeUser?.role);
+    const isMember = constants.isMemberRole(activeUser?.role);
+
     if (item?.id !== previousItemId) {
         setPreviousItemId(item?.id);
-        setActiveTab(normalizeTab(targetTab || item?._targetTab || 'information'));
+        const resolvedTab = normalizeTab(targetTab || item?._targetTab || 'information');
+        setActiveTab(isMember && resolvedTab === 'share' ? 'information' : resolvedTab);
         setChatInputText('');
-        setStagedAttachment(null);
+        setStagedAttachments([]);
         setIsAttachModalOpen(false);
         setIsEditDepartmentModalOpen(false);
         setIsEditUserModalOpen(false);
@@ -188,18 +213,16 @@ const Inspector = ({
     useEffect(() => {
         const nextTab = targetTab || item?._targetTab;
         if (nextTab) {
-            setActiveTab(normalizeTab(nextTab));
+            const resolvedTab = normalizeTab(nextTab);
+            setActiveTab(isMember && resolvedTab === 'share' ? 'information' : resolvedTab);
         }
-    }, [targetTab, item?.id, item?._targetTab]);
-
-    // HOOKS
-    const { showToast } = useToast();
-    const { currentUser: authUser } = useAuth();
-    const activeUser = currentUser ?? authUser;
+    }, [targetTab, item?.id, item?._targetTab, isMember]);
 
     const allDocuments = useDocumentStore((state) => state.documents);
     const allDocumentVersions = useDocumentStore((state) => state.documentVersions ?? state.versions ?? []);
     const allDocumentShares = useDocumentStore((state) => state.documentShares ?? state.shares ?? []);
+    const allDocumentRequests = useDocumentStore((state) => state.documentRequests ?? []);
+    const allCoordinatorRequests = useCoordinatorStore((state) => state.coordinatorRequests ?? []);
     const allRequestMessages = useDocumentStore((state) => state.documentRequestMessages ?? []);
     const allRequestAttachments = useDocumentStore((state) => state.documentRequestAttachments ?? []);
     const addRequestMessage = useDocumentStore((state) => state.insertDocumentRequestMessage);
@@ -208,26 +231,69 @@ const Inspector = ({
     const allUsers = useUserStore((state) => state.users);
     const allAuditLogs = useAuditStore((state) => state.auditLogs);
 
-    // DERIVED VALUES
+    // DERIVED ENTITY TYPES (STRICTLY MUTUALLY EXCLUSIVE)
     const isFolder = Boolean(item?.isFolder);
+    const isCoordinatorRequest = Boolean(
+        !isFolder &&
+        item?.action &&
+        typeof item.action === 'string' &&
+        (item.action.startsWith('USER_') ||
+            item.action.startsWith('DEPARTMENT_') ||
+            item.action.startsWith('DOCUMENT_'))
+    );
+    const isDocumentRequest = Boolean(
+        !isFolder &&
+        !isCoordinatorRequest &&
+        (item?.subject !== undefined ||
+            item?.requesterId !== undefined ||
+            item?.messages !== undefined ||
+            item?.attachments !== undefined)
+    );
+    const isUser = Boolean(
+        !isFolder &&
+        !isCoordinatorRequest &&
+        !isDocumentRequest &&
+        (item?.universityId || (item?.role && !item?.action) || (item?.email && !item?.action))
+    );
+    const isDepartment = Boolean(
+        !isFolder &&
+        !isUser &&
+        !isCoordinatorRequest &&
+        !isDocumentRequest &&
+        item?.code &&
+        !item?.universityId
+    );
     const isDocument = Boolean(
         !isFolder &&
+        !isUser &&
+        !isDepartment &&
+        !isCoordinatorRequest &&
+        !isDocumentRequest &&
         (item?.classification ||
             item?.size ||
             item?.sizeBytes ||
             item?.mimeType ||
             item?.version !== undefined ||
-            item?.parentId !== undefined)
+            item?.parentId !== undefined ||
+            item?.name ||
+            item?.title)
     );
-    const isUser = Boolean(item?.universityId || item?.email || item?.role);
-    const isDepartment = Boolean(item?.code && !item?.universityId && !isUser);
 
-    // FETCH VERSIONS DYNAMICALLY ON SELECTION
+    // FETCH VERSIONS & SHARES DYNAMICALLY ON SELECTION
     useEffect(() => {
         if (item?.id && isDocument) {
             useDocumentStore.getState().fetchDocumentVersions(item.id).catch(() => {});
         }
-    }, [item?.id, isDocument]);
+        if (item?.id && (isDocument || isFolder)) {
+            useDocumentStore.getState().fetchDocumentShares(item.id).catch(() => {});
+        }
+    }, [item?.id, isDocument, isFolder]);
+
+    useEffect(() => {
+        if (activeTab === 'share' && item?.id && (isDocument || isFolder)) {
+            useDocumentStore.getState().fetchDocumentShares(item.id).catch(() => {});
+        }
+    }, [activeTab, item?.id, isDocument, isFolder]);
 
     // REACTIVE LIVE DEPARTMENT DATA
     const activeDepartment = useMemo(() => {
@@ -372,16 +438,52 @@ const Inspector = ({
                 updatedAt: matchedDoc?.updatedAt ?? item.updatedAt,
             };
         }
+        if (isDocumentRequest) {
+            const matchedRequest = (allDocumentRequests || []).find((r) => String(r.id) === String(item?.id));
+            const effectiveStatus = matchedRequest?.status ?? item?.status;
+            return {
+                ...item,
+                ...(matchedRequest || {}),
+                status: effectiveStatus,
+                updatedAt: matchedRequest?.updatedAt ?? item?.updatedAt,
+            };
+        }
+        if (isCoordinatorRequest) {
+            const matchedRequest = allCoordinatorRequests.find((r) => r.id === item.id);
+            if (matchedRequest) {
+                return {
+                    ...item,
+                    ...matchedRequest,
+                    status: matchedRequest.status ?? item.status,
+                    updatedAt: matchedRequest.updatedAt ?? item.updatedAt,
+                };
+            }
+        }
         return item;
-    }, [item, isDepartment, activeDepartment, isUser, activeUserRecord, userDepartmentDisplay, isDocument, isFolder, allDocuments, allDocumentVersions]);
+    }, [item, isDepartment, activeDepartment, isUser, activeUserRecord, userDepartmentDisplay, isDocument, isFolder, isDocumentRequest, isCoordinatorRequest, allDocuments, allDocumentVersions, allDocumentRequests, allCoordinatorRequests]);
 
-    const isCoordinatorRequest = Boolean(
-        item?.action &&
-        (item.action.startsWith('USER_') ||
-            item.action.startsWith('DEPARTMENT_') ||
-            item.action.startsWith('DOCUMENT_'))
-    );
-    const isDocumentRequest = Boolean(item?.subject && !isCoordinatorRequest);
+    // FETCH REQUEST MESSAGES & ATTACHMENTS (INITIAL + REALTIME POLLING)
+    useEffect(() => {
+        const requestId = activeItem?.id ?? item?.id;
+        if (!requestId || !isDocumentRequest) return;
+
+        if (allDocuments.length === 0) {
+            useDocumentStore.getState().fetchDocuments().catch(() => {});
+        }
+        if (allDocumentVersions.length === 0) {
+            useDocumentStore.getState().fetchAllDocumentVersions().catch(() => {});
+        }
+
+        useDocumentStore.getState().fetchDocumentRequestMessages(requestId).catch(() => {});
+        useDocumentStore.getState().fetchDocumentRequestAttachments(requestId).catch(() => {});
+
+        const intervalId = setInterval(() => {
+            useDocumentStore.getState().fetchDocumentRequestMessages(requestId).catch(() => {});
+            useDocumentStore.getState().fetchDocumentRequestAttachments(requestId).catch(() => {});
+        }, 3000);
+
+        return () => clearInterval(intervalId);
+    }, [activeItem?.id, item?.id, isDocumentRequest, allDocuments.length, allDocumentVersions.length]);
 
     const documentVersions = useMemo(() => {
         if (!item || !isDocument) {
@@ -415,12 +517,130 @@ const Inspector = ({
     }, [item, isDocument, allDocumentVersions]);
 
     const documentShares = useMemo(() => {
-        if (!item || !isDocument) {
+        if (!item || (!isDocument && !isFolder)) {
             return [];
         }
 
-        return allDocumentShares.filter((share) => share.document?.id === item.id || share.documentId === item.id);
-    }, [item, isDocument, allDocumentShares]);
+        const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
+        const itemCleanId = cleanId(item.id);
+
+        const direct = allDocumentShares.filter((share) => {
+            const sDocId = cleanId(share.document?.id ?? share.documentId);
+            return sDocId === itemCleanId;
+        });
+        if (direct.length > 0) return direct;
+
+        if (Array.isArray(item.shares) && item.shares.length > 0) {
+            return item.shares;
+        }
+        if (item.share) {
+            return [item.share];
+        }
+
+        // Inherited shares from parent folder
+        let pId = item.parentId ?? item.parentFolderId;
+        while (pId && pId !== 'root') {
+            const pCleanId = cleanId(pId);
+            const parentDoc = allDocuments.find((d) => cleanId(d.id) === pCleanId);
+            if (!parentDoc) break;
+            const parentShares = allDocumentShares.filter((s) => {
+                const sDocId = cleanId(s.document?.id ?? s.documentId);
+                return sDocId === pCleanId;
+            });
+            if (parentShares.length > 0) {
+                return parentShares;
+            }
+            pId = parentDoc.parentId ?? parentDoc.parentFolderId;
+        }
+
+        if (item.status && item.status !== '—') {
+            return [{
+                id: `synthetic-${item.id}`,
+                status: item.status,
+                department: { name: userDepartmentDisplay || 'Current Department' },
+                createdAt: item.createdAt || new Date().toISOString(),
+            }];
+        }
+
+        return [];
+    }, [item, isDocument, isFolder, allDocumentShares, allDocuments, userDepartmentDisplay]);
+
+    const departmentShares = useMemo(() => {
+        return documentShares.filter((s) => !s.recipientId && !s.recipient?.id && !s.recipient);
+    }, [documentShares]);
+
+    const userShares = useMemo(() => {
+        return documentShares.filter((s) => Boolean(s.recipientId || s.recipient?.id || s.recipient));
+    }, [documentShares]);
+
+    const pendingStatusRequest = useMemo(() => {
+        if (!activeItem || !isDocumentRequest) return null;
+        return allCoordinatorRequests.find(
+            (cr) =>
+                cr.status === constants.COORDINATOR_REQUESTS_STATUS.PENDING &&
+                (cr.action === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_RESOLVE ||
+                 cr.action === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_REJECT ||
+                 cr.action === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_REOPEN) &&
+                String(cr.data?.documentRequestId ?? '') === String(activeItem.id)
+        ) ?? null;
+    }, [activeItem, isDocumentRequest, allCoordinatorRequests]);
+
+    const canSeePendingStatus = useMemo(() => {
+        if (!pendingStatusRequest) return false;
+        return isAdmin || (isCoordinator && String(pendingStatusRequest.requesterId) === String(activeUser?.id));
+    }, [pendingStatusRequest, isAdmin, isCoordinator, activeUser?.id]);
+
+    const resolvePublisherName = (shareItem) => {
+        const sharerId = shareItem.sharer?.id ?? shareItem.sharerId;
+        let foundUser = null;
+
+        if (sharerId) {
+            foundUser = allUsers.find((u) => u.id === sharerId);
+        }
+
+        if (!foundUser && shareItem.publisherId) {
+            foundUser = allUsers.find((u) => u.id === shareItem.publisherId);
+        }
+
+        if (!foundUser && (shareItem.sharer?.firstName || shareItem.sharer?.lastName)) {
+            const name = `${shareItem.sharer.firstName || ''} ${shareItem.sharer.lastName || ''}`.trim();
+            if (name) return name;
+        }
+
+        // Check latest document version publisher or uploader
+        if (!foundUser) {
+            const docVersions = allDocumentVersions.filter(
+                (v) => (v.document?.id ?? v.documentId) === item?.id
+            );
+            const latestVer = [...docVersions].sort(
+                (a, b) => (b.versionNumber ?? b.version ?? 0) - (a.versionNumber ?? a.version ?? 0)
+            )[0];
+            const pubId = latestVer?.publisher?.id ?? latestVer?.publisherId ?? latestVer?.uploader?.id ?? latestVer?.uploaderId;
+            if (pubId) {
+                foundUser = allUsers.find((u) => u.id === pubId);
+            }
+        }
+
+        // Check item publisher or uploader
+        if (!foundUser && item?.publisherId) {
+            foundUser = allUsers.find((u) => u.id === item.publisherId);
+        }
+        if (!foundUser && item?.uploaderId) {
+            foundUser = allUsers.find((u) => u.id === item.uploaderId);
+        }
+
+        if (foundUser) {
+            const fullName = `${foundUser.firstName || ''} ${foundUser.lastName || ''}`.trim();
+            return fullName || foundUser.name || foundUser.email || 'Staff';
+        }
+
+        if (isDirector && activeUser) {
+            const myName = `${activeUser.firstName || ''} ${activeUser.lastName || ''}`.trim();
+            return myName || 'Director';
+        }
+
+        return isDirector ? 'Director' : 'Staff';
+    };
 
     const getFolderChildren = useMemo(() => {
         return (folderId) => {
@@ -503,9 +723,12 @@ const Inspector = ({
             return [];
         }
 
-        const messages = allRequestMessages.filter(
-            (message) => message.documentRequest?.id === item.id || message.documentRequestId === item.id
-        );
+        const messages = allRequestMessages.filter((message) => {
+            const msgReqId = typeof message.documentRequest === 'object'
+                ? message.documentRequest?.id
+                : (message.documentRequestId ?? message.documentRequest);
+            return msgReqId === item.id;
+        });
 
         if (messages.length > 0) {
             return messages.sort(
@@ -521,28 +744,108 @@ const Inspector = ({
         return [];
     }, [item, isDocumentRequest, allRequestMessages]);
 
+    const pendingAttachRequests = useMemo(() => {
+        if (!item || !isDocumentRequest) return [];
+        const activeId = activeUser?.id;
+        // PRIVACY GUARD: Only Admin or the submitting Coordinator can view pending attach requests!
+        if (!isAdmin && !isCoordinator) return [];
+
+        return allCoordinatorRequests.filter((req) => {
+            if (!req || req.status !== constants.COORDINATOR_REQUESTS_STATUS.PENDING) return false;
+            if (
+                req.action !== constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_ATTACH &&
+                req.action !== constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_ATTACH
+            ) return false;
+
+            const reqId = typeof req.requester === 'object' ? req.requester?.id : (req.requesterId ?? req.requester);
+            if (!isAdmin && String(reqId) !== String(activeId)) return false;
+
+            const payloadData = typeof req.data === 'string' ? JSON.parse(req.data || '{}') : (req.data || {});
+            const targetDocReqId = payloadData.documentRequestId ?? payloadData.id;
+            return String(targetDocReqId) === String(item.id);
+        });
+    }, [item, isDocumentRequest, allCoordinatorRequests, isAdmin, isCoordinator, activeUser?.id]);
+
+    const combinedThreadItems = useMemo(() => {
+        if (!isDocumentRequest) return [];
+        const messageItems = requestMessages.map((msg) => ({
+            type: 'message',
+            id: msg.id,
+            createdAt: msg.createdAt,
+            data: msg,
+        }));
+
+        const pendingItems = pendingAttachRequests.map((req) => ({
+            type: 'pending_attach',
+            id: `pending-${req.id}`,
+            createdAt: req.createdAt,
+            data: req,
+        }));
+
+        return [...messageItems, ...pendingItems].sort((a, b) => {
+            const timeA = new Date(a.createdAt || 0).getTime();
+            const timeB = new Date(b.createdAt || 0).getTime();
+            return timeA - timeB;
+        });
+    }, [isDocumentRequest, requestMessages, pendingAttachRequests]);
+
     const requestAttachments = useMemo(() => {
         if (!item || !isDocumentRequest) {
             return [];
         }
 
-        const attachments = allRequestAttachments.filter(
-            (attachment) => attachment.documentRequest?.id === item.id || attachment.documentRequestId === item.id
-        );
+        const attachments = allRequestAttachments.filter((attachment) => {
+            const attReqId = typeof attachment.documentRequest === 'object'
+                ? attachment.documentRequest?.id
+                : (attachment.documentRequestId ?? attachment.documentRequest);
+            return attReqId === item.id;
+        });
 
-        if (attachments.length > 0) {
-            return attachments;
-        }
+        const list = attachments.length > 0 ? attachments : (item.attachments ?? []);
 
-        return item.attachments ?? [];
-    }, [item, isDocumentRequest, allRequestAttachments]);
+        return list.map((att) => {
+            const targetDocId = att.documentId ?? att.document?.id ?? att.id;
+            const matchedDoc = allDocuments.find((d) => d.id === targetDocId);
+            const docVers = allDocumentVersions.filter(
+                (v) => (v.document?.id ?? v.documentId) === targetDocId
+            );
+            const latestVer = docVers.length > 0
+                ? [...docVers].sort((a, b) => (b.version ?? 0) - (a.version ?? 0))[0]
+                : null;
+
+            return {
+                ...att,
+                documentId: targetDocId,
+                document: matchedDoc ?? att.document ?? (targetDocId ? { id: targetDocId } : null),
+                name: att.name ?? matchedDoc?.name ?? 'Attachment',
+                path: att.path ?? latestVer?.path ?? matchedDoc?.path,
+                sizeBytes: att.sizeBytes ?? latestVer?.sizeBytes ?? matchedDoc?.sizeBytes,
+                mimeType: att.mimeType ?? latestVer?.mimeType ?? matchedDoc?.mimeType,
+            };
+        });
+    }, [item, isDocumentRequest, allRequestAttachments, allDocuments, allDocumentVersions]);
 
     const tabOptions = useMemo(() => {
+        if (isDocumentRequest) {
+            return [
+                { value: 'information', label: 'Information', icon: Info },
+                { value: 'messages',    label: `Message (${requestMessages.length})`, icon: MessageSquare },
+                { value: 'attachments', label: `Attachments (${requestAttachments.length})`, icon: Paperclip },
+            ];
+        }
+
+        if (isCoordinatorRequest) {
+            return [
+                { value: 'information', label: 'Information', icon: Info },
+                { value: 'payload',     label: 'Payload', icon: Layers },
+            ];
+        }
+
         if (isDocument) {
             return [
                 { value: 'information', label: 'Information', icon: Info },
                 { value: 'version',     label: `Version (${documentVersions.length})`, icon: Layers },
-                { value: 'share',       label: `Share (${documentShares.length})`, icon: Share2 },
+                ...(!isMember ? [{ value: 'share', label: `Share (${documentShares.length})`, icon: Share2 }] : []),
             ];
         }
 
@@ -550,7 +853,7 @@ const Inspector = ({
             return [
                 { value: 'information', label: 'Information', icon: Info },
                 { value: 'content',     label: `Content (${folderContents.length})`, icon: Folder },
-                { value: 'share',       label: `Share (${documentShares.length})`, icon: Share2 },
+                ...(!isMember ? [{ value: 'share', label: `Share (${documentShares.length})`, icon: Share2 }] : []),
             ];
         }
 
@@ -568,37 +871,29 @@ const Inspector = ({
             ];
         }
 
-        if (isCoordinatorRequest) {
-            return [
-                { value: 'information', label: 'Information', icon: Info },
-                { value: 'payload',     label: 'Payload', icon: Layers },
-            ];
-        }
-
-        if (isDocumentRequest) {
-            return [
-                { value: 'information', label: 'Information', icon: Info },
-                { value: 'messages',    label: `Discussion (${requestMessages.length})`, icon: MessageSquare },
-                { value: 'attachments', label: `Attachments (${requestAttachments.length})`, icon: Paperclip },
-            ];
-        }
-
         return [{ value: 'information', label: 'Information', icon: Info }];
     }, [
+        isDocumentRequest,
+        isCoordinatorRequest,
         isDocument,
         isFolder,
         isUser,
         isDepartment,
-        isCoordinatorRequest,
-        isDocumentRequest,
+        isMember,
+        requestMessages.length,
+        requestAttachments.length,
         documentVersions.length,
         documentShares.length,
         folderContents.length,
         userActivities.length,
         departmentFaculty.length,
-        requestMessages.length,
-        requestAttachments.length,
     ]);
+
+    useEffect(() => {
+        if (tabOptions.length > 0 && !tabOptions.some((opt) => opt.value === activeTab)) {
+            setActiveTab(tabOptions[0]?.value || 'information');
+        }
+    }, [tabOptions, activeTab]);
 
     const attachableDocuments = useMemo(() => {
         return allDocuments
@@ -708,6 +1003,36 @@ const Inspector = ({
         setIsSavingEditDepartment(true);
         setDeptFormErrors({});
         try {
+            if (isCoordinator) {
+                const deptPayload = {
+                    departmentId: activeItem.id,
+                    old: {
+                        code: activeItem.code,
+                        name: activeItem.name || activeItem.title,
+                    },
+                    new: {
+                        code: deptFormCode.trim().toUpperCase(),
+                        name: deptFormName.trim(),
+                    },
+                };
+
+                const requesterId = activeUser?.id ?? useAuthStore.getState().currentUser?.id;
+                await coordinatorApprovalService.submitCoordinatorRequest({
+                    action: constants.COORDINATOR_REQUESTS_ACTION.DEPARTMENT_UPDATE,
+                    requesterId,
+                    data: deptPayload,
+                });
+                useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
+
+                showToast({
+                    type: 'success',
+                    title: 'Request Submitted',
+                    description: `Department update request for "${deptFormCode.toUpperCase()}" sent for Administrator approval.`,
+                });
+                setIsEditDepartmentModalOpen(false);
+                return;
+            }
+
             const minTimer = new Promise((resolve) => setTimeout(resolve, 500));
             const [updated] = await Promise.all([
                 useDepartmentStore.getState().updateDepartment(activeItem.id, {
@@ -788,6 +1113,46 @@ const Inspector = ({
                 uploadedAvatarPath = uploadResult.path;
             }
 
+            if (isCoordinator) {
+                const userPayload = {
+                    userId: u.id,
+                    old: {
+                        firstName: u.firstName,
+                        middleName: u.middleName,
+                        lastName: u.lastName,
+                        email: u.email,
+                        role: u.role,
+                        departmentId: u.departmentId,
+                    },
+                    new: {
+                        firstName: userFormFirstName.trim(),
+                        middleName: userFormMiddleName.trim() || null,
+                        lastName: userFormLastName.trim(),
+                        email: userFormEmail.trim().toLowerCase(),
+                        departmentId: finalDepartmentId,
+                        role: userFormRole,
+                        avatarPath: uploadedAvatarPath,
+                    },
+                };
+
+                const requesterId = activeUser?.id ?? useAuthStore.getState().currentUser?.id;
+                await coordinatorApprovalService.submitCoordinatorRequest({
+                    action: constants.COORDINATOR_REQUESTS_ACTION.USER_UPDATE,
+                    requesterId,
+                    data: userPayload,
+                });
+                useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
+
+                showToast({
+                    type: 'success',
+                    title: 'Request Submitted',
+                    description: `Profile update request for "${u.universityId}" sent for Administrator approval.`,
+                });
+                setIsEditUserModalOpen(false);
+                setUserFormAvatarFile(null);
+                return;
+            }
+
             const minTimer = new Promise((resolve) => setTimeout(resolve, 500));
             const [updated] = await Promise.all([
                 useUserStore.getState().updateUser(u.id, {
@@ -822,6 +1187,9 @@ const Inspector = ({
     };
 
     const handleOpenAttachModal = () => {
+        if (allDocuments.length === 0) {
+            useDocumentStore.getState().fetchDocuments().catch(() => {});
+        }
         setIsAttachModalOpen(true);
         setAttachSearchTerm('');
     };
@@ -832,22 +1200,96 @@ const Inspector = ({
     };
 
     const handleSelectDocumentToAttach = (selectedDocument) => {
-        setStagedAttachment({
-            documentId: selectedDocument.id,
-            name:       selectedDocument.name,
-            sizeBytes:  selectedDocument.sizeBytes ?? selectedDocument.size,
+        const docId = selectedDocument.id;
+        setStagedAttachments((prev) => {
+            if (prev.some((item) => item.documentId === docId)) {
+                return prev.filter((item) => item.documentId !== docId);
+            }
+            return [
+                ...prev,
+                {
+                    documentId: docId,
+                    name:       selectedDocument.name || selectedDocument.title,
+                    sizeBytes:  selectedDocument.sizeBytes ?? selectedDocument.size,
+                },
+            ];
         });
-        setIsAttachModalOpen(false);
-        setAttachSearchTerm('');
     };
 
-    const handleRemoveStagedAttachment = () => {
-        setStagedAttachment(null);
+    const handleRemoveStagedAttachment = (documentId) => {
+        setStagedAttachments((prev) => prev.filter((item) => item.documentId !== documentId));
+    };
+
+    const adjustChatTextareaHeight = () => {
+        const textarea = chatTextareaRef.current;
+        if (!textarea) return;
+        textarea.style.height = 'auto';
+        const scrollHeight = textarea.scrollHeight;
+        const maxHeight = 120; // roughly 5 lines (~24px per line)
+        textarea.style.height = `${Math.min(scrollHeight, maxHeight)}px`;
+        textarea.style.overflowY = scrollHeight > maxHeight ? 'auto' : 'hidden';
+    };
+
+    useEffect(() => {
+        adjustChatTextareaHeight();
+    }, [chatInputText]);
+
+    useEffect(() => {
+        if (activeTab === 'messages' && isDocumentRequest) {
+            chatEndReference.current?.scrollIntoView({ behavior: 'smooth' });
+        }
+    }, [activeTab, isDocumentRequest, requestMessages.length]);
+
+    const handleChatKeyDown = (e) => {
+        // Shift + Tab => insert new line
+        if (e.key === 'Tab' && e.shiftKey) {
+            e.preventDefault();
+            const textarea = e.target;
+            const start = textarea.selectionStart;
+            const end = textarea.selectionEnd;
+            const value = textarea.value;
+            const nextValue = value.substring(0, start) + '\n' + value.substring(end);
+            setChatInputText(nextValue);
+            setTimeout(() => {
+                textarea.selectionStart = textarea.selectionEnd = start + 1;
+                adjustChatTextareaHeight();
+            }, 0);
+            return;
+        }
+
+        // Shift + Enter => allow default multiline
+        if (e.key === 'Enter' && e.shiftKey) {
+            return;
+        }
+
+        // Enter without Shift => send message
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            handleSendMessage(e);
+        }
     };
 
     const handleSendMessage = async (formEvent) => {
-        formEvent.preventDefault();
-        if ((!chatInputText.trim() && !stagedAttachment) || !item) {
+        if (formEvent) formEvent.preventDefault();
+        const targetRequestId = activeItem?.id ?? item?.id;
+        if ((!chatInputText.trim() && stagedAttachments.length === 0) || !targetRequestId) {
+            return;
+        }
+
+        const currentReqStatus = String(activeItem?.status ?? item?.status ?? '').toUpperCase().trim();
+        const isRequestLocked = isDocumentRequest && (
+            currentReqStatus === constants.DOCUMENT_REQUESTS_STATUS.RESOLVED ||
+            currentReqStatus === constants.DOCUMENT_REQUESTS_STATUS.REJECTED ||
+            currentReqStatus.includes('RESOLV') ||
+            currentReqStatus.includes('REJECT')
+        );
+
+        if (isRequestLocked) {
+            showToast({
+                title: 'Thread Locked',
+                description: 'This document request has been closed. Reopen it to send messages.',
+                variant: 'warning',
+            });
             return;
         }
 
@@ -855,39 +1297,87 @@ const Inspector = ({
         if (!activeUserId) {
             showToast({
                 title: 'Authentication Error',
-                description: 'You must be signed in to post a discussion message.',
+                description: 'You must be signed in to post a message.',
                 variant: 'error',
             });
             return;
         }
+
+        const currentStaged = [...stagedAttachments];
         const messageText =
             chatInputText.trim() ||
-            (stagedAttachment ? `Attached document: ${stagedAttachment.name}` : '');
+            (currentStaged.length > 0
+                ? `Shared ${currentStaged.length === 1 ? currentStaged[0].name : `${currentStaged.length} documents`}`
+                : '');
+
+        setChatInputText('');
+        setStagedAttachments([]);
+        if (chatTextareaRef.current) {
+            chatTextareaRef.current.style.height = 'auto';
+        }
+
+        if (isCoordinator && currentStaged.length > 0) {
+            try {
+                const userNote = chatInputText.trim();
+                const attachPayload = {
+                    documentRequestId: targetRequestId,
+                    documentRequestSubject: activeItem?.subject || activeItem?.title || item?.subject || item?.title || 'Document Request',
+                    message: messageText,
+                    userMessage: userNote,
+                    hasExtraMessage: Boolean(userNote),
+                    attachments: currentStaged,
+                };
+
+                const requesterId = activeUserId ?? useAuthStore.getState().currentUser?.id;
+                await coordinatorApprovalService.submitCoordinatorRequest({
+                    action: constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_ATTACH,
+                    requesterId,
+                    data: attachPayload,
+                });
+                useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
+
+                showToast({
+                    title: 'Attachment Request Submitted',
+                    description: `Attached ${currentStaged.length} file${currentStaged.length === 1 ? '' : 's'} and accompanying message queued for Administrator approval.`,
+                    variant: 'success',
+                });
+                return;
+            } catch (error) {
+                showToast({
+                    title: 'Request Failed',
+                    description: error?.message ?? 'Could not queue attachment for approval.',
+                    variant: 'error',
+                });
+                return;
+            }
+        }
 
         try {
-            if (stagedAttachment) {
-                await attachDocumentToRequest({
-                    documentRequestId: item.id,
-                    documentId:        stagedAttachment.documentId,
-                    attachedById:      activeUserId,
-                });
+            if (currentStaged.length > 0) {
+                for (const att of currentStaged) {
+                    await attachDocumentToRequest({
+                        documentRequestId: targetRequestId,
+                        documentId:        att.documentId,
+                        attachedById:      activeUserId,
+                        name:              att.name,
+                    });
+                }
             }
 
+            const attachedDocIds = currentStaged.map((att) => att.documentId ?? att.id).filter(Boolean);
+            const metaTag = attachedDocIds.length > 0 ? `<!-- attachments:[${attachedDocIds.join(',')}] -->` : '';
+            const fullMessageText = metaTag ? `${messageText} ${metaTag}` : messageText;
+
             await addRequestMessage({
-                documentRequestId: item.id,
+                documentRequestId: targetRequestId,
                 userId:            activeUserId,
-                message:           messageText,
+                message:           fullMessageText,
             });
 
-            setChatInputText('');
-            setStagedAttachment(null);
-            showToast({
-                title:       'Message Sent',
-                description: stagedAttachment
-                    ? 'Message and attached file posted to discussion thread.'
-                    : 'Your reply has been posted to the discussion thread.',
-                variant:     'success',
-            });
+            // Immediate fetch to synchronize server state
+            useDocumentStore.getState().fetchDocumentRequestMessages(targetRequestId).catch(() => {});
+            useDocumentStore.getState().fetchDocumentRequestAttachments(targetRequestId).catch(() => {});
+
             setTimeout(() => {
                 chatEndReference.current?.scrollIntoView({ behavior: 'smooth' });
             }, 100);
@@ -929,7 +1419,17 @@ const Inspector = ({
         activeItem.universityId ??
         (activeItem.action ? activeItem.action.replace(/_/g, ' ') : null) ??
         activeItem.subtitle ??
-        (isFolder ? 'Folder' : isDocument ? 'Document' : isUser ? 'User' : 'Record');
+        (isFolder
+            ? 'Folder'
+            : isDocumentRequest
+                ? (activeItem.subject ?? 'Document Request')
+                : isCoordinatorRequest
+                    ? 'Coordinator Request'
+                    : isDocument
+                        ? 'Document'
+                        : isUser
+                            ? 'User'
+                            : 'Record');
     const formattedCreatedDate = formatTimestamp(
         activeItem.createdAt ?? activeItem.date ?? activeItem.timestamp
     ) ?? 'Just now';
@@ -992,7 +1492,7 @@ const Inspector = ({
                                             : isCoordinatorRequest
                                                 ? 'Governance Request'
                                                 : isDocumentRequest
-                                                    ? 'Clearance Request'
+                                                    ? 'Document Request'
                                                     : 'Institutional Document'}
                             </span>
                         </div>
@@ -1024,7 +1524,7 @@ const Inspector = ({
                                 variant={ROLE_BADGE_VARIANT[item.role] ?? 'neutral'}
                                 label={item.role}
                             />
-                        ) : item.status ? (
+                        ) : (!isDocument && !isFolder && item.status) ? (
                             <Badge
                                 variant={STATUS_BADGE_VARIANT[item.status] ?? 'neutral'}
                                 label={item.status}
@@ -1052,6 +1552,7 @@ const Inspector = ({
                 {activeTab === 'information' && (
                     <div className="flex flex-col gap-4">
                         {!isCoordinatorRequest &&
+                            !isDocumentRequest &&
                             !isDepartment &&
                             !isUser &&
                             (!isFolder
@@ -1219,6 +1720,55 @@ const Inspector = ({
                                                 />
                                             </div>
                                         )}
+
+                                        {(() => {
+                                            const docVersions = allDocumentVersions.filter(
+                                                (v) => (v.document?.id ?? v.documentId) === item.id
+                                            );
+                                            const earliestVer = [...docVersions].sort(
+                                                (a, b) => (a.version ?? 0) - (b.version ?? 0)
+                                            )[0];
+                                            const uploader = earliestVer?.uploader;
+                                            if (!uploader) return null;
+                                            const uploaderName = `${uploader.firstName ?? ''} ${uploader.lastName ?? ''}`.trim() || uploader.email || '—';
+                                            return (
+                                                <div className={PROPERTY_ROW_STYLE}>
+                                                    <span className={PROPERTY_LABEL_STYLE}>
+                                                        <User className={ICON_STYLE} /> Uploader
+                                                    </span>
+                                                    <span
+                                                        className={PROPERTY_VALUE_STYLE}
+                                                        title={uploaderName}
+                                                    >
+                                                        {uploaderName}
+                                                    </span>
+                                                </div>
+                                            );
+                                        })()}
+
+                                        {/* TOTAL READS */}
+                                        {(() => {
+                                            const isFold = Boolean(item?.isFolder || item?.mimeType === 'folder');
+                                            const targetIds = isFold
+                                                ? new Set(getRecursiveDescendantDocIds(item?.id, allDocuments))
+                                                : new Set([item?.id]);
+                                            const readCount = (allAuditLogs || []).filter((log) => {
+                                                const isDoc = targetIds.has(log?.entityId) || targetIds.has(log?.document?.id);
+                                                const isRead = ['READ', 'VIEW', 'VIEWED'].includes(String(log?.action || '').toUpperCase());
+                                                return isDoc && isRead;
+                                            }).length;
+
+                                            return (
+                                                <div className={PROPERTY_ROW_STYLE}>
+                                                    <span className={PROPERTY_LABEL_STYLE}>
+                                                        <Eye className={ICON_STYLE} /> Total Reads
+                                                    </span>
+                                                    <span className={PROPERTY_VALUE_STYLE} title={`${readCount} total reads`}>
+                                                        {readCount} {readCount === 1 ? 'read' : 'reads'} {isFold ? '(combined)' : ''}
+                                                    </span>
+                                                </div>
+                                            );
+                                        })()}
                                     </>
                                 )}
 
@@ -1376,7 +1926,19 @@ const Inspector = ({
                                     </div>
                                 )}
 
-                                {item.requesterName && (
+                                {isDocumentRequest ? (
+                                    <div className={PROPERTY_ROW_STYLE}>
+                                        <span className={PROPERTY_LABEL_STYLE}>
+                                            <User className={ICON_STYLE} /> Requester
+                                        </span>
+                                        <span
+                                            className="font-medium text-text truncate max-w-48 cursor-default select-text"
+                                            title={activeItem.requesterName ?? (typeof activeItem.requester === 'string' ? activeItem.requester : '—')}
+                                        >
+                                            {activeItem.requesterName ?? (typeof activeItem.requester === 'string' ? activeItem.requester : '—')}
+                                        </span>
+                                    </div>
+                                ) : item.requesterName ? (
                                     <div className={PROPERTY_ROW_STYLE}>
                                         <span className={PROPERTY_LABEL_STYLE}>
                                             <User className={ICON_STYLE} /> Requester
@@ -1388,12 +1950,30 @@ const Inspector = ({
                                             {item.requesterName}
                                         </span>
                                     </div>
+                                ) : null}
+
+                                {isDocumentRequest && (
+                                    <div className={PROPERTY_ROW_STYLE}>
+                                        <span className={PROPERTY_LABEL_STYLE}>
+                                            <CheckCircle2 className={ICON_STYLE} /> Status
+                                        </span>
+                                        <Badge
+                                            variant={
+                                                (activeItem.status || '').toUpperCase().includes('RESOLV')
+                                                    ? 'success'
+                                                    : (activeItem.status || '').toUpperCase().includes('REJECT')
+                                                    ? 'error'
+                                                    : 'information'
+                                            }
+                                            label={activeItem.status ?? constants.DOCUMENT_REQUESTS_STATUS.OPEN}
+                                        />
+                                    </div>
                                 )}
 
                                 <div className={PROPERTY_ROW_STYLE}>
                                     <span className={PROPERTY_LABEL_STYLE}>
                                         <Calendar className={ICON_STYLE} />{' '}
-                                        {isCoordinatorRequest || isDocumentRequest
+                                        {isCoordinatorRequest
                                             ? 'Submitted Date'
                                             : 'Created At'}
                                     </span>
@@ -1408,7 +1988,7 @@ const Inspector = ({
                                 <div className={PROPERTY_ROW_STYLE}>
                                     <span className={PROPERTY_LABEL_STYLE}>
                                         <Clock className={ICON_STYLE} />{' '}
-                                        {isCoordinatorRequest || isDocumentRequest
+                                        {isCoordinatorRequest
                                             ? 'Last Updated'
                                             : 'Updated At'}
                                     </span>
@@ -1463,11 +2043,11 @@ const Inspector = ({
                                             </span>
                                         </div>
 
-                                        {(versionItem.summary || versionItem.changeSummary) && (
+                                        {versionItem.changeSummary && (
                                             <div className={`${CALLOUT_BOX_STYLE} flex items-start gap-2.5 py-2 px-2.5`}>
                                                 <Sparkles className="h-4 w-4 text-text-muted shrink-0 mt-0.5" />
                                                 <span className="leading-relaxed text-xs">
-                                                    {versionItem.summary || versionItem.changeSummary}
+                                                    {versionItem.changeSummary}
                                                 </span>
                                             </div>
                                         )}
@@ -1509,53 +2089,429 @@ const Inspector = ({
                     </div>
                 )}
 
-                {activeTab === 'share' && (isDocument || isFolder) && (
-                    <div className="flex flex-col gap-3">
+                {activeTab === 'share' && !isMember && (isDocument || isFolder) && (
+                    <div className="flex flex-col gap-4">
                         <div className="flex items-center justify-between">
                             <span className={SECTION_TITLE_STYLE}>Permissions & Access</span>
                             <span className="text-xs text-text-muted">
-                                {documentShares.length} shares
+                                {documentShares.length} {documentShares.length === 1 ? 'share' : 'shares'}
                             </span>
                         </div>
 
                         {documentShares.length === 0 ? (
-                            <div className="p-4 rounded-lg border border-surface-border bg-surface-hover text-center text-text-muted text-xs">
-                                No department sharing rules configured yet.
+                            <div className="p-3.5 rounded-lg border border-surface-border bg-surface-hover text-center text-text-muted text-xs">
+                                No sharing rules configured yet.
                             </div>
                         ) : (
-                            <div className="flex flex-col gap-2">
-                                {documentShares.map((shareItem) => {
-                                    const shareDepartment = allDepartments.find(
-                                        (department) => department.id === (shareItem.department?.id ?? shareItem.departmentId)
-                                    );
-                                    const sharer = allUsers.find(
-                                        (userItem) => userItem.id === (shareItem.sharer?.id ?? shareItem.sharerId)
-                                    );
+                            <div className="flex flex-col gap-3">
+                                {departmentShares.length > 0 && (
+                                    <div className="flex flex-col gap-2">
+                                    {departmentShares.map((shareItem) => {
+                                        const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
+                                        const targetDeptClean = cleanId(shareItem.department?.id ?? shareItem.departmentId);
+                                        const shareDepartment = allDepartments.find(
+                                            (department) => cleanId(department.id) === targetDeptClean
+                                        ) ?? shareItem.department;
+                                        const publisherName = resolvePublisherName(shareItem);
 
-                                    return (
-                                        <div
-                                            key={shareItem.id}
-                                            className="p-3 rounded-lg border border-surface-border bg-surface-hover flex flex-col gap-2"
-                                        >
-                                            <div className="flex items-center justify-between gap-2">
-                                                <span className="font-semibold text-xs text-text">
-                                                    {shareDepartment?.name ?? 'University Wide'}
-                                                </span>
-                                                <Badge
-                                                    variant={STATUS_BADGE_VARIANT[shareItem.status] ?? 'neutral'}
-                                                    label={shareItem.status}
-                                                />
+                                        return (
+                                            <div
+                                                key={shareItem.id}
+                                                className="p-3.5 rounded-lg border border-surface-border bg-surface-hover flex flex-col gap-3"
+                                            >
+                                                <div className="flex items-center justify-between gap-2">
+                                                    <div className="flex items-center gap-2 min-w-0">
+                                                        <Building2 className="h-4 w-4 text-text-muted shrink-0" />
+                                                        <span className="font-semibold text-xs text-text truncate">
+                                                            {shareDepartment?.name ?? 'University Wide'}
+                                                        </span>
+                                                    </div>
+                                                    <Badge
+                                                        variant={STATUS_BADGE_VARIANT[shareItem.status] ?? 'neutral'}
+                                                        label={shareItem.status}
+                                                    />
+                                                </div>
+
+                                                {/* VISUAL WORKFLOW TRACKING PIPELINE (4 NODES) */}
+                                                {(() => {
+                                                    const statusUpper = String(shareItem.status || '').toUpperCase();
+                                                    const isRejected = statusUpper.includes('REJECT');
+
+                                                    const isStashed = statusUpper === constants.DOCUMENT_SHARES_STATUS.STASHED;
+                                                    const isPublished = statusUpper === constants.DOCUMENT_SHARES_STATUS.PUBLISHED;
+                                                    const isDirectorApproved = statusUpper === constants.DOCUMENT_SHARES_STATUS.APPROVED;
+                                                    const isOfficerPending = statusUpper === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL;
+
+                                                    // Determine active step:
+                                                    // 1: You (Origin / Draft)
+                                                    // 2: Officer (Pending Approval / Review)
+                                                    // 3: Director (Approved / Pre-publish)
+                                                    // 4: Terminal Branch (Stashed or Published)
+                                                    let currentStep = 1;
+                                                    if (isStashed || isPublished) {
+                                                        currentStep = 4;
+                                                    } else if (isDirectorApproved) {
+                                                        currentStep = 3;
+                                                    } else if (isOfficerPending || isRejected) {
+                                                        currentStep = 2;
+                                                    }
+
+                                                    // Connector line styles with smooth gradients where the color transitions:
+                                                    const getLineStyle = (lineIndex) => {
+                                                        if (lineIndex === 1) {
+                                                            if (currentStep > 2) {
+                                                                return { backgroundColor: 'var(--color-accent)' };
+                                                            }
+                                                            if (currentStep === 2) {
+                                                                return {
+                                                                    background: isRejected
+                                                                        ? 'linear-gradient(to right, var(--color-accent), var(--color-error))'
+                                                                        : 'linear-gradient(to right, var(--color-accent), var(--color-warning))',
+                                                                };
+                                                            }
+                                                            if (currentStep === 1) {
+                                                                return {
+                                                                    background: 'linear-gradient(to right, var(--color-warning), var(--color-surface-border))',
+                                                                };
+                                                            }
+                                                            return { backgroundColor: 'var(--color-surface-border)' };
+                                                        }
+
+                                                        if (lineIndex === 2) {
+                                                            if (currentStep > 3) {
+                                                                return { backgroundColor: 'var(--color-accent)' };
+                                                            }
+                                                            if (currentStep === 3) {
+                                                                return {
+                                                                    background: 'linear-gradient(to right, var(--color-accent), var(--color-warning))',
+                                                                };
+                                                            }
+                                                            return { backgroundColor: 'var(--color-surface-border)' };
+                                                        }
+
+                                                        if (lineIndex === 3) {
+                                                            if (currentStep === 4) {
+                                                                return { backgroundColor: 'var(--color-accent)' };
+                                                            }
+                                                            return { backgroundColor: 'var(--color-surface-border)' };
+                                                        }
+
+                                                        return { backgroundColor: 'var(--color-surface-border)' };
+                                                    };
+
+                                                    // Helper for Pill styling (matching the 2-branch design):
+                                                    const getPillStyles = (nodeStep, isNodeRejected = false) => {
+                                                        const isPassed = currentStep > nodeStep;
+                                                        const isCurrent = currentStep === nodeStep;
+
+                                                        if (isNodeRejected && isCurrent) {
+                                                            return 'bg-error text-text-inverted border-error font-bold ring-2 ring-error/30 shadow-xs';
+                                                        }
+                                                        if (isCurrent) {
+                                                            return 'bg-warning text-text-inverted border-warning font-bold ring-2 ring-warning/30 shadow-xs animate-pulse';
+                                                        }
+                                                        if (isPassed) {
+                                                            return 'bg-accent text-text-inverted border-accent font-semibold shadow-xs ring-1 ring-accent/30';
+                                                        }
+                                                        return 'bg-surface/50 border-surface-border text-text-muted/50 font-normal';
+                                                    };
+
+                                                    const node1Class = getPillStyles(1);
+                                                    const node2Class = getPillStyles(2, isRejected);
+                                                    const node3Class = getPillStyles(3);
+
+                                                    // Branch fork paths & node styling:
+                                                    const forkStashedColor = isStashed ? 'var(--color-accent)' : 'var(--color-surface-border)';
+                                                    const forkPublishedColor = isPublished ? 'var(--color-accent)' : 'var(--color-surface-border)';
+
+                                                    const stashedNodeClass = isStashed
+                                                        ? 'bg-accent text-text-inverted border-accent font-bold ring-2 ring-accent/30 shadow-xs'
+                                                        : 'bg-surface/50 border-surface-border text-text-muted/40 font-normal';
+
+                                                    const publishedNodeClass = isPublished
+                                                        ? 'bg-accent text-text-inverted border-accent font-bold ring-2 ring-accent/30 shadow-xs'
+                                                        : 'bg-surface/50 border-surface-border text-text-muted/40 font-normal';
+
+                                                    return (
+                                                        <div className="p-2.5 rounded-md border border-surface-border bg-surface/60 flex flex-col gap-2">
+                                                            <div className="flex items-center justify-between text-[11px] font-semibold text-text-muted select-none">
+                                                                <span>Workflow Progress</span>
+                                                                <span className="text-[10px] font-medium text-text-muted/80">Lifecycle Review</span>
+                                                            </div>
+
+                                                            {/* EQUAL DISTANCE WORKFLOW TRACK (PILL BADGES) */}
+                                                            <div className="flex items-center w-full pt-1 pb-0.5">
+                                                                {/* 1. NODE 1: YOU */}
+                                                                <div
+                                                                    className={`flex items-center justify-center px-2 py-0.5 rounded-md border text-[10px] transition-all select-none shrink-0 ${node1Class}`}
+                                                                    title="You (Origin / Created)"
+                                                                >
+                                                                    <span>You</span>
+                                                                </div>
+
+                                                                {/* CONNECTOR 1 -> 2 (EQUAL DISTANCE WITH GRADIENT) */}
+                                                                <div
+                                                                    className="flex-1 h-0.5 transition-all duration-300 min-w-2 rounded-full"
+                                                                    style={getLineStyle(1)}
+                                                                />
+
+                                                                {/* 2. NODE 2: OFFICER */}
+                                                                <div
+                                                                    className={`flex items-center justify-center px-2 py-0.5 rounded-md border text-[10px] transition-all select-none shrink-0 ${node2Class}`}
+                                                                    title="Officer Review (Pending Approval)"
+                                                                >
+                                                                    <span>Officer</span>
+                                                                </div>
+
+                                                                {/* CONNECTOR 2 -> 3 (EQUAL DISTANCE WITH GRADIENT) */}
+                                                                <div
+                                                                    className="flex-1 h-0.5 transition-all duration-300 min-w-2 rounded-full"
+                                                                    style={getLineStyle(2)}
+                                                                />
+
+                                                                {/* 3. NODE 3: DIRECTOR */}
+                                                                <div
+                                                                    className={`flex items-center justify-center px-2 py-0.5 rounded-md border text-[10px] transition-all select-none shrink-0 ${node3Class}`}
+                                                                    title="Director Review (Approved)"
+                                                                >
+                                                                    <span>Director</span>
+                                                                </div>
+
+                                                                {/* CONNECTOR 3 -> BRANCH FORK (EQUAL DISTANCE) */}
+                                                                <div
+                                                                    className="flex-1 h-0.5 transition-all duration-300 min-w-2 rounded-full"
+                                                                    style={getLineStyle(3)}
+                                                                />
+
+                                                                {/* BRANCH CONNECTOR (SVG FORK) */}
+                                                                <div className="w-3.5 h-11 shrink-0 flex items-center">
+                                                                    <svg className="w-3.5 h-11 shrink-0" viewBox="0 0 14 44" fill="none">
+                                                                        <path
+                                                                            d="M 0 22 H 4 C 8 22, 9 9, 14 9"
+                                                                            stroke={forkStashedColor}
+                                                                            strokeWidth={isStashed ? '2.5' : '1.5'}
+                                                                            strokeLinecap="round"
+                                                                            className="transition-all duration-300"
+                                                                        />
+                                                                        <path
+                                                                            d="M 0 22 H 4 C 8 22, 9 35, 14 35"
+                                                                            stroke={forkPublishedColor}
+                                                                            strokeWidth={isPublished ? '2.5' : '1.5'}
+                                                                            strokeLinecap="round"
+                                                                            className="transition-all duration-300"
+                                                                        />
+                                                                    </svg>
+                                                                </div>
+
+                                                                {/* 4. BRANCHING NODES: TOP (STASHED) & BOTTOM (PUBLISHED) */}
+                                                                <div className="h-11 flex flex-col justify-between shrink-0">
+                                                                    {/* TOP BRANCH: STASHED */}
+                                                                    <div
+                                                                        className={`flex items-center justify-center px-1.5 py-0.5 rounded-md border text-[9px] transition-all select-none truncate ${stashedNodeClass}`}
+                                                                        title="Stashed (Archived / Internal Reserve)"
+                                                                    >
+                                                                        <span>Stashed</span>
+                                                                    </div>
+
+                                                                    {/* BOTTOM BRANCH: PUBLISHED */}
+                                                                    <div
+                                                                        className={`flex items-center justify-center px-1.5 py-0.5 rounded-md border text-[9px] transition-all select-none truncate ${publishedNodeClass}`}
+                                                                        title="Published (Active / Distributed to Members)"
+                                                                    >
+                                                                        <span>Published</span>
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })()}
+
+                                                {/* DEPARTMENT READERSHIP STATISTIC & READERSHIP CHART */}
+                                                {(() => {
+                                                    const deptId = shareDepartment?.id ?? shareItem.department?.id ?? shareItem.departmentId;
+                                                    const isFold = Boolean(item?.isFolder || item?.mimeType === 'folder');
+                                                    const targetDocIds = isFold
+                                                        ? new Set(getRecursiveDescendantDocIds(item?.id, allDocuments))
+                                                        : new Set([item?.id]);
+
+                                                    const deptAuditLogs = (allAuditLogs || []).filter((log) => {
+                                                        const isDoc = targetDocIds.has(log?.entityId) || targetDocIds.has(log?.document?.id);
+                                                        const isReadAction = ['READ', 'VIEW', 'VIEWED'].includes(String(log?.action || '').toUpperCase());
+                                                        if (!isDoc || !isReadAction) return false;
+
+                                                        const actorId = log?.actor?.id ?? log?.actorId;
+                                                        const actorUser = (allUsers || []).find((u) => u.id === actorId);
+                                                        let logDeptId = actorUser?.departmentId;
+                                                        if (!logDeptId && typeof log?.data === 'string') {
+                                                            try {
+                                                                const parsed = JSON.parse(log.data);
+                                                                logDeptId = parsed.departmentId;
+                                                            } catch {}
+                                                        }
+                                                        return Boolean(deptId && logDeptId && String(logDeptId) === String(deptId));
+                                                    });
+
+                                                    const deptReadCount = deptAuditLogs.length;
+                                                    const uniqueReadersCount = new Set(
+                                                        deptAuditLogs.map((l) => l?.actor?.id ?? l?.actorId).filter(Boolean)
+                                                    ).size;
+
+                                                    return (
+                                                        <div className="p-2.5 rounded-md border border-surface-border bg-surface/50 flex flex-col gap-1.5">
+                                                            <div className="flex items-center justify-between text-[11px]">
+                                                                <span className="font-semibold text-text-muted flex items-center gap-1.5">
+                                                                    <Eye className="h-3 w-3 text-accent" />
+                                                                    <span>Unit Readership</span>
+                                                                </span>
+                                                                <span className="text-[10px] font-medium text-text">
+                                                                    {deptReadCount} {deptReadCount === 1 ? 'read' : 'reads'}
+                                                                    {isFold ? ' (combined)' : ''}
+                                                                    {uniqueReadersCount > 0 ? ` • ${uniqueReadersCount} unique` : ''}
+                                                                </span>
+                                                            </div>
+                                                            <div className="w-full pt-1">
+                                                                <ReadershipChart logs={deptAuditLogs} compact={true} showPeak={false} />
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })()}
+
+                                                <div className="flex items-center justify-between text-xs text-text-muted pt-1 border-t border-surface-border">
+                                                    <span>
+                                                        Shared by {publisherName}
+                                                    </span>
+                                                    <div className="flex items-center gap-2">
+                                                        <span>{formatTimestamp(shareItem.createdAt)}</span>
+                                                        {isStaff && !isDirector && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    handleActionClick('unshare', shareItem);
+                                                                }}
+                                                                className="text-error hover:underline cursor-pointer font-medium ml-1"
+                                                            >
+                                                                Unshare
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                </div>
                                             </div>
-                                            <div className="flex items-center justify-between text-xs text-text-muted pt-1 border-t border-surface-border">
-                                                <span>
-                                                    Shared by {sharer?.firstName ?? 'Dean'}{' '}
-                                                    {sharer?.lastName ?? ''}
-                                                </span>
-                                                <span>{formatTimestamp(shareItem.createdAt)}</span>
+                                        );
+                                    })}
+                                    </div>
+                                )}
+
+                                {/* DIVIDER */}
+                                {departmentShares.length > 0 && userShares.length > 0 && (
+                                    <div className="border-t border-surface-border my-1" />
+                                )}
+
+                                {/* USERS SHARES */}
+                                {userShares.length > 0 && (
+                                    <div className="flex flex-col gap-1.5">
+                                    {userShares.map((shareItem) => {
+                                        const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
+                                        const recId = shareItem.recipient?.id ?? shareItem.recipientId;
+                                        const recClean = cleanId(recId);
+                                        const recipientUser = allUsers.find((u) => cleanId(u.id) === recClean) ?? shareItem.recipient;
+                                        const recipientName = recipientUser
+                                            ? `${recipientUser.firstName || ''} ${recipientUser.lastName || ''}`.trim() || recipientUser.name || 'User'
+                                            : 'User';
+
+                                        const isRecipientRead = Boolean(
+                                            shareItem.isRead ||
+                                            String(shareItem.status || '').toUpperCase() === 'READ' ||
+                                            shareItem.readAt ||
+                                            allAuditLogs.some(
+                                                (log) =>
+                                                    (log.actor?.id === recId || log.actorId === recId) &&
+                                                    (log.entityId === item.id || log.document?.id === item.id) &&
+                                                    ['READ', 'VIEW', 'DOWNLOAD', 'OPEN'].includes(String(log.action || '').toUpperCase())
+                                            )
+                                        );
+
+                                        const publisherName = resolvePublisherName(shareItem);
+
+                                        return (
+                                            <div
+                                                key={shareItem.id}
+                                                className="px-2.5 py-2 rounded-md border border-surface-border bg-surface-hover/70 hover:bg-surface-hover transition-colors flex flex-col gap-1.5"
+                                            >
+                                                <div className="flex items-center justify-between gap-2">
+                                                    <div className="flex items-center gap-2 min-w-0">
+                                                        <Avatar
+                                                            src={resolveUserAvatar(recipientUser, activeUser)}
+                                                            user={recipientUser}
+                                                            alt={recipientName}
+                                                            size="small"
+                                                        />
+                                                        <div className="flex flex-col min-w-0">
+                                                            <span className="font-semibold text-xs text-text truncate leading-tight" title={recipientName}>
+                                                                {recipientName}
+                                                            </span>
+                                                            {recipientUser?.email && (
+                                                                <span className="text-[10px] text-text-muted truncate leading-tight" title={recipientUser.email}>
+                                                                    {recipientUser.email}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    </div>
+
+                                                    {/* COMPACT 2-NODE TRACKING: SENT -> READ */}
+                                                    <div className="flex items-center w-24 shrink-0">
+                                                        <div
+                                                            className="flex items-center justify-center px-1.5 py-0.5 rounded text-[9px] select-none shrink-0 bg-accent text-text-inverted border border-accent font-semibold shadow-2xs"
+                                                            title="Sent"
+                                                        >
+                                                            <span>Sent</span>
+                                                        </div>
+
+                                                        <div
+                                                            className="flex-1 h-0.5 min-w-2 transition-all duration-300 rounded-full"
+                                                            style={
+                                                                isRecipientRead
+                                                                    ? { backgroundColor: 'var(--color-accent)' }
+                                                                    : { background: 'linear-gradient(to right, var(--color-accent), var(--color-warning))' }
+                                                            }
+                                                        />
+
+                                                        <div
+                                                            className={`flex items-center justify-center px-1.5 py-0.5 rounded text-[9px] select-none shrink-0 transition-all ${
+                                                                isRecipientRead
+                                                                    ? 'bg-accent text-text-inverted border border-accent font-semibold shadow-2xs'
+                                                                    : 'bg-warning text-text-inverted border border-warning font-bold ring-1 ring-warning/30 shadow-2xs animate-pulse'
+                                                        }`}
+                                                            title={isRecipientRead ? 'Read' : 'Pending read'}
+                                                        >
+                                                            <span>Read</span>
+                                                        </div>
+                                                    </div>
+                                                </div>
+
+                                                {/* COMPACT FOOTER */}
+                                                <div className="flex items-center justify-between text-[10px] text-text-muted pt-1 border-t border-surface-border/60 leading-none">
+                                                    <span className="truncate">
+                                                        Shared by {publisherName} • {formatTimestamp(shareItem.createdAt)}
+                                                    </span>
+                                                    {isDirector && !isStaff && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                handleActionClick('unpublish', shareItem);
+                                                            }}
+                                                            className="text-error hover:underline cursor-pointer font-medium ml-2 shrink-0"
+                                                        >
+                                                            Unpublish
+                                                        </button>
+                                                    )}
+                                                </div>
                                             </div>
-                                        </div>
-                                    );
-                                })}
+                                        );
+                                    })}
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>
@@ -2033,205 +2989,526 @@ const Inspector = ({
 
                 {activeTab === 'messages' && isDocumentRequest && (
                     <div className="flex flex-col h-full gap-3">
-                        <div className="flex items-center justify-between pb-2 border-b border-surface-border">
-                            <span className={SECTION_TITLE_STYLE}>Direct Discussion</span>
+                        <div className="flex items-center justify-between pb-2 border-b border-surface-border select-none">
+                            <span className={SECTION_TITLE_STYLE}>Message</span>
                             <span className="text-xs text-text-muted">
-                                {requestMessages.length} messages
+                                {requestMessages.length} {requestMessages.length === 1 ? 'message' : 'messages'}
                             </span>
                         </div>
 
-                        <div className="flex-1 flex flex-col gap-3 min-h-56">
-                            {requestMessages.length === 0 ? (
-                                <div className="h-full flex flex-col items-center justify-center p-6 text-center text-text-muted gap-2">
-                                    <MessageSquare className="h-6 w-6 text-text-muted" />
-                                    <span className="text-xs">No messages posted yet.</span>
-                                </div>
-                            ) : (
-                                requestMessages.map((message) => {
-                                    const msgUserId = message.user?.id ?? message.userId;
-                                    const sender = allUsers.find(
-                                        (userItem) => userItem.id === msgUserId
-                                    );
-                                    const isSenderActiveUser = msgUserId === activeUser?.id;
-                                    const isAdministrativeUser =
-                                        activeUser?.role === constants.USERS_ROLE.ADMINISTRATOR ||
-                                        activeUser?.role === constants.USERS_ROLE.COORDINATOR;
-                                    const isSenderAdministrative =
-                                        sender?.role === constants.USERS_ROLE.ADMINISTRATOR ||
-                                        sender?.role === constants.USERS_ROLE.COORDINATOR;
-                                    const isFellowAdmin =
-                                        !isSenderActiveUser &&
-                                        isAdministrativeUser &&
-                                        isSenderAdministrative;
-
-                                    const senderName = sender
-                                        ? `${sender.firstName} ${sender.lastName}`
-                                        : 'University Office';
-
-                                    const messageAttachments = requestAttachments.filter(
-                                        (att) => {
-                                            const attUserId = att.attachedBy?.id ?? att.attachedById;
-                                            return attUserId === msgUserId || (!attUserId && isSenderActiveUser);
+                        {/* WHOLE MESSAGE THREAD CALLOUT BOX */}
+                        <div className="flex-1 flex flex-col rounded-xl border border-surface-border bg-surface-hover/60 overflow-hidden shadow-2xs min-h-72">
+                            {/* THREAD HEADER INSIDE CALLOUT BOX */}
+                            <div className="p-3.5 bg-surface border-b border-surface-border flex flex-col gap-2 shrink-0 select-none">
+                                <div className="flex items-start justify-between gap-3">
+                                    <div className="flex flex-col min-w-0">
+                                        <span className="text-[10px] font-bold tracking-wider uppercase text-text-muted">
+                                            Subject
+                                        </span>
+                                        <h4 className="text-xs font-bold text-text truncate mt-0.5" title={activeItem?.subject || activeItem?.title || 'Document Request'}>
+                                            {activeItem?.subject || activeItem?.title || 'Document Request'}
+                                        </h4>
+                                    </div>
+                                    <Badge
+                                        variant={
+                                            (activeItem?.status || '').toUpperCase().includes('RESOLV')
+                                                ? 'success'
+                                                : (activeItem?.status || '').toUpperCase().includes('REJECT')
+                                                ? 'error'
+                                                : 'information'
                                         }
-                                    );
+                                        label={activeItem?.status ?? constants.DOCUMENT_REQUESTS_STATUS.OPEN}
+                                    />
+                                </div>
 
-                                    const bubbleStyle = isSenderActiveUser
-                                        ? 'bg-accent text-text-inverted rounded-br-sm'
-                                        : isFellowAdmin
-                                            ? 'bg-warning-background border border-warning-border text-text rounded-bl-sm'
-                                            : 'bg-surface-hover border border-surface-border text-text rounded-bl-sm';
+                                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-text-muted pt-2 border-t border-surface-border/60">
+                                    <div className="flex items-center gap-1.5 min-w-0">
+                                        <User className="h-3.5 w-3.5 text-text-muted shrink-0" />
+                                        <span>Requester:</span>
+                                        <span className="font-semibold text-text truncate max-w-44" title={activeItem?.requesterName ?? (typeof activeItem?.requester === 'string' ? activeItem.requester : activeItem?.requester?.name || 'Institutional Requester')}>
+                                            {activeItem?.requesterName ?? (typeof activeItem?.requester === 'string' ? activeItem.requester : activeItem?.requester?.name || 'Institutional Requester')}
+                                        </span>
+                                    </div>
+                                    {activeItem?.createdAt && (
+                                        <div className="flex items-center gap-1.5 shrink-0">
+                                            <Clock className="h-3.5 w-3.5 text-text-muted shrink-0" />
+                                            <span>Requested:</span>
+                                            <span className="text-text font-medium">
+                                                {formatTimestamp(activeItem.createdAt)}
+                                            </span>
+                                        </div>
+                                    )}
+                                    {activeItem?.updatedAt && activeItem.updatedAt !== activeItem.createdAt && (
+                                        <div className="flex items-center gap-1.5 shrink-0">
+                                            <Calendar className="h-3.5 w-3.5 text-text-muted shrink-0" />
+                                            <span>Updated:</span>
+                                            <span className="text-text font-medium">
+                                                {formatMessageTime(activeItem.updatedAt)}
+                                            </span>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
 
-                                    return (
-                                        <div
-                                            key={message.id}
-                                            className={`flex items-end gap-2 max-w-sm ${
-                                                isSenderActiveUser
-                                                    ? 'self-end flex-row-reverse'
-                                                    : 'self-start flex-row'
-                                            }`}
-                                        >
-                                            <Avatar
-                                                src={resolveUserAvatar(sender, activeUser)}
-                                                user={sender}
-                                                alt={senderName}
-                                                size="small"
-                                                className="mb-1 shrink-0"
-                                            />
+                            {/* SCROLLABLE MESSAGE STREAM */}
+                            <div className="flex-1 flex flex-col gap-3.5 overflow-y-auto p-3.5">
+                                {requestMessages.length === 0 ? (
+                                    <div className="h-full min-h-[220px] flex flex-col items-center justify-center p-6 text-center text-text-muted gap-2.5 select-none">
+                                        <div className="p-3 rounded-full bg-surface border border-surface-border shadow-2xs text-accent">
+                                            <MessageSquare className="h-6 w-6" />
+                                        </div>
+                                        <span className="text-xs font-semibold text-text">No messages yet</span>
+                                        <p className="text-[11px] text-text-muted max-w-xs leading-relaxed">
+                                            Post a reply or inquiry below to communicate regarding this document request.
+                                        </p>
+                                    </div>
+                                ) : (
+                                    combinedThreadItems.map((threadItem, itemIndex) => {
+                                        const prevItem = itemIndex > 0 ? combinedThreadItems[itemIndex - 1] : null;
+                                        const prevTime = prevItem?.createdAt ? new Date(prevItem.createdAt).getTime() : null;
+                                        const currTime = threadItem?.createdAt ? new Date(threadItem.createdAt).getTime() : Date.now();
+                                        const showDivider = !prevTime || (currTime - prevTime >= 10 * 60 * 1000);
 
-                                            <div
-                                                className={`flex flex-col gap-1 ${
-                                                    isSenderActiveUser
-                                                        ? 'items-end'
-                                                        : 'items-start'
-                                                }`}
-                                            >
-                                                <div className="flex items-center gap-2 text-xs text-text-muted px-1">
-                                                    <span className="font-semibold">{senderName}</span>
-                                                    {isFellowAdmin && (
-                                                        <Badge
-                                                            variant="warning"
-                                                            label={sender?.role}
-                                                        />
+                                        if (threadItem.type === 'message') {
+                                            const message = threadItem.data;
+                                            const msgUserId = message.user?.id ?? message.userId;
+                                            const sender = allUsers.find(
+                                                (userItem) => userItem.id === msgUserId
+                                            ) || message.user;
+                                            const isSenderActiveUser = Boolean(
+                                                activeUser?.id && (msgUserId === activeUser.id || sender?.id === activeUser.id)
+                                            );
+
+                                            const requesterId = activeItem?.requesterId ?? activeItem?.requester?.id;
+                                            const isSenderRequester = Boolean(
+                                                requesterId && (msgUserId === requesterId || sender?.id === requesterId)
+                                            );
+                                            const senderRole = isSenderActiveUser
+                                                ? activeUser?.role
+                                                : (sender?.role || allUsers.find((u) => u.id === msgUserId)?.role);
+
+                                            const senderFullName = isSenderActiveUser
+                                                ? 'You'
+                                                : sender
+                                                    ? `${sender.firstName || ''} ${sender.lastName || ''}`.trim() || sender.name || sender.title || 'Institutional Staff'
+                                                    : 'University Office';
+
+                                            const messageAttachments = (() => {
+                                                if (!message || !message.message) return [];
+                                                const match = message.message.match(/<!--\s*attachments:\[(.*?)\]\s*-->/i);
+                                                if (match && match[1]) {
+                                                    const idList = match[1].split(',').map((s) => s.trim()).filter(Boolean);
+                                                    if (idList.length > 0) {
+                                                        return requestAttachments.filter((att) => {
+                                                            const targetDocId = att.documentId ?? att.document?.id ?? att.id;
+                                                            return idList.includes(String(targetDocId)) || idList.includes(String(att.id));
+                                                        });
+                                                    }
+                                                }
+                                                const msgTime = new Date(message.createdAt).getTime();
+                                                return requestAttachments.filter((att) => {
+                                                    const attUserId = att.attachedBy?.id ?? att.attachedById;
+                                                    const attTime = new Date(att.createdAt).getTime();
+                                                    const isSameUser = attUserId === msgUserId || (!attUserId && isSenderActiveUser);
+                                                    const isNearTime = Math.abs(attTime - msgTime) <= 10000;
+                                                    const isMentioned = att.name && message.message && message.message.includes(att.name);
+                                                    return isSameUser && (isNearTime || isMentioned);
+                                                });
+                                            })();
+
+                                            const isAdminApproved = Boolean(
+                                                message.message && message.message.includes('admin_approved')
+                                            );
+                                            const cleanMessageText = (message.message || '').replace(/<!--[\s\S]*?-->/gi, '').trim();
+                                            const formattedFullTime = formatFullDateTime(message.createdAt);
+
+                                            return (
+                                                <div key={message.id} className="flex flex-col w-full">
+                                                    {showDivider && (
+                                                        <div className="flex items-center my-2.5 w-full">
+                                                            <div className="flex-grow border-t border-surface-border/70"></div>
+                                                            <span className="mx-3 text-[10px] font-medium text-text-muted/80 select-none">
+                                                                {formatDividerTimestamp(message.createdAt)}
+                                                            </span>
+                                                            <div className="flex-grow border-t border-surface-border/70"></div>
+                                                        </div>
                                                     )}
-                                                    <span>•</span>
-                                                    <span>{formatTimestamp(message.createdAt)}</span>
-                                                </div>
 
-                                                <div
-                                                    className={`p-3 rounded-2xl text-xs leading-relaxed break-words select-text ${bubbleStyle}`}
-                                                >
-                                                    <p>{message.message}</p>
+                                                    {isSenderActiveUser ? (
+                                                        /* RIGHT SIDE: YOU (ACCENTED) */
+                                                        <div
+                                                            className="flex flex-col gap-1 items-end max-w-[85%] self-end"
+                                                            title={formattedFullTime}
+                                                        >
+                                                            {/* SENDER HEADER */}
+                                                            <div className="flex items-center gap-1.5 text-[11px] text-text-muted pr-8 select-none">
+                                                                <span className="font-semibold text-text-muted">You</span>
+                                                                {renderMessageRoleBadge(senderRole, isSenderRequester)}
+                                                                {isAdminApproved && (
+                                                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30">
+                                                                        <ShieldCheck className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
+                                                                        Admin Approved
+                                                                    </span>
+                                                                )}
+                                                            </div>
 
-                                                    {messageAttachments.length > 0 && (
-                                                        <div className="mt-2 flex flex-col gap-2">
-                                                            {messageAttachments.map((attachment) => (
-                                                                <div
-                                                                    key={attachment.id}
-                                                                    className={`p-2 rounded-lg flex items-center justify-between gap-2 text-xs ${
-                                                                        isSenderActiveUser
-                                                                            ? 'bg-surface/20 text-text-inverted border border-white/20'
-                                                                            : 'bg-surface border border-surface-border text-text'
-                                                                    }`}
-                                                                >
-                                                                    <div className="flex items-center gap-2 min-w-0">
-                                                                        <Paperclip className="h-4 w-4 shrink-0" />
-                                                                        <div className="flex flex-col min-w-0">
-                                                                            <span
-                                                                                className="font-semibold truncate"
-                                                                                title={attachment.name}
-                                                                            >
-                                                                                {attachment.name}
-                                                                            </span>
-                                                                            <span className="text-xs opacity-75">
-                                                                                {attachment.sizeBytes
-                                                                                    ? formatBytes(attachment.sizeBytes)
-                                                                                    : 'Document'}
-                                                                            </span>
+                                                            {/* BUBBLE ROW (AVATAR SITS DIRECTLY NEXT TO BOX) */}
+                                                            <div className="flex items-end gap-2 flex-row-reverse w-full justify-start">
+                                                                <Avatar
+                                                                    src={resolveUserAvatar(activeUser, activeUser)}
+                                                                    user={activeUser}
+                                                                    alt="You"
+                                                                    size="small"
+                                                                    className="shrink-0 mb-0.5"
+                                                                />
+                                                                <div className="px-3.5 py-2.5 rounded-2xl rounded-tr-xs text-xs leading-relaxed break-words select-text bg-accent text-text-inverted shadow-xs min-w-0">
+                                                                    <p className="whitespace-pre-wrap">{cleanMessageText}</p>
+
+                                                                    {messageAttachments.length > 0 && (
+                                                                        <div className="mt-2 flex flex-col gap-1.5 pt-2 border-t border-white/20">
+                                                                            {messageAttachments.map((attachment) => (
+                                                                                <div
+                                                                                    key={attachment.id}
+                                                                                    className="p-2 rounded-lg flex items-center justify-between gap-2.5 text-xs bg-black/15 border border-white/20 text-text-inverted"
+                                                                                >
+                                                                                    <div className="flex items-center gap-2 min-w-0">
+                                                                                        <div className="p-1 rounded bg-white/20 text-text-inverted shrink-0">
+                                                                                            <FileText className="h-3.5 w-3.5" />
+                                                                                        </div>
+                                                                                        <div className="flex flex-col min-w-0">
+                                                                                            <span
+                                                                                                className="font-semibold truncate text-xs"
+                                                                                                title={attachment.name}
+                                                                                            >
+                                                                                                {attachment.name}
+                                                                                            </span>
+                                                                                            <span className="text-[10px] text-text-inverted/75">
+                                                                                                {attachment.sizeBytes
+                                                                                                    ? formatBytes(attachment.sizeBytes)
+                                                                                                    : 'Document'}
+                                                                                            </span>
+                                                                                        </div>
+                                                                                    </div>
+                                                                                    <button
+                                                                                        type="button"
+                                                                                        onClick={() =>
+                                                                                            handleActionClick('download', attachment)
+                                                                                        }
+                                                                                        className="p-1 rounded hover:bg-white/20 cursor-pointer text-text-inverted shrink-0 transition-colors"
+                                                                                        title="Download Attachment"
+                                                                                    >
+                                                                                        <Download className="h-3.5 w-3.5" />
+                                                                                    </button>
+                                                                                </div>
+                                                                            ))}
                                                                         </div>
-                                                                    </div>
-                                                                    <button
-                                                                        type="button"
-                                                                        onClick={() =>
-                                                                            handleActionClick(
-                                                                                'download',
-                                                                                attachment
-                                                                            )
-                                                                        }
-                                                                        className={`p-1 rounded hover:bg-surface-hover cursor-pointer shrink-0 transition-colors ${
-                                                                            isSenderActiveUser
-                                                                                ? 'text-text-inverted'
-                                                                                : 'text-accent'
-                                                                        }`}
-                                                                        title="Download Attachment"
-                                                                    >
-                                                                        <Download className="h-4 w-4" />
-                                                                    </button>
+                                                                    )}
                                                                 </div>
-                                                            ))}
+                                                            </div>
+                                                        </div>
+                                                    ) : (
+                                                        /* LEFT SIDE: OTHER PARTY */
+                                                        <div
+                                                            className="flex flex-col gap-1 items-start max-w-[85%] self-start"
+                                                            title={formattedFullTime}
+                                                        >
+                                                            {/* SENDER HEADER */}
+                                                            <div className="flex items-center gap-1.5 text-[11px] text-text-muted pl-8 select-none">
+                                                                <span className="font-semibold text-text-muted">{senderFullName}</span>
+                                                                {renderMessageRoleBadge(senderRole, isSenderRequester)}
+                                                                {isAdminApproved && (
+                                                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30">
+                                                                        <ShieldCheck className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
+                                                                        Admin Approved
+                                                                    </span>
+                                                                )}
+                                                            </div>
+
+                                                            {/* BUBBLE ROW (AVATAR SITS DIRECTLY NEXT TO BOX) */}
+                                                            <div className="flex items-end gap-2 flex-row w-full justify-start">
+                                                                <Avatar
+                                                                    src={resolveUserAvatar(sender, activeUser)}
+                                                                    user={sender}
+                                                                    alt={senderFullName}
+                                                                    size="small"
+                                                                    className="shrink-0 mb-0.5"
+                                                                />
+                                                                <div className="px-3.5 py-2.5 rounded-2xl rounded-tl-xs text-xs leading-relaxed break-words select-text bg-surface border border-surface-border text-text shadow-2xs min-w-0">
+                                                                    <p className="whitespace-pre-wrap">{cleanMessageText}</p>
+
+                                                                    {messageAttachments.length > 0 && (
+                                                                        <div className="mt-2 flex flex-col gap-1.5 pt-2 border-t border-surface-border">
+                                                                            {messageAttachments.map((attachment) => (
+                                                                                <div
+                                                                                    key={attachment.id}
+                                                                                    className="p-2 rounded-lg flex items-center justify-between gap-2.5 text-xs bg-surface-hover/80 border border-surface-border text-text"
+                                                                                >
+                                                                                    <div className="flex items-center gap-2 min-w-0">
+                                                                                        <div className="p-1 rounded bg-accent/10 text-accent shrink-0">
+                                                                                            <FileText className="h-3.5 w-3.5" />
+                                                                                        </div>
+                                                                                        <div className="flex flex-col min-w-0">
+                                                                                            <span
+                                                                                                className="font-semibold truncate text-xs"
+                                                                                                title={attachment.name}
+                                                                                            >
+                                                                                                {attachment.name}
+                                                                                            </span>
+                                                                                            <span className="text-[10px] text-text-muted">
+                                                                                                {attachment.sizeBytes
+                                                                                                    ? formatBytes(attachment.sizeBytes)
+                                                                                                    : 'Document'}
+                                                                                            </span>
+                                                                                        </div>
+                                                                                    </div>
+                                                                                    <button
+                                                                                        type="button"
+                                                                                        onClick={() =>
+                                                                                            handleActionClick('download', attachment)
+                                                                                        }
+                                                                                        className="p-1 rounded hover:bg-surface cursor-pointer text-accent shrink-0 transition-colors"
+                                                                                        title="Download Attachment"
+                                                                                    >
+                                                                                        <Download className="h-3.5 w-3.5" />
+                                                                                    </button>
+                                                                                </div>
+                                                                            ))}
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            </div>
                                                         </div>
                                                     )}
                                                 </div>
+                                            );
+                                        }
+
+                                        // PENDING STAGED FILE APPROVAL BLOCK
+                                        const pendingReq = threadItem.data;
+                                        const payloadData = typeof pendingReq.data === 'string' ? JSON.parse(pendingReq.data || '{}') : (pendingReq.data || {});
+                                        const pendingMsg = payloadData.message || '';
+                                        const pendingAtts = payloadData.attachments || [];
+                                        const reqUserId = pendingReq.requesterId ?? pendingReq.requester?.id;
+                                        const requesterUser = allUsers.find((u) => u.id === reqUserId);
+                                        const isSelf = Boolean(activeUser?.id && String(reqUserId) === String(activeUser.id));
+                                        const senderName = isSelf ? 'You' : (requesterUser ? `${requesterUser.firstName || ''} ${requesterUser.lastName || ''}`.trim() : 'Coordinator');
+                                        const formattedPendingTime = formatFullDateTime(pendingReq.createdAt);
+
+                                        return (
+                                            <div key={threadItem.id} className="flex flex-col w-full">
+                                                {showDivider && (
+                                                    <div className="flex items-center my-2.5 w-full">
+                                                        <div className="flex-grow border-t border-surface-border/70"></div>
+                                                        <span className="mx-3 text-[10px] font-medium text-text-muted/80 select-none">
+                                                            {formatDividerTimestamp(pendingReq.createdAt)}
+                                                        </span>
+                                                        <div className="flex-grow border-t border-surface-border/70"></div>
+                                                    </div>
+                                                )}
+
+                                                <div
+                                                    className="flex flex-col gap-1 items-end max-w-[90%] self-end w-full"
+                                                    title={formattedPendingTime}
+                                                >
+                                                    <div className="flex items-center gap-1.5 text-[11px] text-text-muted pr-2 select-none">
+                                                        <span className="font-semibold text-text-muted">{senderName}</span>
+                                                        <span className="px-1.5 py-0.2 rounded text-[10px] font-semibold bg-warning-background text-warning border border-warning-border">
+                                                            Coordinator
+                                                        </span>
+                                                    </div>
+
+                                                    <div className="w-full p-3.5 rounded-2xl rounded-tr-xs text-xs leading-relaxed break-words bg-warning-background/30 border border-dashed border-warning-border text-text shadow-sm backdrop-blur-xs flex flex-col gap-2.5">
+                                                        {/* STATUS BADGE */}
+                                                        <div className="flex items-center justify-between gap-2 pb-2 border-b border-warning-border/50">
+                                                            <div className="flex items-center gap-1.5 text-warning font-semibold text-xs">
+                                                                <Clock className="h-3.5 w-3.5 animate-pulse shrink-0" />
+                                                                <span>Awaiting Administrator Approval</span>
+                                                            </div>
+                                                            {isAdmin && (
+                                                                <div className="flex items-center gap-1.5 shrink-0">
+                                                                    <Button
+                                                                        variant="primary"
+                                                                        size="sm"
+                                                                        leadingIcon={CheckCircle2}
+                                                                        onClick={() => handleActionClick('approve', pendingReq)}
+                                                                        className="h-7 px-2 text-xs"
+                                                                    >
+                                                                        Approve
+                                                                    </Button>
+                                                                    <Button
+                                                                        variant="destructive"
+                                                                        size="sm"
+                                                                        leadingIcon={XCircle}
+                                                                        onClick={() => handleActionClick('reject', pendingReq)}
+                                                                        className="h-7 px-2 text-xs"
+                                                                    >
+                                                                        Reject
+                                                                    </Button>
+                                                                </div>
+                                                            )}
+                                                        </div>
+
+                                                        {pendingMsg && (
+                                                            <p className="whitespace-pre-wrap text-text font-medium">{pendingMsg}</p>
+                                                        )}
+
+                                                        {pendingAtts.length > 0 && (
+                                                            <div className="flex flex-col gap-1.5 pt-1">
+                                                                <span className="text-[11px] font-semibold text-text-muted">
+                                                                    Staged Clearance Files ({pendingAtts.length}):
+                                                                </span>
+                                                                {pendingAtts.map((att, idx) => (
+                                                                    <div
+                                                                        key={idx}
+                                                                        className="p-2 rounded-lg flex items-center justify-between gap-2 text-xs bg-surface/80 border border-surface-border"
+                                                                    >
+                                                                        <div className="flex items-center gap-2 min-w-0">
+                                                                            <Paperclip className="h-3.5 w-3.5 text-warning shrink-0" />
+                                                                            <span className="font-semibold truncate text-xs" title={att.name}>
+                                                                                {att.name}
+                                                                            </span>
+                                                                        </div>
+                                                                        <span className="text-[10px] text-text-muted shrink-0">
+                                                                            {att.sizeBytes ? formatBytes(att.sizeBytes) : 'File'}
+                                                                        </span>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        )}
+
+                                                        <div className="text-[10px] text-text-muted italic pt-1 border-t border-warning-border/30">
+                                                            This clearance file and message will be delivered to the requester once approved by an Administrator.
+                                                        </div>
+                                                    </div>
+                                                </div>
                                             </div>
+                                        );
+                                    })
+                                )}
+
+                                <div ref={chatEndReference} />
+                            </div>
+
+                            {/* MESSAGE COMPOSER DOCKED AT BOTTOM OF CALLOUT BOX */}
+                            {(() => {
+                                const currentStatus = String(activeItem?.status ?? item?.status ?? '').toUpperCase().trim();
+                                const isLocked = isDocumentRequest && (
+                                    currentStatus === constants.DOCUMENT_REQUESTS_STATUS.RESOLVED ||
+                                    currentStatus === constants.DOCUMENT_REQUESTS_STATUS.REJECTED ||
+                                    currentStatus.includes('RESOLV') ||
+                                    currentStatus.includes('REJECT')
+                                );
+
+                                if (isLocked) {
+                                    return (
+                                        <div className="p-3 border-t border-surface-border bg-surface-hover/60 flex items-center justify-between gap-2.5 shrink-0">
+                                            <div className="flex items-center gap-2 min-w-0">
+                                                <Lock className="h-4 w-4 text-text-muted shrink-0" />
+                                                <div className="flex flex-col min-w-0">
+                                                    <span className="text-xs font-semibold text-text truncate">
+                                                        Request is {currentStatus.toLowerCase()}
+                                                    </span>
+                                                    <span className="text-[10px] text-text-muted truncate">
+                                                        Messaging is locked until reopened.
+                                                    </span>
+                                                </div>
+                                            </div>
+                                            {canSeePendingStatus && pendingStatusRequest?.action === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_REOPEN ? (
+                                                <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-700 dark:text-amber-300 shrink-0">
+                                                    <Clock className="w-3.5 h-3.5 text-amber-500 animate-pulse shrink-0" />
+                                                    <span className="font-semibold">Reopen Awaiting Approval</span>
+                                                </div>
+                                            ) : isStaff && (
+                                                <Button
+                                                    variant="secondary"
+                                                    size="sm"
+                                                    leadingIcon={RotateCcw}
+                                                    onClick={() => handleActionClick('open_request')}
+                                                    isLoading={activeActionLoading === 'open_request'}
+                                                    isDisabled={Boolean(activeActionLoading) || Boolean(canSeePendingStatus)}
+                                                    className="h-7 px-2.5 text-[11px] shrink-0"
+                                                >
+                                                    Reopen
+                                                </Button>
+                                            )}
                                         </div>
                                     );
-                                })
-                            )}
-                            <div ref={chatEndReference} />
-                        </div>
+                                }
 
-                        <div className="pt-3 border-t border-surface-border flex flex-col gap-2 shrink-0">
-                            {stagedAttachment && (
-                                <div className="px-3 py-2 rounded-lg bg-accent-background border border-accent-border flex items-center justify-between text-xs text-accent">
-                                    <div className="flex items-center gap-2 min-w-0">
-                                        <Paperclip className="h-4 w-4 shrink-0" />
-                                        <span className="font-semibold truncate" title={stagedAttachment.name}>
-                                            {stagedAttachment.name}
-                                        </span>
-                                        <span className="text-xs opacity-80">
-                                            ({stagedAttachment.sizeBytes ? formatBytes(stagedAttachment.sizeBytes) : 'Document'})
-                                        </span>
+                                return (
+                                    <div className="p-2.5 border-t border-surface-border bg-surface flex flex-col gap-2 shrink-0">
+                                        {stagedAttachments.length > 0 && (
+                                            <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto p-1">
+                                                {stagedAttachments.map((staged) => (
+                                                    <div
+                                                        key={staged.documentId}
+                                                        className="px-2.5 py-1 rounded-lg bg-accent/10 border border-accent/20 flex items-center gap-2 text-xs text-accent"
+                                                    >
+                                                        <Paperclip className="h-3.5 w-3.5 shrink-0" />
+                                                        <span className="font-semibold truncate max-w-44" title={staged.name}>
+                                                            {staged.name}
+                                                        </span>
+                                                        <span className="text-[10px] opacity-75 shrink-0">
+                                                            ({staged.sizeBytes ? formatBytes(staged.sizeBytes) : 'Document'})
+                                                        </span>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleRemoveStagedAttachment(staged.documentId)}
+                                                            className="p-0.5 rounded hover:bg-accent/20 cursor-pointer text-accent shrink-0 transition-colors"
+                                                            title={`Remove ${staged.name}`}
+                                                        >
+                                                            <X className="h-3.5 w-3.5" />
+                                                        </button>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+
+                                        <form
+                                            onSubmit={handleSendMessage}
+                                            className="flex items-end gap-2"
+                                        >
+                                            {isStaff && (
+                                                <button
+                                                    type="button"
+                                                    onClick={handleOpenAttachModal}
+                                                    className="h-10 w-10 flex items-center justify-center rounded-xl border border-surface-border bg-surface hover:bg-surface-hover hover:text-accent text-text-muted transition-colors shrink-0 cursor-pointer"
+                                                    title="Attach Document from Repository"
+                                                >
+                                                    <Paperclip className="h-4 w-4" />
+                                                </button>
+                                            )}
+
+                                            <div className="relative flex-1 flex items-center px-3 py-2 rounded-xl border border-surface-border bg-surface focus-within:border-accent focus-within:ring-1 focus-within:ring-accent transition-all">
+                                                <textarea
+                                                    ref={chatTextareaRef}
+                                                    value={chatInputText}
+                                                    onChange={(e) => setChatInputText(e.target.value)}
+                                                    onKeyDown={handleChatKeyDown}
+                                                    rows={1}
+                                                    placeholder={
+                                                        stagedAttachments.length > 0
+                                                            ? `Add a message with ${stagedAttachments.length} staged ${stagedAttachments.length === 1 ? 'file' : 'files'}...`
+                                                            : 'Type a message... (Shift+Tab for new line)'
+                                                    }
+                                                    className="w-full bg-transparent border-0 resize-none outline-none focus:outline-none focus:ring-0 text-xs text-text placeholder:text-text-muted leading-relaxed p-0 min-h-[22px] max-h-[120px]"
+                                                    style={{ maxHeight: '120px' }}
+                                                />
+                                            </div>
+
+                                            <Button
+                                                type="submit"
+                                                variant="primary"
+                                                leadingIcon={Send}
+                                                isDisabled={!chatInputText.trim() && stagedAttachments.length === 0}
+                                                className="shrink-0 h-10 px-3.5 rounded-xl"
+                                            >
+                                                Send
+                                            </Button>
+                                        </form>
                                     </div>
-                                    <button
-                                        type="button"
-                                        onClick={handleRemoveStagedAttachment}
-                                        className="p-1 rounded hover:bg-accent-background cursor-pointer text-accent shrink-0"
-                                        title="Remove staged attachment"
-                                    >
-                                        <X className="h-4 w-4" />
-                                    </button>
-                                </div>
-                            )}
-
-                            <form
-                                onSubmit={handleSendMessage}
-                                className="flex items-center gap-2"
-                            >
-                                <button
-                                    type="button"
-                                    onClick={handleOpenAttachModal}
-                                    className="p-2 rounded-md border border-surface-border bg-surface hover:bg-surface-hover text-text-muted hover:text-accent transition-colors cursor-pointer shrink-0"
-                                    title="Attach Document from Repository"
-                                >
-                                    <Paperclip className="h-4 w-4" />
-                                </button>
-
-                                <input
-                                    type="text"
-                                    value={chatInputText}
-                                    onChange={(changeEvent) => setChatInputText(changeEvent.target.value)}
-                                    placeholder={stagedAttachment ? 'Add a note with your attachment...' : 'Type a message or inquiry...'}
-                                    className="flex-1 px-3 py-2 text-xs rounded-md border border-surface-border bg-surface text-text focus:outline-hidden focus:border-accent focus:ring-1 focus:ring-accent"
-                                />
-
-                                <Button
-                                    type="submit"
-                                    variant="primary"
-                                    leadingIcon={Send}
-                                    isDisabled={!chatInputText.trim() && !stagedAttachment}
-                                >
-                                    Send
-                                </Button>
-                            </form>
+                                );
+                            })()}
                         </div>
                     </div>
                 )}
@@ -2289,40 +3566,149 @@ const Inspector = ({
             </div>
 
             <div className="pt-3 border-t border-surface-border shrink-0">
-                {(isDocument || isFolder) && (
-                    <div className={`grid ${item.isArchived ? 'grid-cols-2' : 'grid-cols-3'} gap-2 w-full`}>
-                        {!item.isArchived && (
+                {(isDocument || isFolder) && (() => {
+                    // 1. MEMBER ROLE: Download only
+                    if (isMember) {
+                        return (
+                            <div className="w-full">
+                                <Button
+                                    variant="secondary"
+                                    leadingIcon={Download}
+                                    isLoading={activeActionLoading === 'download'}
+                                    isDisabled={Boolean(activeActionLoading)}
+                                    onClick={() => handleActionClick('download')}
+                                    className="w-full justify-center truncate px-2"
+                                >
+                                    Download
+                                </Button>
+                            </div>
+                        );
+                    }
+
+                    // 2. OFFICER ROLE: Approve/Unapprove + Reject
+                    if (isOfficer) {
+                        const isPending = item.status === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL;
+                        return (
+                            <div className="grid grid-cols-2 gap-2 w-full">
+                                {isPending ? (
+                                    <Button
+                                        variant="primary"
+                                        leadingIcon={CheckCircle2}
+                                        isLoading={activeActionLoading === 'approve'}
+                                        isDisabled={Boolean(activeActionLoading)}
+                                        onClick={() => handleActionClick('approve')}
+                                        className="justify-center truncate px-2"
+                                    >
+                                        Approve
+                                    </Button>
+                                ) : (
+                                    <Button
+                                        variant="secondary"
+                                        leadingIcon={RotateCcw}
+                                        isLoading={activeActionLoading === 'unapprove'}
+                                        isDisabled={Boolean(activeActionLoading)}
+                                        onClick={() => handleActionClick('unapprove')}
+                                        className="justify-center truncate px-2"
+                                    >
+                                        Unapprove
+                                    </Button>
+                                )}
+                                <Button
+                                    variant="destructive"
+                                    leadingIcon={XCircle}
+                                    isLoading={activeActionLoading === 'reject'}
+                                    isDisabled={Boolean(activeActionLoading)}
+                                    onClick={() => handleActionClick('reject')}
+                                    className="justify-center truncate px-2"
+                                >
+                                    Reject
+                                </Button>
+                            </div>
+                        );
+                    }
+
+                    // 3. DIRECTOR ROLE: Publish/Unpublish + Stash/Unstash
+                    if (isDirector) {
+                        const isPublished = item.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED;
+                        const isStashed = item.status === constants.DOCUMENT_SHARES_STATUS.STASHED;
+                        return (
+                            <div className="grid grid-cols-2 gap-2 w-full">
+                                {isPublished ? (
+                                    <Button
+                                        variant="destructive"
+                                        leadingIcon={EyeOff}
+                                        isLoading={activeActionLoading === 'unpublish'}
+                                        isDisabled={Boolean(activeActionLoading)}
+                                        onClick={() => handleActionClick('unpublish')}
+                                        className="justify-center truncate px-2"
+                                    >
+                                        Unpublish
+                                    </Button>
+                                ) : (
+                                    <Button
+                                        variant="primary"
+                                        leadingIcon={Globe}
+                                        isLoading={activeActionLoading === 'publish'}
+                                        isDisabled={Boolean(activeActionLoading)}
+                                        onClick={() => handleActionClick('publish')}
+                                        className="justify-center truncate px-2"
+                                    >
+                                        Publish
+                                    </Button>
+                                )}
+                                {isStashed ? (
+                                    <Button
+                                        variant="secondary"
+                                        leadingIcon={RotateCcw}
+                                        isLoading={activeActionLoading === 'unstash'}
+                                        isDisabled={Boolean(activeActionLoading)}
+                                        onClick={() => handleActionClick('unstash')}
+                                        className="justify-center truncate px-2"
+                                    >
+                                        Unstash
+                                    </Button>
+                                ) : (
+                                    <Button
+                                        variant="secondary"
+                                        leadingIcon={Layers}
+                                        isLoading={activeActionLoading === 'stash'}
+                                        isDisabled={Boolean(activeActionLoading)}
+                                        onClick={() => handleActionClick('stash')}
+                                        className="justify-center truncate px-2"
+                                    >
+                                        Stash
+                                    </Button>
+                                )}
+                            </div>
+                        );
+                    }
+
+                    // 4. ADMIN & COORDINATOR (STAFF): Share + Delete (no Download)
+                    return (
+                        <div className="grid grid-cols-2 gap-2 w-full">
+                            {!item.isArchived && (
+                                <Button
+                                    variant="primary"
+                                    leadingIcon={Share2}
+                                    onClick={() => handleActionClick('share')}
+                                    className="justify-center truncate px-2"
+                                >
+                                    Share
+                                </Button>
+                            )}
                             <Button
-                                variant="primary"
-                                leadingIcon={Share2}
-                                onClick={() => handleActionClick('share')}
-                                className="justify-center truncate px-2"
+                                variant="destructive"
+                                leadingIcon={Trash2}
+                                isLoading={activeActionLoading === 'delete'}
+                                isDisabled={Boolean(activeActionLoading)}
+                                onClick={() => handleActionClick('delete')}
+                                className={`justify-center truncate px-2 ${item.isArchived ? 'col-span-2' : ''}`}
                             >
-                                Share
+                                Delete
                             </Button>
-                        )}
-                        <Button
-                            variant="secondary"
-                            leadingIcon={Download}
-                            isLoading={activeActionLoading === 'download'}
-                            isDisabled={Boolean(activeActionLoading)}
-                            onClick={() => handleActionClick('download')}
-                            className="justify-center truncate px-2"
-                        >
-                            Download
-                        </Button>
-                        <Button
-                            variant="destructive"
-                            leadingIcon={Archive}
-                            isLoading={activeActionLoading === 'archive' || activeActionLoading === 'restore'}
-                            isDisabled={Boolean(activeActionLoading)}
-                            onClick={() => handleActionClick(item.isArchived ? 'restore' : 'archive')}
-                            className="justify-center truncate px-2"
-                        >
-                            {item.isArchived ? 'Unarchive' : 'Archive'}
-                        </Button>
-                    </div>
-                )}
+                        </div>
+                    );
+                })()}
 
                 {isUser && (
                     <div className="grid grid-cols-2 gap-2 w-full">
@@ -2381,13 +3767,14 @@ const Inspector = ({
 
                 {isCoordinatorRequest && (
                     <div className="w-full">
-                        {item.status === constants.COORDINATOR_REQUESTS_STATUS.PENDING ? (
+                        {isAdmin ? (
                             <div className="grid grid-cols-2 gap-2 w-full">
                                 <Button
                                     variant="primary"
                                     leadingIcon={CheckCircle2}
                                     onClick={() => handleActionClick('approve')}
                                     className="justify-center truncate"
+                                    isDisabled={item.status !== constants.COORDINATOR_REQUESTS_STATUS.PENDING}
                                 >
                                     Approve
                                 </Button>
@@ -2396,18 +3783,19 @@ const Inspector = ({
                                     leadingIcon={XCircle}
                                     onClick={() => handleActionClick('reject')}
                                     className="justify-center truncate"
+                                    isDisabled={item.status !== constants.COORDINATOR_REQUESTS_STATUS.PENDING}
                                 >
                                     Reject
                                 </Button>
                             </div>
                         ) : (
                             <Button
-                                variant="secondary"
-                                leadingIcon={Layers}
-                                onClick={() => handleActionClick('reopen')}
-                                className="w-full justify-center"
+                                variant="destructive"
+                                leadingIcon={Trash2}
+                                onClick={() => handleActionClick('delete')}
+                                className="w-full justify-center truncate"
                             >
-                                Re-evaluate Action
+                                Delete
                             </Button>
                         )}
                     </div>
@@ -2415,33 +3803,108 @@ const Inspector = ({
 
                 {isDocumentRequest && (
                     <div className="w-full">
-                        {item.status === constants.DOCUMENT_REQUESTS_STATUS.OPEN ? (
-                            <div className="grid grid-cols-2 gap-2 w-full">
+                        {canSeePendingStatus && (
+                            <div className="mb-2 p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-between gap-2 text-xs text-amber-700 dark:text-amber-300">
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                    <Clock className="w-3.5 h-3.5 shrink-0 text-amber-500 animate-pulse" />
+                                    <span className="font-semibold truncate">
+                                        {pendingStatusRequest.action === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_RESOLVE
+                                            ? 'Resolution'
+                                            : pendingStatusRequest.action === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_REOPEN
+                                            ? 'Reopen'
+                                            : 'Rejection'} awaiting Admin approval
+                                    </span>
+                                </div>
+                                {isAdmin && (
+                                    <div className="flex items-center gap-1.5 shrink-0">
+                                        <button
+                                            type="button"
+                                            onClick={async () => {
+                                                try {
+                                                    await coordinatorApprovalService.executeApprovedRequest(pendingStatusRequest, activeUser);
+                                                    await coordinatorApprovalService.updateCoordinatorRequestStatus({
+                                                        requestId: pendingStatusRequest.id,
+                                                        status: constants.COORDINATOR_REQUESTS_STATUS.APPROVED,
+                                                    });
+                                                    useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
+                                                    showToast({ type: 'success', title: 'Request Approved', description: 'Action executed successfully.' });
+                                                } catch (err) {
+                                                    showToast({ type: 'error', title: 'Approval Failed', description: err?.message ?? 'Could not approve request.' });
+                                                }
+                                            }}
+                                            className="px-2 py-0.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[11px] cursor-pointer"
+                                        >
+                                            Approve
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={async () => {
+                                                try {
+                                                    await coordinatorApprovalService.updateCoordinatorRequestStatus({
+                                                        requestId: pendingStatusRequest.id,
+                                                        status: constants.COORDINATOR_REQUESTS_STATUS.REJECTED,
+                                                    });
+                                                    useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
+                                                    showToast({ type: 'warning', title: 'Request Rejected', description: 'Request was rejected.' });
+                                                } catch (err) {
+                                                    showToast({ type: 'error', title: 'Rejection Failed', description: err?.message ?? 'Could not reject request.' });
+                                                }
+                                            }}
+                                            className="px-2 py-0.5 rounded bg-rose-600 hover:bg-rose-700 text-white font-semibold text-[11px] cursor-pointer"
+                                        >
+                                            Reject
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {isStaff ? (
+                            activeItem.status === constants.DOCUMENT_REQUESTS_STATUS.OPEN ? (
+                                <div className="grid grid-cols-2 gap-2 w-full">
+                                    <Button
+                                        variant="primary"
+                                        leadingIcon={CheckCircle2}
+                                        onClick={() => handleActionClick('resolve')}
+                                        isLoading={activeActionLoading === 'resolve'}
+                                        isDisabled={Boolean(activeActionLoading) || Boolean(canSeePendingStatus)}
+                                        className="justify-center truncate"
+                                    >
+                                        Resolve
+                                    </Button>
+                                    <Button
+                                        variant="destructive"
+                                        leadingIcon={XCircle}
+                                        onClick={() => handleActionClick('reject')}
+                                        isLoading={activeActionLoading === 'reject'}
+                                        isDisabled={Boolean(activeActionLoading) || Boolean(canSeePendingStatus)}
+                                        className="justify-center truncate"
+                                    >
+                                        Reject
+                                    </Button>
+                                </div>
+                            ) : (
                                 <Button
                                     variant="primary"
-                                    leadingIcon={FileCheck}
-                                    onClick={() => handleActionClick('resolve')}
-                                    className="justify-center truncate"
+                                    leadingIcon={RotateCcw}
+                                    onClick={() => handleActionClick('open_request')}
+                                    isLoading={activeActionLoading === 'open_request'}
+                                    isDisabled={Boolean(activeActionLoading) || Boolean(canSeePendingStatus)}
+                                    className="w-full justify-center"
                                 >
-                                    Resolve Request
+                                    Open
                                 </Button>
-                                <Button
-                                    variant="destructive"
-                                    leadingIcon={XCircle}
-                                    onClick={() => handleActionClick('reject')}
-                                    className="justify-center truncate"
-                                >
-                                    Reject Request
-                                </Button>
-                            </div>
+                            )
                         ) : (
                             <Button
-                                variant="primary"
-                                leadingIcon={Download}
-                                onClick={() => handleActionClick('download')}
+                                variant="destructive"
+                                leadingIcon={Trash2}
+                                onClick={() => handleActionClick('delete')}
+                                isLoading={activeActionLoading === 'delete'}
+                                isDisabled={Boolean(activeActionLoading)}
                                 className="w-full justify-center"
                             >
-                                Download Clearance Package
+                                Delete
                             </Button>
                         )}
                     </div>
@@ -2452,10 +3915,12 @@ const Inspector = ({
                 <Modal
                     isOpen={isAttachModalOpen}
                     onClose={handleCloseAttachModal}
-                    title="Attach Document from Repository"
-                    description="Select an institutional file to attach to this clearance thread."
+                    title="Attach Documents from Repository"
+                    description="Select institutional files to attach to this message thread."
                     size="md"
                     icon={Paperclip}
+                    confirmLabel={stagedAttachments.length > 0 ? `Done (${stagedAttachments.length} staged)` : 'Done'}
+                    onConfirm={handleCloseAttachModal}
                     cancelLabel="Cancel"
                     onCancel={handleCloseAttachModal}
                 >
@@ -2477,35 +3942,45 @@ const Inspector = ({
                                     No matching documents found in repository.
                                 </div>
                             ) : (
-                                attachableDocuments.map((doc) => (
-                                    <div
-                                        key={doc.id}
-                                        className="p-3 flex items-center justify-between gap-3 hover:bg-surface-hover transition-colors"
-                                    >
-                                        <div className="flex items-center gap-3 min-w-0">
-                                            <FileText className="h-4 w-4 text-accent shrink-0" />
-                                            <div className="flex flex-col min-w-0">
-                                                <span
-                                                    className="text-xs font-semibold text-text truncate"
-                                                    title={doc.name}
-                                                >
-                                                    {doc.name}
-                                                </span>
-                                                <span className="text-xs text-text-muted">
-                                                    {doc.sizeBytes ? formatBytes(doc.sizeBytes) : 'Document'} • {doc.classification ?? constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED}
-                                                </span>
-                                            </div>
-                                        </div>
-
-                                        <Button
-                                            variant="primary"
+                                attachableDocuments.map((doc) => {
+                                    const isStaged = stagedAttachments.some((att) => att.documentId === doc.id);
+                                    return (
+                                        <div
+                                            key={doc.id}
                                             onClick={() => handleSelectDocumentToAttach(doc)}
-                                            className="shrink-0 text-xs px-3"
+                                            className={`p-3 flex items-center justify-between gap-3 transition-colors cursor-pointer ${
+                                                isStaged ? 'bg-accent/10' : 'hover:bg-surface-hover'
+                                            }`}
                                         >
-                                            Attach
-                                        </Button>
-                                    </div>
-                                ))
+                                            <div className="flex items-center gap-3 min-w-0">
+                                                <FileText className={`h-4 w-4 shrink-0 ${isStaged ? 'text-accent' : 'text-text-muted'}`} />
+                                                <div className="flex flex-col min-w-0">
+                                                    <span
+                                                        className="text-xs font-semibold text-text truncate"
+                                                        title={doc.name}
+                                                    >
+                                                        {doc.name}
+                                                    </span>
+                                                    <span className="text-xs text-text-muted">
+                                                        {doc.sizeBytes ? formatBytes(doc.sizeBytes) : 'Document'} • {doc.classification ?? constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED}
+                                                    </span>
+                                                </div>
+                                            </div>
+
+                                            <Button
+                                                variant={isStaged ? 'secondary' : 'primary'}
+                                                leadingIcon={isStaged ? Check : undefined}
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleSelectDocumentToAttach(doc);
+                                                }}
+                                                className="shrink-0 text-xs px-3"
+                                            >
+                                                {isStaged ? 'Staged' : 'Attach'}
+                                            </Button>
+                                        </div>
+                                    );
+                                })
                             )}
                         </div>
                     </div>
@@ -2785,6 +4260,112 @@ const formatTimestamp = (timestampString) => {
     }
 };
 
+const formatMessageTime = (timestampString) => {
+    if (!timestampString || timestampString === 'Invalid Date') {
+        return '';
+    }
+
+    try {
+        const date = new Date(timestampString);
+        if (isNaN(date.getTime())) {
+            return '';
+        }
+        const now = new Date();
+        const isToday = date.toDateString() === now.toDateString();
+        const timeStr = date.toLocaleTimeString(undefined, {
+            hour: 'numeric',
+            minute: '2-digit',
+        });
+        if (isToday) {
+            return timeStr;
+        }
+        const isThisYear = date.getFullYear() === now.getFullYear();
+        const dateStr = date.toLocaleDateString(undefined, {
+            month: 'short',
+            day: 'numeric',
+            ...(isThisYear ? {} : { year: '2-digit' }),
+        });
+        return `${dateStr}, ${timeStr}`;
+    } catch {
+        return '';
+    }
+};
+
+const formatDividerTimestamp = (dateStr) => {
+    if (!dateStr) return '';
+    const date = new Date(dateStr);
+    if (isNaN(date.getTime())) return '';
+
+    const now = new Date();
+    const isToday = date.toDateString() === now.toDateString();
+
+    const yesterday = new Date(now);
+    yesterday.setDate(now.getDate() - 1);
+    const isYesterday = date.toDateString() === yesterday.toDateString();
+
+    const timeString = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    if (isToday) {
+        return `Today at ${timeString}`;
+    }
+    if (isYesterday) {
+        return `Yesterday at ${timeString}`;
+    }
+    const dateString = date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    return `${dateString} at ${timeString}`;
+};
+
+const formatFullDateTime = (dateStr) => {
+    if (!dateStr) return '';
+    const date = new Date(dateStr);
+    if (isNaN(date.getTime())) return '';
+    return date.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+};
+
+const renderMessageRoleBadge = (role, isRequester = false) => {
+    const badges = [];
+    if (isRequester) {
+        badges.push(
+            <span key="requester" className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-information-background text-information border border-information-border">
+                Requester
+            </span>
+        );
+    }
+    if (role === constants.USERS_ROLE.ADMINISTRATOR) {
+        badges.push(
+            <span key="admin" className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-accent/15 text-accent border border-accent/20">
+                Admin
+            </span>
+        );
+    } else if (role === constants.USERS_ROLE.COORDINATOR) {
+        badges.push(
+            <span key="coordinator" className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-warning-background text-warning border border-warning-border">
+                Coordinator
+            </span>
+        );
+    } else if (role === constants.USERS_ROLE.DIRECTOR) {
+        badges.push(
+            <span key="director" className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-information-background text-information border border-information-border">
+                Director
+            </span>
+        );
+    } else if (role === constants.USERS_ROLE.OFFICER && !isRequester) {
+        badges.push(
+            <span key="officer" className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-surface-hover text-text-muted border border-surface-border">
+                Officer
+            </span>
+        );
+    } else if (role === constants.USERS_ROLE.MEMBER && !isRequester) {
+        badges.push(
+            <span key="member" className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-surface-hover text-text-muted border border-surface-border">
+                Member
+            </span>
+        );
+    }
+    if (badges.length === 0) return null;
+    return <span className="inline-flex items-center gap-1">{badges}</span>;
+};
+
 const getMimeTypeFromExtension = (filename) => {
     if (!filename) {
         return null;
@@ -2829,7 +4410,13 @@ const getActionLabel = (action) => {
         case 'DOCUMENT_DELETE':
             return 'Permanent Document Deletion';
         case 'DOCUMENT_ATTACH':
-            return 'Attach Document File';
+        case 'DOCUMENT_REQUEST_ATTACH':
+            return 'DOCUMENT ATTACHMENT';
+        case 'DOCUMENT_REQUEST_RESOLVE':
+        case 'DOCUMENT_REQUEST_REJECT':
+            return 'DOCUMENT RESOLUTION';
+        case 'DOCUMENT_REQUEST_REOPEN':
+            return 'DOCUMENT REOPEN';
         default:
             return action ?? 'Coordinator Request';
     }
@@ -2855,6 +4442,15 @@ const getActionDescription = (action) => {
             return 'Coordinator submitted a request to transfer an active document into cold vault archives.';
         case 'DOCUMENT_DELETE':
             return 'Coordinator requested permanent deletion of a document from institutional records.';
+        case 'DOCUMENT_ATTACH':
+        case 'DOCUMENT_REQUEST_ATTACH':
+            return 'Coordinator staged official document attachments awaiting administrative approval before delivery.';
+        case 'DOCUMENT_REQUEST_RESOLVE':
+            return 'Coordinator requested to mark this document request as resolved.';
+        case 'DOCUMENT_REQUEST_REJECT':
+            return 'Coordinator requested rejection of this document request.';
+        case 'DOCUMENT_REQUEST_REOPEN':
+            return 'Coordinator requested to reopen this resolved or rejected document request.';
         default:
             return 'Coordinator action submitted for administrative review and execution.';
     }

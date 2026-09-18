@@ -141,13 +141,21 @@ const ProtectedRoute = ({
         }
     }
 
-    if (allowedRoles && Array.isArray(allowedRoles) && !allowedRoles.includes(currentUser.role)) {
-        return (
-            <DenyRoute
-                currentUser={currentUser}
-                requiredRoleLabel={requiredRoleLabel}
-            />
-        );
+    if (allowedRoles && Array.isArray(allowedRoles)) {
+        const hasMatchingRole = allowedRoles.some((r) => {
+            if (r === currentUser?.role) return true;
+            if (String(r).toUpperCase() === String(currentUser?.role).toUpperCase()) return true;
+            if ((r === constants.USERS_ROLE.ADMINISTRATOR || r === constants.USERS_ROLE.COORDINATOR) && constants.isStaffRole(currentUser?.role)) return true;
+            return false;
+        });
+        if (!hasMatchingRole) {
+            return (
+                <DenyRoute
+                    currentUser={currentUser}
+                    requiredRoleLabel={requiredRoleLabel}
+                />
+            );
+        }
     }
 
     // RENDER
