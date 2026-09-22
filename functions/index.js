@@ -2,9 +2,13 @@
 // --- IMPORTS ---
 const { initializeApp } = require('firebase-admin/app');
 const { onCall } = require('firebase-functions/v2/https');
+const { setGlobalOptions } = require('firebase-functions/v2');
 
 // Initialize Firebase Admin SDK
 initializeApp();
+
+// Configure default region to asia-southeast1 (Singapore) to match Cloud SQL, Data Connect, and Cloud Storage
+setGlobalOptions({ region: 'asia-southeast1' });
 
 // Lazy handler loaders: Prevents deployment initialization timeout during backend specification discovery
 // (Firebase official tip: https://firebase.google.com/docs/functions/tips#avoid_deployment_timeouts_during_initialization)

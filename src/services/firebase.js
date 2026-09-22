@@ -44,7 +44,7 @@ if (isConfigured) {
         app = getApps().length > 0 ? getApp() : initializeApp(FIREBASE_CONFIGURATION);
         auth = getAuth(app);
         storage = getStorage(app);
-        functions = getFunctions(app);
+        functions = getFunctions(app, location || 'asia-southeast1');
         db = getFirestore(app);
 
         dataConnect = getDataConnect(app, {

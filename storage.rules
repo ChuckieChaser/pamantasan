@@ -8,31 +8,12 @@ service firebase.storage {
       return request.auth != null;
     }
 
-    function isOwner(userId) {
-      return isAuthenticated() && request.auth.uid == userId;
-    }
-
-    function isInstitutionalDomain() {
-      return isAuthenticated() &&
-             request.auth.token.email != null &&
-             request.auth.token.email.matches('.*@plpasig[.]edu[.]ph$');
-    }
-
     function isValidFileSize() {
       return request.resource.size <= 50 * 1024 * 1024; // 50 MB max
     }
 
     function isValidImage() {
       return request.resource.contentType.matches('image/(jpeg|png|webp|svg[+]xml|gif)');
-    }
-
-    function isValidDocument() {
-      return request.resource.contentType.matches('application/pdf') ||
-             request.resource.contentType.matches('application/msword') ||
-             request.resource.contentType.matches('application/vnd.openxmlformats-officedocument.wordprocessingml.document') ||
-             request.resource.contentType.matches('application/vnd.ms-excel') ||
-             request.resource.contentType.matches('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') ||
-             request.resource.contentType.matches('image/(jpeg|png|webp)');
     }
 
     // User Avatar Icons: avatars/{allPaths=**}

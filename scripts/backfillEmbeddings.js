@@ -13,7 +13,7 @@ const firebaseConfig = {
 };
 
 async function fetchEmbeddingFromCloudFunction(text) {
-    const response = await fetch('https://us-central1-pamantasan-records-210fe.cloudfunctions.net/generateTextEmbedding', {
+    const response = await fetch('https://asia-southeast1-pamantasan-records-210fe.cloudfunctions.net/generateTextEmbedding', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ data: { text } }),

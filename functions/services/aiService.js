@@ -18,12 +18,10 @@ const DEFAULT_STORAGE_BUCKET = process.env.STORAGE_BUCKET_NAME || 'pamantasan-re
 // Primary location: asia-southeast1 (Singapore - colocated with Firebase Storage)
 // Fallback location: us-central1 (for global deployment redundancy)
 const MODEL_CANDIDATES = [
-    { model: 'gemini-2.0-flash', location: 'us-central1' },
-    { model: 'gemini-2.0-flash-001', location: 'us-central1' },
-    { model: 'gemini-1.5-flash', location: 'us-central1' },
-    { model: 'gemini-3.5-flash', location: 'asia-southeast1' },
     { model: 'gemini-2.0-flash', location: 'asia-southeast1' },
     { model: 'gemini-1.5-flash', location: 'asia-southeast1' },
+    { model: 'gemini-2.0-flash', location: 'us-central1' },
+    { model: 'gemini-1.5-flash', location: 'us-central1' },
 ];
 
 const SYSTEM_INSTRUCTION = `You are the Lead AI Document Intelligence Engine for Pamantasan Records Management System (an official Philippine Higher Education Records System).
@@ -521,8 +519,8 @@ async function generateVectorEmbedding(inputText) {
 
     const cleanText = inputText.substring(0, 2048);
 
-    // text-embedding-004 is deployed on Vertex AI in us-central1 (primary) and asia-southeast1
-    const candidateLocations = ['us-central1', 'asia-southeast1'];
+    // text-embedding-004 is deployed on Vertex AI in asia-southeast1 (primary) and us-central1
+    const candidateLocations = ['asia-southeast1', 'us-central1'];
 
     // 1. Try modern @google/genai SDK with retry backoff for rate limits
     for (const loc of candidateLocations) {
