@@ -87,7 +87,7 @@ const coordinatorApprovalService = {
                 const tempPassword = payloadData.password || targetUid;
                 const targetEmail = (payloadData.email || '').trim().toLowerCase();
 
-                const newUser = await userStore.insertUser({
+                await userStore.insertUser({
                     universityId: targetUid,
                     password: tempPassword,
                     firstName: (payloadData.firstName || '').trim(),

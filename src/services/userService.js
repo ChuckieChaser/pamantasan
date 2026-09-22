@@ -165,10 +165,10 @@ const userService = {
             : null;
 
         const cleanPayload = Object.fromEntries(
-            Object.entries(payloadWithUpdate).filter(([_, v]) => v !== undefined)
+            Object.entries(payloadWithUpdate).filter(([, v]) => v !== undefined)
         );
         const cleanFormatted = formatted
-            ? Object.fromEntries(Object.entries(formatted).filter(([_, v]) => v !== undefined))
+            ? Object.fromEntries(Object.entries(formatted).filter(([, v]) => v !== undefined))
             : {};
 
         return {

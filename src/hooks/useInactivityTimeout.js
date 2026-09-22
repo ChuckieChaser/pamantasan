@@ -17,7 +17,9 @@ export const useInactivityTimeout = ({
     enabled = true,
 } = {}) => {
     const onTimeoutReference = useRef(onTimeout);
-    onTimeoutReference.current = onTimeout;
+    useEffect(() => {
+        onTimeoutReference.current = onTimeout;
+    }, [onTimeout]);
 
     useEffect(() => {
         if (!enabled) {

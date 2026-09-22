@@ -28,6 +28,7 @@ import {
     ScanText,
     Image as ImageIcon,
     Crop,
+    Smartphone,
 } from 'lucide-react';
 import {
     Badge,
@@ -40,6 +41,7 @@ import {
     SelectField,
     DocumentViewerModal,
     DocumentScannerModal,
+    MobileScanModal,
     Avatar,
     resolveUserAvatar,
     formatDateTime,
@@ -118,6 +120,7 @@ const INITIAL_BREADCRUMBS = [
 // --- COMPONENTS ---
 const DocumentsPage = ({
     currentUser: propUser = null,
+    selectedItem = null,
     onSelectDocument,
     className,
     ...props
@@ -146,6 +149,7 @@ const DocumentsPage = ({
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
     const [isDiscardConfirmOpen, setIsDiscardConfirmOpen] = useState(false);
     const [creationMode, setCreationMode] = useState('file');
+    const [isMobileScanModalOpen, setIsMobileScanModalOpen] = useState(false);
 
     // STATES: STAGED ITEMS & FORMS
     const [stagedDroppedItems, setStagedDroppedItems] = useState([]);
@@ -570,20 +574,56 @@ const DocumentsPage = ({
         return [...localCreatedItems, ...liveItems];
     }, [documents, documentVersions, documentShares, localCreatedItems, currentUser, isStaff, isOfficer, isDirector, isMember]);
 
+    // DERIVED SELECTION & ACTIVE FOLDER: Reactive to both local navigation and external selectedItem
+    const activeSelectedDocument = useMemo(() => {
+        const targetId = selectedItem?.id ?? selectedDocument?.id;
+        if (!targetId) return null;
+        const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
+        const targetClean = cleanId(targetId);
+        const matched = repositoryItems.find((item) => cleanId(item.id) === targetClean);
+        return matched ?? selectedItem ?? selectedDocument;
+    }, [selectedItem, selectedDocument, repositoryItems]);
+
+    const activeFolderId = useMemo(() => {
+        if (selectedItem?.id) {
+            const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
+            const targetClean = cleanId(selectedItem.id);
+            const matched = repositoryItems.find((item) => cleanId(item.id) === targetClean);
+            if (matched && matched.parentId && matched.parentId !== 'root') {
+                return matched.parentId;
+            }
+        }
+        return currentFolderId;
+    }, [selectedItem, repositoryItems, currentFolderId]);
+
     const currentFolderItems = useMemo(() => {
         const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
         return repositoryItems.filter((item) => {
             const matchesArchiveState = !item.isArchived;
             if (!matchesArchiveState) return false;
             const itemParent = item.parentId ?? 'root';
-            if (currentFolderId === 'root') {
+            if (activeFolderId === 'root') {
                 return !itemParent || itemParent === 'root';
             }
-            return cleanId(itemParent) === cleanId(currentFolderId);
+            return cleanId(itemParent) === cleanId(activeFolderId);
         });
-    }, [repositoryItems, currentFolderId]);
+    }, [repositoryItems, activeFolderId]);
 
-    const currentDirectoryLabel = breadcrumbsList[breadcrumbsList.length - 1]?.label ?? 'current directory';
+    const activeBreadcrumbsList = useMemo(() => {
+        if (activeFolderId !== 'root') {
+            const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
+            const parentFolder = repositoryItems.find((f) => cleanId(f.id) === cleanId(activeFolderId));
+            if (parentFolder) {
+                return [
+                    INITIAL_BREADCRUMBS[0],
+                    { id: parentFolder.id, label: parentFolder.name || parentFolder.title || 'Folder' },
+                ];
+            }
+        }
+        return breadcrumbsList;
+    }, [activeFolderId, repositoryItems, breadcrumbsList]);
+
+    const currentDirectoryLabel = activeBreadcrumbsList[activeBreadcrumbsList.length - 1]?.label ?? 'current directory';
 
     // HANDLERS
     const handleBreadcrumbClick = (breadcrumbItem, breadcrumbIndex) => {
@@ -697,7 +737,7 @@ const DocumentsPage = ({
         };
     }, [documents, handleItemDoubleClick, showToast]);
 
-    // LISTEN FOR EXTERNAL ARCHIVE TRIGGER (E.G. FROM INSPECTOR QUICK ACTION)
+    // LISTEN FOR EXTERNAL ARCHIVE & DELETE TRIGGERS (E.G. FROM INSPECTOR QUICK ACTION)
     useEffect(() => {
         const handleArchiveDocEvent = (event) => {
             if (event.detail) {
@@ -705,8 +745,18 @@ const DocumentsPage = ({
                 setArchivingItem(targetDoc);
             }
         };
+        const handleDeleteDocEvent = (event) => {
+            if (event.detail) {
+                const targetDoc = documents.find((d) => d?.id === event.detail.id) ?? event.detail;
+                setDeletingItem(targetDoc);
+            }
+        };
         window.addEventListener('pamantasan:archive-document', handleArchiveDocEvent);
-        return () => window.removeEventListener('pamantasan:archive-document', handleArchiveDocEvent);
+        window.addEventListener('pamantasan:delete-document', handleDeleteDocEvent);
+        return () => {
+            window.removeEventListener('pamantasan:archive-document', handleArchiveDocEvent);
+            window.removeEventListener('pamantasan:delete-document', handleDeleteDocEvent);
+        };
     }, [documents]);
 
     useEffect(() => {
@@ -1663,12 +1713,15 @@ const DocumentsPage = ({
                 if (item.isImage && item.ocrMode === 'ocr_pdf') {
                     toastProcess.updateItem(item.id, {
                         progress: 15,
-                        statusText: 'Running PaddleOCR text recognition...',
+                        statusText: 'Running Cloud OCR text recognition...',
                     });
 
                     try {
+                        // If enhanced in Scanner Studio, honor user's filter (do not auto-whiten if 'original')
+                        const shouldWhiten = item.isScannerEnhanced ? (item.scannerFilter !== 'original') : true;
                         const ocrResult = await ocrService.convertImageToPdf(item.file, {
                             customTitle: item.fileName || item.title,
+                            autoWhiten: shouldWhiten,
                         });
 
                         if (ocrResult.extractedText) {
@@ -1691,15 +1744,15 @@ const DocumentsPage = ({
                             statusText: `OCR extracted ${ocrResult.linesCount} lines. Resolving location...`,
                         });
                     } catch (ocrErr) {
-                        console.warn('PaddleOCR processing failed or server offline, uploading as normal image:', ocrErr);
+                        console.warn('OCR processing failed, uploading as normal image:', ocrErr);
                         toastProcess.updateItem(item.id, {
                             progress: 25,
-                            statusText: 'OCR offline / failed. Uploading as normal image...',
+                            statusText: 'OCR failed. Uploading as normal image...',
                         });
                         showToast({
                             type: 'warning',
-                            title: 'PaddleOCR Offline / Failed',
-                            description: `Could not connect to OCR service on localhost:5005 for "${item.fileName}". File will be uploaded as normal image. (Start OCR service with: npm run ocr).`,
+                            title: 'OCR Processing Failed',
+                            description: `Could not process OCR for "${item.fileName}". File will be uploaded as normal image. (${ocrErr?.message || 'Error'})`,
                         });
                     }
                 } else {
@@ -1729,6 +1782,47 @@ const DocumentsPage = ({
                         targetDocumentId = existingDoc.id;
                     }
                 }
+
+                // Extract client text snippet for text-based formats and DOCX if OCR was not run
+                let textContentSnippet = null;
+                if (!ocrSummary && item.file) {
+                    const lowerName = finalFileName.toLowerCase();
+                    const isDocx = lowerName.endsWith('.docx') || (item.file.type || '').includes('wordprocessingml');
+                    if (isDocx && typeof item.file.arrayBuffer === 'function') {
+                        try {
+                            const mammothModule = await import('mammoth');
+                            const mammoth = mammothModule.default || mammothModule;
+                            if (typeof mammoth?.extractRawText === 'function') {
+                                const arrayBuffer = await item.file.arrayBuffer();
+                                const res = await mammoth.extractRawText({ arrayBuffer });
+                                if (res?.value && res.value.trim()) {
+                                    textContentSnippet = res.value.trim().slice(0, 30000);
+                                }
+                            }
+                        } catch (mErr) {
+                            console.warn('[DocumentsPage] Client docx extraction failed:', mErr);
+                        }
+                    } else if (typeof item.file.text === 'function') {
+                        const isTextual = (item.file.type || '').startsWith('text/') ||
+                            item.file.type === 'application/json' ||
+                            item.file.type === 'application/javascript' ||
+                            item.file.type === 'application/x-httpd-php' ||
+                            lowerName.endsWith('.txt') || lowerName.endsWith('.csv') ||
+                            lowerName.endsWith('.md') || lowerName.endsWith('.json') ||
+                            lowerName.endsWith('.js') || lowerName.endsWith('.html') ||
+                            lowerName.endsWith('.py') || lowerName.endsWith('.sql') ||
+                            lowerName.endsWith('.php');
+                        if (isTextual) {
+                            try {
+                                const raw = await item.file.text();
+                                textContentSnippet = raw ? raw.slice(0, 30000) : null;
+                            } catch {
+                                // Text reading error ignored for non-text formats
+                            }
+                        }
+                    }
+                }
+                const activeExtractedText = ocrSummary || textContentSnippet || item.summary || null;
 
                 if (targetDocumentId) {
                     // VERSIONING: Existing document found, increment version
@@ -1769,6 +1863,7 @@ const DocumentsPage = ({
                             previousStoragePath: latestPriorVer?.path || null,
                             previousMimeType: latestPriorVer?.mimeType || null,
                             nextVersion: nextVersionNum,
+                            extractedText: activeExtractedText,
                         });
                     } catch (aiErr) {
                         console.warn('AI analysis error on version update:', aiErr);
@@ -1793,7 +1888,7 @@ const DocumentsPage = ({
                             mimeType: storageResult.mimeType || item.file.type || getMimeTypeFromFilename(finalFileName),
                             classification: finalClassification,
                             changeSummary: aiResult?.changeSummary || `Version ${nextVersionNum}.0 update`,
-                            summary: aiResult?.summary || null,
+                            summary: aiResult?.summary || (activeExtractedText ? activeExtractedText.slice(0, 500) : null),
                             embedding: aiResult?.embedding || null,
                         });
 
@@ -1872,6 +1967,7 @@ const DocumentsPage = ({
                             fileName: finalFileName,
                             fileSize: storageResult.sizeBytes || item.file.size || 0,
                             isVersionUpdate: false,
+                            extractedText: activeExtractedText,
                         });
                     } catch (aiErr) {
                         console.warn('AI analysis error on initial upload:', aiErr);
@@ -1897,7 +1993,7 @@ const DocumentsPage = ({
                                 mimeType: storageResult.mimeType || item.file.type || getMimeTypeFromFilename(finalFileName),
                                 classification: finalClassification,
                                 changeSummary: aiResult?.changeSummary || 'Initial file upload',
-                                summary: aiResult?.summary || null,
+                                summary: aiResult?.summary || (activeExtractedText ? activeExtractedText.slice(0, 500) : null),
                                 embedding: aiResult?.embedding || null,
                             });
 
@@ -2083,6 +2179,43 @@ const DocumentsPage = ({
         }
     };
 
+    // HANDLER: IMAGE CAPTURED FROM MOBILE PHONE CAMERA
+    const handleMobileImageReceived = (file) => {
+        const newStagedItem = {
+            id: `doc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            parentId: currentFolderId,
+            relativePath: `/${file.name}`,
+            fileName: file.name,
+            folderPathParts: [],
+            title: `/${file.name}`,
+            subtitle: `DOC-${new Date().getFullYear()}-SCAN-${Math.floor(100 + Math.random() * 900)}`,
+            description: 'Captured via smartphone camera',
+            category: 'Image',
+            classification: constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED,
+            version: 'v1.0',
+            size: formatFileSize(file.size),
+            sizeBytes: file.size,
+            status: constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL,
+            date: 'Just now',
+            isFolder: false,
+            file: file,
+            isImage: true,
+            isMobileCaptured: true,
+            ocrMode: 'ocr_pdf',
+            tags: [constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL, constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED],
+        };
+
+        const annotated = annotateDuplicates([newStagedItem], currentFolderId, documents, documentVersions);
+        setStagedDroppedItems((previousItems) => [...previousItems, ...annotated]);
+        setFileError('');
+
+        showToast({
+            type: 'success',
+            title: 'Mobile Scan Received',
+            description: `Photo "${file.name}" received from phone and queued for Cloud OCR conversion!`,
+        });
+    };
+
     const handleToggleOcrMode = (stagedId, mode) => {
         setStagedDroppedItems((prev) =>
             prev.map((item) =>
@@ -2096,6 +2229,20 @@ const DocumentsPage = ({
             prev.map((item) =>
                 item.isImage ? { ...item, ocrMode: mode } : item
             )
+        );
+    };
+
+    const handleSetStagedItemClassification = (stagedId, classification) => {
+        setStagedDroppedItems((prev) =>
+            prev.map((item) =>
+                item.id === stagedId ? { ...item, classification } : item
+            )
+        );
+    };
+
+    const handleSetAllStagedClassification = (classification) => {
+        setStagedDroppedItems((prev) =>
+            prev.map((item) => ({ ...item, classification }))
         );
     };
 
@@ -2646,8 +2793,8 @@ const DocumentsPage = ({
                 data={currentFolderItems}
                 columns={DOCUMENT_COLUMNS}
                 filterOptions={dynamicFilterOptions}
-                breadcrumbs={breadcrumbsList}
-                selectedItem={selectedDocument}
+                breadcrumbs={activeBreadcrumbsList}
+                selectedItem={activeSelectedDocument}
                 onSelectItem={handleItemSelect}
                 onDoubleClickItem={handleItemDoubleClick}
                 onBreadcrumbClick={handleBreadcrumbClick}
@@ -2670,30 +2817,50 @@ const DocumentsPage = ({
                 primaryAction={modalPrimaryAction}
                 secondaryAction={modalSecondaryAction}
             >
-                {/* 1. CREATION MODE SELECTOR: TWO BIG SQUARE BUTTONS */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* 1. CREATION MODE SELECTOR: 3 TILES INCLUDING PHONE SCAN */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <button
                         type="button"
                         onClick={() => handleCreationModeChange('file')}
-                        className={`p-5 rounded-xl border-2 flex flex-col items-center justify-center text-center gap-3 transition-colors cursor-pointer select-none ${
+                        className={`p-4 rounded-xl border-2 flex flex-col items-center justify-center text-center gap-2.5 transition-colors cursor-pointer select-none ${
                             creationMode === 'file'
                                 ? 'bg-accent-background border-accent text-text'
                                 : 'bg-surface border-surface-border hover:bg-surface-hover hover:border-surface-border text-text'
                         }`}
                     >
                         <div
-                            className={`p-3 rounded-full transition-colors ${
+                            className={`p-2.5 rounded-full transition-colors ${
                                 creationMode === 'file'
                                     ? 'bg-accent text-text-inverted'
                                     : 'bg-surface-hover text-text-muted'
                             }`}
                         >
-                            <FileUp className="h-6 w-6" />
+                            <FileUp className="h-5 w-5" />
                         </div>
-                        <div className="flex flex-col gap-1">
-                            <span className="font-bold text-sm text-text">Upload Documents</span>
-                            <span className="text-xs text-text-muted">
-                                Upload single files or entire nested directories
+                        <div className="flex flex-col gap-0.5">
+                            <span className="font-bold text-xs text-text">Upload Documents</span>
+                            <span className="text-[10px] text-text-muted">
+                                Single files or folder trees
+                            </span>
+                        </div>
+                    </button>
+
+                    <button
+                        type="button"
+                        onClick={() => setIsMobileScanModalOpen(true)}
+                        className="p-4 rounded-xl border-2 border-accent/40 bg-accent/5 hover:bg-accent/15 hover:border-accent flex flex-col items-center justify-center text-center gap-2.5 transition-all cursor-pointer select-none shadow-xs group"
+                        title="Scan documents with your phone's camera"
+                    >
+                        <div className="p-2.5 rounded-full bg-accent/20 text-accent group-hover:scale-110 transition-transform">
+                            <Smartphone className="h-5 w-5" />
+                        </div>
+                        <div className="flex flex-col gap-0.5">
+                            <span className="font-bold text-xs text-accent flex items-center gap-1 justify-center">
+                                <span>Scan with Phone</span>
+                                <span className="text-[8px] px-1 py-0.2 rounded bg-accent text-text-inverted font-extrabold uppercase">New</span>
+                            </span>
+                            <span className="text-[10px] text-text-muted">
+                                Snap document wirelessly
                             </span>
                         </div>
                     </button>
@@ -2701,25 +2868,25 @@ const DocumentsPage = ({
                     <button
                         type="button"
                         onClick={() => handleCreationModeChange('folder')}
-                        className={`p-5 rounded-xl border-2 flex flex-col items-center justify-center text-center gap-3 transition-colors cursor-pointer select-none ${
+                        className={`p-4 rounded-xl border-2 flex flex-col items-center justify-center text-center gap-2.5 transition-colors cursor-pointer select-none ${
                             creationMode === 'folder'
                                 ? 'bg-accent-background border-accent text-text'
                                 : 'bg-surface border-surface-border hover:bg-surface-hover hover:border-surface-border text-text'
                         }`}
                     >
                         <div
-                            className={`p-3 rounded-full transition-colors ${
+                            className={`p-2.5 rounded-full transition-colors ${
                                 creationMode === 'folder'
                                     ? 'bg-accent text-text-inverted'
                                     : 'bg-surface-hover text-text-muted'
                             }`}
                         >
-                            <FolderPlus className="h-6 w-6" />
+                            <FolderPlus className="h-5 w-5" />
                         </div>
-                        <div className="flex flex-col gap-1">
-                            <span className="font-bold text-sm text-text">Create Folder</span>
-                            <span className="text-xs text-text-muted">
-                                Group and organize documents into department folders
+                        <div className="flex flex-col gap-0.5">
+                            <span className="font-bold text-xs text-text">Create Folder</span>
+                            <span className="text-[10px] text-text-muted">
+                                Group and organize files
                             </span>
                         </div>
                     </button>
@@ -2757,9 +2924,22 @@ const DocumentsPage = ({
                                     Drop single files or nested folder structures to upload
                                 </span>
                             </div>
-                            <span className="text-xs font-medium text-text-muted px-3 py-1 rounded-full bg-surface-hover border border-surface-border">
-                                Destination: {currentDirectoryLabel}
-                            </span>
+                            <div className="flex items-center gap-2">
+                                <span className="text-xs font-medium text-text-muted px-3 py-1 rounded-full bg-surface-hover border border-surface-border">
+                                    Destination: {currentDirectoryLabel}
+                                </span>
+                                <button
+                                    type="button"
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        setIsMobileScanModalOpen(true);
+                                    }}
+                                    className="text-xs font-medium text-accent hover:underline flex items-center gap-1 cursor-pointer"
+                                >
+                                    <Smartphone className="h-3 w-3" />
+                                    <span>Scan with Phone Camera</span>
+                                </button>
+                            </div>
                             <input
                                 ref={fileInputReference}
                                 type="file"
@@ -2785,7 +2965,7 @@ const DocumentsPage = ({
                                                     type="button"
                                                     onClick={() => handleSetAllImagesOcrMode('ocr_pdf')}
                                                     className="text-accent hover:underline font-semibold cursor-pointer"
-                                                    title="Set all images to convert to PDF via PaddleOCR"
+                                                    title="Set all images to convert to PDF via Cloud OCR"
                                                 >
                                                     All OCR to PDF
                                                 </button>
@@ -2800,6 +2980,35 @@ const DocumentsPage = ({
                                                 </button>
                                             </div>
                                         )}
+                                        <div className="flex items-center gap-1.5 text-[11px] text-text-muted bg-surface-hover/60 px-2 py-0.5 rounded-md border border-surface-border">
+                                            <span className="font-medium">Set All:</span>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleSetAllStagedClassification(constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED)}
+                                                className="text-accent hover:underline font-medium cursor-pointer"
+                                                title="Set all items to Auto AI classification"
+                                            >
+                                                Auto AI
+                                            </button>
+                                            <span>•</span>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleSetAllStagedClassification(constants.DOCUMENT_VERSIONS_CLASSIFICATION.PUBLIC)}
+                                                className="hover:text-text hover:underline cursor-pointer"
+                                                title="Set all items to Public"
+                                            >
+                                                Public
+                                            </button>
+                                            <span>•</span>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleSetAllStagedClassification(constants.DOCUMENT_VERSIONS_CLASSIFICATION.PRIVATE)}
+                                                className="hover:text-text hover:underline cursor-pointer"
+                                                title="Set all items to Private"
+                                            >
+                                                Private
+                                            </button>
+                                        </div>
                                         <button
                                             type="button"
                                             onClick={handleClearAllStagedItems}
@@ -2843,17 +3052,54 @@ const DocumentsPage = ({
                                                             ({stagedItem.size})
                                                         </span>
                                                         {stagedItem.isScannerEnhanced && (
-                                                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-accent/15 text-accent border border-accent/30 flex items-center gap-0.5">
+                                                            <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold flex items-center gap-0.5 border ${
+                                                                stagedItem.scannerFilter === 'original'
+                                                                    ? 'bg-success/15 text-success border-success/30'
+                                                                    : stagedItem.scannerFilter === 'bw'
+                                                                    ? 'bg-neutral-800 text-neutral-200 border-neutral-700'
+                                                                    : stagedItem.scannerFilter === 'gray'
+                                                                    ? 'bg-neutral-700/50 text-neutral-300 border-neutral-600'
+                                                                    : 'bg-accent/15 text-accent border-accent/30'
+                                                            }`}>
                                                                 <Sparkles className="h-2.5 w-2.5" />
-                                                                Whitened &amp; Cropped
+                                                                {stagedItem.scannerFilter === 'original'
+                                                                    ? 'Original Color'
+                                                                    : stagedItem.scannerFilter === 'bw'
+                                                                    ? 'B&W Clean'
+                                                                    : stagedItem.scannerFilter === 'gray'
+                                                                    ? 'Grayscale'
+                                                                    : 'Magic White'}
+                                                            </span>
+                                                        )}
+                                                        {stagedItem.isMobileCaptured && (
+                                                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold flex items-center gap-1 bg-accent/15 text-accent border border-accent/30">
+                                                                <Smartphone className="h-2.5 w-2.5" />
+                                                                Phone Capture
                                                             </span>
                                                         )}
                                                     </div>
-                                                    {stagedItem.isImage && stagedItem.ocrMode === 'ocr_pdf' && (
-                                                        <span className="text-[10px] text-accent font-medium flex items-center gap-1">
-                                                            <span>➔ Will convert to <strong>{(stagedItem.fileName || '').replace(/\.[^/.]+$/, '')}.pdf</strong> via PaddleOCR</span>
-                                                        </span>
-                                                    )}
+                                                    <div className="flex items-center gap-3 mt-1 flex-wrap">
+                                                        {stagedItem.isImage && stagedItem.ocrMode === 'ocr_pdf' && (
+                                                            <span className="text-[10px] text-accent font-medium flex items-center gap-1">
+                                                                <span>➔ Will convert to <strong>{(stagedItem.fileName || '').replace(/\.[^/.]+$/, '')}.pdf</strong> via Cloud OCR</span>
+                                                            </span>
+                                                        )}
+                                                        <div className="flex items-center gap-1 text-[10px] text-text-muted">
+                                                            <span>Class:</span>
+                                                            <select
+                                                                value={stagedItem.classification || constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED}
+                                                                onChange={(e) => handleSetStagedItemClassification(stagedItem.id, e.target.value)}
+                                                                className="text-[10px] py-0.5 px-1.5 rounded bg-surface hover:bg-surface-border border border-surface-border text-text font-medium cursor-pointer focus:outline-none focus:border-accent"
+                                                                title="Security classification for this document"
+                                                            >
+                                                                <option value={constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED}>✨ Auto (AI Classify)</option>
+                                                                <option value={constants.DOCUMENT_VERSIONS_CLASSIFICATION.PUBLIC}>Public</option>
+                                                                <option value={constants.DOCUMENT_VERSIONS_CLASSIFICATION.PRIVATE}>Private</option>
+                                                                <option value={constants.DOCUMENT_VERSIONS_CLASSIFICATION.RESTRICTED}>Restricted</option>
+                                                                <option value={constants.DOCUMENT_VERSIONS_CLASSIFICATION.CONFIDENTIAL}>Confidential</option>
+                                                            </select>
+                                                        </div>
+                                                    </div>
                                                 </div>
                                             </div>
 
@@ -2868,10 +3114,10 @@ const DocumentsPage = ({
                                                                 ? 'bg-accent/15 border-accent/40 text-accent hover:bg-accent/25'
                                                                 : 'bg-surface-hover hover:bg-surface-border text-text hover:text-accent border-surface-border'
                                                         }`}
-                                                        title="Open Scanner Studio to adjust 8-point crop, rotate 90°, and whiten paper background"
+                                                        title="Open Scanner Studio to adjust 8-point crop, rotate 90°, and choose filter"
                                                     >
                                                         <Crop className="h-3 w-3 text-accent" />
-                                                        <span>{stagedItem.isScannerEnhanced ? 'Re-crop / Whiten' : 'Adjust / Crop'}</span>
+                                                        <span>{stagedItem.isScannerEnhanced ? 'Edit Scan' : 'Adjust / Crop'}</span>
                                                     </button>
                                                 )}
 
@@ -2886,7 +3132,7 @@ const DocumentsPage = ({
                                                                     ? 'bg-accent text-text-inverted font-semibold shadow-xs'
                                                                     : 'text-text-muted hover:text-text'
                                                             }`}
-                                                            title="Scan image text with PaddleOCR and convert into searchable PDF"
+                                                            title="Scan image text with Cloud OCR and convert into searchable PDF"
                                                         >
                                                             <ScanText className="h-3 w-3" />
                                                             <span>OCR to PDF</span>
@@ -3286,6 +3532,14 @@ const DocumentsPage = ({
                     onApply={handleApplyScannerResults}
                 />
             )}
+
+            {/* MOBILE SCANNER PAIRING MODAL */}
+            <MobileScanModal
+                isOpen={isMobileScanModalOpen}
+                onClose={() => setIsMobileScanModalOpen(false)}
+                onImageReceived={handleMobileImageReceived}
+                currentFolderLabel={currentDirectoryLabel}
+            />
 
             {/* SHARE TO DEPARTMENT MODAL */}
             {Boolean(shareModalDocument) && (

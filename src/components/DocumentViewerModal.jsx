@@ -17,7 +17,6 @@ import {
     AlertTriangle,
     Check,
     Copy,
-    ExternalLink,
     Plus,
 } from 'lucide-react';
 import { Button } from './Button';
@@ -86,26 +85,30 @@ const DocumentViewerModal = ({
     // PROGRESSIVE LOADING BAR ANIMATION (BUILDS LEFT TO RIGHT)
     useEffect(() => {
         if (isLoading) {
-            setLoadProgress(15);
+            const t0 = setTimeout(() => setLoadProgress(15), 0);
             const t1 = setTimeout(() => setLoadProgress(45), 150);
             const t2 = setTimeout(() => setLoadProgress(75), 400);
             const t3 = setTimeout(() => setLoadProgress(90), 800);
             return () => {
+                clearTimeout(t0);
                 clearTimeout(t1);
                 clearTimeout(t2);
                 clearTimeout(t3);
             };
         } else {
-            setLoadProgress(100);
+            const t0 = setTimeout(() => setLoadProgress(100), 0);
             const t = setTimeout(() => setLoadProgress(0), 350);
-            return () => clearTimeout(t);
+            return () => {
+                clearTimeout(t0);
+                clearTimeout(t);
+            };
         }
     }, [isLoading]);
 
     // LOADING ELAPSED TIMER
     useEffect(() => {
         if (!isLoading) {
-            setLoadingElapsedSec(0);
+            queueMicrotask(() => setLoadingElapsedSec(0));
             return;
         }
         const startTime = Date.now();
@@ -136,13 +139,6 @@ const DocumentViewerModal = ({
     const [changeSummary, setChangeSummary] = useState('');
     const [isSaving, setIsSaving] = useState(false);
     const [copiedChecksum, setCopiedChecksum] = useState(false);
-
-    // KEYBOARD SHORTCUTS
-    useKeyPress('Escape', () => {
-        if (isOpen && !isSaveModalOpen) {
-            handleRequestClose();
-        }
-    });
 
     // DERIVED DOCUMENT & VERSION PROPERTIES
     const resolvedDoc = useMemo(() => {
@@ -190,18 +186,23 @@ const DocumentViewerModal = ({
     // LOAD FILE RESOURCE
     useEffect(() => {
         if (!isOpen || !resolvedDoc) {
-            setDownloadUrl(null);
-            setFileBlob(null);
-            setIsLoading(false);
-            setLoadError(null);
-            setIsEditing(false);
+            queueMicrotask(() => {
+                setDownloadUrl(null);
+                setFileBlob(null);
+                setIsLoading(false);
+                setLoadError(null);
+                setIsEditing(false);
+            });
             return;
         }
 
         let isMounted = true;
-        setIsLoading(true);
-        setLoadError(null);
-        setLoadingMessage('Fetching document from storage...');
+        queueMicrotask(() => {
+            if (!isMounted) return;
+            setIsLoading(true);
+            setLoadError(null);
+            setLoadingMessage('Fetching document from storage...');
+        });
 
         async function fetchResource() {
             try {
@@ -287,7 +288,7 @@ const DocumentViewerModal = ({
                 version: activeVersion?.version,
             }).catch(() => {});
         }
-    }, [isOpen, resolvedDoc?.id, isLoading, loadError, currentUser?.id, activeVersion?.version]);
+    }, [isOpen, resolvedDoc, isLoading, loadError, currentUser, activeVersion?.version]);
 
     // RENDER DOCX VIA CLIENT-SIDE PARSER
     useEffect(() => {
@@ -573,6 +574,13 @@ const DocumentViewerModal = ({
         onClose?.();
     };
 
+    // KEYBOARD SHORTCUTS
+    useKeyPress('Escape', () => {
+        if (isOpen && !isSaveModalOpen) {
+            handleRequestClose();
+        }
+    });
+
     const handleDownload = async () => {
         try {
             let effectiveDownloadName = fileName || 'document';
@@ -630,7 +638,6 @@ const DocumentViewerModal = ({
         try {
             const targetDocId = resolvedDoc.id;
             const activeUserId = currentUser?.id;
-            const mimeType = activeVersion?.mimeType || 'text/plain';
 
             // 1. Create in-memory Blob from edited text or spreadsheet
             let updatedBlob = null;
@@ -1397,10 +1404,10 @@ function getColumnHeader(colIdx) {
 function getGoogleAppConfig(ext, downloadUrl, userEmail) {
     if (!ext) return null;
 
-    let name = 'Google Docs';
-    let app = 'docs';
-    let colorClass = 'text-blue-600 hover:text-blue-700 hover:bg-blue-50 border-blue-200 dark:border-blue-900/40 dark:text-blue-400 dark:hover:bg-blue-950/30';
-    let iconType = 'docs';
+    let name;
+    let app;
+    let colorClass;
+    let iconType;
 
     if (ext === 'docx' || ext === 'doc' || ext === 'odt' || ext === 'rtf') {
         name = 'Google Docs';

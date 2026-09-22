@@ -62,6 +62,7 @@ const RMO_DEPARTMENT_RAW = 'd0000001000040008000000000000001';
 // --- COMPONENTS ---
 const UsersPage = ({
     currentUser: propUser = null,
+    selectedItem = null,
     onSelectUser = null,
     className,
     ...props
@@ -104,7 +105,6 @@ const UsersPage = ({
     const fetchUsers = useUserStore((state) => state.fetchUsers);
     const insertUser = useUserStore((state) => state.insertUser);
     const updateUser = useUserStore((state) => state.updateUser);
-    const suspendUser = useUserStore((state) => state.suspendUser);
     const deleteUser = useUserStore((state) => state.deleteUser);
     const departments = useDepartmentStore((state) => state.departments);
     const fetchDepartments = useDepartmentStore((state) => state.fetchDepartments);
@@ -514,7 +514,13 @@ const UsersPage = ({
             });
             handleCloseModals();
         } catch (error) {
-            setFormError(error?.message ?? 'Failed to update user.');
+            const errorMessage = error?.message ?? 'Failed to update user.';
+            setEditFormErrors({ general: errorMessage });
+            showToast({
+                type: 'error',
+                title: 'Update Failed',
+                description: errorMessage,
+            });
         } finally {
             setIsUpdatingUser(false);
         }
@@ -696,6 +702,7 @@ const UsersPage = ({
     }, [departments]);
 
     const formattedUserData = useMemo(() => {
+        void avatarVersion;
         return (users || []).filter(Boolean).map((user) => {
             const department = departments?.find(
                 (dept) => dept?.id === user.departmentId ||
@@ -741,6 +748,13 @@ const UsersPage = ({
         });
     }, [users, departments, currentUser, avatarVersion]);
 
+    const activeSelectedUser = useMemo(() => {
+        const targetId = selectedItem?.id ?? selectedUser?.id;
+        if (!targetId) return null;
+        const matched = formattedUserData.find((u) => u.id === targetId);
+        return matched ?? selectedItem ?? selectedUser;
+    }, [selectedItem, selectedUser, formattedUserData]);
+
     // RENDER
     return (
         <Container variant="page" className={`flex flex-col gap-6 ${className ?? ''}`} {...props}>
@@ -752,7 +766,7 @@ const UsersPage = ({
                 columns={USER_COLUMNS}
                 sortOptions={USER_SORT_OPTIONS}
                 filterOptions={userFilterOptions}
-                selectedItem={selectedUser}
+                selectedItem={activeSelectedUser}
                 addItemLabel="New User"
                 addItemIcon={Plus}
                 searchPlaceholder="Search by name, ID, or email..."

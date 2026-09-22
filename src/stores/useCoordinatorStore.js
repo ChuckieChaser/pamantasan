@@ -104,10 +104,10 @@ const useCoordinatorStore = create((set, get) => ({
             const result = await coordinatorService.updateCoordinatorRequest(id, validatedPayload);
 
             const cleanResult = Object.fromEntries(
-                Object.entries(result || {}).filter(([_, v]) => v !== undefined && v !== null)
+                Object.entries(result || {}).filter(([, v]) => v !== undefined && v !== null)
             );
             const cleanPayload = Object.fromEntries(
-                Object.entries(validatedPayload || {}).filter(([_, v]) => v !== undefined)
+                Object.entries(validatedPayload || {}).filter(([, v]) => v !== undefined)
             );
 
             const mergedRequest = {

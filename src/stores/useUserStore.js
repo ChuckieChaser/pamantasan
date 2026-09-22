@@ -69,7 +69,7 @@ const useUserStore = create((set, get) => ({
             set({ users: resolvedUsers, isLoading: false, error: null });
 
             return resolvedUsers;
-        } catch (error) {
+        } catch {
             const currentUser = useAuthStore.getState().currentUser;
             const fallbackUsers = currentUser ? [currentUser] : [];
             set({ users: fallbackUsers, isLoading: false, error: null });
@@ -155,7 +155,7 @@ const useUserStore = create((set, get) => ({
             const result = await userService.insertUser(validatedPayload);
 
             const definedResult = Object.fromEntries(
-                Object.entries(result || {}).filter(([_, v]) => v !== undefined)
+                Object.entries(result || {}).filter(([, v]) => v !== undefined)
             );
 
             const newUser = {
@@ -237,10 +237,10 @@ const useUserStore = create((set, get) => ({
             const result = await userService.updateUser(id, validatedPayload);
 
             const cleanResult = Object.fromEntries(
-                Object.entries(result || {}).filter(([_, v]) => v !== undefined)
+                Object.entries(result || {}).filter(([, v]) => v !== undefined)
             );
             const cleanPayload = Object.fromEntries(
-                Object.entries(validatedPayload || {}).filter(([_, v]) => v !== undefined)
+                Object.entries(validatedPayload || {}).filter(([, v]) => v !== undefined)
             );
 
             const mergedUser = {

@@ -54,10 +54,12 @@ const Table = ({
                         return (
                             <tr
                                 key={item.id}
+                                data-record-id={item.id}
+                                data-selected={isSelected ? 'true' : 'false'}
                                 onClick={() => onItemClick?.(item)}
                                 onDoubleClick={() => onItemDoubleClick?.(item)}
-                                className={`cursor-pointer transition-colors select-none ${isSelected
-                                    ? 'bg-accent-background text-text'
+                                className={`cursor-pointer transition-all duration-200 select-none ${isSelected
+                                    ? 'bg-accent/15 text-text font-medium border-l-4 border-l-accent'
                                     : 'hover:bg-surface-hover text-text'
                                 }`}
                             >

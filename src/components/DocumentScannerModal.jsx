@@ -10,11 +10,8 @@ import {
     Scan,
     Eye,
     Sliders,
-    Sun,
-    Contrast,
 } from 'lucide-react';
 import { Button } from './Button';
-import { Container } from './Container';
 import { useToast } from '../hooks';
 
 // --- CONFIGURATIONS ---
@@ -86,8 +83,6 @@ function applyDocumentWhitening(sourceCanvas, mode = 'magic', brightness = 1.05,
             g = ((g / 255 - 0.5) * contrast + 0.5) * 255 * brightness;
             b = ((b / 255 - 0.5) * contrast + 0.5) * 255 * brightness;
 
-            const maxColor = Math.max(r, g, b);
-            const minColor = Math.min(r, g, b);
             const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
 
             if (luminance > 140) {
@@ -136,10 +131,12 @@ export const DocumentScannerModal = ({
     // Load file into Image element when file opens
     useEffect(() => {
         if (!isOpen || !file) {
-            setImageElement(null);
-            setRotation(0);
-            setPreviewMode(false);
-            setCropBox({ x: 0.05, y: 0.05, width: 0.9, height: 0.9 });
+            queueMicrotask(() => {
+                setImageElement(null);
+                setRotation(0);
+                setPreviewMode(false);
+                setCropBox({ x: 0.05, y: 0.05, width: 0.9, height: 0.9 });
+            });
             return;
         }
 

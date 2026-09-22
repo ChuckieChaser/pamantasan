@@ -67,7 +67,7 @@ async function handleVerifyPasswordResetOtp(data) {
 /**
  * Callable function to consume the OTP after password reset.
  */
-async function handleConsumePasswordResetOtp(data) {
+async function handleConsumePasswordResetOtp() {
     await consumeOtp();
     return { success: true };
 }

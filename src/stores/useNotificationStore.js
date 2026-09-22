@@ -87,7 +87,7 @@ const useNotificationStore = create((set, get) => ({
         }
     },
 
-    markAllNotificationsAsRead: async (recipientId) => {
+    markAllNotificationsAsRead: async () => {
         const unreadList = get().notifications.filter((n) => !n.isRead);
 
         // Optimistic local update

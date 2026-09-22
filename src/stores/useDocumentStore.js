@@ -9,8 +9,12 @@ import { documentService, departmentService, systemEventService } from '../servi
 // --- CONFIGURATIONS ---
 // Cleanup legacy client-side directly-archived key if it exists
 try {
-    localStorage.removeItem('pamantasan_directly_archived_ids');
-} catch {}
+    if (typeof localStorage !== 'undefined') {
+        localStorage.removeItem('pamantasan_directly_archived_ids');
+    }
+} catch {
+    /* ignore */
+}
 
 const isAncestorArchived = (doc, allDocs = []) => {
     let parentId = doc.parentId ?? doc.parentFolderId;
@@ -759,6 +763,11 @@ const useDocumentStore = create((set, get) => ({
 
     syncAllDocumentShares: async (currentUser, departments = []) => {
         if (!currentUser) return [];
+
+        // Throttle rapid repeated syncs (3 second window)
+        if (Date.now() - lastSyncSharesTimestamp < 3000) {
+            return get().documentShares || [];
+        }
 
         // Return existing in-flight promise if currently fetching
         if (inFlightSyncPromise) {
@@ -1639,10 +1648,10 @@ const useDocumentStore = create((set, get) => ({
             const result = await documentService.updateDocumentRequest(id, validatedPayload);
 
             const cleanResult = Object.fromEntries(
-                Object.entries(result || {}).filter(([_, v]) => v !== undefined && v !== null)
+                Object.entries(result || {}).filter(([, v]) => v !== undefined && v !== null)
             );
             const cleanPayload = Object.fromEntries(
-                Object.entries(validatedPayload || {}).filter(([_, v]) => v !== undefined)
+                Object.entries(validatedPayload || {}).filter(([, v]) => v !== undefined)
             );
 
             const mergedRequest = {
@@ -1883,8 +1892,6 @@ const useDocumentStore = create((set, get) => ({
                 targetRoles: ['RMO_STAFF'],
                 isMajor: true,
             }).catch(() => {});
-
-            return newAttachment;
 
             return newAttachment;
         } catch (error) {

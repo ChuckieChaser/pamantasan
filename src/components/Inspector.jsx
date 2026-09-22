@@ -2,8 +2,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
     AlertCircle,
-    Archive,
-    ArrowUpRight,
     Building2,
     Calendar,
     Check,
@@ -16,13 +14,11 @@ import {
     Edit3,
     Eye,
     EyeOff,
-    FileCheck,
     FileText,
     FileType,
     Folder,
     FolderInput,
     FolderOpen,
-    FolderTree,
     Globe,
     HardDrive,
     Hash,
@@ -129,13 +125,32 @@ const normalizeTab = (tab) => {
     return tab;
 };
 
+const formatChangeSummary = (rawChangeSummary) => {
+    if (!rawChangeSummary || typeof rawChangeSummary !== 'string') return '';
+    let text = rawChangeSummary.replace(/\r\n/g, '\n').trim();
+    // Separate bullets that are concatenated inline (e.g. "...story. - Removed all...") with double newlines
+    text = text.replace(/([.!?])\s*[-*•]\s+/g, '$1\n\n- ');
+
+    // If the text has bullets, ensure each line is prefixed with "- " and separated by \n\n
+    if (text.includes('- ') || text.includes('• ') || text.includes('* ')) {
+        const lines = text.split(/\n+/).map(l => l.trim()).filter(Boolean);
+        const bullets = lines.map(line => {
+            let cleaned = line.replace(/^[-*•]\s*/, '').trim();
+            if (!/[.!?]$/.test(cleaned)) cleaned += '.';
+            return `- ${cleaned}`;
+        });
+        return bullets.join('\n\n');
+    }
+
+    return text;
+};
+
 
 // --- COMPONENTS ---
 const Inspector = ({
     item = null,
     currentUser = null,
     targetTab = null,
-    onClose,
     onAction,
     className,
     ...props
@@ -214,7 +229,8 @@ const Inspector = ({
         const nextTab = targetTab || item?._targetTab;
         if (nextTab) {
             const resolvedTab = normalizeTab(nextTab);
-            setActiveTab(isMember && resolvedTab === 'share' ? 'information' : resolvedTab);
+            const target = isMember && resolvedTab === 'share' ? 'information' : resolvedTab;
+            queueMicrotask(() => setActiveTab(target));
         }
     }, [targetTab, item?.id, item?._targetTab, isMember]);
 
@@ -891,7 +907,8 @@ const Inspector = ({
 
     useEffect(() => {
         if (tabOptions.length > 0 && !tabOptions.some((opt) => opt.value === activeTab)) {
-            setActiveTab(tabOptions[0]?.value || 'information');
+            const fallback = tabOptions[0]?.value || 'information';
+            queueMicrotask(() => setActiveTab(fallback));
         }
     }, [tabOptions, activeTab]);
 
@@ -1176,7 +1193,13 @@ const Inspector = ({
             setUserFormAvatarFile(null);
             onAction?.('edit_user_success', updated);
         } catch (error) {
-            setUserFormError(error?.message ?? 'Failed to update user.');
+            const errorMessage = error?.message ?? 'Failed to update user.';
+            setUserFormErrors({ general: errorMessage });
+            showToast({
+                type: 'error',
+                title: 'Update Failed',
+                description: errorMessage,
+            });
         } finally {
             setIsSavingEditUser(false);
         }
@@ -1441,7 +1464,6 @@ const Inspector = ({
         : (activeItem.size ?? (isFolder ? '0 B' : null));
     const mimeType = activeItem.mimeType ?? getMimeTypeFromExtension(activeItem.name ?? activeItem.title);
     const checksum = activeItem.checksum ?? null;
-    const storagePath = activeItem.path ?? null;
 
     // RENDER
     return (
@@ -1564,7 +1586,7 @@ const Inspector = ({
                                             <span className={SECTION_TITLE_STYLE}>Summary</span>
                                             <div className={`${CALLOUT_BOX_STYLE} flex items-start gap-2.5`}>
                                                 <Sparkles className="h-4 w-4 text-text-muted shrink-0 mt-0.5" />
-                                                <span className="leading-relaxed">{activeItem.summary}</span>
+                                                <span className="leading-relaxed whitespace-pre-line">{activeItem.summary}</span>
                                             </div>
                                         </div>
                                     )}
@@ -1574,7 +1596,7 @@ const Inspector = ({
                                             <span className={SECTION_TITLE_STYLE}>Change Summary</span>
                                             <div className={`${CALLOUT_BOX_STYLE} flex items-start gap-2.5`}>
                                                 <Sparkles className="h-4 w-4 text-text-muted shrink-0 mt-0.5" />
-                                                <span className="leading-relaxed">{activeItem.changeSummary}</span>
+                                                <span className="leading-relaxed whitespace-pre-line">{formatChangeSummary(activeItem.changeSummary)}</span>
                                             </div>
                                         </div>
                                     )}
@@ -2046,8 +2068,8 @@ const Inspector = ({
                                         {versionItem.changeSummary && (
                                             <div className={`${CALLOUT_BOX_STYLE} flex items-start gap-2.5 py-2 px-2.5`}>
                                                 <Sparkles className="h-4 w-4 text-text-muted shrink-0 mt-0.5" />
-                                                <span className="leading-relaxed text-xs">
-                                                    {versionItem.changeSummary}
+                                                <span className="leading-relaxed text-xs whitespace-pre-line">
+                                                    {formatChangeSummary(versionItem.changeSummary)}
                                                 </span>
                                             </div>
                                         )}
@@ -2346,7 +2368,9 @@ const Inspector = ({
                                                             try {
                                                                 const parsed = JSON.parse(log.data);
                                                                 logDeptId = parsed.departmentId;
-                                                            } catch {}
+                                                            } catch {
+                                                                /* ignore */
+                                                            }
                                                         }
                                                         return Boolean(deptId && logDeptId && String(logDeptId) === String(deptId));
                                                     });
@@ -2700,7 +2724,7 @@ const Inspector = ({
                                     {selectedTreeItem.summary && (
                                         <div className={`${CALLOUT_BOX_STYLE} flex items-start gap-2 py-1.5 px-2 text-[11px]`}>
                                             <Sparkles className="h-3.5 w-3.5 text-text-muted shrink-0 mt-0.5" />
-                                            <span className="break-words leading-relaxed">{selectedTreeItem.summary}</span>
+                                            <span className="break-words leading-relaxed whitespace-pre-line">{selectedTreeItem.summary}</span>
                                         </div>
                                     )}
 
@@ -3066,7 +3090,7 @@ const Inspector = ({
                                     combinedThreadItems.map((threadItem, itemIndex) => {
                                         const prevItem = itemIndex > 0 ? combinedThreadItems[itemIndex - 1] : null;
                                         const prevTime = prevItem?.createdAt ? new Date(prevItem.createdAt).getTime() : null;
-                                        const currTime = threadItem?.createdAt ? new Date(threadItem.createdAt).getTime() : Date.now();
+                                        const currTime = threadItem?.createdAt ? new Date(threadItem.createdAt).getTime() : (prevTime ?? 0);
                                         const showDivider = !prevTime || (currTime - prevTime >= 10 * 60 * 1000);
 
                                         if (threadItem.type === 'message') {

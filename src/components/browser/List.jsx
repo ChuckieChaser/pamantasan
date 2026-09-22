@@ -27,9 +27,11 @@ const List = ({
                 return (
                     <div
                         key={item.id}
+                        data-record-id={item.id}
+                        data-selected={isSelected ? 'true' : 'false'}
                         onClick={() => onItemClick?.(item)}
-                        className={`flex items-center justify-between p-3 rounded-lg border transition-colors cursor-pointer select-none gap-4 min-w-0 ${isSelected
-                            ? 'bg-accent-background border-accent'
+                        className={`flex items-center justify-between p-3 rounded-lg border transition-all duration-200 cursor-pointer select-none gap-4 min-w-0 ${isSelected
+                            ? 'bg-accent/15 border-accent shadow-xs ring-1 ring-accent/30'
                             : 'bg-surface border-surface-border hover:bg-surface-hover'
                         }`}
                     >

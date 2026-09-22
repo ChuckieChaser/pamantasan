@@ -97,6 +97,12 @@ service cloud.firestore {
       allow update, delete: if false; // Immutable audit logs
     }
 
+    // Mobile Scan Pairing Sessions (Ephemeral, 15-minute TTL)
+    match /mobileScanSessions/{sessionId} {
+      allow read: if true;
+      allow write: if false; // Writes strictly managed via Admin SDK in Cloud Functions
+    }
+
     // Default deny all other collections
     match /{document=**} {
       allow read, write: if false;

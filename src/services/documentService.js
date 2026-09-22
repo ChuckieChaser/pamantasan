@@ -137,7 +137,7 @@ const documentService = {
         await Promise.all(
             targetIds.map((docId) => {
                 const doc = allDocuments.find((d) => d.id === docId);
-                let directlyArchivedVal = false;
+                let directlyArchivedVal;
                 if (isArchived) {
                     // Explicit target is directlyArchived = true.
                     // Descendant that was ALREADY directly archived preserves directlyArchived = true.
@@ -548,10 +548,10 @@ const documentService = {
         const raw = data?.documentRequest_update ?? data?.documentRequests_update;
         const formatted = raw ? formatLiveDocumentRequest(raw) : null;
         const cleanFormatted = Object.fromEntries(
-            Object.entries(formatted || {}).filter(([_, v]) => v !== undefined && v !== null)
+            Object.entries(formatted || {}).filter(([, v]) => v !== undefined && v !== null)
         );
         const cleanPayload = Object.fromEntries(
-            Object.entries(payload || {}).filter(([_, v]) => v !== undefined)
+            Object.entries(payload || {}).filter(([, v]) => v !== undefined)
         );
 
         return {

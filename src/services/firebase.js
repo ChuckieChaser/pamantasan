@@ -1,9 +1,9 @@
-// --- IMPORTS ---
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
 import { getDataConnect } from 'firebase/data-connect';
 import { getStorage } from 'firebase/storage';
 import { getFunctions } from 'firebase/functions';
+import { getFirestore } from 'firebase/firestore';
 
 import { constants } from '../constants';
 
@@ -37,6 +37,7 @@ let storage;
 let dataConnect;
 let functions;
 let googleProvider;
+let db;
 
 if (isConfigured) {
     try {
@@ -44,6 +45,7 @@ if (isConfigured) {
         auth = getAuth(app);
         storage = getStorage(app);
         functions = getFunctions(app);
+        db = getFirestore(app);
 
         dataConnect = getDataConnect(app, {
             service: serviceId,
@@ -66,5 +68,6 @@ if (isConfigured) {
 
 
 // --- EXPORTS ---
-export { auth, storage, dataConnect, functions, googleProvider, isConfigured, FIREBASE_CONFIGURATION };
+export { auth, storage, dataConnect, functions, googleProvider, db, isConfigured, FIREBASE_CONFIGURATION };
+
 

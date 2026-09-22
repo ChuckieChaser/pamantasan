@@ -1,16 +1,23 @@
 // --- IMPORTS ---
 import { useState, useRef, useEffect } from 'react';
-import { Outlet } from 'react-router-dom';
+import { Outlet, useNavigate } from 'react-router-dom';
 import { LayoutDashboard, PanelRight, X } from 'lucide-react';
 import {
     Account,
+    GlobalSearchDropdown,
     Notifications,
     Settings,
     Sidebar,
     TopBar,
 } from '../components/ui';
 import { useClickOutside, useToast } from '../hooks';
-import { useNotificationStore } from '../stores';
+import {
+    useNotificationStore,
+    useDocumentStore,
+    useDepartmentStore,
+    useUserStore,
+    useCoordinatorStore,
+} from '../stores';
 import { userService, authService } from '../services';
 import { constants } from '../constants';
 
@@ -35,7 +42,7 @@ const MainLayout = ({
     activeNavigationKey = 'dashboard',
     pageTitle = 'Dashboard',
     headerActions = null,
-    searchQuery = '',
+    searchQuery: controlledSearchQuery,
     searchPlaceholder = 'Search documents, records...',
     hasSearch = true,
     showSearch = true,
@@ -57,15 +64,22 @@ const MainLayout = ({
     onSettingsClick,
     onToggleDetailPanel,
     onCloseDetailPanel,
+    onSelectRecord,
     onSignOut,
     className,
     children,
     ...props
 }) => {
+    // ROUTING
+    const navigate = useNavigate();
+
     // REFS
     const notificationReference = useRef(null);
+    const searchContainerReference = useRef(null);
 
     // STATES
+    const [internalSearchQuery, setInternalSearchQuery] = useState('');
+    const [isSearchDropdownOpen, setIsSearchDropdownOpen] = useState(false);
     const [internalDetailPanelOpen, setInternalDetailPanelOpen] = useState(false);
     const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
     const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
@@ -87,6 +101,13 @@ const MainLayout = ({
 
     const [notificationScope, setNotificationScope] = useState(constants.USER_SETTINGS_NOTIFICATION.ALL);
 
+    // STORES: GLOBAL SEARCH DATA
+    const documents = useDocumentStore((state) => state.documents);
+    const documentVersions = useDocumentStore((state) => state.documentVersions);
+    const departments = useDepartmentStore((state) => state.departments);
+    const users = useUserStore((state) => state.users);
+    const coordinatorRequests = useCoordinatorStore((state) => state.coordinatorRequests);
+
     // HOOKS
     const { showToast } = useToast();
     const notifications = useNotificationStore((state) => state.notifications);
@@ -96,6 +117,20 @@ const MainLayout = ({
     useClickOutside(notificationReference, () => {
         setIsNotificationPanelOpen(false);
     });
+
+    useClickOutside(searchContainerReference, () => {
+        setIsSearchDropdownOpen(false);
+    });
+
+    useEffect(() => {
+        const handleKeyDown = (e) => {
+            if (e.key === 'Escape') {
+                setIsSearchDropdownOpen(false);
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, []);
 
     useEffect(() => {
         const rootElement = document.documentElement;
@@ -241,12 +276,52 @@ const MainLayout = ({
         onNavigationChange?.(navigationKey);
     };
 
+    const activeSearchQuery = controlledSearchQuery !== undefined ? controlledSearchQuery : internalSearchQuery;
+
     const handleSearchChange = (event) => {
+        const val = event?.target?.value ?? '';
+        if (controlledSearchQuery === undefined) {
+            setInternalSearchQuery(val);
+        }
+        setIsSearchDropdownOpen(Boolean(val.trim()));
         onSearchChange?.(event);
     };
 
     const handleSearchClear = () => {
+        if (controlledSearchQuery === undefined) {
+            setInternalSearchQuery('');
+        }
+        setIsSearchDropdownOpen(false);
         onSearchClear?.();
+    };
+
+    const handleSearchFocus = () => {
+        if (activeSearchQuery.trim()) {
+            setIsSearchDropdownOpen(true);
+        }
+    };
+
+    const handleSelectSearchResult = (result) => {
+        setIsSearchDropdownOpen(false);
+        setInternalSearchQuery('');
+
+        if (result.type === 'document') {
+            if (result.isArchived) {
+                navigate('/archives');
+            } else {
+                navigate('/documents');
+            }
+            onSelectRecord?.(result.raw);
+        } else if (result.type === 'department') {
+            navigate('/departments');
+            onSelectRecord?.(result.raw);
+        } else if (result.type === 'user') {
+            navigate('/users');
+            onSelectRecord?.(result.raw);
+        } else if (result.type === 'request') {
+            navigate('/requests');
+            onSelectRecord?.(result.raw);
+        }
     };
 
     const handleOpenAccountModal = (event) => {
@@ -353,10 +428,25 @@ const MainLayout = ({
                         pageTitle={pageTitle}
                         headerActions={headerActions}
                         hasSearch={shouldRenderSearch}
-                        searchQuery={searchQuery}
+                        searchQuery={activeSearchQuery}
                         searchPlaceholder={searchPlaceholder}
+                        searchContainerRef={searchContainerReference}
                         onSearchChange={handleSearchChange}
                         onSearchClear={handleSearchClear}
+                        onSearchFocus={handleSearchFocus}
+                        searchContent={
+                            <GlobalSearchDropdown
+                                isOpen={isSearchDropdownOpen}
+                                query={activeSearchQuery}
+                                onClose={() => setIsSearchDropdownOpen(false)}
+                                onSelectResult={handleSelectSearchResult}
+                                documents={documents}
+                                documentVersions={documentVersions}
+                                departments={departments}
+                                users={users}
+                                requests={coordinatorRequests}
+                            />
+                        }
                         hasDetailPanel={shouldRenderDetailPanel}
                         isDetailPanelOpen={effectiveIsDetailPanelOpen}
                         onToggleDetailPanel={handleToggleDetailPanel}

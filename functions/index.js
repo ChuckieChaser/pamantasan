@@ -1,3 +1,4 @@
+
 // --- IMPORTS ---
 const { initializeApp } = require('firebase-admin/app');
 const { onCall } = require('firebase-functions/v2/https');
@@ -19,7 +20,15 @@ const {
 const {
     handleAnalyzeDocumentFile,
     handleSynthesizeFolderSummary,
+    handleGenerateTextEmbedding,
 } = require('./handlers/aiHandlers');
+
+const {
+    handleConvertImageToSearchablePdf,
+    handleExtractTextFromImage,
+    handleCreateMobileScanSession,
+    handleSubmitMobileScan,
+} = require('./handlers/ocrHandlers');
 
 // --- CALLABLE EXPORTS ---
 
@@ -72,4 +81,38 @@ exports.synthesizeFolderSummary = onCall({ cors: true, timeoutSeconds: 60 }, asy
     return await handleSynthesizeFolderSummary(request.data);
 });
 
+/**
+ * Generates 768-dimensional vector embedding for semantic search or backfill using Vertex AI (text-embedding-004).
+ */
+exports.generateTextEmbedding = onCall({ cors: true, timeoutSeconds: 60, memory: '256MiB' }, async (request) => {
+    return await handleGenerateTextEmbedding(request.data);
+});
 
+/**
+ * Cloud OCR: Scans an image and generates a high-quality ISO A4 Searchable PDF
+ * with an invisible embedded text layer and full OCR transcription metadata.
+ */
+exports.convertImageToSearchablePdf = onCall({ cors: true, timeoutSeconds: 180, memory: '1GiB' }, async (request) => {
+    return await handleConvertImageToSearchablePdf(request.data);
+});
+
+/**
+ * Cloud OCR: Extracts recognized lines and full text from an image.
+ */
+exports.extractTextFromImage = onCall({ cors: true, timeoutSeconds: 60, memory: '512MiB' }, async (request) => {
+    return await handleExtractTextFromImage(request.data);
+});
+
+/**
+ * Mobile Phone Scanner: Creates an ephemeral pairing session for desktop-to-phone camera scan sync.
+ */
+exports.createMobileScanSession = onCall({ cors: true, timeoutSeconds: 30, memory: '256MiB' }, async (request) => {
+    return await handleCreateMobileScanSession(request.data, request);
+});
+
+/**
+ * Mobile Phone Scanner: Submits a captured photo from a smartphone browser to the desktop session.
+ */
+exports.submitMobileScan = onCall({ cors: true, timeoutSeconds: 60, memory: '512MiB' }, async (request) => {
+    return await handleSubmitMobileScan(request.data);
+});

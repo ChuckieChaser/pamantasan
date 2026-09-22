@@ -58,7 +58,7 @@ const coordinatorService = {
         const raw = data?.coordinatorRequest_insert ?? data?.coordinatorRequests_insert;
         const formatted = raw ? formatLiveCoordinatorRequest(raw) : null;
         const cleanFormatted = Object.fromEntries(
-            Object.entries(formatted || {}).filter(([_, v]) => v !== undefined && v !== null)
+            Object.entries(formatted || {}).filter(([, v]) => v !== undefined && v !== null)
         );
 
         let parsedData = payload.data;
@@ -101,10 +101,10 @@ const coordinatorService = {
         const raw = data?.coordinatorRequest_update ?? data?.coordinatorRequests_update;
         const formatted = raw ? formatLiveCoordinatorRequest(raw) : null;
         const cleanFormatted = Object.fromEntries(
-            Object.entries(formatted || {}).filter(([_, v]) => v !== undefined && v !== null)
+            Object.entries(formatted || {}).filter(([, v]) => v !== undefined && v !== null)
         );
         const cleanPayload = Object.fromEntries(
-            Object.entries(payload || {}).filter(([_, v]) => v !== undefined)
+            Object.entries(payload || {}).filter(([, v]) => v !== undefined)
         );
 
         return {

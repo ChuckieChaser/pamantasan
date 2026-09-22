@@ -30,6 +30,7 @@ const DOCUMENT_COLUMNS = [
 // --- COMPONENTS ---
 const ArchivesPage = ({
     currentUser: propUser = null,
+    selectedItem = null,
     onSelectDocument = null,
     className,
     ...props
@@ -135,6 +136,18 @@ const ArchivesPage = ({
 
         return [...deptOptions, ...classOptions];
     }, [departments]);
+
+    // LISTEN FOR EXTERNAL DELETE TRIGGER (E.G. FROM INSPECTOR QUICK ACTION)
+    useEffect(() => {
+        const handleDeleteDocEvent = (event) => {
+            if (event.detail) {
+                const targetDoc = documents.find((d) => d?.id === event.detail.id) ?? event.detail;
+                setDeletingItem(targetDoc);
+            }
+        };
+        window.addEventListener('pamantasan:delete-document', handleDeleteDocEvent);
+        return () => window.removeEventListener('pamantasan:delete-document', handleDeleteDocEvent);
+    }, [documents]);
 
     // HANDLERS
     const handleItemSelect = (item) => {
@@ -379,7 +392,7 @@ const ArchivesPage = ({
                 data={archivedItems}
                 columns={DOCUMENT_COLUMNS}
                 filterOptions={dynamicFilterOptions}
-                selectedItem={selectedDocument}
+                selectedItem={selectedDocument ?? selectedItem}
                 onSelectItem={handleItemSelect}
                 onDoubleClickItem={handleItemDoubleClick}
                 searchPlaceholder="Search archived documents by name, classification..."
@@ -437,10 +450,6 @@ const ArchivesPage = ({
 
 
 // --- HELPERS ---
-function getFolderItemCount(folderId, docsList) {
-    return (docsList || []).filter((d) => (d.parentId ?? 'root') === folderId).length;
-}
-
 function getRecursiveFolderSizeBytes(folderId, docsList, versionsList) {
     let totalBytes = 0;
     const children = (docsList || []).filter((d) => (d.parentId ?? 'root') === folderId);

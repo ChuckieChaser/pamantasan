@@ -45,28 +45,9 @@ const Menu = ({
     // STORES
     const currentUser = useAuthStore((state) => state.currentUser);
 
-    // GUARD CLAUSES
-    if (!item || !anchorRect) {
-        return null;
-    }
-
-    // DERIVED VALUES
-    const isFolder = item.isFolder;
-    const isArchived = Boolean(item.isArchived);
-    const isSelfUser = Boolean(
-        currentUser && (
-            item.id === currentUser.id ||
-            (item.universityId && currentUser.universityId === item.universityId)
-        )
-    );
-    const isAdmin = constants.isAdminRole(currentUser?.role);
-    const isStaff = constants.isStaffRole(currentUser?.role);
-    const isOfficer = constants.isOfficerRole(currentUser?.role);
-    const isDirector = constants.isDirectorRole(currentUser?.role);
-    const isMember = constants.isMemberRole(currentUser?.role);
-
     // SMART POSITIONING (DYNAMIC MEASUREMENT, AUTO-FLIP & VIEWPORT CLAMPING)
     const [position, setPosition] = useState(() => {
+        if (!anchorRect) return { top: 0, left: 0 };
         const estimatedHeight = 320;
         const estimatedWidth = 200;
         const spaceBelow = window.innerHeight - anchorRect.bottom;
@@ -80,6 +61,7 @@ const Menu = ({
     });
 
     useLayoutEffect(() => {
+        if (!anchorRect) return;
         const updatePosition = () => {
             if (!anchorRect) return;
             const menuElement = menuRef.current;
@@ -130,6 +112,26 @@ const Menu = ({
             window.removeEventListener('scroll', updatePosition, true);
         };
     }, [anchorRect, resourceName, item]);
+
+    // GUARD CLAUSES
+    if (!item || !anchorRect) {
+        return null;
+    }
+
+    // DERIVED VALUES
+    const isFolder = item.isFolder;
+    const isArchived = Boolean(item.isArchived);
+    const isSelfUser = Boolean(
+        currentUser && (
+            item.id === currentUser.id ||
+            (item.universityId && currentUser.universityId === item.universityId)
+        )
+    );
+    const isAdmin = constants.isAdminRole(currentUser?.role);
+    const isStaff = constants.isStaffRole(currentUser?.role);
+    const isOfficer = constants.isOfficerRole(currentUser?.role);
+    const isDirector = constants.isDirectorRole(currentUser?.role);
+    const isMember = constants.isMemberRole(currentUser?.role);
 
     const dynamicStyle = {
         position: 'fixed',

@@ -206,7 +206,9 @@ const systemEventService = {
                     if (!recipientUser?.email) {
                         try {
                             recipientUser = await userService.fetchUserById(recipientId);
-                        } catch {}
+                        } catch {
+                            /* ignore */
+                        }
                     }
 
                     const toEmail = recipientUser?.email;

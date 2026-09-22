@@ -265,6 +265,7 @@ query FetchDocumentVersions(
         changeSummary
         rejectionReason
         summary
+        embedding
         textHash
         createdAt
         updatedAt
@@ -307,6 +308,7 @@ query FetchAllDocumentVersions @auth(level: PUBLIC) {
         changeSummary
         rejectionReason
         summary
+        embedding
         textHash
         createdAt
         updatedAt
@@ -351,6 +353,7 @@ query FetchDocumentVersionById(
         changeSummary
         rejectionReason
         summary
+        embedding
         textHash
         createdAt
         updatedAt

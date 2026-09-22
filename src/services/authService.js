@@ -1,12 +1,7 @@
 import { initializeApp, getApps } from 'firebase/app';
 import {
-    signInWithEmailAndPassword,
     signInWithPopup,
     signOut,
-    sendPasswordResetEmail,
-    updatePassword,
-    reauthenticateWithCredential,
-    EmailAuthProvider,
     getAuth,
     onAuthStateChanged as onFirebaseAuthChanged,
 } from 'firebase/auth';
@@ -144,7 +139,7 @@ const authService = {
         return databaseUser;
     },
 
-    loginWithGoogle: async () => {
+    loginWithGoogle: async (options = {}) => {
         if (!googleProvider) {
             throw new Error('Firebase Google Auth is not initialized.');
         }
@@ -155,7 +150,7 @@ const authService = {
         }
         const secondaryAuth = getAuth(secondaryApp);
 
-        let userCredential = null;
+        let userCredential;
         try {
             userCredential = await signInWithPopupImmediate(secondaryAuth, googleProvider);
             const rawEmail = userCredential.user.email;
@@ -268,7 +263,9 @@ const authService = {
             if (secondaryAuth?.currentUser) {
                 try {
                     await signOut(secondaryAuth);
-                } catch {}
+                } catch {
+                    /* ignore */
+                }
             }
 
             if (error.code === 'auth/popup-closed-by-user') {
@@ -295,7 +292,7 @@ const authService = {
         }
         const secondaryAuth = getAuth(secondaryApp);
 
-        let userCredential = null;
+        let userCredential;
         try {
             userCredential = await signInWithPopupImmediate(secondaryAuth, googleProvider);
             const rawEmail = userCredential.user.email;
@@ -374,7 +371,7 @@ const authService = {
             console.error('Google linking failed:', error);
             await safeSignOutFirebase(secondaryAuth);
             if (error.code === 'auth/popup-closed-by-user') {
-                throw new Error('Linking cancelled.');
+                throw new Error('Linking cancelled.', { cause: error });
             }
             throw error;
         }
@@ -450,7 +447,7 @@ const authService = {
                 return result?.data ?? { success: true };
             } catch (error) {
                 console.error('Cloud Function sendPasswordResetOtp failed:', error);
-                throw new Error(error?.message || 'Failed to dispatch verification code.');
+                throw new Error(error?.message || 'Failed to dispatch verification code.', { cause: error });
             }
         } else {
             throw new Error('Firebase Functions is not configured.');
@@ -476,7 +473,7 @@ const authService = {
                 return result?.data ?? { success: true, verified: true };
             } catch (error) {
                 console.warn('Cloud Function verifyPasswordResetOtp failed:', error);
-                throw new Error(error?.message || 'Invalid or expired verification code.');
+                throw new Error(error?.message || 'Invalid or expired verification code.', { cause: error });
             }
         } else {
             throw new Error('Firebase Functions is not configured.');
@@ -613,7 +610,9 @@ const authService = {
         if (auth) {
             try {
                 await signOut(auth);
-            } catch {}
+            } catch {
+                /* ignore */
+            }
         }
         notifyAuthListeners(null);
     },
@@ -638,7 +637,9 @@ const authService = {
             if (persistOnPC && typeof localStorage !== 'undefined') {
                 localStorage.setItem(`pamantasan_skip_sso_onboarding_${userId}`, 'true');
             }
-        } catch {}
+        } catch {
+            /* ignore */
+        }
     },
 
     getCurrentSessionId: () => {
@@ -851,7 +852,9 @@ async function signInWithPopupImmediate(authInstance, provider) {
                             reject(err);
                         }, 100);
                     }
-                } catch {}
+                } catch {
+                    /* ignore */
+                }
             }, 150);
         });
 
@@ -871,7 +874,9 @@ async function safeSignOutFirebase(authInstance) {
     if (authInstance) {
         try {
             await signOut(authInstance);
-        } catch {}
+        } catch {
+            /* ignore */
+        }
     }
 }
 

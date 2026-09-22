@@ -114,6 +114,19 @@ const Browser = ({
         };
     }, [activeActionMenu]);
 
+    const selectedId = selectedItem?.id ?? internalSelectedId;
+
+    useEffect(() => {
+        if (!selectedId) return;
+        const timer = setTimeout(() => {
+            const element = document.querySelector(`[data-record-id="${selectedId}"]`);
+            if (element && typeof element.scrollIntoView === 'function') {
+                element.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }
+        }, 150);
+        return () => clearTimeout(timer);
+    }, [selectedId]);
+
     const handleItemInteraction = useDoubleClick({
         onClick: (item) => {
             const activeSelectedId = selectedItem?.id ?? internalSelectedId;
@@ -182,7 +195,6 @@ const Browser = ({
 
     // DERIVED VALUES
     const activeSortBy = sortBy !== undefined ? sortBy : internalSortBy;
-    const selectedId = selectedItem?.id ?? internalSelectedId;
 
     const filteredData = useMemo(() => {
         const filtered = data.filter((item) => {
@@ -190,6 +202,7 @@ const Browser = ({
                 item.title,
                 item.subtitle,
                 item.description,
+                item.summary,
                 item.department,
                 item.classification,
                 item.status,

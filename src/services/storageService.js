@@ -170,7 +170,7 @@ const storageService = {
     },
 
     downloadDocument: async (storagePathOrItem, preferredFileName, onProgress) => {
-        let storagePath = null;
+        let storagePath;
         let effectiveFileName = preferredFileName;
 
         if (typeof storagePathOrItem === 'object' && storagePathOrItem !== null) {
@@ -448,7 +448,12 @@ const storageService = {
 function toProxiedUrl(url) {
     if (!url || typeof url !== 'string') return url;
     if (typeof window !== 'undefined') {
-        const isLocalDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+        const isLocalDev = window.location.port === '5173' ||
+                           window.location.hostname === 'localhost' ||
+                           window.location.hostname === '127.0.0.1' ||
+                           window.location.hostname.startsWith('192.') ||
+                           window.location.hostname.startsWith('10.') ||
+                           window.location.hostname.startsWith('172.');
         if (isLocalDev && url.startsWith('https://firebasestorage.googleapis.com')) {
             return url.replace('https://firebasestorage.googleapis.com', '/firebase-storage');
         }

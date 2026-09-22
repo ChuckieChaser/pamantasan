@@ -13,8 +13,11 @@ const TopBar = ({
     hasSearch = true,
     searchQuery = '',
     searchPlaceholder = 'Search documents, records...',
+    searchContainerRef = null,
+    searchContent = null,
     onSearchChange,
     onSearchClear,
+    onSearchFocus,
     hasDetailPanel = true,
     isDetailPanelOpen = false,
     onToggleDetailPanel,
@@ -62,15 +65,21 @@ const TopBar = ({
             <div className="flex items-center gap-2 sm:gap-3 shrink-0">
                 {headerActions}
 
-                {/* SEARCH FIELD */}
+                {/* SEARCH FIELD WITH GLOBAL DROPDOWN SLOT */}
                 {hasSearch && (
-                    <div className="w-48 sm:w-64 md:w-80">
+                    <div
+                        ref={searchContainerRef}
+                        className="w-48 sm:w-64 md:w-80 relative"
+                    >
                         <SearchField
                             value={searchQuery}
                             placeholder={searchPlaceholder}
                             onChange={handleSearchChange}
                             onClear={handleSearchClear}
+                            onFocus={onSearchFocus}
                         />
+
+                        {searchContent}
                     </div>
                 )}
 

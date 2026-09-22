@@ -10,14 +10,15 @@
         "preview": "vite preview",
         "deploy:dataconnect": "firebase deploy --only dataconnect",
         "deploy:functions": "firebase deploy --only functions",
-        "check:backend": "node scripts/checkFirebase.js",
-        "ocr": "node scripts/start_ocr.js"
+        "check:backend": "node scripts/checkFirebase.js"
     },
     "dependencies": {
         "@tailwindcss/vite": "^4.3.3",
         "docx-preview": "^0.4.0",
         "firebase": "^12.17.1",
         "lucide-react": "^1.31.0",
+        "mammoth": "^1.12.3",
+        "qrcode.react": "^4.2.0",
         "react": "^19.2.8",
         "react-dom": "^19.2.8",
         "react-router-dom": "^7.18.2",

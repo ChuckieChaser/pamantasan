@@ -234,10 +234,10 @@ const useDepartmentStore = create((set, get) => ({
     },
 
     deleteDepartment: async (id) => {
+        const department = get().departments.find((d) => d.id === id);
         try {
             const { useUserStore } = await import('./useUserStore');
             const users = useUserStore.getState().users || [];
-            const department = get().departments.find((d) => d.id === id);
             const assignedUsers = users.filter((u) =>
                 u.departmentId === id ||
                 (department && (

@@ -29,10 +29,12 @@ const Grid = ({
                 return (
                     <Container
                         key={item.id}
+                        data-record-id={item.id}
+                        data-selected={isSelected ? 'true' : 'false'}
                         variant="card"
                         onClick={() => onItemClick?.(item)}
-                        className={`p-4 gap-3 justify-between transition-colors cursor-pointer group select-none min-w-0 ${isSelected
-                            ? 'bg-accent-background border-accent'
+                        className={`p-4 gap-3 justify-between transition-all duration-200 cursor-pointer group select-none min-w-0 ${isSelected
+                            ? 'bg-accent/15 border-accent shadow-sm ring-1 ring-accent/30'
                             : 'bg-surface border-surface-border hover:border-accent-border'
                         }`}
                     >

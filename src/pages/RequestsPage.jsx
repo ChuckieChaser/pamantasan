@@ -160,7 +160,6 @@ const RequestsPage = ({
 
     const users = useUserStore((state) => state.users);
     const fetchUsers = useUserStore((state) => state.fetchUsers);
-    const departments = useDepartmentStore((state) => state.departments);
     const fetchDepartments = useDepartmentStore((state) => state.fetchDepartments);
 
     // EFFECTS
@@ -189,7 +188,9 @@ const RequestsPage = ({
         if (!viewingDocumentRequest) return;
         const liveReq = (documentRequests || []).find((r) => String(r.id) === String(viewingDocumentRequest.id));
         if (liveReq && String(liveReq.status).toUpperCase() !== String(viewingDocumentRequest.status).toUpperCase()) {
-            setViewingDocumentRequest((prev) => (prev ? { ...prev, status: liveReq.status } : null));
+            queueMicrotask(() => {
+                setViewingDocumentRequest((prev) => (prev ? { ...prev, status: liveReq.status } : null));
+            });
         }
     }, [documentRequests, viewingDocumentRequest]);
 
@@ -268,7 +269,7 @@ const RequestsPage = ({
                 badge: request.status || constants.DOCUMENT_REQUESTS_STATUS.OPEN,
             };
         });
-    }, [documentRequests, messages, attachments, users]);
+    }, [documentRequests, messages, attachments, users, documents, documentVersions]);
 
     const activeViewingMessages = useMemo(() => {
         if (!viewingDocumentRequest) {
@@ -408,12 +409,6 @@ const RequestsPage = ({
         const itemWithTab = item ? { ...item, _targetTab: targetTab } : null;
         setSelectedRequestItem(itemWithTab);
         onSelectRequest?.(itemWithTab, targetTab);
-    };
-
-    const handleOpenDocumentThread = (requestItem) => {
-        setViewingDocumentRequest(requestItem);
-        setReplyMessage('');
-        setStagedAttachments([]);
     };
 
     const handleOpenAttachModal = () => {
@@ -858,7 +853,7 @@ const RequestsPage = ({
                                 combinedThreadItems.map((threadItem, itemIndex) => {
                                     const prevItem = itemIndex > 0 ? combinedThreadItems[itemIndex - 1] : null;
                                     const prevTime = prevItem?.createdAt ? new Date(prevItem.createdAt).getTime() : null;
-                                    const currTime = threadItem?.createdAt ? new Date(threadItem.createdAt).getTime() : Date.now();
+                                    const currTime = threadItem?.createdAt ? new Date(threadItem.createdAt).getTime() : (prevTime ?? 0);
                                     const showDivider = !prevTime || (currTime - prevTime >= 10 * 60 * 1000);
 
                                     if (threadItem.type === 'message') {
@@ -1002,7 +997,9 @@ const RequestsPage = ({
                                                                                                 if (fetched && fetched.length > 0) {
                                                                                                     vers = fetched;
                                                                                                 }
-                                                                                            } catch {}
+                                                                                            } catch {
+                                                                                                /* ignore */
+                                                                                            }
                                                                                         }
                                                                                         if (vers.length === 0) {
                                                                                             try {
@@ -1010,7 +1007,9 @@ const RequestsPage = ({
                                                                                                 if (allFetched && allFetched.length > 0) {
                                                                                                     vers = allFetched.filter((v) => (v.document?.id ?? v.documentId) === targetDocId);
                                                                                                 }
-                                                                                            } catch {}
+                                                                                            } catch {
+                                                                                                /* ignore */
+                                                                                            }
                                                                                         }
                                                                                         const latestVer = vers.length > 0
                                                                                             ? [...vers].sort((a, b) => (b.version ?? 0) - (a.version ?? 0))[0]

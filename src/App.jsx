@@ -14,7 +14,6 @@ import {
     FilePlus,
     Users,
     Building2,
-    Inbox,
     AlertTriangle,
     Archive,
     UserCheck,
@@ -30,6 +29,7 @@ import {
     RequestsPage,
     CoordinatorPage,
     OnboardingPage,
+    MobileSyncCapturePage,
 } from './pages';
 import { MainLayout } from './layouts';
 import {
@@ -77,7 +77,7 @@ const AppContent = () => {
     // HOOKS
     const location = useLocation();
     const navigate = useNavigate();
-    const { showToast, showProcessing } = useToast();
+    const { showToast } = useToast();
     const {
         currentUser,
         isLoading,
@@ -121,10 +121,10 @@ const AppContent = () => {
     }, [currentUser, fetchDepartments, fetchUsers, fetchDocuments, fetchAuditLogs, fetchNotifications]);
 
     useEffect(() => {
-        if (currentUser) {
+        if (currentUser && departments.length > 0 && typeof syncAllDocumentShares === 'function') {
             syncAllDocumentShares(currentUser, departments).catch(() => {});
         }
-    }, [currentUser?.id, currentUser?.departmentId, currentUser?.role, departments?.length, syncAllDocumentShares]);
+    }, [currentUser, departments, syncAllDocumentShares]);
 
     // REACTIVE SYNC FOR SELECTED ITEM WHEN STORE DEPARTMENTS UPDATE
     useEffect(() => {
@@ -134,29 +134,31 @@ const AppContent = () => {
 
         const matchingDepartment = departments.find((dept) => dept?.id === selectedItem.id);
         if (matchingDepartment) {
-            setSelectedItem((previous) => {
-                if (!previous) {
-                    return previous;
-                }
+            queueMicrotask(() => {
+                setSelectedItem((previous) => {
+                    if (!previous || previous.id !== matchingDepartment.id) {
+                        return previous;
+                    }
 
-                if (
-                    previous.name === matchingDepartment.name &&
-                    previous.code === matchingDepartment.code &&
-                    previous.updatedAt === matchingDepartment.updatedAt
-                ) {
-                    return previous;
-                }
+                    if (
+                        previous.name === matchingDepartment.name &&
+                        previous.code === matchingDepartment.code &&
+                        previous.updatedAt === matchingDepartment.updatedAt
+                    ) {
+                        return previous;
+                    }
 
-                return {
-                    ...previous,
-                    ...matchingDepartment,
-                    title: matchingDepartment.name,
-                    name: matchingDepartment.name,
-                    code: matchingDepartment.code,
-                    subtitle: matchingDepartment.code,
-                    createdAt: matchingDepartment.createdAt ?? previous.createdAt,
-                    updatedAt: matchingDepartment.updatedAt ?? previous.updatedAt,
-                };
+                    return {
+                        ...previous,
+                        ...matchingDepartment,
+                        title: matchingDepartment.name,
+                        name: matchingDepartment.name,
+                        code: matchingDepartment.code,
+                        subtitle: matchingDepartment.code,
+                        createdAt: matchingDepartment.createdAt ?? previous.createdAt,
+                        updatedAt: matchingDepartment.updatedAt ?? previous.updatedAt,
+                    };
+                });
             });
         }
     }, [departments, selectedItem?.id]);
@@ -169,43 +171,45 @@ const AppContent = () => {
 
         const matchingUser = users.find((user) => user?.id === selectedItem.id);
         if (matchingUser) {
-            setSelectedItem((previous) => {
-                if (!previous) {
-                    return previous;
-                }
+            queueMicrotask(() => {
+                setSelectedItem((previous) => {
+                    if (!previous || previous.id !== matchingUser.id) {
+                        return previous;
+                    }
 
-                const firstName = matchingUser.firstName ?? previous.firstName ?? '';
-                const lastName = matchingUser.lastName ?? previous.lastName ?? '';
-                const fullName = `${firstName} ${lastName}`.trim() || previous.title || previous.name;
+                    const firstName = matchingUser.firstName ?? previous.firstName ?? '';
+                    const lastName = matchingUser.lastName ?? previous.lastName ?? '';
+                    const fullName = `${firstName} ${lastName}`.trim() || previous.title || previous.name;
 
-                if (
-                    previous.firstName === matchingUser.firstName &&
-                    previous.lastName === matchingUser.lastName &&
-                    previous.role === matchingUser.role &&
-                    previous.status === matchingUser.status &&
-                    previous.departmentId === matchingUser.departmentId &&
-                    previous.updatedAt === matchingUser.updatedAt
-                ) {
-                    return previous;
-                }
+                    if (
+                        previous.firstName === matchingUser.firstName &&
+                        previous.lastName === matchingUser.lastName &&
+                        previous.role === matchingUser.role &&
+                        previous.status === matchingUser.status &&
+                        previous.departmentId === matchingUser.departmentId &&
+                        previous.updatedAt === matchingUser.updatedAt
+                    ) {
+                        return previous;
+                    }
 
-                return {
-                    ...previous,
-                    ...matchingUser,
-                    title: fullName,
-                    name: fullName,
-                    firstName,
-                    lastName,
-                    middleName: matchingUser.middleName ?? previous.middleName ?? null,
-                    universityId: matchingUser.universityId ?? previous.universityId,
-                    email: matchingUser.email ?? previous.email,
-                    role: matchingUser.role ?? previous.role,
-                    status: matchingUser.status ?? previous.status,
-                    departmentId: matchingUser.departmentId ?? previous.departmentId,
-                    avatarPath: matchingUser.avatarPath ?? previous.avatarPath ?? null,
-                    createdAt: matchingUser.createdAt ?? previous.createdAt,
-                    updatedAt: matchingUser.updatedAt ?? previous.updatedAt,
-                };
+                    return {
+                        ...previous,
+                        ...matchingUser,
+                        title: fullName,
+                        name: fullName,
+                        firstName,
+                        lastName,
+                        middleName: matchingUser.middleName ?? previous.middleName ?? null,
+                        universityId: matchingUser.universityId ?? previous.universityId,
+                        email: matchingUser.email ?? previous.email,
+                        role: matchingUser.role ?? previous.role,
+                        status: matchingUser.status ?? previous.status,
+                        departmentId: matchingUser.departmentId ?? previous.departmentId,
+                        avatarPath: matchingUser.avatarPath ?? previous.avatarPath ?? null,
+                        createdAt: matchingUser.createdAt ?? previous.createdAt,
+                        updatedAt: matchingUser.updatedAt ?? previous.updatedAt,
+                    };
+                });
             });
         }
     }, [users, selectedItem?.id]);
@@ -234,7 +238,6 @@ const AppContent = () => {
         return 'dashboard';
     }, [location.pathname]);
 
-    const userRole = currentUser?.role ?? constants.USERS_ROLE.MEMBER;
     const isAdmin = constants.isAdminRole(currentUser?.role);
     const isCoordinator = constants.isCoordinatorRole(currentUser?.role);
     const pageTitle = PAGE_TITLES[activeNavigationKey] ?? 'Dashboard';
@@ -415,6 +418,8 @@ const AppContent = () => {
         }
         if (activityItem) {
             setIsDetailPanelOpen(true);
+        } else {
+            setIsDetailPanelOpen(false);
         }
     };
 
@@ -799,7 +804,7 @@ const AppContent = () => {
 
         if (actionKey === 'archive') {
             if (item?.isArchived) {
-                handleConfirmRestoreDirectly(item);
+                await performRestoreItem(item);
                 return;
             }
             if (location.pathname !== '/documents') {
@@ -944,11 +949,23 @@ const AppContent = () => {
                 window.dispatchEvent(new CustomEvent('pamantasan:delete-document-request', { detail: item }));
                 return;
             }
-            showToast({
-                type: 'error',
-                title: 'Deletion Requested',
-                description: `Deletion action triggered for ${item?.name ?? item?.code ?? 'record'}.`,
-            });
+            if (item?.universityId || (item?.email && item?.role)) {
+                window.dispatchEvent(new CustomEvent('pamantasan:delete-user', { detail: item }));
+                return;
+            }
+
+            // Document or Folder deletion
+            const targetDoc = item || selectedItem;
+            if (location.pathname === '/archives') {
+                window.dispatchEvent(new CustomEvent('pamantasan:delete-document', { detail: targetDoc }));
+            } else if (location.pathname !== '/documents') {
+                navigate('/documents');
+                setTimeout(() => {
+                    window.dispatchEvent(new CustomEvent('pamantasan:delete-document', { detail: targetDoc }));
+                }, 100);
+            } else {
+                window.dispatchEvent(new CustomEvent('pamantasan:delete-document', { detail: targetDoc }));
+            }
             return;
         }
 
@@ -1256,6 +1273,12 @@ const AppContent = () => {
                 />
             </Route>
 
+            {/* 1.5. PUBLIC MOBILE SCAN SYNC ROUTE (Direct camera pairing from phone) */}
+            <Route
+                path="/mobile-sync/:sessionId"
+                element={<MobileSyncCapturePage />}
+            />
+
             {/* 2. ONBOARDING ROUTE (REQUIRES AUTH, ACCESSIBLE IN PENDING STATUS) */}
             <Route
                 path="/onboarding"
@@ -1309,6 +1332,7 @@ const AppContent = () => {
                             onNavigationChange={handleNavigationChange}
                             onToggleDetailPanel={handleToggleDetailPanel}
                             onCloseDetailPanel={handleCloseDetailPanel}
+                            onSelectRecord={handleSelectActivity}
                             onSignOut={handleSignOut}
                         />
                     </ProtectedRoute>
@@ -1335,7 +1359,7 @@ const AppContent = () => {
                     element={
                         <DocumentsPage
                             currentUser={currentUser}
-                            onUploadDocument={handleUploadDocument}
+                            selectedItem={selectedItem}
                             onSelectDocument={handleSelectActivity}
                         />
                     }
@@ -1345,6 +1369,7 @@ const AppContent = () => {
                     element={
                         <ArchivesPage
                             currentUser={currentUser}
+                            selectedItem={selectedItem}
                             onSelectDocument={handleSelectActivity}
                         />
                     }
@@ -1379,6 +1404,7 @@ const AppContent = () => {
                         element={
                             <DepartmentsPage
                                 currentUser={currentUser}
+                                selectedItem={selectedItem}
                                 onSelectDepartment={handleSelectActivity}
                             />
                         }
@@ -1388,6 +1414,7 @@ const AppContent = () => {
                         element={
                             <UsersPage
                                 currentUser={currentUser}
+                                selectedItem={selectedItem}
                                 onSelectUser={handleSelectActivity}
                             />
                         }

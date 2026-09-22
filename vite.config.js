@@ -7,6 +7,7 @@ import tailwindcss from '@tailwindcss/vite';
 export default defineConfig({
     plugins: [react(), tailwindcss()],
     server: {
+        host: true,
         proxy: {
             '/firebase-storage': {
                 target: 'https://firebasestorage.googleapis.com',

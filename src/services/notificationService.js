@@ -113,7 +113,9 @@ const notificationService = {
                 if (user?.email) {
                     targetEmail = user.email;
                 }
-            } catch {}
+            } catch {
+                /* ignore */
+            }
         }
 
         const cleanEmail = (targetEmail || '').toString().trim().toLowerCase();

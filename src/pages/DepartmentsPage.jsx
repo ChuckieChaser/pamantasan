@@ -36,6 +36,7 @@ const DEPARTMENT_SORT_OPTIONS = [
 // --- COMPONENTS ---
 const DepartmentsPage = ({
     currentUser: propUser = null,
+    selectedItem = null,
     onSelectDepartment = null,
     className,
     ...props
@@ -51,6 +52,21 @@ const DepartmentsPage = ({
     const storeUser = useAuthStore((state) => state.currentUser);
     const currentUser = propUser ?? authUser ?? storeUser ?? useAuthStore.getState().currentUser;
     const isCoordinator = constants.isCoordinatorRole(currentUser?.role);
+
+    // STATES
+    const [selectedDepartment, setSelectedDepartment] = useState(null);
+    const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+    const [editingDepartment, setEditingDepartment] = useState(null);
+    const [deletingDepartment, setDeletingDepartment] = useState(null);
+
+    const [isCreatingDepartment, setIsCreatingDepartment] = useState(false);
+    const [isUpdatingDepartment, setIsUpdatingDepartment] = useState(false);
+    const [isDeletingDepartmentLoading, setIsDeletingDepartmentLoading] = useState(false);
+
+    const [formCode, setFormCode] = useState('');
+    const [formName, setFormName] = useState('');
+    const [formErrors, setFormErrors] = useState({});
+    const [editFormErrors, setEditFormErrors] = useState({});
 
     // EFFECTS
     useEffect(() => {
@@ -68,21 +84,6 @@ const DepartmentsPage = ({
         window.addEventListener('pamantasan:delete-department', handleDeleteDeptEvent);
         return () => window.removeEventListener('pamantasan:delete-department', handleDeleteDeptEvent);
     }, [departments]);
-
-    // STATES
-    const [selectedDepartment, setSelectedDepartment] = useState(null);
-    const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-    const [editingDepartment, setEditingDepartment] = useState(null);
-    const [deletingDepartment, setDeletingDepartment] = useState(null);
-
-    const [isCreatingDepartment, setIsCreatingDepartment] = useState(false);
-    const [isUpdatingDepartment, setIsUpdatingDepartment] = useState(false);
-    const [isDeletingDepartmentLoading, setIsDeletingDepartmentLoading] = useState(false);
-
-    const [formCode, setFormCode] = useState('');
-    const [formName, setFormName] = useState('');
-    const [formErrors, setFormErrors] = useState({});
-    const [editFormErrors, setEditFormErrors] = useState({});
 
     // HOOKS
     const { showToast } = useToast();
@@ -362,19 +363,19 @@ const DepartmentsPage = ({
 
     // DERIVED VALUES
     const activeSelectedDepartment = useMemo(() => {
-        if (!selectedDepartment?.id) return null;
-        const matched = departments.find((d) => d?.id === selectedDepartment.id);
-        if (!matched) return selectedDepartment;
+        const targetId = selectedItem?.id ?? selectedDepartment?.id;
+        if (!targetId) return null;
+        const matched = departments.find((d) => d?.id === targetId);
+        if (!matched) return selectedItem ?? selectedDepartment;
         return {
             ...selectedDepartment,
-            code: matched.code,
-            name: matched.name,
+            ...matched,
             title: matched.name,
             subtitle: matched.code,
             createdAt: matched.createdAt,
             updatedAt: matched.updatedAt,
         };
-    }, [departments, selectedDepartment]);
+    }, [departments, selectedDepartment, selectedItem]);
 
     const formattedDepartmentData = useMemo(() => {
         return departments.filter(Boolean).map((department) => {
