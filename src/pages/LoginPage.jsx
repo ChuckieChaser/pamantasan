@@ -1,5 +1,5 @@
 // --- IMPORTS ---
-import { Lock, LogIn, User } from 'lucide-react';
+import { ArrowLeft, KeyRound, Lock, LogIn, ShieldAlert, User } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
@@ -26,13 +26,18 @@ export const LoginPage = () => {
     const { toast } = useToast();
 
     const {
+        step,
         universityId,
         password,
+        otp,
+        maskedEmail,
         fieldErrors,
         isSubmitting,
         error: authError,
         handleUniversityIdChange,
         handlePasswordChange,
+        handleOtpChange,
+        handleBackToCredentials,
         submit,
         submitGoogle,
     } = useLoginForm({
@@ -47,7 +52,7 @@ export const LoginPage = () => {
         try {
             await submit(e);
         } catch (err) {
-            toast.error('Authentication failed', err?.message || 'Invalid university credentials.', err);
+            toast.error('Authentication failed', err?.message || 'Invalid credentials or code.', err);
         }
     };
 
@@ -90,76 +95,132 @@ export const LoginPage = () => {
                     </div>
                 </div>
 
-                {/* Form */}
-                <form onSubmit={onSubmit} className="flex flex-col gap-4">
-                    <FormField
-                        label="University ID"
-                        isRequired
-                        errorMessage={fieldErrors.universityId}
-                    >
-                        <Input
-                            value={universityId}
-                            onChange={handleUniversityIdChange}
-                            placeholder="e.g. 2024-00001"
-                            leadingIcon={User}
-                            hasError={Boolean(fieldErrors.universityId)}
-                            autoFocus
-                        />
-                    </FormField>
+                {step === 'credentials' ? (
+                    <>
+                        {/* Credentials Form */}
+                        <form onSubmit={onSubmit} className="flex flex-col gap-4">
+                            <FormField
+                                label="University ID"
+                                isRequired
+                                errorMessage={fieldErrors.universityId}
+                            >
+                                <Input
+                                    value={universityId}
+                                    onChange={handleUniversityIdChange}
+                                    placeholder="e.g. 2024-00001"
+                                    leadingIcon={User}
+                                    hasError={Boolean(fieldErrors.universityId)}
+                                    autoFocus
+                                />
+                            </FormField>
 
-                    <FormField
-                        label="Password"
-                        isRequired
-                        errorMessage={fieldErrors.password}
-                    >
-                        <Input
-                            type="password"
-                            value={password}
-                            onChange={handlePasswordChange}
-                            placeholder="Enter account password"
-                            leadingIcon={Lock}
-                            hasError={Boolean(fieldErrors.password)}
-                        />
-                    </FormField>
+                            <FormField
+                                label="Password"
+                                isRequired
+                                errorMessage={fieldErrors.password}
+                            >
+                                <Input
+                                    type="password"
+                                    value={password}
+                                    onChange={handlePasswordChange}
+                                    placeholder="Enter account password"
+                                    leadingIcon={Lock}
+                                    hasError={Boolean(fieldErrors.password)}
+                                />
+                            </FormField>
 
-                    <div className="flex items-center justify-end -mt-1">
-                        <Link
-                            to="/forgot-password"
-                            className="text-xs text-accent hover:underline focus:outline-none focus:ring-1 focus:ring-accent rounded"
+                            <div className="flex items-center justify-end -mt-1">
+                                <Link
+                                    to="/forgot-password"
+                                    className="text-xs text-accent hover:underline focus:outline-none focus:ring-1 focus:ring-accent rounded"
+                                >
+                                    Forgot password?
+                                </Link>
+                            </div>
+
+                            <Button
+                                type="submit"
+                                variant="primary"
+                                leadingIcon={LogIn}
+                                isLoading={isSubmitting}
+                                className="w-full mt-1"
+                            >
+                                Sign In
+                            </Button>
+                        </form>
+
+                        <div className="relative flex items-center justify-center">
+                            <div className="absolute inset-0 flex items-center">
+                                <div className="w-full border-t border-surface-border" />
+                            </div>
+                            <span className="relative bg-surface px-3 text-[11px] font-medium text-text-muted uppercase tracking-wider">
+                                Or continue with
+                            </span>
+                        </div>
+
+                        <Button
+                            variant="secondary"
+                            leadingIcon={GoogleIcon}
+                            onClick={onGoogleSubmit}
+                            isLoading={isSubmitting}
+                            className="w-full"
                         >
-                            Forgot password?
-                        </Link>
-                    </div>
+                            Sign in with Google
+                        </Button>
+                    </>
+                ) : (
+                    /* Concurrency Takeover OTP Step */
+                    <form onSubmit={onSubmit} className="flex flex-col gap-4">
+                        <div className="p-3 rounded-lg border border-warning/30 bg-warning/10 text-text flex items-start gap-3">
+                            <ShieldAlert className="h-5 w-5 text-warning shrink-0 mt-0.5" />
+                            <div className="flex flex-col gap-1 text-xs">
+                                <span className="font-semibold text-warning">Active Session Detected</span>
+                                <span className="text-text-muted leading-relaxed">
+                                    This account is currently active on another device. We sent a 6-digit verification code to <span className="font-medium text-text">{maskedEmail}</span>. Entering this code will transfer your session and log out the other device.
+                                </span>
+                            </div>
+                        </div>
 
-                    <Button
-                        type="submit"
-                        variant="primary"
-                        leadingIcon={LogIn}
-                        isLoading={isSubmitting}
-                        className="w-full mt-1"
-                    >
-                        Sign In
-                    </Button>
-                </form>
+                        <FormField
+                            label="Verification Code (OTP)"
+                            isRequired
+                            errorMessage={fieldErrors.otp}
+                        >
+                            <Input
+                                value={otp}
+                                onChange={handleOtpChange}
+                                placeholder="Enter 6-digit code"
+                                leadingIcon={KeyRound}
+                                hasError={Boolean(fieldErrors.otp)}
+                                maxLength={6}
+                                autoFocus
+                            />
+                        </FormField>
 
-                <div className="relative flex items-center justify-center">
-                    <div className="absolute inset-0 flex items-center">
-                        <div className="w-full border-t border-surface-border" />
-                    </div>
-                    <span className="relative bg-surface px-3 text-[11px] font-medium text-text-muted uppercase tracking-wider">
-                        Or continue with
-                    </span>
-                </div>
+                        <div className="flex flex-col gap-2 mt-2">
+                            <Button
+                                type="submit"
+                                variant="primary"
+                                leadingIcon={LogIn}
+                                isLoading={isSubmitting}
+                                className="w-full"
+                            >
+                                Verify & Transfer Session
+                            </Button>
 
-                <Button
-                    variant="secondary"
-                    leadingIcon={GoogleIcon}
-                    onClick={onGoogleSubmit}
-                    isLoading={isSubmitting}
-                    className="w-full"
-                >
-                    Sign in with Google
-                </Button>
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                leadingIcon={ArrowLeft}
+                                onClick={handleBackToCredentials}
+                                disabled={isSubmitting}
+                                className="w-full"
+                            >
+                                Back to Credentials
+                            </Button>
+                        </div>
+                    </form>
+                )}
             </Card>
         </div>
     );

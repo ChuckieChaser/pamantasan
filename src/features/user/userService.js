@@ -1,4 +1,6 @@
 // --- IMPORTS ---
+import { httpsCallable } from 'firebase/functions';
+import { functions } from '../../services/firebase';
 import { executeDataQuery, executeDataMutation } from '../../services/dataConnectService';
 import { CreateUserSchema, UpdateUserSchema, UpdateUsersSchema, UpdateUserCredentialSchema, UpdateUserSettingSchema, CreateUserSessionSchema, UpdateUserSessionSchema, DeleteUserSessionsSchema } from './userSchema';
 
@@ -78,7 +80,31 @@ export const getUserByEmail = async (email) => {
 };
 
 export const createUser = async (payload) => {
-    const validated = CreateUserSchema.parse(payload);
+    const validated = CreateUserSchema.parse({
+        id: payload?.id || crypto.randomUUID(),
+        ...payload,
+    });
+
+    // Prefer atomic Cloud Functions provisioning (hashes password on server & emails temporary credentials)
+    if (functions) {
+        try {
+            const provision = httpsCallable(functions, 'provisionUser');
+            const res = await provision({
+                id: validated.id,
+                universityId: validated.universityId,
+                departmentId: validated.departmentId,
+                role: validated.role,
+                email: validated.email,
+                givenName: validated.givenName,
+                lastName: validated.lastName,
+            });
+            if (res?.data?.user) {
+                return res.data.user;
+            }
+        } catch (fnErr) {
+            console.warn('[createUser] Cloud Function provisioning fallback:', fnErr?.message);
+        }
+    }
 
     const data = await executeDataMutation('CreateUser', {
         id: validated.id,
@@ -89,7 +115,7 @@ export const createUser = async (payload) => {
         avatar: validated.avatar ?? null,
         givenName: validated.givenName,
         lastName: validated.lastName,
-        passwordHash: validated.passwordHash,
+        passwordHash: validated.passwordHash || 'PENDING_PROVISIONING',
         googleId: validated.googleId ?? null,
     });
 

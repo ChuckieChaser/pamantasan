@@ -20,6 +20,31 @@ const getOcrHandlers = () => require('./features/ocr/ocrHandlers');
 
 // --- AUTH ---
 
+/** Verifies credentials, enforces concurrency checks/step-up OTP, and mints custom JWT with claims. */
+exports.verifyCredentialsAndMintToken = onCall({ cors: true }, async (request) =>
+    getAuthHandlers().handleVerifyCredentialsAndMintToken(request.data, request),
+);
+
+/** Verifies active session heartbeat and refreshes expiredAt timestamp. */
+exports.verifySessionHeartbeat = onCall({ cors: true }, async (request) =>
+    getAuthHandlers().handleVerifySessionHeartbeat(request.data, request),
+);
+
+/** Changes user password after verifying current password. */
+exports.changeUserPassword = onCall({ cors: true }, async (request) =>
+    getAuthHandlers().handleChangeUserPassword(request.data, request),
+);
+
+/** Sets custom user claims for role, status, and department. Admin only. */
+exports.setUserClaims = onCall({ cors: true }, async (request) =>
+    getAuthHandlers().handleSetUserClaims(request.data, request),
+);
+
+/** Provisions new user account with temporary password and welcome email. Admin only. */
+exports.provisionUser = onCall({ cors: true }, async (request) =>
+    getAuthHandlers().handleProvisionUser(request.data, request),
+);
+
 /** Generates and emails a 6-digit OTP for password recovery. */
 exports.sendPasswordResetOtp = onCall({ cors: true }, async (request) =>
     getAuthHandlers().handleSendPasswordResetOtp(request.data),

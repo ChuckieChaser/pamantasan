@@ -11,6 +11,7 @@ import {
     resetPasswordWithOtp,
     changePassword,
     linkGoogleAccount,
+    verifySessionHeartbeat,
 } from './authService';
 
 
@@ -28,9 +29,14 @@ export const useAuthStore = create((set) => ({
     loginWithUniversityId: async (payload) => {
         set({ error: null });
         try {
-            const user = await loginWithUniversityId(payload);
-            set({ currentUser: user, error: null });
-            return user;
+            const result = await loginWithUniversityId(payload);
+            // If concurrent session step-up is required, return result directly without setting currentUser
+            if (result?.requiresStepUp) {
+                return result;
+            }
+            const activeUser = result?.user ?? result;
+            set({ currentUser: activeUser, error: null });
+            return activeUser;
         } catch (error) {
             set({ error: error?.message ?? 'Failed to authenticate with University ID.' });
             throw error;
@@ -120,7 +126,40 @@ export const useAuthStore = create((set) => ({
     // --- LISTENER ---
 
     initializeAuthListener: () => {
-        const unsubscribe = onAuthStateChanged(auth, (user) => {
+        const unsubscribe = onAuthStateChanged(auth, async (user) => {
+            if (!user) {
+                try {
+                    localStorage.removeItem('pamantasan_session_id');
+                    localStorage.removeItem('pamantasan_last_active_time');
+                } catch {
+                    // Ignore storage errors
+                }
+                set({ currentUser: null, isLoading: false, error: null });
+                return;
+            }
+
+            // Session Binding: Verify active session ID is present
+            const sessionId = localStorage.getItem('pamantasan_session_id');
+            if (!sessionId) {
+                // If the session record was deleted, immediately terminate actual user session
+                await logout().catch(() => {});
+                set({ currentUser: null, isLoading: false, error: null });
+                return;
+            }
+
+            // Verify with backend that this session record is intact and unrevoked
+            try {
+                const check = await verifySessionHeartbeat({ sessionId, userId: user.uid });
+                if (check && check.valid === false) {
+                    // Backend session was deleted (concurrency logout or timeout)
+                    await logout().catch(() => {});
+                    set({ currentUser: null, isLoading: false, error: null });
+                    return;
+                }
+            } catch {
+                // Network failure during initialization, preserve offline state
+            }
+
             set({ currentUser: user, isLoading: false, error: null });
         });
         return unsubscribe;

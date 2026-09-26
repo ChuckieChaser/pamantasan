@@ -11,7 +11,7 @@ mutation CreateUser(
 
     $passwordHash: String!
     $googleId: String
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role == 'ADMINISTRATOR'") {
     user_insert(
         data: {
             id: $id
@@ -48,7 +48,7 @@ mutation UpdateUser(
     $lastName: String
     $status: String
     $updatedAt: Timestamp
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role == 'ADMINISTRATOR' || auth.uid == string($id)") {
     user_update(
         id: $id
         data: {
@@ -78,7 +78,7 @@ mutation UpdateUsers(
     $role: String
     $status: String
     $updatedAt: Timestamp
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role == 'ADMINISTRATOR'") {
     user_updateMany(
         where: {
             id: { in: $ids }
@@ -107,7 +107,7 @@ mutation UpdateUserCredential(
     $passwordHash: String
     $googleId: String
     $updatedAt: Timestamp
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role == 'ADMINISTRATOR' || auth.uid == string($userId)") {
     userCredential_update(
         key: {
             userId: $userId
@@ -127,7 +127,7 @@ mutation UpdateUserSetting(
     $theme: String
     $notification: String
     $updatedAt: Timestamp
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role == 'ADMINISTRATOR' || auth.uid == string($userId)") {
     userSetting_update(
         key: {
             userId: $userId
@@ -148,7 +148,7 @@ mutation CreateUserSession(
     $ipAddress: String
     $userAgent: String
     $expiredAt: Timestamp
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role == 'ADMINISTRATOR' || auth.uid == string($userId)") {
     userSession_insert(
         data: {
             userId: $userId
@@ -163,7 +163,7 @@ mutation CreateUserSession(
 mutation UpdateUserSession(
     $id: UUID!
     $expiredAt: Timestamp!
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR', 'DIRECTOR', 'OFFICER', 'MEMBER']") {
     userSession_update(
         id: $id
         data: {
@@ -174,10 +174,11 @@ mutation UpdateUserSession(
 
 mutation DeleteUserSessions(
     $ids: [UUID!]!
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR', 'DIRECTOR', 'OFFICER', 'MEMBER']") {
     userSession_deleteMany(
         where: {
             id: { in: $ids }
         }
     )
 }
+

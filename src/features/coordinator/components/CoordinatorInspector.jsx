@@ -16,6 +16,7 @@ import { Panel } from '../../../components/layout/Panel';
 import { useDialog } from '../../../components/feedback/DialogProvider';
 import { useToast } from '../../../components/feedback/ToastProvider';
 import { useCoordinator } from '../hooks/useCoordinator';
+import { useAuth } from '../../auth/hooks/useAuth';
 import { COORDINATOR_STATUS } from '../coordinatorConstants';
 
 
@@ -38,6 +39,8 @@ export const CoordinatorInspector = ({
     const { handleUpdateCoordinatorRequest, isMutating } = useCoordinator();
     const { confirm } = useDialog();
     const { toast } = useToast();
+    const { currentUser } = useAuth();
+    const canDecide = currentUser?.role === 'ADMINISTRATOR';
 
     // Guard: Hidden if no request or not open
     if (!isOpen || !request) {
@@ -109,10 +112,10 @@ export const CoordinatorInspector = ({
                 </div>
 
                 {/* Decision Actions */}
-                {request.status === COORDINATOR_STATUS.PENDING && (
+                {canDecide && request.status === COORDINATOR_STATUS.PENDING && (
                     <div className="flex flex-col gap-2">
                         <span className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">
-                            Coordinator Decision
+                            Administrator Decision
                         </span>
 
                         <div className="grid grid-cols-2 gap-2">

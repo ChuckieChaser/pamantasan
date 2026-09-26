@@ -21,6 +21,7 @@ import { Panel } from '../../../components/layout/Panel';
 import { useDialog } from '../../../components/feedback/DialogProvider';
 import { useToast } from '../../../components/feedback/ToastProvider';
 import { useRequest } from '../hooks/useRequest';
+import { useAuth } from '../../auth/hooks/useAuth';
 import { REQUEST_STATUS } from '../requestConstants';
 
 
@@ -52,6 +53,8 @@ export const RequestInspector = ({
 
     const { confirm } = useDialog();
     const { toast } = useToast();
+    const { currentUser } = useAuth();
+    const canReview = currentUser?.role === 'ADMINISTRATOR' || currentUser?.role === 'COORDINATOR';
 
     const [replyText, setReplyText] = useState('');
     const [isSendingMessage, setIsSendingMessage] = useState(false);
@@ -167,39 +170,41 @@ export const RequestInspector = ({
                 </div>
 
                 {/* Workflow Status Actions */}
-                <div className="flex flex-col gap-2">
-                    <span className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">
-                        Workflow Status
-                    </span>
+                {canReview && (
+                    <div className="flex flex-col gap-2">
+                        <span className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">
+                            Workflow Status
+                        </span>
 
-                    {request.status === REQUEST_STATUS.OPEN ? (
-                        <div className="grid grid-cols-2 gap-2">
+                        {request.status === REQUEST_STATUS.OPEN ? (
+                            <div className="grid grid-cols-2 gap-2">
+                                <Button
+                                    variant="primary"
+                                    leadingIcon={CheckCircle2}
+                                    label="Resolve"
+                                    onClick={() => handleStatusChange(REQUEST_STATUS.RESOLVED)}
+                                    isLoading={isMutating}
+                                />
+                                <Button
+                                    variant="destructive"
+                                    leadingIcon={XCircle}
+                                    label="Reject"
+                                    onClick={() => handleStatusChange(REQUEST_STATUS.REJECTED)}
+                                    isLoading={isMutating}
+                                />
+                            </div>
+                        ) : (
                             <Button
-                                variant="primary"
-                                leadingIcon={CheckCircle2}
-                                label="Resolve"
-                                onClick={() => handleStatusChange(REQUEST_STATUS.RESOLVED)}
+                                variant="secondary"
+                                leadingIcon={RotateCcw}
+                                label="Reopen Request"
+                                onClick={() => handleStatusChange(REQUEST_STATUS.OPEN)}
                                 isLoading={isMutating}
+                                className="w-full"
                             />
-                            <Button
-                                variant="destructive"
-                                leadingIcon={XCircle}
-                                label="Reject"
-                                onClick={() => handleStatusChange(REQUEST_STATUS.REJECTED)}
-                                isLoading={isMutating}
-                            />
-                        </div>
-                    ) : (
-                        <Button
-                            variant="secondary"
-                            leadingIcon={RotateCcw}
-                            label="Reopen Request"
-                            onClick={() => handleStatusChange(REQUEST_STATUS.OPEN)}
-                            isLoading={isMutating}
-                            className="w-full"
-                        />
-                    )}
-                </div>
+                        )}
+                    </div>
+                )}
 
                 {/* Discussion Thread */}
                 <div className="flex flex-col gap-3">

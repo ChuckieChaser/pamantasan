@@ -5,7 +5,7 @@ query GetCoordinatorRequests(
     $orderBy: [CoordinatorRequest_Order!] = [{ createdAt: DESC }]
     $limit: Int = 100
     $offset: Int = 0
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR']") {
     coordinatorRequests(
         where: {
             _or: [
@@ -52,7 +52,7 @@ query GetCoordinatorRequestsByRequesterId(
     $orderBy: [CoordinatorRequest_Order!] = [{ createdAt: DESC }]
     $limit: Int = 100
     $offset: Int = 0
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR'] || auth.uid == string($requesterId)") {
     coordinatorRequests(
         where: {
             _or: [
@@ -95,7 +95,7 @@ query GetCoordinatorRequestsByRequesterId(
 
 query GetCoordinatorRequestById(
     $id: UUID!
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR']") {
     coordinatorRequests(
         where: {
             id: { eq: $id }
@@ -126,3 +126,4 @@ query GetCoordinatorRequestById(
         updatedAt
     }
 }
+

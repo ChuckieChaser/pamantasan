@@ -4,7 +4,7 @@ mutation CreateCoordinatorRequest(
     $reviewerId: UUID
     $action: String!
     $data: String!
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role == 'COORDINATOR'") {
     coordinatorRequest_insert(
         data: {
             requesterId: $requesterId
@@ -23,7 +23,7 @@ mutation UpdateCoordinatorRequest(
     $status: String
     $rejectionReason: String
     $updatedAt: Timestamp
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role == 'ADMINISTRATOR'") {
     coordinatorRequest_update(
         id: $id
         data: {
@@ -43,7 +43,7 @@ mutation UpdateCoordinatorRequests(
     $status: String
     $rejectionReason: String
     $updatedAt: Timestamp
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role == 'ADMINISTRATOR'") {
     coordinatorRequest_updateMany(
         where: {
             id: { in: $ids }
@@ -59,10 +59,11 @@ mutation UpdateCoordinatorRequests(
 
 mutation DeleteCoordinatorRequests(
     $ids: [UUID!]!
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role == 'ADMINISTRATOR'") {
     coordinatorRequest_deleteMany(
         where: {
             id: { in: $ids }
         }
     )
 }
+

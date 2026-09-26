@@ -2,14 +2,15 @@
 import { ArrowLeft } from 'lucide-react';
 import backgroundImage from '../assets/background.jpg';
 import logoImage from '../assets/logo.jpg';
-import { Container } from '../components';
+
 
 // --- CONFIGURATIONS ---
 const BASE_STYLE = 'relative min-h-screen w-full flex items-center justify-center p-4 sm:p-6 overflow-hidden select-none bg-surface text-text';
 const CARD_STYLE = 'bg-surface border border-surface-border shadow-2xl rounded-2xl p-6 sm:p-8 flex flex-col gap-6 text-text w-full';
 
+
 // --- COMPONENTS ---
-const AuthLayout = ({
+export const AuthLayout = ({
     title,
     description,
     icon,
@@ -78,10 +79,7 @@ const AuthLayout = ({
 
             {/* CENTER CARD CONTAINER */}
             <main className="relative z-10 max-w-md w-full my-auto">
-                <Container
-                    variant="card"
-                    className={composedCardStyle}
-                >
+                <div className={composedCardStyle}>
                     {/* OPTIONAL BACK BUTTON */}
                     {onBack && (
                         <div>
@@ -119,7 +117,7 @@ const AuthLayout = ({
 
                     {/* CARD CONTENT / FORM */}
                     {children}
-                </Container>
+                </div>
             </main>
 
             {/* INSTITUTIONAL FOOTER */}
@@ -135,6 +133,3 @@ const AuthLayout = ({
         </div>
     );
 };
-
-// --- EXPORTS ---
-export { AuthLayout };

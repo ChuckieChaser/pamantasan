@@ -11,7 +11,13 @@ import { SYSTEM } from '../../constants';
 
 // --- AUTHENTICATION SERVICES ---
 export const loginWithUniversityId = async (payload) => {
-    const validated = LoginSchema.parse(payload);
+    const rawPayload = {
+        identifier: payload?.identifier || payload?.universityId,
+        password: payload?.password,
+        otp: payload?.otp,
+        token: payload?.token,
+    };
+    const validated = LoginSchema.parse(rawPayload);
 
     if (!functions) {
         throw new Error('Firebase Functions is not initialized.');
@@ -22,13 +28,15 @@ export const loginWithUniversityId = async (payload) => {
         identifier: validated.identifier,
         password: validated.password,
         otp: validated.otp ?? null,
+        token: validated.token ?? null,
     });
 
     if (result?.data?.requiresStepUp) {
         return {
             requiresStepUp: true,
             maskedEmail: result.data.maskedEmail,
-            activeDevice: result.data.activeDevice,
+            token: result.data.token,
+            message: result.data.message,
         };
     }
 
@@ -37,8 +45,44 @@ export const loginWithUniversityId = async (payload) => {
         throw new Error('Authentication failed: No security token issued.');
     }
 
+    if (result?.data?.sessionId) {
+        try {
+            localStorage.setItem('pamantasan_session_id', result.data.sessionId);
+            localStorage.setItem('pamantasan_last_active_time', Date.now().toString());
+        } catch {
+            // Ignore storage write errors
+        }
+    }
+
     const userCredential = await signInWithCustomToken(auth, customToken);
-    return userCredential.user;
+    return {
+        user: userCredential.user,
+        sessionId: result.data.sessionId,
+    };
+};
+
+export const verifySessionHeartbeat = async ({ sessionId, userId }) => {
+    if (!functions || !sessionId || !userId) {
+        return { valid: false };
+    }
+
+    try {
+        const heartbeatFn = httpsCallable(functions, 'verifySessionHeartbeat');
+        const res = await heartbeatFn({ sessionId, userId });
+        return res?.data ?? { valid: false };
+    } catch (err) {
+        console.warn('[verifySessionHeartbeat] Session check failed:', err?.message);
+        return { valid: false, reason: err?.message };
+    }
+};
+
+export const terminateSession = async () => {
+    try {
+        localStorage.removeItem('pamantasan_session_id');
+        localStorage.removeItem('pamantasan_last_active_time');
+    } catch {
+        // Ignore
+    }
 };
 
 export const loginWithGoogle = async () => {
@@ -58,6 +102,7 @@ export const loginWithGoogle = async () => {
 };
 
 export const logout = async () => {
+    await terminateSession();
     if (auth) {
         await signOut(auth);
     }

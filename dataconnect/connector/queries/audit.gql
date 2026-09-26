@@ -5,7 +5,7 @@ query GetAuditLogs(
     $orderBy: [AuditLog_Order!] = [{ createdAt: DESC }]
     $limit: Int = 100
     $offset: Int = 0
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR']") {
     auditLogs(
         where: {
             _or: [
@@ -41,7 +41,7 @@ query GetAuditLogsByActorId(
     $orderBy: [AuditLog_Order!] = [{ createdAt: DESC }]
     $limit: Int = 100
     $offset: Int = 0
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role == 'ADMINISTRATOR' || auth.uid == string($actorId)") {
     auditLogs(
         where: {
             _or: [
@@ -77,7 +77,7 @@ query GetAuditLogsByEntityId(
     $orderBy: [AuditLog_Order!] = [{ createdAt: DESC }]
     $limit: Int = 100
     $offset: Int = 0
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR', 'DIRECTOR', 'OFFICER']") {
     auditLogs(
         where: {
             _or: [

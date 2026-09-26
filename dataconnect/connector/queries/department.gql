@@ -4,7 +4,7 @@ query GetDepartments(
     $orderBy: [Department_Order!] = [{ name: ASC }]
     $limit: Int = 100
     $offset: Int = 0
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR', 'DIRECTOR', 'OFFICER', 'MEMBER']") {
     departments(
         where: {
             _or: [
@@ -27,7 +27,7 @@ query GetDepartments(
 
 query GetDepartmentById(
     $id: UUID!
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR', 'DIRECTOR', 'OFFICER', 'MEMBER']") {
     departments(
         where: {
             id: { eq: $id }
@@ -44,7 +44,7 @@ query GetDepartmentById(
 
 query GetDepartmentByCode(
     $code: String!
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR', 'DIRECTOR', 'OFFICER', 'MEMBER']") {
     departments(
         where: {
             code: { eq: $code }
@@ -58,3 +58,4 @@ query GetDepartmentByCode(
         updatedAt
     }
 }
+

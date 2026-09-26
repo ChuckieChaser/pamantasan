@@ -4,7 +4,7 @@ mutation CreateNotification(
     $actorId: UUID
     $entityId: UUID!
     $event: String!
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR', 'DIRECTOR', 'OFFICER', 'MEMBER']") {
     notification_insert(
         data: {
             recipientId: $recipientId
@@ -20,7 +20,7 @@ mutation UpdateNotification(
     $isRead: Boolean
     $isEmailed: Boolean
     $updatedAt: Timestamp
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR', 'DIRECTOR', 'OFFICER', 'MEMBER']") {
     notification_update(
         id: $id
         data: {
@@ -36,7 +36,7 @@ mutation UpdateNotifications(
     $isRead: Boolean
     $isEmailed: Boolean
     $updatedAt: Timestamp
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR', 'DIRECTOR', 'OFFICER', 'MEMBER']") {
     notification_updateMany(
         where: {
             id: { in: $ids }
@@ -51,7 +51,7 @@ mutation UpdateNotifications(
 
 mutation DeleteNotifications(
     $ids: [UUID!]!
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR', 'DIRECTOR', 'OFFICER', 'MEMBER']") {
     notification_deleteMany(
         where: {
             id: { in: $ids }

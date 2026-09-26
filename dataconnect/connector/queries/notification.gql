@@ -6,7 +6,7 @@ query GetNotificationsByRecipientId(
     $orderBy: [Notification_Order!] = [{ createdAt: DESC }]
     $limit: Int = 100
     $offset: Int = 0
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role == 'ADMINISTRATOR' || auth.uid == string($recipientId)") {
     notifications(
         where: {
             event: { contains: $search, in: $events }

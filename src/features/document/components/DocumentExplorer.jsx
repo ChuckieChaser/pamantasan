@@ -26,6 +26,7 @@ import { DOCUMENT_CLASSIFICATION } from '../documentConstants';
 import { DocumentUploader } from './DocumentUploader';
 import { DocumentInspector } from './DocumentInspector';
 import { DocumentViewerModal } from './DocumentViewerModal';
+import { useAuth } from '../../auth/hooks/useAuth';
 
 
 // --- CONFIGURATIONS ---
@@ -63,6 +64,8 @@ const formatBytes = (bytes) => {
 export const DocumentExplorer = ({ currentUserId }) => {
     // --- HOOKS & STATE ---
     const { toast } = useToast();
+    const { currentUser } = useAuth();
+    const canManage = currentUser?.role === 'ADMINISTRATOR' || currentUser?.role === 'COORDINATOR';
 
     const {
         sortedDocuments,
@@ -135,19 +138,23 @@ export const DocumentExplorer = ({ currentUserId }) => {
                         options={VIEW_OPTIONS}
                     />
 
-                    <Button
-                        variant="secondary"
-                        leadingIcon={FolderPlus}
-                        label="New Folder"
-                        onClick={() => setIsNewFolderOpen(true)}
-                    />
+                    {canManage && (
+                        <>
+                            <Button
+                                variant="secondary"
+                                leadingIcon={FolderPlus}
+                                label="New Folder"
+                                onClick={() => setIsNewFolderOpen(true)}
+                            />
 
-                    <Button
-                        variant="primary"
-                        leadingIcon={Upload}
-                        label="Upload"
-                        onClick={() => setIsUploaderOpen(true)}
-                    />
+                            <Button
+                                variant="primary"
+                                leadingIcon={Upload}
+                                label="Upload"
+                                onClick={() => setIsUploaderOpen(true)}
+                            />
+                        </>
+                    )}
                 </div>
             </div>
 

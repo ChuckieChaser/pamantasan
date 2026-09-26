@@ -4,9 +4,9 @@ export { ForgotPasswordPage } from './ForgotPasswordPage';
 export { OnboardingPage } from './OnboardingPage';
 
 export { DashboardPage } from './DashboardPage';
-export { DocumentsPage, DocumentPage } from './DocumentsPage';
-export { UsersPage, UserPage } from './UsersPage';
-export { DepartmentsPage, DepartmentPage } from './DepartmentsPage';
+export { DocumentsPage } from './DocumentsPage';
+export { UsersPage } from './UsersPage';
+export { DepartmentsPage } from './DepartmentsPage';
 export { RequestsPage } from './RequestsPage';
 export { CoordinatorPage } from './CoordinatorPage';
 export { ArchivesPage } from './ArchivesPage';

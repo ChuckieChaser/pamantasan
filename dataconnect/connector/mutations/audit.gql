@@ -4,7 +4,7 @@ mutation CreateAuditLog(
     $entityId: UUID!
     $event: String!
     $data: String!
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR', 'DIRECTOR', 'OFFICER', 'MEMBER']") {
     auditLog_insert(
         data: {
             actorId: $actorId

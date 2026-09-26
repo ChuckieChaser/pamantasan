@@ -7,7 +7,7 @@ query GetDocumentsByParentId(
     $orderBy: [Document_Order!] = [{ isFolder: DESC }, { name: ASC }]
     $limit: Int = 100
     $offset: Int = 0
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR', 'DIRECTOR', 'OFFICER', 'MEMBER']") {
     documents(
         where: {
             _or: [
@@ -51,7 +51,7 @@ query GetDocumentsByIsArchived(
     $orderBy: [Document_Order!] = [{ updatedAt: DESC }]
     $limit: Int = 100
     $offset: Int = 0
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR', 'DIRECTOR', 'OFFICER', 'MEMBER']") {
     documents(
         where: {
             _or: [
@@ -89,7 +89,7 @@ query GetDocumentsByIsArchived(
 
 query GetDocumentById(
     $id: UUID!
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR', 'DIRECTOR', 'OFFICER', 'MEMBER']") {
     documents(
         where: {
             id: { eq: $id }
@@ -120,7 +120,7 @@ query GetDocumentById(
 # --- DOCUMENT VERSION QUERIES ---
 query GetDocumentVersionsByDocumentId(
     $documentId: UUID!
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR', 'DIRECTOR', 'OFFICER', 'MEMBER']") {
     documentVersions(
         where: {
             document: { id: { eq: $documentId } }
@@ -176,7 +176,7 @@ query GetDocumentVersionsByDocumentId(
 # --- DOCUMENT SHARE QUERIES ---
 query GetDocumentSharesByDocumentId(
     $documentId: UUID!
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR', 'DIRECTOR', 'OFFICER', 'MEMBER']") {
     documentShares(
         where: {
             document: { id: { eq: $documentId } }
@@ -219,7 +219,7 @@ query GetDocumentSharesByDocumentId(
 
 query GetDocumentSharesByDepartmentId(
     $departmentId: UUID!
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR'] || (auth.token.role in ['DIRECTOR', 'OFFICER', 'MEMBER'] && auth.token.departmentId == string($departmentId))") {
     documentShares(
         where: {
             department: { id: { eq: $departmentId } }
@@ -262,7 +262,7 @@ query GetDocumentSharesByDepartmentId(
 
 query GetDocumentSharesByRecipientId(
     $recipientId: UUID!
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role == 'ADMINISTRATOR' || auth.uid == string($recipientId)") {
     documentShares(
         where: {
             recipient: { id: { eq: $recipientId } }
@@ -302,3 +302,4 @@ query GetDocumentSharesByRecipientId(
         updatedAt
     }
 }
+

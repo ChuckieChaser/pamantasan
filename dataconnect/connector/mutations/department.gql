@@ -3,7 +3,7 @@ mutation CreateDepartment(
     $logo: String
     $name: String!
     $code: String!
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role == 'ADMINISTRATOR'") {
     department_insert(
         data: {
             logo: $logo
@@ -19,7 +19,7 @@ mutation UpdateDepartment(
     $name: String
     $code: String
     $updatedAt: Timestamp
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role == 'ADMINISTRATOR'") {
     department_update(
         id: $id
         data: {
@@ -33,10 +33,11 @@ mutation UpdateDepartment(
 
 mutation DeleteDepartments(
     $ids: [UUID!]!
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role == 'ADMINISTRATOR'") {
     department_deleteMany(
         where: {
             id: { in: $ids }
         }
     )
 }
+

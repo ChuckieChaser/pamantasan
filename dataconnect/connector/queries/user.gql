@@ -6,7 +6,7 @@ query GetUsers(
     $orderBy: [User_Order!] = [{ lastName: ASC }]
     $limit: Int = 100
     $offset: Int = 0
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR', 'DIRECTOR', 'OFFICER']") {
     users(
         where: {
             _or: [
@@ -49,7 +49,7 @@ query GetUsersByDepartmentId(
     $orderBy: [User_Order!] = [{ lastName: ASC }]
     $limit: Int = 100
     $offset: Int = 0
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR', 'DIRECTOR', 'OFFICER', 'MEMBER']") {
     users(
         where: {
             _or: [
@@ -87,7 +87,7 @@ query GetUsersByDepartmentId(
 
 query GetUserById(
     $id: UUID!
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR', 'DIRECTOR', 'OFFICER', 'MEMBER']") {
     users(
         where: {
             id: { eq: $id }
@@ -114,7 +114,7 @@ query GetUserById(
 
 query GetUserByUniversityId(
     $universityId: String!
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR', 'DIRECTOR', 'OFFICER', 'MEMBER']") {
     users(
         where: {
             universityId: { eq: $universityId }
@@ -141,7 +141,7 @@ query GetUserByUniversityId(
 
 query GetUserByEmail(
     $email: String!
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR', 'DIRECTOR', 'OFFICER', 'MEMBER']") {
     users(
         where: {
             email: { eq: $email }
@@ -170,7 +170,7 @@ query GetUserByEmail(
 # --- USER CREDENTIAL QUERIES ---
 query GetUserCredentialByUserId(
     $userId: UUID!
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role == 'ADMINISTRATOR'") {
     userCredentials(
         where: {
             user: { id: { eq: $userId } }
@@ -179,7 +179,6 @@ query GetUserCredentialByUserId(
         user {
             id
         }
-        passwordHash
         googleId
         createdAt
         updatedAt
@@ -190,7 +189,7 @@ query GetUserCredentialByUserId(
 # --- USER SETTING QUERIES ---
 query GetUserSettingByUserId(
     $userId: UUID!
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role == 'ADMINISTRATOR' || auth.uid == string($userId)") {
     userSettings(
         where: {
             user: { id: { eq: $userId } }
@@ -210,7 +209,7 @@ query GetUserSettingByUserId(
 # --- USER SESSION QUERIES ---
 query GetUserSessionsByUserId(
     $userId: UUID!
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role == 'ADMINISTRATOR' || auth.uid == string($userId)") {
     userSessions(
         where: {
             user: { id: { eq: $userId } }
@@ -227,3 +226,4 @@ query GetUserSessionsByUserId(
         expiredAt
     }
 }
+

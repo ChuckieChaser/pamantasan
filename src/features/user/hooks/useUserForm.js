@@ -92,7 +92,6 @@ export const useUserForm = ({
                 email:        formData.email.trim().toLowerCase(),
                 departmentId: formData.departmentId,
                 role:         formData.role,
-                passwordHash: 'TEMP_PLACEHOLDER_HASH',
             });
         }
 

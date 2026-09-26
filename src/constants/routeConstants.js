@@ -11,7 +11,13 @@ export const ROUTES = Object.freeze({
     DEPARTMENTS: '/departments',
     USERS: '/users',
     COORDINATOR: '/coordinator',
+    ARCHIVES: '/archives',
 
+    MOBILE_SCAN: '/scan/:sessionId',
+
+    DENIED: '/denied',
     ACCESS_DENIED: '/access-denied',
 });
+
+export const getMobileScanPath = (sessionId) => `/scan/${sessionId}`;
 

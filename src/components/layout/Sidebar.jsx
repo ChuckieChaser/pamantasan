@@ -27,7 +27,7 @@ export const Sidebar = ({
     ...props
 }) => {
     // --- DERIVED VALUES ---
-    const userName = `${currentUser?.firstName ?? ''} ${currentUser?.lastName ?? ''}`.trim() || currentUser?.email || 'User';
+    const userName = `${currentUser?.givenName ?? currentUser?.firstName ?? ''} ${currentUser?.lastName ?? ''}`.trim() || currentUser?.email || 'User';
     const userEmail = currentUser?.email ?? '';
     const userRole = currentUser?.role ?? 'MEMBER';
     const userAvatarUrl = currentUser?.googlePhotoUrl ?? currentUser?.avatarPath ?? null;
@@ -119,7 +119,7 @@ export const Sidebar = ({
                             <span className="text-xs font-semibold text-text truncate">
                                 {userName}
                             </span>
-                            {userRole === 'ADMIN' && (
+                            {(userRole === 'ADMIN' || userRole === 'ADMINISTRATOR') && (
                                 <Badge variant="accent" size="sm">
                                     Admin
                                 </Badge>

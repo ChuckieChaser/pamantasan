@@ -165,7 +165,7 @@ export const ArchivesPage = () => {
                                             <div className="flex items-center justify-end gap-2">
                                                 <Button
                                                     variant="secondary"
-                                                    size="xs"
+                                                    size="sm"
                                                     leadingIcon={ArrowUpLeft}
                                                     onClick={() => handleRestore(doc)}
                                                     isLoading={isMutating}
@@ -173,8 +173,8 @@ export const ArchivesPage = () => {
                                                     Restore
                                                 </Button>
                                                 <Button
-                                                    variant="danger"
-                                                    size="xs"
+                                                    variant="destructive"
+                                                    size="sm"
                                                     leadingIcon={Trash2}
                                                     onClick={() => handleDeletePermanent(doc)}
                                                     isLoading={isMutating}

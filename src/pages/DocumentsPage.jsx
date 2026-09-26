@@ -13,5 +13,3 @@ export const DocumentsPage = () => {
         </div>
     );
 };
-
-export const DocumentPage = DocumentsPage;

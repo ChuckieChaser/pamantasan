@@ -1,5 +1,5 @@
 // --- EXPORTS ---
-export { useClickOutside, useOnClickOutside } from './useOnClickOutside';
+export { useOnClickOutside } from './useOnClickOutside';
 export { useDebounce } from './useDebounce';
 export { useDoubleClick } from './useDoubleClick';
 export { useKeyPress } from './useKeyPress';

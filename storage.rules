@@ -16,6 +16,15 @@ service firebase.storage {
       return request.resource.contentType.matches('image/(jpeg|png|webp|svg[+]xml|gif)');
     }
 
+    function isStaffOrAdmin() {
+      return isAuthenticated() && (
+        request.auth.token.role == 'ADMINISTRATOR' ||
+        request.auth.token.role == 'COORDINATOR' ||
+        request.auth.token.role == 'DIRECTOR' ||
+        request.auth.token.role == 'OFFICER'
+      );
+    }
+
     // User Avatar Icons: avatars/{allPaths=**}
     match /avatars/{allPaths=**} {
       allow read: if true;
@@ -24,7 +33,15 @@ service firebase.storage {
 
     // System Documents: documents/{allPaths=**}
     match /documents/{allPaths=**} {
-      allow read, create, update, delete: if true;
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated() && isValidFileSize() && (
+        request.auth.token.role == 'ADMINISTRATOR' ||
+        request.auth.token.role == 'COORDINATOR'
+      );
+      allow delete: if isAuthenticated() && (
+        request.auth.token.role == 'ADMINISTRATOR' ||
+        request.auth.token.role == 'COORDINATOR'
+      );
     }
 
     // Default fallback

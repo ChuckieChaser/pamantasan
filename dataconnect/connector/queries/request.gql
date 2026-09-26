@@ -5,7 +5,7 @@ query GetRequests(
     $orderBy: [Request_Order!] = [{ createdAt: DESC }]
     $limit: Int = 100
     $offset: Int = 0
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR', 'DIRECTOR', 'OFFICER']") {
     requests(
         where: {
             subject: { contains: $search }
@@ -46,7 +46,7 @@ query GetRequestsByRequesterId(
     $orderBy: [Request_Order!] = [{ createdAt: DESC }]
     $limit: Int = 100
     $offset: Int = 0
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR'] || auth.uid == string($requesterId)") {
     requests(
         where: {
             subject: { contains: $search }
@@ -83,7 +83,7 @@ query GetRequestsByRequesterId(
 
 query GetRequestById(
     $id: UUID!
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR', 'DIRECTOR', 'OFFICER', 'MEMBER']") {
     requests(
         where: {
             id: { eq: $id }
@@ -117,7 +117,7 @@ query GetRequestById(
 # --- REQUEST MESSAGE QUERIES ---
 query GetRequestMessagesByRequestId(
     $requestId: UUID!
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR', 'DIRECTOR', 'OFFICER', 'MEMBER']") {
     requestMessages(
         where: {
             request: { id: { eq: $requestId } }
@@ -147,7 +147,7 @@ query GetRequestMessagesByRequestId(
 # --- REQUEST ATTACHMENT QUERIES ---
 query GetRequestAttachmentsByRequestId(
     $requestId: UUID!
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR', 'DIRECTOR', 'OFFICER', 'MEMBER']") {
     requestAttachments(
         where: {
             request: { id: { eq: $requestId } }

@@ -3,7 +3,7 @@ mutation CreateRequest(
     $requesterId: UUID!
     $reviewerId: UUID
     $subject: String!
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['DIRECTOR', 'OFFICER', 'MEMBER']") {
     request_insert(
         data: {
             requesterId: $requesterId
@@ -19,7 +19,7 @@ mutation UpdateRequest(
     $subject: String
     $status: String
     $updatedAt: Timestamp
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR']") {
     request_update(
         id: $id
         data: {
@@ -36,7 +36,7 @@ mutation UpdateRequests(
     $reviewerId: UUID
     $status: String
     $updatedAt: Timestamp
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR']") {
     request_updateMany(
         where: {
             id: { in: $ids }
@@ -51,7 +51,7 @@ mutation UpdateRequests(
 
 mutation DeleteRequests(
     $ids: [UUID!]!
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role == 'ADMINISTRATOR'") {
     requestAttachment_deleteMany(
         where: {
             request: { id: { in: $ids } }
@@ -75,7 +75,7 @@ mutation CreateRequestMessage(
     $requestId: UUID!
     $userId: UUID
     $message: String!
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR', 'DIRECTOR', 'OFFICER', 'MEMBER']") {
     requestMessage_insert(
         data: {
             requestId: $requestId
@@ -89,7 +89,7 @@ mutation UpdateRequestMessage(
     $id: UUID!
     $message: String!
     $updatedAt: Timestamp
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR', 'DIRECTOR', 'OFFICER', 'MEMBER']") {
     requestMessage_update(
         id: $id
         data: {
@@ -101,7 +101,7 @@ mutation UpdateRequestMessage(
 
 mutation DeleteRequestMessages(
     $ids: [UUID!]!
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR']") {
     requestAttachment_deleteMany(
         where: {
             message: { id: { in: $ids } }
@@ -121,7 +121,7 @@ mutation CreateRequestAttachment(
     $messageId: UUID
     $documentId: UUID!
     $attacherId: UUID!
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR', 'DIRECTOR', 'OFFICER', 'MEMBER']") {
     requestAttachment_insert(
         data: {
             requestId: $requestId
@@ -134,16 +134,17 @@ mutation CreateRequestAttachment(
 
 mutation CreateRequestAttachments(
     $data: [RequestAttachment_Data!]!
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR', 'DIRECTOR', 'OFFICER', 'MEMBER']") {
     requestAttachment_insertMany(data: $data)
 }
 
 mutation DeleteRequestAttachments(
     $ids: [UUID!]!
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR']") {
     requestAttachment_deleteMany(
         where: {
             id: { in: $ids }
         }
     )
 }
+

@@ -19,6 +19,7 @@ import { Panel } from '../../../components/layout/Panel';
 import { useDialog } from '../../../components/feedback/DialogProvider';
 import { useToast } from '../../../components/feedback/ToastProvider';
 import { useDocument } from '../hooks/useDocument';
+import { useAuth } from '../../auth/hooks/useAuth';
 import { getDownloadUrl } from '../services/storageService';
 import { DOCUMENT_CLASSIFICATION } from '../documentConstants';
 
@@ -58,6 +59,8 @@ export const DocumentInspector = ({
 
     const { confirm } = useDialog();
     const { toast } = useToast();
+    const { currentUser } = useAuth();
+    const canDelete = currentUser?.role === 'ADMINISTRATOR' || currentUser?.role === 'COORDINATOR';
 
     // Fetch versions when a document is selected
     useEffect(() => {
@@ -240,16 +243,18 @@ export const DocumentInspector = ({
                 )}
 
                 {/* Danger Zone Actions */}
-                <div className="flex flex-col gap-2 pt-2">
-                    <Button
-                        variant="destructive"
-                        leadingIcon={Trash2}
-                        label={`Delete ${document.isFolder ? 'Folder' : 'Document'}`}
-                        onClick={handleDelete}
-                        isLoading={isMutating}
-                        className="w-full justify-start"
-                    />
-                </div>
+                {canDelete && (
+                    <div className="flex flex-col gap-2 pt-2">
+                        <Button
+                            variant="destructive"
+                            leadingIcon={Trash2}
+                            label={`Delete ${document.isFolder ? 'Folder' : 'Document'}`}
+                            onClick={handleDelete}
+                            isLoading={isMutating}
+                            className="w-full justify-start"
+                        />
+                    </div>
+                )}
             </div>
         </Panel>
     );

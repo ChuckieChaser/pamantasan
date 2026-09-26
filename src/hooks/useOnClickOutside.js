@@ -30,5 +30,3 @@ export const useOnClickOutside = (ref, callback) => {
         };
     }, [ref]);
 };
-
-export const useClickOutside = useOnClickOutside;

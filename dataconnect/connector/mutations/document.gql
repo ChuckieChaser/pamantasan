@@ -11,7 +11,7 @@ mutation CreateFile(
     $sizeBytes: Int64!
     $mimeType: String!
     $classification: String
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR']") {
     document_insert(
         data: {
             id: $id
@@ -41,7 +41,7 @@ mutation CreateFolder(
     $parentId: UUID
     $name: String!
     $comment: String
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR']") {
     document_insert(
         data: {
             parentId: $parentId
@@ -60,7 +60,7 @@ mutation UpdateDocument(
     $isArchived: Boolean
     $isDirectlyArchived: Boolean
     $updatedAt: Timestamp
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR']") {
     document_update(
         id: $id
         data: {
@@ -81,7 +81,7 @@ mutation UpdateDocuments(
     $isArchived: Boolean
     $isDirectlyArchived: Boolean
     $updatedAt: Timestamp
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR']") {
     document_updateMany(
         where: {
             id: { in: $ids }
@@ -98,7 +98,7 @@ mutation UpdateDocuments(
 
 mutation DeleteDocuments(
     $ids: [UUID!]!
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR']") {
     documentShare_deleteMany(
         where: {
             document: { id: { in: $ids } }
@@ -128,7 +128,7 @@ mutation CreateDocumentVersion(
     $mimeType: String!
     $classification: String
     $changeSummary: String
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR']") {
     documentVersion_insert(
         data: {
             documentId: $documentId
@@ -164,7 +164,7 @@ mutation UpdateDocumentVersion(
     $changeSummary: String
     $rejectionReason: String
     $updatedAt: Timestamp
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR', 'DIRECTOR', 'OFFICER']") {
     documentVersion_update(
         id: $id
         data: {
@@ -187,7 +187,7 @@ mutation UpdateDocumentVersions(
     $publisherId: UUID
     $rejectionReason: String
     $updatedAt: Timestamp
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR', 'DIRECTOR', 'OFFICER']") {
     documentVersion_updateMany(
         where: {
             id: { in: $ids }
@@ -208,7 +208,7 @@ mutation CreateDocumentShare(
     $sharerId: UUID!
     $recipientId: UUID
     $departmentId: UUID!
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR'] || (auth.token.role == 'DIRECTOR' && auth.token.departmentId == string($departmentId))") {
     documentShare_insert(
         data: {
             documentId: $documentId
@@ -221,7 +221,7 @@ mutation CreateDocumentShare(
 
 mutation CreateDocumentShares(
     $data: [DocumentShare_Data!]!
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR', 'DIRECTOR']") {
     documentShare_insertMany(data: $data)
 }
 
@@ -231,7 +231,7 @@ mutation UpdateDocumentShare(
     $departmentId: UUID
     $status: String
     $updatedAt: Timestamp
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR', 'DIRECTOR', 'OFFICER']") {
     documentShare_update(
         id: $id
         data: {
@@ -245,10 +245,11 @@ mutation UpdateDocumentShare(
 
 mutation DeleteDocumentShares(
     $ids: [UUID!]!
-) @auth(level: USER) {
+) @auth(expr: "auth.token.role in ['ADMINISTRATOR', 'COORDINATOR', 'DIRECTOR']") {
     documentShare_deleteMany(
         where: {
             id: { in: $ids }
         }
     )
 }
+

@@ -7,6 +7,7 @@ const { loadEnv } = require('../../shared/env');
 const { renderOtpEmailHtml } = require('./templates/otpTemplate');
 const { renderProvisionEmailHtml } = require('./templates/provisionTemplate');
 const { renderNotificationEmailHtml } = require('./templates/notificationTemplate');
+const { renderConcurrencyEmailHtml } = require('./templates/concurrencyTemplate');
 
 const PRODUCTION_LOGIN_URL = 'https://pamantasan-records-210fe.web.app/login';
 
@@ -84,8 +85,20 @@ const sendNotificationEmail = async ({ toEmail, recipientName, actorName, title,
     return transport.sendMail({ from: getSenderAddress(), to: toEmail, subject, html });
 };
 
+/**
+ * Sends a concurrency step-up OTP email when an account is already signed in on another device.
+ */
+const sendConcurrencyOtpEmail = async ({ toEmail, otpCode, ipAddress, userAgent }) => {
+    const html = renderConcurrencyEmailHtml(toEmail, otpCode, ipAddress, userAgent);
+    const subject = `[PLP Records] Action Required: Authorize Active Account Sign-In (${otpCode})`;
+
+    const transport = getTransporter();
+    return transport.sendMail({ from: getSenderAddress(), to: toEmail, subject, html });
+};
+
 module.exports = {
     sendOtpEmail,
     sendUserProvisionEmail,
     sendNotificationEmail,
+    sendConcurrencyOtpEmail,
 };

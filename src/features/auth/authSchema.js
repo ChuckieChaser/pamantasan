@@ -22,7 +22,15 @@ export const OtpSchema = z
 export const LoginSchema = z.object({
     identifier: z.string().trim().min(1, 'University ID or Email is required').max(64),
     password: z.string().min(1, 'Password is required'),
-    otp: OtpSchema.optional(),
+    otp: OtpSchema.optional().nullable(),
+    token: z.string().optional().nullable(),
+});
+
+export const loginSchema = LoginSchema;
+
+export const StepUpOtpSchema = z.object({
+    otp: OtpSchema,
+    token: z.string().min(1, 'Verification token is required'),
 });
 
 export const ForgotPasswordSchema = z.object({

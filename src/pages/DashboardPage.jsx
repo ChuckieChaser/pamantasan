@@ -19,6 +19,8 @@ import { useDepartment } from '../features/department/hooks/useDepartment';
 import { useRequest } from '../features/request/hooks/useRequest';
 import { useCoordinator } from '../features/coordinator/hooks/useCoordinator';
 import { AuditExplorer } from '../features/audit/components/AuditExplorer';
+import { REQUEST_STATUS } from '../features/request/requestConstants';
+import { COORDINATOR_STATUS } from '../features/coordinator/coordinatorConstants';
 
 
 // --- COMPONENTS ---
@@ -41,8 +43,8 @@ export const DashboardPage = () => {
     // Metric summary stats
     const totalDocs = documents?.length ?? 0;
     const totalDepts = departments?.length ?? 0;
-    const pendingRequests = requests?.filter((r) => r.status === 'PENDING')?.length ?? requests?.length ?? 0;
-    const pendingReviews = coordinatorRequests?.filter((r) => r.status === 'PENDING')?.length ?? coordinatorRequests?.length ?? 0;
+    const pendingRequests = requests?.filter((r) => r.status === REQUEST_STATUS.OPEN)?.length ?? 0;
+    const pendingReviews = coordinatorRequests?.filter((r) => r.status === COORDINATOR_STATUS.PENDING)?.length ?? 0;
 
     // --- RENDER ---
     return (

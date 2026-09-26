@@ -21,6 +21,7 @@ import { useRequest } from '../hooks/useRequest';
 import { REQUEST_STATUS } from '../requestConstants';
 import { RequestFormModal } from './RequestFormModal';
 import { RequestInspector } from './RequestInspector';
+import { useAuth } from '../../auth/hooks/useAuth';
 
 
 // --- CONFIGURATIONS ---
@@ -41,6 +42,8 @@ const STATUS_BADGE_VARIANT = {
 // --- COMPONENTS ---
 export const RequestExplorer = ({ currentUserId }) => {
     // --- HOOKS & STATE ---
+    const { currentUser } = useAuth();
+    const canCreateRequest = currentUser?.role && currentUser.role !== 'ADMINISTRATOR' && currentUser.role !== 'COORDINATOR';
     const {
         requests,
         isLoading,
@@ -105,13 +108,15 @@ export const RequestExplorer = ({ currentUserId }) => {
                     />
                 </div>
 
-                <Button
-                    variant="primary"
-                    leadingIcon={Plus}
-                    label="New Request"
-                    onClick={() => setIsFormModalOpen(true)}
-                    className="shrink-0"
-                />
+                {canCreateRequest && (
+                    <Button
+                        variant="primary"
+                        leadingIcon={Plus}
+                        label="New Request"
+                        onClick={() => setIsFormModalOpen(true)}
+                        className="shrink-0"
+                    />
+                )}
             </div>
 
             {/* Requests Directory Viewport */}

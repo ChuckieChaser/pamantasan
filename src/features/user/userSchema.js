@@ -42,7 +42,7 @@ export const CreateUserSchema = z.object({
     avatar: z.string().max(256).nullable().optional(),
     givenName: z.string().min(1).max(64),
     lastName: z.string().min(1).max(64),
-    passwordHash: z.string().min(1).max(256),
+    passwordHash: z.string().min(1).max(256).optional().nullable(),
     googleId: z.string().max(256).nullable().optional(),
 });
 
