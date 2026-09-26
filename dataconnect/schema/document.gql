@@ -1,0 +1,48 @@
+# --- DOCUMENT SCHEMAS ---
+type Document @table {
+    parent: Document
+    name: String! @col(dataType: "varchar(256)")
+    comment: String
+    isFolder: Boolean! @default(value: false)
+    isArchived: Boolean! @default(value: false)
+    isDirectlyArchived: Boolean! @default(value: false)
+    currentVersion: Int! @default(value: 1)
+    currentSizeBytes: Int64! @default(value: 0)
+    currentMimeType: String! @default(value: "folder") @col(dataType: "varchar(128)")
+    currentClassification: String! @default(value: "UNCLASSIFIED") @col(dataType: "varchar(32)")
+    createdAt: Timestamp! @default(expr: "request.time")
+    updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+
+# --- DOCUMENT VERSION SCHEMAS ---
+type DocumentVersion @table {
+    document: Document!
+    uploader: User!
+    reviewer: User
+    publisher: User
+    version: Int! @default(value: 1)
+    checksum: String @col(dataType: "varchar(64)")
+    path: String! @col(dataType: "varchar(256)")
+    sizeBytes: Int64!
+    mimeType: String! @col(dataType: "varchar(128)")
+    classification: String! @default(value: "UNCLASSIFIED") @col(dataType: "varchar(32)")
+    embedding: Vector @col(size: 768)
+    contentSummary: String @default(value: "Pending AI analysis.")
+    changeSummary: String @default(value: "Initial version upload.") @col(dataType: "varchar(512)")
+    rejectionReason: String @col(dataType: "varchar(512)")
+    createdAt: Timestamp! @default(expr: "request.time")
+    updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+
+# --- DOCUMENT SHARE SCHEMAS ---
+type DocumentShare @table {
+    document: Document!
+    sharer: User!
+    recipient: User
+    department: Department!
+    status: String! @default(value: "PENDING_APPROVAL") @col(dataType: "varchar(32)")
+    createdAt: Timestamp! @default(expr: "request.time")
+    updatedAt: Timestamp! @default(expr: "request.time")
+}

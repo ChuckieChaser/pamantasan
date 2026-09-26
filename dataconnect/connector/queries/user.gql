@@ -1,0 +1,229 @@
+# --- USER QUERIES ---
+query GetUsers(
+    $search: String = ""
+    $roles: [String!]
+    $statuses: [String!]
+    $orderBy: [User_Order!] = [{ lastName: ASC }]
+    $limit: Int = 100
+    $offset: Int = 0
+) @auth(level: USER) {
+    users(
+        where: {
+            _or: [
+                { universityId: { contains: $search } }
+                { email: { contains: $search } }
+                { givenName: { contains: $search } }
+                { lastName: { contains: $search } }
+            ]
+            role: { in: $roles }
+            status: { in: $statuses }
+        }
+        orderBy: $orderBy
+        limit: $limit
+        offset: $offset
+    ) {
+        id
+        universityId
+        department {
+            id
+            logo
+            name
+            code
+        }
+        role
+        email
+        avatar
+        givenName
+        lastName
+        status
+        createdAt
+        updatedAt
+    }
+}
+
+query GetUsersByDepartmentId(
+    $search: String = ""
+    $departmentId: UUID!
+    $roles: [String!]
+    $statuses: [String!]
+    $orderBy: [User_Order!] = [{ lastName: ASC }]
+    $limit: Int = 100
+    $offset: Int = 0
+) @auth(level: USER) {
+    users(
+        where: {
+            _or: [
+                { universityId: { contains: $search } }
+                { email: { contains: $search } }
+                { givenName: { contains: $search } }
+                { lastName: { contains: $search } }
+            ]
+            department: { id: { eq: $departmentId } }
+            role: { in: $roles }
+            status: { in: $statuses }
+        }
+        orderBy: $orderBy
+        limit: $limit
+        offset: $offset
+    ) {
+        id
+        universityId
+        department {
+            id
+            logo
+            name
+            code
+        }
+        role
+        email
+        avatar
+        givenName
+        lastName
+        status
+        createdAt
+        updatedAt
+    }
+}
+
+query GetUserById(
+    $id: UUID!
+) @auth(level: USER) {
+    users(
+        where: {
+            id: { eq: $id }
+        }
+    ) {
+        id
+        universityId
+        department {
+            id
+            logo
+            name
+            code
+        }
+        role
+        email
+        avatar
+        givenName
+        lastName
+        status
+        createdAt
+        updatedAt
+    }
+}
+
+query GetUserByUniversityId(
+    $universityId: String!
+) @auth(level: USER) {
+    users(
+        where: {
+            universityId: { eq: $universityId }
+        }
+    ) {
+        id
+        universityId
+        department {
+            id
+            logo
+            name
+            code
+        }
+        role
+        email
+        avatar
+        givenName
+        lastName
+        status
+        createdAt
+        updatedAt
+    }
+}
+
+query GetUserByEmail(
+    $email: String!
+) @auth(level: USER) {
+    users(
+        where: {
+            email: { eq: $email }
+        }
+    ) {
+        id
+        universityId
+        department {
+            id
+            logo
+            name
+            code
+        }
+        role
+        email
+        avatar
+        givenName
+        lastName
+        status
+        createdAt
+        updatedAt
+    }
+}
+
+
+# --- USER CREDENTIAL QUERIES ---
+query GetUserCredentialByUserId(
+    $userId: UUID!
+) @auth(level: USER) {
+    userCredentials(
+        where: {
+            user: { id: { eq: $userId } }
+        }
+    ) {
+        user {
+            id
+        }
+        passwordHash
+        googleId
+        createdAt
+        updatedAt
+    }
+}
+
+
+# --- USER SETTING QUERIES ---
+query GetUserSettingByUserId(
+    $userId: UUID!
+) @auth(level: USER) {
+    userSettings(
+        where: {
+            user: { id: { eq: $userId } }
+        }
+    ) {
+        user {
+            id
+        }
+        theme
+        notification
+        createdAt
+        updatedAt
+    }
+}
+
+
+# --- USER SESSION QUERIES ---
+query GetUserSessionsByUserId(
+    $userId: UUID!
+) @auth(level: USER) {
+    userSessions(
+        where: {
+            user: { id: { eq: $userId } }
+        }
+    ) {
+        id
+        user {
+            id
+        }
+        tokenHash
+        ipAddress
+        userAgent
+        createdAt
+        expiredAt
+    }
+}

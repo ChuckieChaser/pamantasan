@@ -1,0 +1,149 @@
+# --- REQUEST MUTATIONS ---
+mutation CreateRequest(
+    $requesterId: UUID!
+    $reviewerId: UUID
+    $subject: String!
+) @auth(level: USER) {
+    request_insert(
+        data: {
+            requesterId: $requesterId
+            reviewerId: $reviewerId
+            subject: $subject
+        }
+    )
+}
+
+mutation UpdateRequest(
+    $id: UUID!
+    $reviewerId: UUID
+    $subject: String
+    $status: String
+    $updatedAt: Timestamp
+) @auth(level: USER) {
+    request_update(
+        id: $id
+        data: {
+            reviewerId: $reviewerId
+            subject: $subject
+            status: $status
+            updatedAt: $updatedAt
+        }
+    )
+}
+
+mutation UpdateRequests(
+    $ids: [UUID!]!
+    $reviewerId: UUID
+    $status: String
+    $updatedAt: Timestamp
+) @auth(level: USER) {
+    request_updateMany(
+        where: {
+            id: { in: $ids }
+        }
+        data: {
+            reviewerId: $reviewerId
+            status: $status
+            updatedAt: $updatedAt
+        }
+    )
+}
+
+mutation DeleteRequests(
+    $ids: [UUID!]!
+) @auth(level: USER) {
+    requestAttachment_deleteMany(
+        where: {
+            request: { id: { in: $ids } }
+        }
+    )
+    requestMessage_deleteMany(
+        where: {
+            request: { id: { in: $ids } }
+        }
+    )
+    request_deleteMany(
+        where: {
+            id: { in: $ids }
+        }
+    )
+}
+
+
+# --- REQUEST MESSAGE MUTATIONS ---
+mutation CreateRequestMessage(
+    $requestId: UUID!
+    $userId: UUID
+    $message: String!
+) @auth(level: USER) {
+    requestMessage_insert(
+        data: {
+            requestId: $requestId
+            userId: $userId
+            message: $message
+        }
+    )
+}
+
+mutation UpdateRequestMessage(
+    $id: UUID!
+    $message: String!
+    $updatedAt: Timestamp
+) @auth(level: USER) {
+    requestMessage_update(
+        id: $id
+        data: {
+            message: $message
+            updatedAt: $updatedAt
+        }
+    )
+}
+
+mutation DeleteRequestMessages(
+    $ids: [UUID!]!
+) @auth(level: USER) {
+    requestAttachment_deleteMany(
+        where: {
+            message: { id: { in: $ids } }
+        }
+    )
+    requestMessage_deleteMany(
+        where: {
+            id: { in: $ids }
+        }
+    )
+}
+
+
+# --- REQUEST ATTACHMENT MUTATIONS ---
+mutation CreateRequestAttachment(
+    $requestId: UUID!
+    $messageId: UUID
+    $documentId: UUID!
+    $attacherId: UUID!
+) @auth(level: USER) {
+    requestAttachment_insert(
+        data: {
+            requestId: $requestId
+            messageId: $messageId
+            documentId: $documentId
+            attacherId: $attacherId
+        }
+    )
+}
+
+mutation CreateRequestAttachments(
+    $data: [RequestAttachment_Data!]!
+) @auth(level: USER) {
+    requestAttachment_insertMany(data: $data)
+}
+
+mutation DeleteRequestAttachments(
+    $ids: [UUID!]!
+) @auth(level: USER) {
+    requestAttachment_deleteMany(
+        where: {
+            id: { in: $ids }
+        }
+    )
+}

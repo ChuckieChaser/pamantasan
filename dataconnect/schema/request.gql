@@ -1,0 +1,29 @@
+# --- REQUEST SCHEMAS ---
+type Request @table {
+    requester: User!
+    reviewer: User
+    subject: String! @col(dataType: "varchar(128)")
+    status: String! @default(value: "OPEN") @col(dataType: "varchar(32)")
+    createdAt: Timestamp! @default(expr: "request.time")
+    updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+
+# --- REQUEST MESSAGE SCHEMAS ---
+type RequestMessage @table {
+    request: Request!
+    user: User
+    message: String!
+    createdAt: Timestamp! @default(expr: "request.time")
+    updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+
+# --- REQUEST ATTACHMENT SCHEMAS ---
+type RequestAttachment @table {
+    request: Request!
+    message: RequestMessage
+    document: Document!
+    attacher: User!
+    createdAt: Timestamp! @default(expr: "request.time")
+}

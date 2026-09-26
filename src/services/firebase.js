@@ -1,73 +1,95 @@
+// --- IMPORTS ---
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
 import { getDataConnect } from 'firebase/data-connect';
 import { getStorage } from 'firebase/storage';
 import { getFunctions } from 'firebase/functions';
-import { getFirestore } from 'firebase/firestore';
 
-import { constants } from '../constants';
+import { SYSTEM } from '../constants';
 
 
-// --- CONFIGURATIONS ---
+// --- ENVIRONMENTS ---
 const apiKey = import.meta.env.VITE_FIREBASE_API_KEY?.trim() ?? '';
 const authDomain = import.meta.env.VITE_FIREBASE_AUTH_DOMAIN?.trim() ?? '';
 const projectId = import.meta.env.VITE_FIREBASE_PROJECT_ID?.trim() ?? '';
 const storageBucket = import.meta.env.VITE_FIREBASE_STORAGE_BUCKET?.trim() ?? '';
-const messagingSenderId = import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID?.trim() ?? '';
 const appId = import.meta.env.VITE_FIREBASE_APP_ID?.trim() ?? '';
 const serviceId = import.meta.env.VITE_FIREBASE_DATA_CONNECT_SERVICE?.trim() ?? '';
-const location = import.meta.env.VITE_FIREBASE_DATA_CONNECT_LOCATION?.trim() ?? '';
-
-const isConfigured = Boolean(apiKey !== '' && projectId !== '' && serviceId !== '' && location !== '');
-
-const FIREBASE_CONFIGURATION = Object.freeze({
-    apiKey: apiKey,
-    authDomain: authDomain,
-    projectId: projectId,
-    storageBucket: storageBucket,
-    messagingSenderId: messagingSenderId,
-    appId: appId,
-});
+const location = import.meta.env.VITE_FIREBASE_DATA_CONNECT_LOCATION?.trim() || 'asia-southeast1';
 
 
-// --- INITIALIZATION ---
-let app;
-let auth;
-let storage;
-let dataConnect;
-let functions;
-let googleProvider;
-let db;
+// --- FIREBASE SERVICES ---
+const initializeFirebaseServices = () => {
+    if (!apiKey || !projectId || !serviceId) {
+        console.warn('Firebase configuration is incomplete. Check environment variables in .env.');
+        return {
+            app: null,
+            auth: null,
+            storage: null,
+            dataConnect: null,
+            functions: null,
+            googleProvider: null,
+        };
+    }
 
-if (isConfigured) {
     try {
-        app = getApps().length > 0 ? getApp() : initializeApp(FIREBASE_CONFIGURATION);
-        auth = getAuth(app);
-        storage = getStorage(app);
-        functions = getFunctions(app, location || 'asia-southeast1');
-        db = getFirestore(app);
+        const app = getApps().length > 0 ? getApp() : initializeApp({
+            apiKey,
+            authDomain,
+            projectId,
+            storageBucket,
+            appId,
+        });
 
-        dataConnect = getDataConnect(app, {
+        const auth = getAuth(app);
+        const storage = getStorage(app);
+        const functions = getFunctions(app, location);
+
+        const dataConnect = getDataConnect(app, {
             service: serviceId,
             location: location,
             connector: 'default',
         });
 
-        googleProvider = new GoogleAuthProvider();
-        
+        const googleProvider = new GoogleAuthProvider();
         googleProvider.setCustomParameters({
-            hd: constants.INSTITUTIONAL_CONFIGURATION.EMAIL_DOMAIN.replace('@', ''),
+            hd: SYSTEM.EMAIL_DOMAIN.replace(/^@/, ''),
             prompt: 'select_account',
         });
+
+        return {
+            app,
+            auth,
+            storage,
+            dataConnect,
+            functions,
+            googleProvider,
+        };
     } catch (error) {
         console.error('Firebase initialization failure:', error);
+        return {
+            app: null,
+            auth: null,
+            storage: null,
+            dataConnect: null,
+            functions: null,
+            googleProvider: null,
+        };
     }
-} else {
-    console.warn('Firebase configuration is incomplete. Please check your environment variables in .env.');
-}
+};
+
+const services = initializeFirebaseServices();
 
 
-// --- EXPORTS ---
-export { auth, storage, dataConnect, functions, googleProvider, db, isConfigured, FIREBASE_CONFIGURATION };
+// --- HELPERS ---
+export const app = services.app;
 
+export const auth = services.auth;
 
+export const storage = services.storage;
+
+export const dataConnect = services.dataConnect;
+
+export const functions = services.functions;
+
+export const googleProvider = services.googleProvider;

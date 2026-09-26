@@ -1,0 +1,16 @@
+# --- AUDIT LOG MUTATIONS ---
+mutation CreateAuditLog(
+    $actorId: UUID
+    $entityId: UUID!
+    $event: String!
+    $data: String!
+) @auth(level: USER) {
+    auditLog_insert(
+        data: {
+            actorId: $actorId
+            entityId: $entityId
+            event: $event
+            data: $data
+        }
+    )
+}

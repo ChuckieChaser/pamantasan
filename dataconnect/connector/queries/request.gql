@@ -1,0 +1,181 @@
+# --- REQUEST QUERIES ---
+query GetRequests(
+    $search: String = ""
+    $statuses: [String!]
+    $orderBy: [Request_Order!] = [{ createdAt: DESC }]
+    $limit: Int = 100
+    $offset: Int = 0
+) @auth(level: USER) {
+    requests(
+        where: {
+            subject: { contains: $search }
+            status: { in: $statuses }
+        }
+        orderBy: $orderBy
+        limit: $limit
+        offset: $offset
+    ) {
+        id
+        requester {
+            id
+            avatar
+            role
+            email
+            givenName
+            lastName
+        }
+        reviewer {
+            id
+            avatar
+            role
+            email
+            givenName
+            lastName
+        }
+        subject
+        status
+        createdAt
+        updatedAt
+    }
+}
+
+query GetRequestsByRequesterId(
+    $search: String = ""
+    $requesterId: UUID!
+    $statuses: [String!]
+    $orderBy: [Request_Order!] = [{ createdAt: DESC }]
+    $limit: Int = 100
+    $offset: Int = 0
+) @auth(level: USER) {
+    requests(
+        where: {
+            subject: { contains: $search }
+            requester: { id: { eq: $requesterId } }
+            status: { in: $statuses }
+        }
+        orderBy: $orderBy
+        limit: $limit
+        offset: $offset
+    ) {
+        id
+        requester {
+            id
+            avatar
+            role
+            email
+            givenName
+            lastName
+        }
+        reviewer {
+            id
+            avatar
+            role
+            email
+            givenName
+            lastName
+        }
+        subject
+        status
+        createdAt
+        updatedAt
+    }
+}
+
+query GetRequestById(
+    $id: UUID!
+) @auth(level: USER) {
+    requests(
+        where: {
+            id: { eq: $id }
+        }
+    ) {
+        id
+        requester {
+            id
+            avatar
+            role
+            email
+            givenName
+            lastName
+        }
+        reviewer {
+            id
+            avatar
+            role
+            email
+            givenName
+            lastName
+        }
+        subject
+        status
+        createdAt
+        updatedAt
+    }
+}
+
+
+# --- REQUEST MESSAGE QUERIES ---
+query GetRequestMessagesByRequestId(
+    $requestId: UUID!
+) @auth(level: USER) {
+    requestMessages(
+        where: {
+            request: { id: { eq: $requestId } }
+        }
+    ) {
+        id
+        request {
+            id
+            subject
+            status
+        }
+        user {
+            id
+            avatar
+            role
+            email
+            givenName
+            lastName
+        }
+        message
+        createdAt
+        updatedAt
+    }
+}
+
+
+# --- REQUEST ATTACHMENT QUERIES ---
+query GetRequestAttachmentsByRequestId(
+    $requestId: UUID!
+) @auth(level: USER) {
+    requestAttachments(
+        where: {
+            request: { id: { eq: $requestId } }
+        }
+    ) {
+        id
+        request {
+            id
+            subject
+            status
+        }
+        message {
+            id
+        }
+        document {
+            id
+            name
+            isFolder
+            isArchived
+        }
+        attacher {
+            id
+            avatar
+            role
+            email
+            givenName
+            lastName
+        }
+        createdAt
+    }
+}

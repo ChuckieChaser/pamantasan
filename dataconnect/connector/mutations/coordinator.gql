@@ -1,0 +1,68 @@
+# --- COORDINATOR REQUEST MUTATIONS ---
+mutation CreateCoordinatorRequest(
+    $requesterId: UUID!
+    $reviewerId: UUID
+    $action: String!
+    $data: String!
+) @auth(level: USER) {
+    coordinatorRequest_insert(
+        data: {
+            requesterId: $requesterId
+            reviewerId: $reviewerId
+            action: $action
+            data: $data
+        }
+    )
+}
+
+mutation UpdateCoordinatorRequest(
+    $id: UUID!
+    $reviewerId: UUID
+    $action: String
+    $data: String
+    $status: String
+    $rejectionReason: String
+    $updatedAt: Timestamp
+) @auth(level: USER) {
+    coordinatorRequest_update(
+        id: $id
+        data: {
+            reviewerId: $reviewerId
+            action: $action
+            data: $data
+            status: $status
+            rejectionReason: $rejectionReason
+            updatedAt: $updatedAt
+        }
+    )
+}
+
+mutation UpdateCoordinatorRequests(
+    $ids: [UUID!]!
+    $reviewerId: UUID
+    $status: String
+    $rejectionReason: String
+    $updatedAt: Timestamp
+) @auth(level: USER) {
+    coordinatorRequest_updateMany(
+        where: {
+            id: { in: $ids }
+        }
+        data: {
+            reviewerId: $reviewerId
+            status: $status
+            rejectionReason: $rejectionReason
+            updatedAt: $updatedAt
+        }
+    )
+}
+
+mutation DeleteCoordinatorRequests(
+    $ids: [UUID!]!
+) @auth(level: USER) {
+    coordinatorRequest_deleteMany(
+        where: {
+            id: { in: $ids }
+        }
+    )
+}

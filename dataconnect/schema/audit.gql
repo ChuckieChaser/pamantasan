@@ -1,0 +1,8 @@
+# --- AUDIT LOG SCHEMA ---
+type AuditLog @table {
+    actor: User
+    entityId: UUID!
+    event: String! @col(dataType: "varchar(64)")
+    data: String!
+    createdAt: Timestamp! @default(expr: "request.time")
+}

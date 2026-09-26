@@ -1,0 +1,43 @@
+# --- NOTIFICATION QUERIES ---
+query GetNotificationsByRecipientId(
+    $search: String = ""
+    $recipientId: UUID!
+    $events: [String!]
+    $orderBy: [Notification_Order!] = [{ createdAt: DESC }]
+    $limit: Int = 100
+    $offset: Int = 0
+) @auth(level: USER) {
+    notifications(
+        where: {
+            event: { contains: $search, in: $events }
+            recipient: { id: { eq: $recipientId } }
+        }
+        orderBy: $orderBy
+        limit: $limit
+        offset: $offset
+    ) {
+        id
+        recipient {
+            id
+            avatar
+            role
+            email
+            givenName
+            lastName
+        }
+        actor {
+            id
+            avatar
+            role
+            email
+            givenName
+            lastName
+        }
+        entityId
+        event
+        isRead
+        isEmailed
+        createdAt
+        updatedAt
+    }
+}

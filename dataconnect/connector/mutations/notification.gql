@@ -1,0 +1,60 @@
+# --- NOTIFICATION MUTATIONS ---
+mutation CreateNotification(
+    $recipientId: UUID!
+    $actorId: UUID
+    $entityId: UUID!
+    $event: String!
+) @auth(level: USER) {
+    notification_insert(
+        data: {
+            recipientId: $recipientId
+            actorId: $actorId
+            entityId: $entityId
+            event: $event
+        }
+    )
+}
+
+mutation UpdateNotification(
+    $id: UUID!
+    $isRead: Boolean
+    $isEmailed: Boolean
+    $updatedAt: Timestamp
+) @auth(level: USER) {
+    notification_update(
+        id: $id
+        data: {
+            isRead: $isRead
+            isEmailed: $isEmailed
+            updatedAt: $updatedAt
+        }
+    )
+}
+
+mutation UpdateNotifications(
+    $ids: [UUID!]!
+    $isRead: Boolean
+    $isEmailed: Boolean
+    $updatedAt: Timestamp
+) @auth(level: USER) {
+    notification_updateMany(
+        where: {
+            id: { in: $ids }
+        }
+        data: {
+            isRead: $isRead
+            isEmailed: $isEmailed
+            updatedAt: $updatedAt
+        }
+    )
+}
+
+mutation DeleteNotifications(
+    $ids: [UUID!]!
+) @auth(level: USER) {
+    notification_deleteMany(
+        where: {
+            id: { in: $ids }
+        }
+    )
+}

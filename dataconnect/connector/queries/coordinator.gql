@@ -1,0 +1,128 @@
+# --- COORDINATOR REQUEST QUERIES ---
+query GetCoordinatorRequests(
+    $search: String = ""
+    $statuses: [String!]
+    $orderBy: [CoordinatorRequest_Order!] = [{ createdAt: DESC }]
+    $limit: Int = 100
+    $offset: Int = 0
+) @auth(level: USER) {
+    coordinatorRequests(
+        where: {
+            _or: [
+                { action: { contains: $search } }
+                { data: { contains: $search } }
+                { rejectionReason: { contains: $search } }
+            ]
+            status: { in: $statuses }
+        }
+        orderBy: $orderBy
+        limit: $limit
+        offset: $offset
+    ) {
+        id
+        requester {
+            id
+            avatar
+            role
+            email
+            givenName
+            lastName
+        }
+        reviewer {
+            id
+            avatar
+            role
+            email
+            givenName
+            lastName
+        }
+        action
+        data
+        status
+        rejectionReason
+        createdAt
+        updatedAt
+    }
+}
+
+query GetCoordinatorRequestsByRequesterId(
+    $search: String = ""
+    $requesterId: UUID!
+    $statuses: [String!]
+    $orderBy: [CoordinatorRequest_Order!] = [{ createdAt: DESC }]
+    $limit: Int = 100
+    $offset: Int = 0
+) @auth(level: USER) {
+    coordinatorRequests(
+        where: {
+            _or: [
+                { action: { contains: $search } }
+                { data: { contains: $search } }
+                { rejectionReason: { contains: $search } }
+            ]
+            requester: { id: { eq: $requesterId } }
+            status: { in: $statuses }
+        }
+        orderBy: $orderBy
+        limit: $limit
+        offset: $offset
+    ) {
+        id
+        requester {
+            id
+            avatar
+            role
+            email
+            givenName
+            lastName
+        }
+        reviewer {
+            id
+            avatar
+            role
+            email
+            givenName
+            lastName
+        }
+        action
+        data
+        status
+        rejectionReason
+        createdAt
+        updatedAt
+    }
+}
+
+query GetCoordinatorRequestById(
+    $id: UUID!
+) @auth(level: USER) {
+    coordinatorRequests(
+        where: {
+            id: { eq: $id }
+        }
+    ) {
+        id
+        requester {
+            id
+            avatar
+            role
+            email
+            givenName
+            lastName
+        }
+        reviewer {
+            id
+            avatar
+            role
+            email
+            givenName
+            lastName
+        }
+        action
+        data
+        status
+        rejectionReason
+        createdAt
+        updatedAt
+    }
+}

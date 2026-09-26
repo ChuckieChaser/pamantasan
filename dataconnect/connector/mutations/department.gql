@@ -1,0 +1,42 @@
+# --- DEPARTMENT MUTATIONS ---
+mutation CreateDepartment(
+    $logo: String
+    $name: String!
+    $code: String!
+) @auth(level: USER) {
+    department_insert(
+        data: {
+            logo: $logo
+            name: $name
+            code: $code
+        }
+    )
+}
+
+mutation UpdateDepartment(
+    $id: UUID!
+    $logo: String
+    $name: String
+    $code: String
+    $updatedAt: Timestamp
+) @auth(level: USER) {
+    department_update(
+        id: $id
+        data: {
+            logo: $logo
+            name: $name
+            code: $code
+            updatedAt: $updatedAt
+        }
+    )
+}
+
+mutation DeleteDepartments(
+    $ids: [UUID!]!
+) @auth(level: USER) {
+    department_deleteMany(
+        where: {
+            id: { in: $ids }
+        }
+    )
+}

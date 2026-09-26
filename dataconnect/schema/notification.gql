@@ -1,0 +1,11 @@
+# --- NOTIFICATION SCHEMA ---
+type Notification @table {
+    recipient: User!
+    actor: User
+    entityId: UUID!
+    event: String! @col(dataType: "varchar(64)")
+    isRead: Boolean! @default(value: false)
+    isEmailed: Boolean! @default(value: false)
+    createdAt: Timestamp! @default(expr: "request.time")
+    updatedAt: Timestamp! @default(expr: "request.time")
+}

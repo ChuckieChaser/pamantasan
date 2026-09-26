@@ -1,0 +1,44 @@
+# --- USER SCHEMAS ---
+type User @table {
+    universityId: String! @col(dataType: "varchar(32)")
+    department: Department!
+    role: String! @col(dataType: "varchar(32)")
+    email: String! @col(dataType: "varchar(128)")
+    avatar: String @col(dataType: "varchar(256)")
+    givenName: String! @col(dataType: "varchar(64)")
+    lastName: String! @col(dataType: "varchar(64)")
+    status: String! @default(value: "PENDING_SSO") @col(dataType: "varchar(32)")
+    createdAt: Timestamp! @default(expr: "request.time")
+    updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+
+# --- USER CREDENTIAL SCHEMAS ---
+type UserCredential @table(key: ["user"]) {
+    user: User!
+    passwordHash: String! @col(dataType: "varchar(256)")
+    googleId: String @col(dataType: "varchar(256)")
+    createdAt: Timestamp! @default(expr: "request.time")
+    updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+
+# --- USER SETTING SCHEMAS ---
+type UserSetting @table(key: ["user"]) {
+    user: User!
+    theme: String! @default(value: "SYSTEM") @col(dataType: "varchar(32)")
+    notification: String! @default(value: "ALL") @col(dataType: "varchar(32)")
+    createdAt: Timestamp! @default(expr: "request.time")
+    updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+
+# --- USER SESSION SCHEMAS ---
+type UserSession @table {
+    user: User!
+    tokenHash: String! @col(dataType: "varchar(256)")
+    ipAddress: String @col(dataType: "varchar(64)")
+    userAgent: String @col(dataType: "varchar(256)")
+    createdAt: Timestamp! @default(expr: "request.time")
+    expiredAt: Timestamp
+}

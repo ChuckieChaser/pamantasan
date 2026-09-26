@@ -1,0 +1,11 @@
+# --- COORDINATOR REQUEST SCHEMA ---
+type CoordinatorRequest @table {
+    requester: User!
+    reviewer: User
+    action: String! @col(dataType: "varchar(64)")
+    data: String!
+    status: String! @default(value: "PENDING") @col(dataType: "varchar(32)")
+    rejectionReason: String @col(dataType: "varchar(512)")
+    createdAt: Timestamp! @default(expr: "request.time")
+    updatedAt: Timestamp! @default(expr: "request.time")
+}

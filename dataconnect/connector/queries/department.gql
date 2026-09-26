@@ -1,0 +1,60 @@
+# --- DEPARTMENT QUERIES ---
+query GetDepartments(
+    $search: String = ""
+    $orderBy: [Department_Order!] = [{ name: ASC }]
+    $limit: Int = 100
+    $offset: Int = 0
+) @auth(level: USER) {
+    departments(
+        where: {
+            _or: [
+                { name: { contains: $search } }
+                { code: { contains: $search } }
+            ]
+        }
+        orderBy: $orderBy
+        limit: $limit
+        offset: $offset
+    ) {
+        id
+        logo
+        name
+        code
+        createdAt
+        updatedAt
+    }
+}
+
+query GetDepartmentById(
+    $id: UUID!
+) @auth(level: USER) {
+    departments(
+        where: {
+            id: { eq: $id }
+        }
+    ) {
+        id
+        logo
+        name
+        code
+        createdAt
+        updatedAt
+    }
+}
+
+query GetDepartmentByCode(
+    $code: String!
+) @auth(level: USER) {
+    departments(
+        where: {
+            code: { eq: $code }
+        }
+    ) {
+        id
+        logo
+        name
+        code
+        createdAt
+        updatedAt
+    }
+}

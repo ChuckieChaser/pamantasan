@@ -1,0 +1,304 @@
+# --- DOCUMENT QUERIES ---
+query GetDocumentsByParentId(
+    $search: String = ""
+    $parentId: UUID
+    $isArchived: Boolean! = false
+    $classifications: [String!]
+    $orderBy: [Document_Order!] = [{ isFolder: DESC }, { name: ASC }]
+    $limit: Int = 100
+    $offset: Int = 0
+) @auth(level: USER) {
+    documents(
+        where: {
+            _or: [
+                { name: { contains: $search } }
+                { comment: { contains: $search } }
+                { currentMimeType: { contains: $search } }
+            ]
+            parent: { id: { eq: $parentId } }
+            isArchived: { eq: $isArchived }
+            currentClassification: { in: $classifications }
+        }
+        orderBy: $orderBy
+        limit: $limit
+        offset: $offset
+    ) {
+        id
+        parent {
+            id
+            name
+            isFolder
+            isArchived
+        }
+        name
+        comment
+        isFolder
+        isArchived
+        isDirectlyArchived
+        currentVersion
+        currentSizeBytes
+        currentMimeType
+        currentClassification
+        createdAt
+        updatedAt
+    }
+}
+
+query GetDocumentsByIsArchived(
+    $search: String = ""
+    $isArchived: Boolean!
+    $classifications: [String!]
+    $orderBy: [Document_Order!] = [{ updatedAt: DESC }]
+    $limit: Int = 100
+    $offset: Int = 0
+) @auth(level: USER) {
+    documents(
+        where: {
+            _or: [
+                { name: { contains: $search } }
+                { comment: { contains: $search } }
+                { currentMimeType: { contains: $search } }
+            ]
+            isArchived: { eq: $isArchived }
+            currentClassification: { in: $classifications }
+        }
+        orderBy: $orderBy
+        limit: $limit
+        offset: $offset
+    ) {
+        id
+        parent {
+            id
+            name
+            isFolder
+            isArchived
+        }
+        name
+        comment
+        isFolder
+        isArchived
+        isDirectlyArchived
+        currentVersion
+        currentSizeBytes
+        currentMimeType
+        currentClassification
+        createdAt
+        updatedAt
+    }
+}
+
+query GetDocumentById(
+    $id: UUID!
+) @auth(level: USER) {
+    documents(
+        where: {
+            id: { eq: $id }
+        }
+    ) {
+        id
+        parent {
+            id
+            name
+            isFolder
+            isArchived
+        }
+        name
+        comment
+        isFolder
+        isArchived
+        isDirectlyArchived
+        currentVersion
+        currentSizeBytes
+        currentMimeType
+        currentClassification
+        createdAt
+        updatedAt
+    }
+}
+
+
+# --- DOCUMENT VERSION QUERIES ---
+query GetDocumentVersionsByDocumentId(
+    $documentId: UUID!
+) @auth(level: USER) {
+    documentVersions(
+        where: {
+            document: { id: { eq: $documentId } }
+        }
+    ) {
+        id
+        document {
+            id
+            name
+            isFolder
+            isArchived
+        }
+        uploader {
+            id
+            avatar
+            role
+            email
+            givenName
+            lastName
+        }
+        reviewer {
+            id
+            avatar
+            role
+            email
+            givenName
+            lastName
+        }
+        publisher {
+            id
+            avatar
+            role
+            email
+            givenName
+            lastName
+        }
+        version
+        checksum
+        path
+        sizeBytes
+        mimeType
+        classification
+        embedding
+        contentSummary
+        changeSummary
+        rejectionReason
+        createdAt
+        updatedAt
+    }
+}
+
+
+# --- DOCUMENT SHARE QUERIES ---
+query GetDocumentSharesByDocumentId(
+    $documentId: UUID!
+) @auth(level: USER) {
+    documentShares(
+        where: {
+            document: { id: { eq: $documentId } }
+        }
+    ) {
+        id
+        document {
+            id
+            name
+            isFolder
+            isArchived
+        }
+        sharer {
+            id
+            avatar
+            role
+            email
+            givenName
+            lastName
+        }
+        recipient {
+            id
+            avatar
+            role
+            email
+            givenName
+            lastName
+        }
+        department {
+            id
+            logo
+            name
+            code
+        }
+        status
+        createdAt
+        updatedAt
+    }
+}
+
+query GetDocumentSharesByDepartmentId(
+    $departmentId: UUID!
+) @auth(level: USER) {
+    documentShares(
+        where: {
+            department: { id: { eq: $departmentId } }
+        }
+    ) {
+        id
+        document {
+            id
+            name
+            isFolder
+            isArchived
+        }
+        sharer {
+            id
+            avatar
+            role
+            email
+            givenName
+            lastName
+        }
+        recipient {
+            id
+            avatar
+            role
+            email
+            givenName
+            lastName
+        }
+        department {
+            id
+            logo
+            name
+            code
+        }
+        status
+        createdAt
+        updatedAt
+    }
+}
+
+query GetDocumentSharesByRecipientId(
+    $recipientId: UUID!
+) @auth(level: USER) {
+    documentShares(
+        where: {
+            recipient: { id: { eq: $recipientId } }
+        }
+    ) {
+        id
+        document {
+            id
+            name
+            isFolder
+            isArchived
+        }
+        sharer {
+            id
+            avatar
+            role
+            email
+            givenName
+            lastName
+        }
+        recipient {
+            id
+            avatar
+            role
+            email
+            givenName
+            lastName
+        }
+        department {
+            id
+            logo
+            name
+            code
+        }
+        status
+        createdAt
+        updatedAt
+    }
+}

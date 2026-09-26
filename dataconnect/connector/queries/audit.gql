@@ -1,0 +1,107 @@
+# --- AUDIT LOG QUERIES ---
+query GetAuditLogs(
+    $search: String = ""
+    $events: [String!]
+    $orderBy: [AuditLog_Order!] = [{ createdAt: DESC }]
+    $limit: Int = 100
+    $offset: Int = 0
+) @auth(level: USER) {
+    auditLogs(
+        where: {
+            _or: [
+                { event: { contains: $search } }
+                { data: { contains: $search } }
+            ]
+            event: { in: $events }
+        }
+        orderBy: $orderBy
+        limit: $limit
+        offset: $offset
+    ) {
+        id
+        actor {
+            id
+            avatar
+            role
+            email
+            givenName
+            lastName
+        }
+        entityId
+        event
+        data
+        createdAt
+    }
+}
+
+query GetAuditLogsByActorId(
+    $search: String = ""
+    $actorId: UUID!
+    $events: [String!]
+    $orderBy: [AuditLog_Order!] = [{ createdAt: DESC }]
+    $limit: Int = 100
+    $offset: Int = 0
+) @auth(level: USER) {
+    auditLogs(
+        where: {
+            _or: [
+                { event: { contains: $search } }
+                { data: { contains: $search } }
+            ]
+            actor: { id: { eq: $actorId } }
+            event: { in: $events }
+        }
+        orderBy: $orderBy
+        limit: $limit
+        offset: $offset
+    ) {
+        id
+        actor {
+            id
+            avatar
+            role
+            email
+            givenName
+            lastName
+        }
+        entityId
+        event
+        data
+        createdAt
+    }
+}
+
+query GetAuditLogsByEntityId(
+    $search: String = ""
+    $entityId: UUID!
+    $orderBy: [AuditLog_Order!] = [{ createdAt: DESC }]
+    $limit: Int = 100
+    $offset: Int = 0
+) @auth(level: USER) {
+    auditLogs(
+        where: {
+            _or: [
+                { event: { contains: $search } }
+                { data: { contains: $search } }
+            ]
+            entityId: { eq: $entityId }
+        }
+        orderBy: $orderBy
+        limit: $limit
+        offset: $offset
+    ) {
+        id
+        actor {
+            id
+            avatar
+            role
+            email
+            givenName
+            lastName
+        }
+        entityId
+        event
+        data
+        createdAt
+    }
+}

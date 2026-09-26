@@ -1,0 +1,8 @@
+# --- DEPARTMENT SCHEMA ---
+type Department @table {
+    logo: String @col(dataType: "varchar(256)")
+    name: String! @col(dataType: "varchar(128)")
+    code: String! @col(dataType: "varchar(32)")
+    createdAt: Timestamp! @default(expr: "request.time")
+    updatedAt: Timestamp! @default(expr: "request.time")
+}

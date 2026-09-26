@@ -1,0 +1,254 @@
+# --- DOCUMENT MUTATIONS ---
+mutation CreateFile(
+    $id: UUID!
+    $parentId: UUID
+    $name: String!
+    $comment: String
+
+    $uploaderId: UUID!
+    $checksum: String
+    $path: String!
+    $sizeBytes: Int64!
+    $mimeType: String!
+    $classification: String
+) @auth(level: USER) {
+    document_insert(
+        data: {
+            id: $id
+            parentId: $parentId
+            name: $name
+            comment: $comment
+            currentVersion: 1
+            currentSizeBytes: $sizeBytes
+            currentMimeType: $mimeType
+            currentClassification: $classification
+        }
+    )
+    documentVersion_insert(
+        data: {
+            documentId: $id
+            uploaderId: $uploaderId
+            checksum: $checksum
+            path: $path
+            sizeBytes: $sizeBytes
+            mimeType: $mimeType
+            classification: $classification
+        }
+    )
+}
+
+mutation CreateFolder(
+    $parentId: UUID
+    $name: String!
+    $comment: String
+) @auth(level: USER) {
+    document_insert(
+        data: {
+            parentId: $parentId
+            name: $name
+            comment: $comment
+            isFolder: true
+        }
+    )
+}
+
+mutation UpdateDocument(
+    $id: UUID!
+    $parentId: UUID
+    $name: String
+    $comment: String
+    $isArchived: Boolean
+    $isDirectlyArchived: Boolean
+    $updatedAt: Timestamp
+) @auth(level: USER) {
+    document_update(
+        id: $id
+        data: {
+            parentId: $parentId
+            name: $name
+            comment: $comment
+            isArchived: $isArchived
+            isDirectlyArchived: $isDirectlyArchived
+            updatedAt: $updatedAt
+        }
+    )
+}
+
+mutation UpdateDocuments(
+    $ids: [UUID!]!
+    $parentId: UUID
+    $comment: String
+    $isArchived: Boolean
+    $isDirectlyArchived: Boolean
+    $updatedAt: Timestamp
+) @auth(level: USER) {
+    document_updateMany(
+        where: {
+            id: { in: $ids }
+        }
+        data: {
+            parentId: $parentId
+            comment: $comment
+            isArchived: $isArchived
+            isDirectlyArchived: $isDirectlyArchived
+            updatedAt: $updatedAt
+        }
+    )
+}
+
+mutation DeleteDocuments(
+    $ids: [UUID!]!
+) @auth(level: USER) {
+    documentShare_deleteMany(
+        where: {
+            document: { id: { in: $ids } }
+        }
+    )
+    documentVersion_deleteMany(
+        where: {
+            document: { id: { in: $ids } }
+        }
+    )
+    document_deleteMany(
+        where: {
+            id: { in: $ids }
+        }
+    )
+}
+
+
+# --- DOCUMENT VERSION MUTATIONS ---
+mutation CreateDocumentVersion(
+    $documentId: UUID!
+    $uploaderId: UUID!
+    $version: Int!
+    $checksum: String
+    $path: String!
+    $sizeBytes: Int64!
+    $mimeType: String!
+    $classification: String
+    $changeSummary: String
+) @auth(level: USER) {
+    documentVersion_insert(
+        data: {
+            documentId: $documentId
+            uploaderId: $uploaderId
+            version: $version
+            checksum: $checksum
+            path: $path
+            sizeBytes: $sizeBytes
+            mimeType: $mimeType
+            classification: $classification
+            changeSummary: $changeSummary
+        }
+    )
+    document_update(
+        id: $documentId
+        data: {
+            currentVersion: $version
+            currentSizeBytes: $sizeBytes
+            currentMimeType: $mimeType
+            currentClassification: $classification
+        }
+    )
+}
+
+mutation UpdateDocumentVersion(
+    $id: UUID!
+    $reviewerId: UUID
+    $publisherId: UUID
+    $mimeType: String
+    $classification: String
+    $embedding: Vector
+    $contentSummary: String
+    $changeSummary: String
+    $rejectionReason: String
+    $updatedAt: Timestamp
+) @auth(level: USER) {
+    documentVersion_update(
+        id: $id
+        data: {
+            reviewerId: $reviewerId
+            publisherId: $publisherId
+            mimeType: $mimeType
+            classification: $classification
+            embedding: $embedding
+            contentSummary: $contentSummary
+            changeSummary: $changeSummary
+            rejectionReason: $rejectionReason
+            updatedAt: $updatedAt
+        }
+    )
+}
+
+mutation UpdateDocumentVersions(
+    $ids: [UUID!]!
+    $reviewerId: UUID
+    $publisherId: UUID
+    $rejectionReason: String
+    $updatedAt: Timestamp
+) @auth(level: USER) {
+    documentVersion_updateMany(
+        where: {
+            id: { in: $ids }
+        }
+        data: {
+            reviewerId: $reviewerId
+            publisherId: $publisherId
+            rejectionReason: $rejectionReason
+            updatedAt: $updatedAt
+        }
+    )
+}
+
+
+# --- DOCUMENT SHARE MUTATIONS ---
+mutation CreateDocumentShare(
+    $documentId: UUID!
+    $sharerId: UUID!
+    $recipientId: UUID
+    $departmentId: UUID!
+) @auth(level: USER) {
+    documentShare_insert(
+        data: {
+            documentId: $documentId
+            sharerId: $sharerId
+            recipientId: $recipientId
+            departmentId: $departmentId
+        }
+    )
+}
+
+mutation CreateDocumentShares(
+    $data: [DocumentShare_Data!]!
+) @auth(level: USER) {
+    documentShare_insertMany(data: $data)
+}
+
+mutation UpdateDocumentShare(
+    $id: UUID!
+    $recipientId: UUID
+    $departmentId: UUID
+    $status: String
+    $updatedAt: Timestamp
+) @auth(level: USER) {
+    documentShare_update(
+        id: $id
+        data: {
+            recipientId: $recipientId
+            departmentId: $departmentId
+            status: $status
+            updatedAt: $updatedAt
+        }
+    )
+}
+
+mutation DeleteDocumentShares(
+    $ids: [UUID!]!
+) @auth(level: USER) {
+    documentShare_deleteMany(
+        where: {
+            id: { in: $ids }
+        }
+    )
+}

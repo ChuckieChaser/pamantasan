@@ -1,55 +1,14 @@
 // --- IMPORTS ---
-import {
-    queryRef,
-    mutationRef,
-    executeQuery,
-    executeMutation,
-    QueryFetchPolicy,
-} from 'firebase/data-connect';
 import { dataConnect } from './firebase';
+import { queryRef, mutationRef, executeQuery, executeMutation, QueryFetchPolicy } from 'firebase/data-connect';
 
 
-// --- CONFIGURATIONS ---
+// --- ENVIRONMENTS ---
 const OPERATION_TIMEOUT_MILLISECONDS = 15_000;
 
 
-// --- SERVICES ---
-const dataConnectService = {
-    executeQuery: async (queryName, variables = {}, options = {}) => {
-        if (!dataConnect) {
-            throw new Error('Firebase Data Connect is not initialized.');
-        }
-
-        const queryReference = queryRef(dataConnect, queryName, variables);
-        const fetchPolicy = options.fetchPolicy ?? QueryFetchPolicy.SERVER_ONLY;
-        const response = await executeWithTimeout(
-            executeQuery(queryReference, { fetchPolicy }),
-            OPERATION_TIMEOUT_MILLISECONDS,
-            queryName
-        );
-
-        return response.data;
-    },
-
-    executeMutation: async (mutationName, variables = {}) => {
-        if (!dataConnect) {
-            throw new Error('Firebase Data Connect is not initialized.');
-        }
-
-        const mutationReference = mutationRef(dataConnect, mutationName, variables);
-        const response = await executeWithTimeout(
-            executeMutation(mutationReference),
-            OPERATION_TIMEOUT_MILLISECONDS,
-            mutationName
-        );
-
-        return response.data;
-    },
-};
-
-
-// --- HELPERS ---
-function executeWithTimeout(promise, milliseconds, operationName) {
+// --- UTILITIES ---
+const executeWithTimeout = (promise, milliseconds, operationName) => {
     let timeoutId;
 
     const timeoutPromise = new Promise((_, reject) => {
@@ -61,8 +20,38 @@ function executeWithTimeout(promise, milliseconds, operationName) {
     return Promise.race([promise, timeoutPromise]).finally(() => {
         clearTimeout(timeoutId);
     });
-}
+};
 
 
-// --- EXPORTS ---
-export { dataConnectService };
+// --- DATACONNECT SERVICES ---
+export const executeDataQuery = async (queryName, variables = {}, options = {}) => {
+    if (!dataConnect) {
+        throw new Error('Firebase Data Connect is not initialized.');
+    }
+
+    const queryReference = queryRef(dataConnect, queryName, variables);
+    const fetchPolicy = options.fetchPolicy ?? QueryFetchPolicy.SERVER_ONLY;
+
+    const response = await executeWithTimeout(
+        executeQuery(queryReference, { fetchPolicy }),
+        OPERATION_TIMEOUT_MILLISECONDS,
+        queryName
+    );
+
+    return response.data;
+};
+
+export const executeDataMutation = async (mutationName, variables = {}) => {
+    if (!dataConnect) {
+        throw new Error('Firebase Data Connect is not initialized.');
+    }
+
+    const mutationReference = mutationRef(dataConnect, mutationName, variables);
+    const response = await executeWithTimeout(
+        executeMutation(mutationReference),
+        OPERATION_TIMEOUT_MILLISECONDS,
+        mutationName
+    );
+
+    return response.data;
+};
