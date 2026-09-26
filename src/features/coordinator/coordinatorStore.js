@@ -24,7 +24,7 @@ export const useCoordinatorStore = create((set, get) => ({
 
     // --- QUERIES ---
 
-    fetchCoordinatorRequests: async (filters = {}) => {
+    getCoordinatorRequests: async (filters = {}) => {
         set({ isLoading: true, error: null });
         try {
             const coordinatorRequests = await getCoordinatorRequests(filters);
@@ -36,7 +36,7 @@ export const useCoordinatorStore = create((set, get) => ({
         }
     },
 
-    fetchCoordinatorRequestsByRequesterId: async (filters = {}) => {
+    getCoordinatorRequestsByRequesterId: async (filters = {}) => {
         set({ isLoading: true, error: null });
         try {
             const coordinatorRequests = await getCoordinatorRequestsByRequesterId(filters);
@@ -48,7 +48,7 @@ export const useCoordinatorStore = create((set, get) => ({
         }
     },
 
-    fetchCoordinatorRequestById: async (id) => {
+    getCoordinatorRequestById: async (id) => {
         set({ isLoading: true, error: null });
         try {
             const cached = get().coordinatorRequests.find((r) => r?.id === id);

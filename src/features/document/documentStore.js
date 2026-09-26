@@ -36,9 +36,9 @@ export const useDocumentStore = create((set, get) => ({
     error: null,
 
 
-    // --- DOCUMENTS ---
+    // --- DOCUMENT QUERIES ---
 
-    fetchDocumentsByParentId: async (filters = {}) => {
+    getDocumentsByParentId: async (filters = {}) => {
         set({ isLoading: true, error: null });
         try {
             const documents = await getDocumentsByParentId(filters);
@@ -50,7 +50,7 @@ export const useDocumentStore = create((set, get) => ({
         }
     },
 
-    fetchDocumentsByIsArchived: async (filters = {}) => {
+    getDocumentsByIsArchived: async (filters = {}) => {
         set({ isLoading: true, error: null });
         try {
             const documents = await getDocumentsByIsArchived(filters);
@@ -62,7 +62,7 @@ export const useDocumentStore = create((set, get) => ({
         }
     },
 
-    fetchDocumentById: async (id) => {
+    getDocumentById: async (id) => {
         set({ isLoading: true, error: null });
         try {
             const cached = get().documents.find((d) => d?.id === id);
@@ -74,6 +74,9 @@ export const useDocumentStore = create((set, get) => ({
             return null;
         }
     },
+
+
+    // --- DOCUMENT MUTATIONS ---
 
     createFile: async (payload) => {
         set({ isMutating: true, error: null });
@@ -150,9 +153,9 @@ export const useDocumentStore = create((set, get) => ({
     },
 
 
-    // --- VERSIONS ---
+    // --- VERSION QUERIES ---
 
-    fetchVersionsByDocumentId: async (documentId) => {
+    getDocumentVersionsByDocumentId: async (documentId) => {
         set({ isLoading: true, error: null });
         try {
             const versions = await getDocumentVersionsByDocumentId(documentId);
@@ -163,6 +166,9 @@ export const useDocumentStore = create((set, get) => ({
             return [];
         }
     },
+
+
+    // --- VERSION MUTATIONS ---
 
     createDocumentVersion: async (payload) => {
         set({ isMutating: true, error: null });
@@ -207,9 +213,9 @@ export const useDocumentStore = create((set, get) => ({
     },
 
 
-    // --- SHARES ---
+    // --- SHARE QUERIES ---
 
-    fetchSharesByDocumentId: async (documentId) => {
+    getDocumentSharesByDocumentId: async (documentId) => {
         set({ isLoading: true, error: null });
         try {
             const shares = await getDocumentSharesByDocumentId(documentId);
@@ -221,7 +227,7 @@ export const useDocumentStore = create((set, get) => ({
         }
     },
 
-    fetchSharesByDepartmentId: async (departmentId) => {
+    getDocumentSharesByDepartmentId: async (departmentId) => {
         try {
             return await getDocumentSharesByDepartmentId(departmentId);
         } catch (error) {
@@ -230,7 +236,7 @@ export const useDocumentStore = create((set, get) => ({
         }
     },
 
-    fetchSharesByRecipientId: async (recipientId) => {
+    getDocumentSharesByRecipientId: async (recipientId) => {
         try {
             return await getDocumentSharesByRecipientId(recipientId);
         } catch (error) {
@@ -238,6 +244,9 @@ export const useDocumentStore = create((set, get) => ({
             return [];
         }
     },
+
+
+    // --- SHARE MUTATIONS ---
 
     createDocumentShare: async (payload) => {
         set({ isMutating: true, error: null });

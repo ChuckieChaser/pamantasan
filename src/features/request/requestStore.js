@@ -32,9 +32,9 @@ export const useRequestStore = create((set, get) => ({
     error: null,
 
 
-    // --- QUERIES ---
+    // --- REQUEST QUERIES ---
 
-    fetchRequests: async (filters = {}) => {
+    getRequests: async (filters = {}) => {
         set({ isLoading: true, error: null });
         try {
             const requests = await getRequests(filters);
@@ -46,7 +46,7 @@ export const useRequestStore = create((set, get) => ({
         }
     },
 
-    fetchRequestsByRequesterId: async (filters = {}) => {
+    getRequestsByRequesterId: async (filters = {}) => {
         set({ isLoading: true, error: null });
         try {
             const requests = await getRequestsByRequesterId(filters);
@@ -58,7 +58,7 @@ export const useRequestStore = create((set, get) => ({
         }
     },
 
-    fetchRequestById: async (id) => {
+    getRequestById: async (id) => {
         set({ isLoading: true, error: null });
         try {
             const cached = get().requests.find((r) => r?.id === id);
@@ -72,7 +72,7 @@ export const useRequestStore = create((set, get) => ({
     },
 
 
-    // --- MUTATIONS ---
+    // --- REQUEST MUTATIONS ---
 
     createRequest: async (payload) => {
         set({ isMutating: true, error: null });
@@ -134,9 +134,9 @@ export const useRequestStore = create((set, get) => ({
     },
 
 
-    // --- MESSAGES ---
+    // --- MESSAGE QUERIES ---
 
-    fetchMessagesByRequestId: async (requestId) => {
+    getRequestMessagesByRequestId: async (requestId) => {
         set({ isLoading: true, error: null });
         try {
             const messages = await getRequestMessagesByRequestId(requestId);
@@ -148,7 +148,10 @@ export const useRequestStore = create((set, get) => ({
         }
     },
 
-    createMessage: async (payload) => {
+
+    // --- MESSAGE MUTATIONS ---
+
+    createRequestMessage: async (payload) => {
         set({ isMutating: true, error: null });
         try {
             const message = await createRequestMessage(payload);
@@ -163,7 +166,7 @@ export const useRequestStore = create((set, get) => ({
         }
     },
 
-    updateMessage: async (id, payload) => {
+    updateRequestMessage: async (id, payload) => {
         set({ isMutating: true, error: null });
         try {
             const updated = await updateRequestMessage(id, payload);
@@ -178,7 +181,7 @@ export const useRequestStore = create((set, get) => ({
         }
     },
 
-    deleteMessages: async (ids) => {
+    deleteRequestMessages: async (ids) => {
         set({ isMutating: true, error: null });
         try {
             const result = await deleteRequestMessages(ids);
@@ -194,9 +197,9 @@ export const useRequestStore = create((set, get) => ({
     },
 
 
-    // --- ATTACHMENTS ---
+    // --- ATTACHMENT QUERIES ---
 
-    fetchAttachmentsByRequestId: async (requestId) => {
+    getRequestAttachmentsByRequestId: async (requestId) => {
         set({ isLoading: true, error: null });
         try {
             const attachments = await getRequestAttachmentsByRequestId(requestId);
@@ -208,7 +211,10 @@ export const useRequestStore = create((set, get) => ({
         }
     },
 
-    createAttachment: async (payload) => {
+
+    // --- ATTACHMENT MUTATIONS ---
+
+    createRequestAttachment: async (payload) => {
         set({ isMutating: true, error: null });
         try {
             const attachment = await createRequestAttachment(payload);
@@ -223,7 +229,7 @@ export const useRequestStore = create((set, get) => ({
         }
     },
 
-    createAttachments: async (dataList) => {
+    createRequestAttachments: async (dataList) => {
         set({ isMutating: true, error: null });
         try {
             const result = await createRequestAttachments(dataList);
@@ -235,7 +241,7 @@ export const useRequestStore = create((set, get) => ({
         }
     },
 
-    deleteAttachments: async (ids) => {
+    deleteRequestAttachments: async (ids) => {
         set({ isMutating: true, error: null });
         try {
             const result = await deleteRequestAttachments(ids);

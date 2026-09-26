@@ -1,20 +1,17 @@
 // --- IMPORTS ---
-import { useState } from 'react';
-import {
-    Lock,
-    User,
-    DoorOpen,
-} from 'lucide-react';
-import { AuthLayout } from '../layouts';
-import {
-    Button,
-    TextField,
-    PasswordField,
-    formatUniversityId,
-} from '../components';
-import { useToast } from '../hooks';
-import { constants } from '../constants';
+import { Lock, LogIn, User } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
+import { Button } from '../components/ui/Button';
+import { Card } from '../components/ui/Card';
+import { FormField } from '../components/forms/FormField';
+import { Input } from '../components/forms/Input';
+import { useToast } from '../components/feedback/ToastProvider';
+import { useLoginForm } from '../features/auth/hooks/useLoginForm';
+import backgroundImage from '../assets/background.jpg';
+import logoImage from '../assets/logo.jpg';
 
+
+// --- COMPONENTS ---
 const GoogleIcon = ({ className = 'h-4 w-4 shrink-0' }) => (
     <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
         <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
@@ -24,235 +21,146 @@ const GoogleIcon = ({ className = 'h-4 w-4 shrink-0' }) => (
     </svg>
 );
 
-// --- COMPONENTS ---
-const LoginPage = ({
-    onLoginSuccess,
-    onGoogleLogin,
-    onForgotPasswordClick,
-}) => {
-    // STATES
-    const [universityId, setUniversityId] = useState('');
-    const [password, setPassword] = useState('');
-    const [isSubmitting, setIsSubmitting] = useState(false);
-    const [isGoogleLoading, setIsGoogleLoading] = useState(false);
-    const [universityIdError, setUniversityIdError] = useState('');
-    const [passwordError, setPasswordError] = useState('');
+export const LoginPage = () => {
+    const navigate = useNavigate();
+    const { toast } = useToast();
 
-    // HOOKS
-    const { showToast } = useToast();
+    const {
+        universityId,
+        password,
+        fieldErrors,
+        isSubmitting,
+        error: authError,
+        handleUniversityIdChange,
+        handlePasswordChange,
+        submit,
+        submitGoogle,
+    } = useLoginForm({
+        onSuccess: (user) => {
+            toast.success('Signed in', `Welcome back, ${user?.givenName || 'Colleague'}!`);
+            navigate('/dashboard');
+        },
+    });
 
-    // HANDLERS
-    const handleUniversityIdChange = (event) => {
-        const rawValue = event.target.value;
-        const formatted = formatUniversityId(rawValue);
-        setUniversityId(formatted);
-
-        if (universityIdError) {
-            setUniversityIdError('');
-        }
-    };
-
-    const handlePasswordChange = (event) => {
-        setPassword(event.target.value);
-        if (passwordError) {
-            setPasswordError('');
-        }
-    };
-
-    const handleForgotPassword = (event) => {
-        event.preventDefault();
-        onForgotPasswordClick?.();
-    };
-
-    const handleFormSubmit = async (event) => {
-        if (event) {
-            event.preventDefault();
-            event.stopPropagation();
-        }
-
-        // Validate fields simultaneously
-        const trimmedUniversityId = universityId.trim();
-        let hasError = false;
-
-        if (!trimmedUniversityId) {
-            setUniversityIdError('University ID is required.');
-            hasError = true;
-        } else if (!constants.VALIDATION_PATTERNS.UNIVERSITY_ID.test(trimmedUniversityId)) {
-            setUniversityIdError('Enter valid ID format (e.g. 20-00001).');
-            hasError = true;
-        }
-
-        if (!password) {
-            setPasswordError('Password is required.');
-            hasError = true;
-        }
-
-        if (hasError) {
-            return;
-        }
-
-        setIsSubmitting(true);
-        setPasswordError('');
-
+    const onSubmit = async (e) => {
+        e?.preventDefault?.();
         try {
-            if (onLoginSuccess) {
-                await onLoginSuccess({
-                    universityId: trimmedUniversityId,
-                    password,
-                });
-            }
-            // User requirement: "no pop up toast login" - do not trigger toast on login
-        } catch (error) {
-            let errorMessage = 'Invalid University ID or password.';
-
-            if (
-                error?.code === 'ERR_CONCURRENT_SESSION' ||
-                error?.message?.includes('active in another session') ||
-                error?.message?.includes('Concurrent logins are not permitted')
-            ) {
-                errorMessage = 'Account active in another session.';
-            } else if (
-                error?.code === 'auth/invalid-credential' ||
-                error?.code === 'auth/user-not-found' ||
-                error?.code === 'auth/wrong-password'
-            ) {
-                errorMessage = 'Invalid credentials.';
-            } else if (error?.code === 'auth/too-many-requests') {
-                errorMessage = 'Too many attempts. Try again later.';
-            } else if (error?.message) {
-                errorMessage = error.message;
-            }
-
-            setPasswordError(errorMessage);
-            showToast({
-                title: error?.code === 'ERR_CONCURRENT_SESSION' ? 'Access Restricted' : 'Authentication Failed',
-                description: errorMessage,
-                variant: error?.code === 'ERR_CONCURRENT_SESSION' ? 'warning' : 'error',
-            });
-        } finally {
-            setIsSubmitting(false);
+            await submit(e);
+        } catch (err) {
+            toast.error('Authentication failed', err?.message || 'Invalid university credentials.', err);
         }
     };
 
-    const handleGoogleSSOClick = async () => {
-        if (isGoogleLoading || isSubmitting) return;
-
-        setIsGoogleLoading(true);
-        setPasswordError('');
-
+    const onGoogleSubmit = async () => {
         try {
-            if (onGoogleLogin) {
-                await onGoogleLogin();
-                return;
-            }
-        } catch (error) {
-            console.error('Google Sign-In Error:', error);
-            if (
-                error?.code === 'auth/popup-closed-by-user' ||
-                error?.message?.includes('cancelled')
-            ) {
-                // User closed the popup, immediately return without error toast
-                return;
-            }
-
-            let errorMessage = 'Google authentication failed.';
-            if (
-                error?.code === 'ERR_CONCURRENT_SESSION' ||
-                error?.message?.includes('active in another session') ||
-                error?.message?.includes('Concurrent logins are not permitted')
-            ) {
-                errorMessage = 'Account active in another session.';
-            } else if (error?.message) {
-                errorMessage = error.message;
-            }
-
-            setPasswordError(errorMessage);
-            showToast({
-                title: error?.code === 'ERR_CONCURRENT_SESSION' ? 'Access Restricted' : 'Authentication Failed',
-                description: errorMessage,
-                variant: error?.code === 'ERR_CONCURRENT_SESSION' ? 'warning' : 'error',
-            });
-        } finally {
-            setIsGoogleLoading(false);
+            await submitGoogle();
+        } catch (err) {
+            toast.error('Google Sign-In failed', err?.message || 'Could not authenticate via Google.', err);
         }
     };
 
-    // RENDER
     return (
-        <AuthLayout
-            title="Sign In"
-            description="Enter your official University ID and password to access your account."
-        >
-            {/* FORM FIELDS */}
-            <form onSubmit={handleFormSubmit} className="flex flex-col gap-4">
-                <TextField
-                    label="University ID"
-                    placeholder="Enter your university id"
-                    value={universityId}
-                    onChange={handleUniversityIdChange}
-                    error={universityIdError}
-                    leadingIcon={User}
-                    maxLength={8}
-                    inputMode="numeric"
-                    autoComplete="username"
-                    required
-                />
+        <div className="relative min-h-screen w-full flex items-center justify-center p-4 sm:p-6 overflow-hidden select-none bg-background text-text">
+            {/* Campus Background with ambient overlays */}
+            <img
+                src={backgroundImage}
+                alt="Pamantasan Campus Background"
+                className="absolute inset-0 h-full w-full object-cover object-center scale-105 filter brightness-50 contrast-125"
+            />
+            <div className="absolute inset-0 bg-gradient-to-tr from-zinc-950/90 via-zinc-900/60 to-emerald-950/70 backdrop-blur-sm" />
+            <div className="absolute -top-32 -left-32 h-96 w-96 rounded-full bg-accent/20 blur-3xl pointer-events-none" />
+            <div className="absolute -bottom-32 -right-32 h-96 w-96 rounded-full bg-information/15 blur-3xl pointer-events-none" />
 
-                <PasswordField
-                    label="Password"
-                    placeholder="Enter your password"
-                    value={password}
-                    onChange={handlePasswordChange}
-                    error={passwordError}
-                    leadingIcon={Lock}
-                    autoComplete="current-password"
-                    required
-                />
+            {/* Login Card */}
+            <Card className="relative z-10 max-w-md w-full p-6 sm:p-8 flex flex-col gap-6 shadow-2xl bg-surface/95 backdrop-blur-md border-surface-border">
+                {/* Header */}
+                <div className="flex flex-col items-center text-center gap-3">
+                    <img
+                        src={logoImage}
+                        alt="Pamantasan Logo"
+                        className="h-12 w-12 rounded-xl object-cover ring-2 ring-accent/30 shadow-md"
+                    />
+                    <div>
+                        <h1 className="text-xl font-bold tracking-tight text-text">
+                            Pamantasan EDMS
+                        </h1>
+                        <p className="text-xs text-text-muted mt-1">
+                            Electronic Document Management System
+                        </p>
+                    </div>
+                </div>
 
-                <div className="flex items-center justify-end text-xs pt-1">
-                    <button
-                        type="button"
-                        onClick={handleForgotPassword}
-                        className="text-accent hover:text-accent-hover font-medium cursor-pointer transition-colors"
+                {/* Form */}
+                <form onSubmit={onSubmit} className="flex flex-col gap-4">
+                    <FormField
+                        label="University ID"
+                        isRequired
+                        errorMessage={fieldErrors.universityId}
                     >
-                        Forgot password?
-                    </button>
+                        <Input
+                            value={universityId}
+                            onChange={handleUniversityIdChange}
+                            placeholder="e.g. 2024-00001"
+                            leadingIcon={User}
+                            hasError={Boolean(fieldErrors.universityId)}
+                            autoFocus
+                        />
+                    </FormField>
+
+                    <FormField
+                        label="Password"
+                        isRequired
+                        errorMessage={fieldErrors.password}
+                    >
+                        <Input
+                            type="password"
+                            value={password}
+                            onChange={handlePasswordChange}
+                            placeholder="Enter account password"
+                            leadingIcon={Lock}
+                            hasError={Boolean(fieldErrors.password)}
+                        />
+                    </FormField>
+
+                    <div className="flex items-center justify-end -mt-1">
+                        <Link
+                            to="/forgot-password"
+                            className="text-xs text-accent hover:underline focus:outline-none focus:ring-1 focus:ring-accent rounded"
+                        >
+                            Forgot password?
+                        </Link>
+                    </div>
+
+                    <Button
+                        type="submit"
+                        variant="primary"
+                        leadingIcon={LogIn}
+                        isLoading={isSubmitting}
+                        className="w-full mt-1"
+                    >
+                        Sign In
+                    </Button>
+                </form>
+
+                <div className="relative flex items-center justify-center">
+                    <div className="absolute inset-0 flex items-center">
+                        <div className="w-full border-t border-surface-border" />
+                    </div>
+                    <span className="relative bg-surface px-3 text-[11px] font-medium text-text-muted uppercase tracking-wider">
+                        Or continue with
+                    </span>
                 </div>
 
                 <Button
-                    type="submit"
-                    variant="primary"
-                    label={isSubmitting ? 'Logging In...' : 'Log In'}
-                    leadingIcon={DoorOpen}
+                    variant="secondary"
+                    leadingIcon={GoogleIcon}
+                    onClick={onGoogleSubmit}
                     isLoading={isSubmitting}
-                    isDisabled={isSubmitting || isGoogleLoading}
-                    className="w-full mt-2"
-                />
-            </form>
-
-            {/* DIVIDER */}
-            <div className="relative flex items-center justify-center my-1 gap-3">
-                <div className="border-t border-surface-border flex-1" />
-                <span className="text-xs text-text-muted uppercase tracking-wider font-semibold shrink-0">
-                    or continue with
-                </span>
-                <div className="border-t border-surface-border flex-1" />
-            </div>
-
-            {/* GOOGLE SINGLE SIGN ON BUTTON */}
-            <Button
-                variant="secondary"
-                label={isGoogleLoading ? 'Connecting...' : 'Sign in with Google'}
-                leadingIcon={GoogleIcon}
-                onClick={handleGoogleSSOClick}
-                isLoading={isGoogleLoading}
-                isDisabled={isSubmitting || isGoogleLoading}
-                className="w-full justify-center"
-            />
-        </AuthLayout>
+                    className="w-full"
+                >
+                    Sign in with Google
+                </Button>
+            </Card>
+        </div>
     );
 };
-
-// --- EXPORTS ---
-export { LoginPage };
-export default LoginPage;

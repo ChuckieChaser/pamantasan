@@ -14,21 +14,21 @@ export const useDocument = () => {
     const isMutating = useDocumentStore((s) => s.isMutating);
     const error = useDocumentStore((s) => s.error);
 
-    const fetchDocumentsByParentId = useDocumentStore((s) => s.fetchDocumentsByParentId);
-    const fetchDocumentsByIsArchived = useDocumentStore((s) => s.fetchDocumentsByIsArchived);
-    const fetchDocumentById = useDocumentStore((s) => s.fetchDocumentById);
+    const getDocumentsByParentId = useDocumentStore((s) => s.getDocumentsByParentId);
+    const getDocumentsByIsArchived = useDocumentStore((s) => s.getDocumentsByIsArchived);
+    const getDocumentById = useDocumentStore((s) => s.getDocumentById);
     const createFile = useDocumentStore((s) => s.createFile);
     const createFolder = useDocumentStore((s) => s.createFolder);
     const updateDocument = useDocumentStore((s) => s.updateDocument);
     const updateDocuments = useDocumentStore((s) => s.updateDocuments);
     const deleteDocuments = useDocumentStore((s) => s.deleteDocuments);
-    const fetchVersionsByDocumentId = useDocumentStore((s) => s.fetchVersionsByDocumentId);
+    const getDocumentVersionsByDocumentId = useDocumentStore((s) => s.getDocumentVersionsByDocumentId);
     const createDocumentVersion = useDocumentStore((s) => s.createDocumentVersion);
     const updateDocumentVersion = useDocumentStore((s) => s.updateDocumentVersion);
     const updateDocumentVersions = useDocumentStore((s) => s.updateDocumentVersions);
-    const fetchSharesByDocumentId = useDocumentStore((s) => s.fetchSharesByDocumentId);
-    const fetchSharesByDepartmentId = useDocumentStore((s) => s.fetchSharesByDepartmentId);
-    const fetchSharesByRecipientId = useDocumentStore((s) => s.fetchSharesByRecipientId);
+    const getDocumentSharesByDocumentId = useDocumentStore((s) => s.getDocumentSharesByDocumentId);
+    const getDocumentSharesByDepartmentId = useDocumentStore((s) => s.getDocumentSharesByDepartmentId);
+    const getDocumentSharesByRecipientId = useDocumentStore((s) => s.getDocumentSharesByRecipientId);
     const createDocumentShare = useDocumentStore((s) => s.createDocumentShare);
     const createDocumentShares = useDocumentStore((s) => s.createDocumentShares);
     const updateDocumentShare = useDocumentStore((s) => s.updateDocumentShare);
@@ -40,19 +40,19 @@ export const useDocument = () => {
 
     // --- HANDLERS ---
 
-    const handleFetchByParentId = useCallback(
-        (filters) => fetchDocumentsByParentId(filters),
-        [fetchDocumentsByParentId],
+    const handleGetDocumentsByParentId = useCallback(
+        (filters) => getDocumentsByParentId(filters),
+        [getDocumentsByParentId],
     );
 
-    const handleFetchArchived = useCallback(
-        (filters) => fetchDocumentsByIsArchived(filters),
-        [fetchDocumentsByIsArchived],
+    const handleGetDocumentsByIsArchived = useCallback(
+        (filters) => getDocumentsByIsArchived(filters),
+        [getDocumentsByIsArchived],
     );
 
-    const handleFetchById = useCallback(
-        (id) => fetchDocumentById(id),
-        [fetchDocumentById],
+    const handleGetDocumentById = useCallback(
+        (id) => getDocumentById(id),
+        [getDocumentById],
     );
 
     const handleCreateFile = useCallback(
@@ -75,32 +75,32 @@ export const useDocument = () => {
         [deleteDocuments],
     );
 
-    const handleFetchVersions = useCallback(
-        (documentId) => fetchVersionsByDocumentId(documentId),
-        [fetchVersionsByDocumentId],
+    const handleGetDocumentVersionsByDocumentId = useCallback(
+        (documentId) => getDocumentVersionsByDocumentId(documentId),
+        [getDocumentVersionsByDocumentId],
     );
 
-    const handleCreateVersion = useCallback(
+    const handleCreateDocumentVersion = useCallback(
         (payload) => createDocumentVersion(payload),
         [createDocumentVersion],
     );
 
-    const handleUpdateVersion = useCallback(
+    const handleUpdateDocumentVersion = useCallback(
         (id, payload) => updateDocumentVersion(id, payload),
         [updateDocumentVersion],
     );
 
-    const handleFetchShares = useCallback(
-        (documentId) => fetchSharesByDocumentId(documentId),
-        [fetchSharesByDocumentId],
+    const handleGetDocumentSharesByDocumentId = useCallback(
+        (documentId) => getDocumentSharesByDocumentId(documentId),
+        [getDocumentSharesByDocumentId],
     );
 
-    const handleCreateShare = useCallback(
+    const handleCreateDocumentShare = useCallback(
         (payload) => createDocumentShare(payload),
         [createDocumentShare],
     );
 
-    const handleDeleteShares = useCallback(
+    const handleDeleteDocumentShares = useCallback(
         (ids) => deleteDocumentShares(ids),
         [deleteDocumentShares],
     );
@@ -117,25 +117,25 @@ export const useDocument = () => {
         error,
 
         // Handlers
-        handleFetchByParentId,
-        handleFetchArchived,
-        handleFetchById,
+        handleGetDocumentsByParentId,
+        handleGetDocumentsByIsArchived,
+        handleGetDocumentById,
         handleCreateFile,
         handleCreateFolder,
         handleUpdateDocument,
         handleDeleteDocuments,
-        handleFetchVersions,
-        handleCreateVersion,
-        handleUpdateVersion,
-        handleFetchShares,
-        handleCreateShare,
-        handleDeleteShares,
+        handleGetDocumentVersionsByDocumentId,
+        handleCreateDocumentVersion,
+        handleUpdateDocumentVersion,
+        handleGetDocumentSharesByDocumentId,
+        handleCreateDocumentShare,
+        handleDeleteDocumentShares,
 
-        // Direct (for bulk and advanced share ops)
+        // Direct
         updateDocuments,
         updateDocumentVersions,
-        fetchSharesByDepartmentId,
-        fetchSharesByRecipientId,
+        getDocumentSharesByDepartmentId,
+        getDocumentSharesByRecipientId,
         createDocumentShares,
         updateDocumentShare,
         setSelectedDocument,

@@ -12,9 +12,9 @@ export const useDepartment = () => {
     const isMutating = useDepartmentStore((s) => s.isMutating);
     const error = useDepartmentStore((s) => s.error);
 
-    const fetchDepartments = useDepartmentStore((s) => s.fetchDepartments);
-    const fetchDepartmentById = useDepartmentStore((s) => s.fetchDepartmentById);
-    const fetchDepartmentByCode = useDepartmentStore((s) => s.fetchDepartmentByCode);
+    const getDepartments = useDepartmentStore((s) => s.getDepartments);
+    const getDepartmentById = useDepartmentStore((s) => s.getDepartmentById);
+    const getDepartmentByCode = useDepartmentStore((s) => s.getDepartmentByCode);
     const createDepartment = useDepartmentStore((s) => s.createDepartment);
     const updateDepartment = useDepartmentStore((s) => s.updateDepartment);
     const deleteDepartments = useDepartmentStore((s) => s.deleteDepartments);
@@ -25,14 +25,14 @@ export const useDepartment = () => {
 
     // --- HANDLERS ---
 
-    const handleFetchDepartments = useCallback(
-        (filters) => fetchDepartments(filters),
-        [fetchDepartments],
+    const handleGetDepartments = useCallback(
+        (filters) => getDepartments(filters),
+        [getDepartments],
     );
 
-    const handleFetchById = useCallback(
-        (id) => fetchDepartmentById(id),
-        [fetchDepartmentById],
+    const handleGetDepartmentById = useCallback(
+        (id) => getDepartmentById(id),
+        [getDepartmentById],
     );
 
     const handleCreateDepartment = useCallback(
@@ -60,14 +60,14 @@ export const useDepartment = () => {
         error,
 
         // Handlers
-        handleFetchDepartments,
-        handleFetchById,
+        handleGetDepartments,
+        handleGetDepartmentById,
         handleCreateDepartment,
         handleUpdateDepartment,
         handleDeleteDepartments,
 
         // Direct
-        fetchDepartmentByCode,
+        getDepartmentByCode,
         setSelectedDepartment,
         clearError,
         reset,

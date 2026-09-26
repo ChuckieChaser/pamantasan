@@ -3,15 +3,13 @@ import { useEffect, useRef } from 'react';
 
 
 // --- HOOK ---
-const useKeyPress = (targetKey, callback) => {
-    // REFS
+export const useKeyPress = (targetKey, callback) => {
     const callbackRef = useRef(callback);
 
     useEffect(() => {
         callbackRef.current = callback;
     }, [callback]);
 
-    // LISTENERS
     useEffect(() => {
         const handleKeyDown = (event) => {
             const isMatch = Array.isArray(targetKey)
@@ -30,7 +28,3 @@ const useKeyPress = (targetKey, callback) => {
         };
     }, [targetKey]);
 };
-
-
-// --- EXPORTS ---
-export { useKeyPress };

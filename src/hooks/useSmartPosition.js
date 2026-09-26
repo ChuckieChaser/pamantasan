@@ -1,5 +1,5 @@
 // --- IMPORTS ---
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 
 
 // --- CONFIGURATIONS ---
@@ -8,14 +8,12 @@ const DEFAULT_DROPDOWN_WIDTH = 320;
 
 
 // --- HOOK ---
-const useSmartPosition = (triggerRef, dropdownRef, isOpen, preferredHorizontal = 'auto') => {
-    // STATES
+export const useSmartPosition = (triggerRef, dropdownRef, isOpen, preferredHorizontal = 'auto') => {
     const [placement, setPlacement] = useState({
         vertical: 'bottom',
         horizontal: preferredHorizontal === 'right' ? 'right' : 'left',
     });
 
-    // LISTENERS
     useEffect(() => {
         if (!isOpen) {
             return;
@@ -77,7 +75,6 @@ const useSmartPosition = (triggerRef, dropdownRef, isOpen, preferredHorizontal =
 
         return () => {
             cancelAnimationFrame(frameId);
-            
             window.removeEventListener('resize', updatePosition);
             window.removeEventListener('scroll', updatePosition, true);
         };
@@ -85,7 +82,3 @@ const useSmartPosition = (triggerRef, dropdownRef, isOpen, preferredHorizontal =
 
     return placement;
 };
-
-
-// --- EXPORTS ---
-export { useSmartPosition };

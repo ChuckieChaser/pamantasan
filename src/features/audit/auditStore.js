@@ -1,5 +1,5 @@
 // --- AUDIT STORE ---
-// Read-mostly store: audit logs are append-only; no update or delete operations.
+// Read-mostly store: audit logs are append-only. No update or delete operations.
 import { create } from 'zustand';
 import {
     getAuditLogs,
@@ -15,13 +15,12 @@ export const useAuditStore = create((set) => ({
     // --- STATE ---
     auditLogs: [],
     isLoading: false,
-    isMutating: false,
     error: null,
 
 
     // --- QUERIES ---
 
-    fetchAuditLogs: async (filters = {}) => {
+    getAuditLogs: async (filters = {}) => {
         set({ isLoading: true, error: null });
         try {
             const auditLogs = await getAuditLogs(filters);
@@ -33,7 +32,7 @@ export const useAuditStore = create((set) => ({
         }
     },
 
-    fetchAuditLogsByActorId: async (filters = {}) => {
+    getAuditLogsByActorId: async (filters = {}) => {
         set({ isLoading: true, error: null });
         try {
             const auditLogs = await getAuditLogsByActorId(filters);
@@ -45,7 +44,7 @@ export const useAuditStore = create((set) => ({
         }
     },
 
-    fetchAuditLogsByEntityId: async (filters = {}) => {
+    getAuditLogsByEntityId: async (filters = {}) => {
         set({ isLoading: true, error: null });
         try {
             const auditLogs = await getAuditLogsByEntityId(filters);
@@ -61,18 +60,16 @@ export const useAuditStore = create((set) => ({
     // --- MUTATIONS ---
 
     createAuditLog: async (payload) => {
-        set({ isMutating: true, error: null });
+        // Audit log creation is fire-and-forget. Failure is non-fatal and must
+        // never surface to the UI or block the primary action that triggered it.
         try {
             const log = await createAuditLog(payload);
             set((state) => ({
                 auditLogs: log ? [log, ...state.auditLogs] : state.auditLogs,
-                isMutating: false,
             }));
             return log;
         } catch (error) {
-            // Audit log creation failure is non-fatal — log but don't surface to UI
-            console.error('[useAuditStore] Failed to create audit log:', error?.message);
-            set({ isMutating: false });
+            console.error('[useAuditStore] createAuditLog failed silently:', error?.message);
             return null;
         }
     },
@@ -82,5 +79,5 @@ export const useAuditStore = create((set) => ({
 
     clearError: () => set({ error: null }),
 
-    reset: () => set({ auditLogs: [], isLoading: false, isMutating: false, error: null }),
+    reset: () => set({ auditLogs: [], isLoading: false, error: null }),
 }));

@@ -1,5 +1,5 @@
 // --- IMPORTS ---
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 
 
 // --- CONFIGURATIONS ---
@@ -7,11 +7,9 @@ const DEFAULT_DELAY_MS = 300;
 
 
 // --- HOOK ---
-const useDebounce = (value, delay = DEFAULT_DELAY_MS) => {
-    // STATES
+export const useDebounce = (value, delay = DEFAULT_DELAY_MS) => {
     const [debouncedValue, setDebouncedValue] = useState(value);
 
-    // LISTENERS
     useEffect(() => {
         const timerId = setTimeout(() => {
             setDebouncedValue(value);
@@ -24,7 +22,3 @@ const useDebounce = (value, delay = DEFAULT_DELAY_MS) => {
 
     return debouncedValue;
 };
-
-
-// --- EXPORTS ---
-export { useDebounce };

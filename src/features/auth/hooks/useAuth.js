@@ -1,6 +1,6 @@
 // --- USE AUTH HOOK ---
 import { useCallback } from 'react';
-import { useAuthStore } from './authStore';
+import { useAuthStore } from '../authStore';
 
 
 // --- HOOK ---

@@ -1,298 +1,142 @@
 // --- IMPORTS ---
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
+import { ArrowRight, CheckCircle2, Key, ShieldCheck } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import {
-    Key,
-    Globe,
-    ArrowRight,
-    ShieldCheck,
-} from 'lucide-react';
-import { AuthLayout } from '../layouts';
-import { Button, PasswordField } from '../components';
-import { useAuth, useToast } from '../hooks';
-import { authService } from '../services';
-import { constants } from '../constants';
+import { Button } from '../components/ui/Button';
+import { Card } from '../components/ui/Card';
+import { FormField } from '../components/forms/FormField';
+import { Input } from '../components/forms/Input';
+import { useToast } from '../components/feedback/ToastProvider';
+import { useAuth } from '../features/auth/hooks/useAuth';
+import backgroundImage from '../assets/background.jpg';
+import logoImage from '../assets/logo.jpg';
 
 
 // --- COMPONENTS ---
-const OnboardingPage = ({
-    currentUser: propUser = null,
-    onComplete = null,
-}) => {
-    // HOOKS
+export const OnboardingPage = () => {
     const navigate = useNavigate();
-    const { showToast } = useToast();
-    const { currentUser: authUser, isLoading: isAuthLoading } = useAuth();
+    const { toast } = useToast();
+    const { currentUser, handleChangePassword, handleLinkGoogle } = useAuth();
 
-    // RESOLVE ACTIVE USER
-    const activeUser = propUser || authUser;
-    const activeUserId = activeUser?.id || (typeof localStorage !== 'undefined' ? localStorage.getItem('pamantasan_auth_user_id') : null);
-    const targetEmail = activeUser?.email || (typeof localStorage !== 'undefined' ? localStorage.getItem('pamantasan_auth_user_email') : null);
-
-    // DERIVED STATUS
-    const currentStatus = activeUser?.status ?? constants.USERS_STATUS.VERIFIED;
-    const isPendingPassword = currentStatus === constants.USERS_STATUS.PENDING_PASSWORD;
-    const isPendingSSO = currentStatus === constants.USERS_STATUS.PENDING_SSO;
-
-    // STATES FOR PASSWORD SETUP
     const [currentPassword, setCurrentPassword] = useState('');
     const [newPassword, setNewPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
-    const [passwordErrors, setPasswordErrors] = useState({});
-    const [isSubmittingPassword, setIsSubmittingPassword] = useState(false);
+    const [errors, setErrors] = useState({});
+    const [isLoading, setIsLoading] = useState(false);
 
-    // STATES FOR SSO LINKING
-    const [isLinkingGoogle, setIsLinkingGoogle] = useState(false);
-    const [dontShowAgain, setDontShowAgain] = useState(false);
+    const handleSubmit = async (e) => {
+        e?.preventDefault?.();
+        const errs = {};
+        if (!currentPassword) errs.currentPassword = 'Temporary password is required.';
+        if (newPassword.length < 8) errs.newPassword = 'New password must be at least 8 characters.';
+        if (newPassword !== confirmPassword) errs.confirmPassword = 'Passwords do not match.';
 
-    // AUTO-REDIRECT
-    useEffect(() => {
-        if (isAuthLoading && !activeUser) {
+        if (Object.keys(errs).length > 0) {
+            setErrors(errs);
             return;
         }
 
-        if (!activeUser && !activeUserId) {
-            navigate('/login', { replace: true });
-            return;
-        }
-
-        if (currentStatus === constants.USERS_STATUS.VERIFIED) {
-            navigate('/dashboard', { replace: true });
-            return;
-        }
-
-        if (isPendingSSO && activeUserId) {
-            const hasSkipped = authService.hasSkippedSSOOnboarding(activeUserId);
-            if (hasSkipped) {
-                navigate('/dashboard', { replace: true });
-            }
-        }
-    }, [activeUser, activeUserId, currentStatus, isPendingSSO, isAuthLoading, navigate]);
-
-    // HANDLERS: PASSWORD CHANGE
-    const handlePasswordSubmit = async (event) => {
-        if (event) {
-            event.preventDefault();
-            event.stopPropagation();
-        }
-
-        const errors = {};
-        if (!currentPassword) {
-            errors.current = 'Temporary password is required.';
-        }
-        if (!newPassword) {
-            errors.new = 'New password is required.';
-        } else if (newPassword.length < 8) {
-            errors.new = 'Must be at least 8 characters.';
-        } else if (newPassword === currentPassword) {
-            errors.new = 'Must be different from temporary password.';
-        }
-        if (!confirmPassword) {
-            errors.confirm = 'Confirm password is required.';
-        } else if (newPassword && newPassword !== confirmPassword) {
-            errors.confirm = 'Passwords do not match.';
-        }
-
-        if (Object.keys(errors).length > 0) {
-            setPasswordErrors(errors);
-            return;
-        }
-
-        setPasswordErrors({});
-        setIsSubmittingPassword(true);
-
+        setIsLoading(true);
+        setErrors({});
         try {
-            await authService.changePassword(currentPassword, newPassword);
-            showToast({
-                title: 'Password Updated',
-                description: 'Password updated successfully.',
-                variant: 'success',
+            await handleChangePassword({
+                currentPassword,
+                newPassword,
             });
-            // Automatically advances to PENDING_SSO step in view
-        } catch (error) {
-            const message = error?.message || 'Failed to update password.';
-            setPasswordErrors({ current: message });
-            showToast({
-                title: 'Password Update Failed',
-                description: message,
-                variant: 'error',
-            });
+            toast.success('Onboarding complete', 'Your permanent password has been set.');
+            navigate('/dashboard');
+        } catch (err) {
+            toast.error('Setup failed', err?.message || 'Could not update password.', err);
         } finally {
-            setIsSubmittingPassword(false);
+            setIsLoading(false);
         }
     };
 
-    // HANDLERS: SSO LINKING
-    const handleLinkGoogle = async () => {
-        if (!targetEmail) {
-            showToast({
-                title: 'Linking Failed',
-                description: 'Email missing.',
-                variant: 'error',
-            });
-            return;
-        }
+    return (
+        <div className="relative min-h-screen w-full flex items-center justify-center p-4 sm:p-6 overflow-hidden select-none bg-background text-text">
+            {/* Campus Background with ambient overlays */}
+            <img
+                src={backgroundImage}
+                alt="Pamantasan Campus Background"
+                className="absolute inset-0 h-full w-full object-cover object-center scale-105 filter brightness-50 contrast-125"
+            />
+            <div className="absolute inset-0 bg-gradient-to-tr from-zinc-950/90 via-zinc-900/60 to-emerald-950/70 backdrop-blur-sm" />
 
-        setIsLinkingGoogle(true);
-
-        try {
-            await authService.linkGoogleAccount(targetEmail);
-            showToast({
-                title: 'Google SSO Linked',
-                description: 'Account linked successfully.',
-                variant: 'success',
-            });
-            if (onComplete) {
-                await onComplete();
-            } else {
-                navigate('/dashboard', { replace: true });
-            }
-        } catch (error) {
-            let desc = 'Link failed.';
-            if (error?.message?.includes('mismatch')) {
-                desc = 'Account email mismatch.';
-            } else if (error?.message?.includes('cancelled') || error?.code === 'auth/popup-closed-by-user') {
-                desc = 'Linking cancelled.';
-            } else if (error?.message) {
-                desc = error.message;
-            }
-            showToast({
-                title: 'Linking Failed',
-                description: desc,
-                variant: 'error',
-            });
-        } finally {
-            setIsLinkingGoogle(false);
-        }
-    };
-
-    const handleSkipSSO = async () => {
-        if (activeUserId) {
-            authService.setSkippedSSOOnboarding(activeUserId, dontShowAgain);
-        }
-
-        if (onComplete) {
-            await onComplete();
-        } else {
-            navigate('/dashboard', { replace: true });
-        }
-    };
-
-    // RENDER: PASSWORD ONBOARDING
-    if (isPendingPassword) {
-        return (
-            <AuthLayout
-                title="Set Account Password"
-                description="Your account was provisioned with a temporary password. Please set your personal password to continue."
-            >
-                <form onSubmit={handlePasswordSubmit} className="flex flex-col gap-4">
-                    <PasswordField
-                        label="Temporary / Initial Password"
-                        placeholder="Enter your current password"
-                        value={currentPassword}
-                        onChange={(e) => {
-                            setCurrentPassword(e.target.value);
-                            if (passwordErrors.current) setPasswordErrors((prev) => ({ ...prev, current: '' }));
-                        }}
-                        error={passwordErrors.current}
-                        leadingIcon={Key}
-                        required
-                        autoFocus
+            <Card className="relative z-10 max-w-md w-full p-6 sm:p-8 flex flex-col gap-6 shadow-2xl bg-surface/95 backdrop-blur-md border-surface-border">
+                <div className="flex flex-col items-center text-center gap-3">
+                    <img
+                        src={logoImage}
+                        alt="Pamantasan Logo"
+                        className="h-12 w-12 rounded-xl object-cover ring-2 ring-accent/30 shadow-md"
                     />
+                    <div>
+                        <h1 className="text-xl font-bold tracking-tight text-text">
+                            Account Onboarding
+                        </h1>
+                        <p className="text-xs text-text-muted mt-1">
+                            Welcome, {currentUser?.givenName || 'Colleague'}. Please initialize your permanent credentials to activate your account.
+                        </p>
+                    </div>
+                </div>
 
-                    <PasswordField
-                        label="New Password"
-                        placeholder="Enter your new password"
-                        value={newPassword}
-                        onChange={(e) => {
-                            setNewPassword(e.target.value);
-                            if (passwordErrors.new) setPasswordErrors((prev) => ({ ...prev, new: '' }));
-                        }}
-                        error={passwordErrors.new}
-                        leadingIcon={Key}
-                        required
-                    />
+                <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+                    <FormField
+                        label="Temporary Password"
+                        isRequired
+                        errorMessage={errors.currentPassword}
+                    >
+                        <Input
+                            type="password"
+                            value={currentPassword}
+                            onChange={(e) => setCurrentPassword(e.target.value)}
+                            placeholder="Enter temporary password"
+                            leadingIcon={Key}
+                            hasError={Boolean(errors.currentPassword)}
+                            autoFocus
+                        />
+                    </FormField>
 
-                    <PasswordField
-                        label="Confirm New Password"
-                        placeholder="Enter your confirm new password"
-                        value={confirmPassword}
-                        onChange={(e) => {
-                            setConfirmPassword(e.target.value);
-                            if (passwordErrors.confirm) setPasswordErrors((prev) => ({ ...prev, confirm: '' }));
-                        }}
-                        error={passwordErrors.confirm}
-                        leadingIcon={Key}
-                        required
-                    />
+                    <FormField
+                        label="New Permanent Password"
+                        isRequired
+                        errorMessage={errors.newPassword}
+                    >
+                        <Input
+                            type="password"
+                            value={newPassword}
+                            onChange={(e) => setNewPassword(e.target.value)}
+                            placeholder="At least 8 characters"
+                            leadingIcon={ShieldCheck}
+                            hasError={Boolean(errors.newPassword)}
+                        />
+                    </FormField>
+
+                    <FormField
+                        label="Confirm Permanent Password"
+                        isRequired
+                        errorMessage={errors.confirmPassword}
+                    >
+                        <Input
+                            type="password"
+                            value={confirmPassword}
+                            onChange={(e) => setConfirmPassword(e.target.value)}
+                            placeholder="Confirm new password"
+                            leadingIcon={CheckCircle2}
+                            hasError={Boolean(errors.confirmPassword)}
+                        />
+                    </FormField>
 
                     <Button
                         type="submit"
                         variant="primary"
-                        label={isSubmittingPassword ? 'Updating Password...' : 'Save Password & Proceed'}
                         leadingIcon={ArrowRight}
-                        isLoading={isSubmittingPassword}
+                        isLoading={isLoading}
                         className="w-full mt-2"
-                    />
+                    >
+                        Complete Onboarding
+                    </Button>
                 </form>
-            </AuthLayout>
-        );
-    }
-
-    // RENDER: SSO ONBOARDING
-    return (
-        <AuthLayout
-            title="Google Single Sign On (SSO)"
-            description="Connect your institutional Google account for seamless authentication."
-        >
-            <div className="flex flex-col gap-5">
-                <div className="p-4 rounded-xl bg-surface-hover/50 border border-surface-border flex items-start gap-3">
-                    <div className="p-2.5 rounded-lg bg-surface border border-surface-border text-accent shrink-0 mt-0.5">
-                        <Globe className="h-5 w-5" />
-                    </div>
-                    <div className="flex flex-col gap-1 min-w-0 flex-1">
-                        <span className="text-sm font-semibold text-text">
-                            Institutional Account
-                        </span>
-                        <span className="text-xs text-text-muted leading-relaxed">
-                            Link <span className="font-semibold text-text">{targetEmail || 'your institutional email'}</span> to enable one-click Google sign-in.
-                        </span>
-                    </div>
-                </div>
-
-                <Button
-                    variant="primary"
-                    label={isLinkingGoogle ? 'Connecting Account...' : 'Link Google Account'}
-                    leadingIcon={ShieldCheck}
-                    onClick={handleLinkGoogle}
-                    isLoading={isLinkingGoogle}
-                    className="w-full justify-center"
-                />
-
-                <div className="flex flex-col gap-3 pt-2 border-t border-surface-border">
-                    <label className="flex items-center gap-2 text-xs text-text-muted cursor-pointer hover:text-text transition-colors select-none">
-                        <input
-                            type="checkbox"
-                            checked={dontShowAgain}
-                            onChange={(e) => setDontShowAgain(e.target.checked)}
-                            className="rounded border-surface-border text-accent focus:ring-accent accent-accent h-4 w-4"
-                        />
-                        <span>Don't show SSO on login for this PC</span>
-                    </label>
-
-                    <Button
-                        variant="secondary"
-                        label="Skip for Now"
-                        onClick={handleSkipSSO}
-                        disabled={isLinkingGoogle}
-                        className="w-full justify-center"
-                    />
-                </div>
-            </div>
-        </AuthLayout>
+            </Card>
+        </div>
     );
 };
-
-// --- EXPORTS ---
-export { OnboardingPage };
-export default OnboardingPage;

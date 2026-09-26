@@ -14,21 +14,21 @@ export const useRequest = () => {
     const isMutating = useRequestStore((s) => s.isMutating);
     const error = useRequestStore((s) => s.error);
 
-    const fetchRequests = useRequestStore((s) => s.fetchRequests);
-    const fetchRequestsByRequesterId = useRequestStore((s) => s.fetchRequestsByRequesterId);
-    const fetchRequestById = useRequestStore((s) => s.fetchRequestById);
+    const getRequests = useRequestStore((s) => s.getRequests);
+    const getRequestsByRequesterId = useRequestStore((s) => s.getRequestsByRequesterId);
+    const getRequestById = useRequestStore((s) => s.getRequestById);
     const createRequest = useRequestStore((s) => s.createRequest);
     const updateRequest = useRequestStore((s) => s.updateRequest);
     const updateRequests = useRequestStore((s) => s.updateRequests);
     const deleteRequests = useRequestStore((s) => s.deleteRequests);
-    const fetchMessagesByRequestId = useRequestStore((s) => s.fetchMessagesByRequestId);
-    const createMessage = useRequestStore((s) => s.createMessage);
-    const updateMessage = useRequestStore((s) => s.updateMessage);
-    const deleteMessages = useRequestStore((s) => s.deleteMessages);
-    const fetchAttachmentsByRequestId = useRequestStore((s) => s.fetchAttachmentsByRequestId);
-    const createAttachment = useRequestStore((s) => s.createAttachment);
-    const createAttachments = useRequestStore((s) => s.createAttachments);
-    const deleteAttachments = useRequestStore((s) => s.deleteAttachments);
+    const getRequestMessagesByRequestId = useRequestStore((s) => s.getRequestMessagesByRequestId);
+    const createRequestMessage = useRequestStore((s) => s.createRequestMessage);
+    const updateRequestMessage = useRequestStore((s) => s.updateRequestMessage);
+    const deleteRequestMessages = useRequestStore((s) => s.deleteRequestMessages);
+    const getRequestAttachmentsByRequestId = useRequestStore((s) => s.getRequestAttachmentsByRequestId);
+    const createRequestAttachment = useRequestStore((s) => s.createRequestAttachment);
+    const createRequestAttachments = useRequestStore((s) => s.createRequestAttachments);
+    const deleteRequestAttachments = useRequestStore((s) => s.deleteRequestAttachments);
     const setSelectedRequest = useRequestStore((s) => s.setSelectedRequest);
     const clearError = useRequestStore((s) => s.clearError);
     const reset = useRequestStore((s) => s.reset);
@@ -36,14 +36,14 @@ export const useRequest = () => {
 
     // --- HANDLERS ---
 
-    const handleFetchRequests = useCallback(
-        (filters) => fetchRequests(filters),
-        [fetchRequests],
+    const handleGetRequests = useCallback(
+        (filters) => getRequests(filters),
+        [getRequests],
     );
 
-    const handleFetchById = useCallback(
-        (id) => fetchRequestById(id),
-        [fetchRequestById],
+    const handleGetRequestById = useCallback(
+        (id) => getRequestById(id),
+        [getRequestById],
     );
 
     const handleCreateRequest = useCallback(
@@ -61,14 +61,24 @@ export const useRequest = () => {
         [deleteRequests],
     );
 
-    const handleSendMessage = useCallback(
-        (payload) => createMessage(payload),
-        [createMessage],
+    const handleGetMessages = useCallback(
+        (requestId) => getRequestMessagesByRequestId(requestId),
+        [getRequestMessagesByRequestId],
     );
 
-    const handleAddAttachments = useCallback(
-        (dataList) => createAttachments(dataList),
-        [createAttachments],
+    const handleCreateMessage = useCallback(
+        (payload) => createRequestMessage(payload),
+        [createRequestMessage],
+    );
+
+    const handleGetAttachments = useCallback(
+        (requestId) => getRequestAttachmentsByRequestId(requestId),
+        [getRequestAttachmentsByRequestId],
+    );
+
+    const handleCreateAttachments = useCallback(
+        (dataList) => createRequestAttachments(dataList),
+        [createRequestAttachments],
     );
 
 
@@ -83,23 +93,23 @@ export const useRequest = () => {
         error,
 
         // Handlers
-        handleFetchRequests,
-        handleFetchById,
+        handleGetRequests,
+        handleGetRequestById,
         handleCreateRequest,
         handleUpdateRequest,
         handleDeleteRequests,
-        handleSendMessage,
-        handleAddAttachments,
+        handleGetMessages,
+        handleCreateMessage,
+        handleGetAttachments,
+        handleCreateAttachments,
 
         // Direct
-        fetchRequestsByRequesterId,
+        getRequestsByRequesterId,
         updateRequests,
-        fetchMessagesByRequestId,
-        updateMessage,
-        deleteMessages,
-        fetchAttachmentsByRequestId,
-        createAttachment,
-        deleteAttachments,
+        updateRequestMessage,
+        deleteRequestMessages,
+        createRequestAttachment,
+        deleteRequestAttachments,
         setSelectedRequest,
         clearError,
         reset,

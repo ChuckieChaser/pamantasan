@@ -11,7 +11,7 @@ import {
 
 // --- STORE ---
 
-export const useNotificationStore = create((set, get) => ({
+export const useNotificationStore = create((set) => ({
     // --- STATE ---
     notifications: [],
     isLoading: false,
@@ -21,7 +21,7 @@ export const useNotificationStore = create((set, get) => ({
 
     // --- QUERIES ---
 
-    fetchNotifications: async (filters = {}) => {
+    getNotificationsByRecipientId: async (filters = {}) => {
         set({ isLoading: true, error: null });
         try {
             const notifications = await getNotificationsByRecipientId(filters);
@@ -51,36 +51,36 @@ export const useNotificationStore = create((set, get) => ({
         }
     },
 
-    markAsRead: async (id) => {
+    updateNotification: async (id, payload) => {
         set({ isMutating: true, error: null });
         try {
-            const updated = await updateNotification(id, { isRead: true });
+            const updated = await updateNotification(id, payload);
             set((state) => ({
                 notifications: state.notifications.map((n) =>
-                    n?.id === id ? { ...n, isRead: true, ...updated } : n
+                    n?.id === id ? { ...n, ...updated } : n
                 ),
                 isMutating: false,
             }));
             return updated;
         } catch (error) {
-            set({ isMutating: false, error: error?.message ?? 'Failed to mark notification as read.' });
+            set({ isMutating: false, error: error?.message ?? 'Failed to update notification.' });
             throw error;
         }
     },
 
-    markAllAsRead: async (ids) => {
+    updateNotifications: async (ids, payload) => {
         set({ isMutating: true, error: null });
         try {
-            const result = await updateNotifications(ids, { isRead: true });
+            const result = await updateNotifications(ids, payload);
             set((state) => ({
                 notifications: state.notifications.map((n) =>
-                    ids.includes(n?.id) ? { ...n, isRead: true } : n
+                    ids.includes(n?.id) ? { ...n, ...payload } : n
                 ),
                 isMutating: false,
             }));
             return result;
         } catch (error) {
-            set({ isMutating: false, error: error?.message ?? 'Failed to mark all notifications as read.' });
+            set({ isMutating: false, error: error?.message ?? 'Failed to update notifications.' });
             throw error;
         }
     },

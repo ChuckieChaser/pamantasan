@@ -12,19 +12,19 @@ export const useUser = () => {
     const isMutating = useUserStore((s) => s.isMutating);
     const error = useUserStore((s) => s.error);
 
-    const fetchUsers = useUserStore((s) => s.fetchUsers);
-    const fetchUsersByDepartmentId = useUserStore((s) => s.fetchUsersByDepartmentId);
-    const fetchUserById = useUserStore((s) => s.fetchUserById);
-    const fetchUserByUniversityId = useUserStore((s) => s.fetchUserByUniversityId);
-    const fetchUserByEmail = useUserStore((s) => s.fetchUserByEmail);
+    const getUsers = useUserStore((s) => s.getUsers);
+    const getUsersByDepartmentId = useUserStore((s) => s.getUsersByDepartmentId);
+    const getUserById = useUserStore((s) => s.getUserById);
+    const getUserByUniversityId = useUserStore((s) => s.getUserByUniversityId);
+    const getUserByEmail = useUserStore((s) => s.getUserByEmail);
     const createUser = useUserStore((s) => s.createUser);
     const updateUser = useUserStore((s) => s.updateUser);
     const updateUsers = useUserStore((s) => s.updateUsers);
-    const fetchUserCredential = useUserStore((s) => s.fetchUserCredential);
+    const getUserCredentialByUserId = useUserStore((s) => s.getUserCredentialByUserId);
     const updateUserCredential = useUserStore((s) => s.updateUserCredential);
-    const fetchUserSetting = useUserStore((s) => s.fetchUserSetting);
+    const getUserSettingByUserId = useUserStore((s) => s.getUserSettingByUserId);
     const updateUserSetting = useUserStore((s) => s.updateUserSetting);
-    const fetchUserSessions = useUserStore((s) => s.fetchUserSessions);
+    const getUserSessionsByUserId = useUserStore((s) => s.getUserSessionsByUserId);
     const deleteUserSessions = useUserStore((s) => s.deleteUserSessions);
     const setSelectedUser = useUserStore((s) => s.setSelectedUser);
     const clearError = useUserStore((s) => s.clearError);
@@ -33,14 +33,14 @@ export const useUser = () => {
 
     // --- HANDLERS ---
 
-    const handleFetchUsers = useCallback(
-        (filters) => fetchUsers(filters),
-        [fetchUsers],
+    const handleGetUsers = useCallback(
+        (filters) => getUsers(filters),
+        [getUsers],
     );
 
-    const handleFetchUserById = useCallback(
-        (id) => fetchUserById(id),
-        [fetchUserById],
+    const handleGetUserById = useCallback(
+        (id) => getUserById(id),
+        [getUserById],
     );
 
     const handleCreateUser = useCallback(
@@ -83,8 +83,8 @@ export const useUser = () => {
         error,
 
         // Handlers
-        handleFetchUsers,
-        handleFetchUserById,
+        handleGetUsers,
+        handleGetUserById,
         handleCreateUser,
         handleUpdateUser,
         handleUpdateUsers,
@@ -92,13 +92,13 @@ export const useUser = () => {
         handleUpdateSetting,
         handleDeleteSessions,
 
-        // Direct access (for complex flows)
-        fetchUsersByDepartmentId,
-        fetchUserByUniversityId,
-        fetchUserByEmail,
-        fetchUserCredential,
-        fetchUserSetting,
-        fetchUserSessions,
+        // Direct
+        getUsersByDepartmentId,
+        getUserByUniversityId,
+        getUserByEmail,
+        getUserCredentialByUserId,
+        getUserSettingByUserId,
+        getUserSessionsByUserId,
         setSelectedUser,
         clearError,
         reset,

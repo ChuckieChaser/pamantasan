@@ -23,7 +23,7 @@ export const useDepartmentStore = create((set, get) => ({
 
     // --- QUERIES ---
 
-    fetchDepartments: async (filters = {}) => {
+    getDepartments: async (filters = {}) => {
         set({ isLoading: true, error: null });
         try {
             const departments = await getDepartments(filters);
@@ -35,7 +35,7 @@ export const useDepartmentStore = create((set, get) => ({
         }
     },
 
-    fetchDepartmentById: async (id) => {
+    getDepartmentById: async (id) => {
         set({ isLoading: true, error: null });
         try {
             const cached = get().departments.find((d) => d?.id === id);
@@ -48,7 +48,7 @@ export const useDepartmentStore = create((set, get) => ({
         }
     },
 
-    fetchDepartmentByCode: async (code) => {
+    getDepartmentByCode: async (code) => {
         try {
             const cached = get().departments.find((d) => d?.code?.toUpperCase() === code?.toUpperCase());
             const department = cached ?? await getDepartmentByCode(code);

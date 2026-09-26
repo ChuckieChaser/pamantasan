@@ -33,7 +33,7 @@ export const useUserStore = create((set, get) => ({
 
     // --- QUERIES ---
 
-    fetchUsers: async (filters = {}) => {
+    getUsers: async (filters = {}) => {
         set({ isLoading: true, error: null });
         try {
             const users = await getUsers(filters);
@@ -45,7 +45,7 @@ export const useUserStore = create((set, get) => ({
         }
     },
 
-    fetchUsersByDepartmentId: async (filters = {}) => {
+    getUsersByDepartmentId: async (filters = {}) => {
         set({ isLoading: true, error: null });
         try {
             const users = await getUsersByDepartmentId(filters);
@@ -57,7 +57,7 @@ export const useUserStore = create((set, get) => ({
         }
     },
 
-    fetchUserById: async (id) => {
+    getUserById: async (id) => {
         set({ isLoading: true, error: null });
         try {
             const cached = get().users.find((u) => u?.id === id);
@@ -70,7 +70,7 @@ export const useUserStore = create((set, get) => ({
         }
     },
 
-    fetchUserByUniversityId: async (universityId) => {
+    getUserByUniversityId: async (universityId) => {
         set({ isLoading: true, error: null });
         try {
             const user = await getUserByUniversityId(universityId);
@@ -82,7 +82,7 @@ export const useUserStore = create((set, get) => ({
         }
     },
 
-    fetchUserByEmail: async (email) => {
+    getUserByEmail: async (email) => {
         set({ isLoading: true, error: null });
         try {
             const user = await getUserByEmail(email);
@@ -95,7 +95,7 @@ export const useUserStore = create((set, get) => ({
     },
 
 
-    // --- MUTATIONS ---
+    // --- USER MUTATIONS ---
 
     createUser: async (payload) => {
         set({ isMutating: true, error: null });
@@ -132,8 +132,7 @@ export const useUserStore = create((set, get) => ({
         set({ isMutating: true, error: null });
         try {
             const result = await updateUsers(ids, payload);
-            // Refetch to reflect bulk changes
-            await get().fetchUsers();
+            await get().getUsers();
             set({ isMutating: false });
             return result;
         } catch (error) {
@@ -143,9 +142,9 @@ export const useUserStore = create((set, get) => ({
     },
 
 
-    // --- CREDENTIALS ---
+    // --- CREDENTIAL ---
 
-    fetchUserCredential: async (userId) => {
+    getUserCredentialByUserId: async (userId) => {
         try {
             return await getUserCredentialByUserId(userId);
         } catch (error) {
@@ -167,9 +166,9 @@ export const useUserStore = create((set, get) => ({
     },
 
 
-    // --- SETTINGS ---
+    // --- SETTING ---
 
-    fetchUserSetting: async (userId) => {
+    getUserSettingByUserId: async (userId) => {
         try {
             return await getUserSettingByUserId(userId);
         } catch (error) {
@@ -191,9 +190,9 @@ export const useUserStore = create((set, get) => ({
     },
 
 
-    // --- SESSIONS ---
+    // --- SESSION ---
 
-    fetchUserSessions: async (userId) => {
+    getUserSessionsByUserId: async (userId) => {
         try {
             return await getUserSessionsByUserId(userId);
         } catch (error) {

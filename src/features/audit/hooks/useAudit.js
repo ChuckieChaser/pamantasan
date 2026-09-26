@@ -10,9 +10,9 @@ export const useAudit = () => {
     const isLoading = useAuditStore((s) => s.isLoading);
     const error = useAuditStore((s) => s.error);
 
-    const fetchAuditLogs = useAuditStore((s) => s.fetchAuditLogs);
-    const fetchAuditLogsByActorId = useAuditStore((s) => s.fetchAuditLogsByActorId);
-    const fetchAuditLogsByEntityId = useAuditStore((s) => s.fetchAuditLogsByEntityId);
+    const getAuditLogs = useAuditStore((s) => s.getAuditLogs);
+    const getAuditLogsByActorId = useAuditStore((s) => s.getAuditLogsByActorId);
+    const getAuditLogsByEntityId = useAuditStore((s) => s.getAuditLogsByEntityId);
     const createAuditLog = useAuditStore((s) => s.createAuditLog);
     const clearError = useAuditStore((s) => s.clearError);
     const reset = useAuditStore((s) => s.reset);
@@ -20,24 +20,24 @@ export const useAudit = () => {
 
     // --- HANDLERS ---
 
-    const handleFetchAuditLogs = useCallback(
-        (filters) => fetchAuditLogs(filters),
-        [fetchAuditLogs],
+    const handleGetAuditLogs = useCallback(
+        (filters) => getAuditLogs(filters),
+        [getAuditLogs],
     );
 
-    const handleFetchByActorId = useCallback(
-        (filters) => fetchAuditLogsByActorId(filters),
-        [fetchAuditLogsByActorId],
+    const handleGetAuditLogsByActorId = useCallback(
+        (filters) => getAuditLogsByActorId(filters),
+        [getAuditLogsByActorId],
     );
 
-    const handleFetchByEntityId = useCallback(
-        (filters) => fetchAuditLogsByEntityId(filters),
-        [fetchAuditLogsByEntityId],
+    const handleGetAuditLogsByEntityId = useCallback(
+        (filters) => getAuditLogsByEntityId(filters),
+        [getAuditLogsByEntityId],
     );
 
     /**
-     * Fire-and-forget audit trail creation. Never awaited at call sites.
-     * @param {Object} payload
+     * Fire-and-forget audit trail creation.
+     * Never awaited at call sites — must not block the primary action.
      */
     const logAuditEvent = useCallback(
         (payload) => createAuditLog(payload),
@@ -52,9 +52,9 @@ export const useAudit = () => {
         error,
 
         // Handlers
-        handleFetchAuditLogs,
-        handleFetchByActorId,
-        handleFetchByEntityId,
+        handleGetAuditLogs,
+        handleGetAuditLogsByActorId,
+        handleGetAuditLogsByEntityId,
         logAuditEvent,
 
         // Direct

@@ -30,14 +30,15 @@ const SYSTEM_INSTRUCTION = `You are the Lead AI Document Intelligence Engine for
 Your task is to analyze documents, scans, images, audio recordings, or technical data uploaded to the institutional repository and generate an authoritative, substantive, and content-focused executive summary.
 
 STRICT EXECUTIVE SUMMARIZATION RULES:
-1. "summary": Provide EXACTLY 2 to 3 substantive, content-driven sentences. Separate each sentence with a double newline ("\\n\\n") to make readability and visual clarity effortless.
-   - PURE CONTENT FOCUS: Focus EXCLUSIVELY on the substantive content, subject matter, core narrative, key findings, and outcomes so users can quickly understand long complex files without reading the entire document.
+1. "summary": Provide about 1 to 3 substantive, content-driven sentences, scaling dynamically with the amount of content in the file.
+   - PROPORTIONAL DENSITY:
+     * Brief/sparse files (e.g., short notes, receipts, certificates, single-paragraph memos): Provide 1 crisp, substantive sentence capturing the core subject and takeaway.
+     * Moderate files (e.g., circulars, grade sheets, syllabi, meeting minutes): Provide 2 substantive sentences covering the primary subject and key findings or requirements.
+     * Extensive/dense files (e.g., multi-page policies, comprehensive reports, contracts, detailed academic guidelines): Provide 3 substantive sentences detailing core context, key clauses/data, and operational conclusions.
+   - FORMATTING: When outputting multiple sentences, separate each sentence with a double newline ("\\n\\n") for effortless readability and visual clarity.
+   - PURE CONTENT FOCUS: Focus EXCLUSIVELY on the substantive content, subject matter, core narrative, key findings, and outcomes so users can quickly understand files without reading the entire document.
    - ABSOLUTE PROHIBITION ON FILE PROPERTIES: NEVER mention file properties, file size (e.g., "13.6 KB", "bytes", "MB"), file formats/extensions (e.g., ".pdf", ".png", "image", "binary format"), or storage statements (e.g., "in repository archives", "asset size"). The user interface already displays file properties elsewhere.
    - NO FILLER INTROS: Never start with filler phrases (e.g. "This document is...", "The uploaded file...", "An image showing...", "This is a..."). Immediately identify the core subject matter and context.
-   - STRUCTURE (3 distinct lines separated by "\\n\\n"):
-     * Line 1 (Sentence 1 - Core Subject & Context): State the specific subject matter, the institutional context, and the primary objective of the document.
-     * Line 2 (Sentence 2 - Substantive Findings & Key Data): Detail the key findings, specific entities, concrete numbers/grades/amounts, core clauses, or policy directives discussed in the content.
-     * Line 3 (Sentence 3 - Conclusions & Outcomes): State the overarching takeaway, required action, compliance directive, or official conclusion established by the document.
 
 2. "classification": Accurately classify into EXACTLY one official institutional security tier:
    - "PUBLIC": Campus-wide announcements, press releases, public academic calendars, student handbooks, general circulars, approved flyers.
@@ -616,7 +617,7 @@ const analyzeDocumentFile = async ({
             text: `Compare the two versions of "${fileName}" carefully. Focus purely on the substantive content and changes (never mention file size, format, or storage properties).
 Return a valid JSON object with exactly these three fields:
 {
-  "summary": "Provide exactly 2 to 3 substantive, content-driven sentences separated by newlines (\\n\\n) explaining what the document covers, key details, and administrative outcome.",
+  "summary": "Provide about 1 to 3 substantive sentences (scaled to content depth, separated by \\n\\n) explaining what the document covers, key details, and administrative outcome.",
   "classification": "Exactly one of: PUBLIC, PRIVATE, RESTRICTED, CONFIDENTIAL",
   "changeSummary": "Bulleted markdown list detailing specific changes between previous and new versions. Each bullet MUST begin with '- ' on its own line and end with a double newline (\\n\\n) so there is clear blank space between each bullet item."
 }`,
@@ -629,7 +630,7 @@ Return a valid JSON object with exactly these three fields:
 Even if the filename is generic or arbitrary, interpret the actual text content and official directives.
 Return a valid JSON object with exactly these three fields:
 {
-  "summary": "Provide exactly 2 to 3 substantive, content-driven sentences separated by newlines (\\n\\n) explaining what the document covers, key directives or findings, and administrative outcome.",
+  "summary": "Provide about 1 to 3 substantive sentences (scaled to content depth: 1 for brief files, up to 3 for dense documents, separated by \\n\\n) explaining what the document covers, key directives or findings, and administrative outcome.",
   "classification": "Exactly one of: PUBLIC, PRIVATE, RESTRICTED, CONFIDENTIAL",
   "changeSummary": "Initial file upload"
 }`,

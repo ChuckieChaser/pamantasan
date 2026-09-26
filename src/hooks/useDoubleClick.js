@@ -1,5 +1,5 @@
 // --- IMPORTS ---
-import { useRef, useEffect, useCallback } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 
 
 // --- CONFIGURATIONS ---
@@ -7,8 +7,7 @@ const DEFAULT_DELAY_MS = 250;
 
 
 // --- HOOK ---
-const useDoubleClick = ({ onClick, onDoubleClick, delay = DEFAULT_DELAY_MS } = {}) => {
-    // REFS
+export const useDoubleClick = ({ onClick, onDoubleClick, delay = DEFAULT_DELAY_MS } = {}) => {
     const timerRef = useRef(null);
     const onClickRef = useRef(onClick);
     const onDoubleClickRef = useRef(onDoubleClick);
@@ -18,7 +17,6 @@ const useDoubleClick = ({ onClick, onDoubleClick, delay = DEFAULT_DELAY_MS } = {
         onDoubleClickRef.current = onDoubleClick;
     }, [onClick, onDoubleClick]);
 
-    // CLEANUP
     useEffect(() => {
         return () => {
             if (timerRef.current !== null) {
@@ -27,15 +25,12 @@ const useDoubleClick = ({ onClick, onDoubleClick, delay = DEFAULT_DELAY_MS } = {
         };
     }, []);
 
-    // CONTROLS
     const handleClick = useCallback(
         (item, event) => {
             if (timerRef.current !== null) {
                 clearTimeout(timerRef.current);
-
                 timerRef.current = null;
                 onDoubleClickRef.current?.(item, event);
-                
                 return;
             }
 
@@ -49,8 +44,3 @@ const useDoubleClick = ({ onClick, onDoubleClick, delay = DEFAULT_DELAY_MS } = {
 
     return handleClick;
 };
-
-
-// --- EXPORTS ---
-export { useDoubleClick };
-

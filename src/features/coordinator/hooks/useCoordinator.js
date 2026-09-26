@@ -12,9 +12,9 @@ export const useCoordinator = () => {
     const isMutating = useCoordinatorStore((s) => s.isMutating);
     const error = useCoordinatorStore((s) => s.error);
 
-    const fetchCoordinatorRequests = useCoordinatorStore((s) => s.fetchCoordinatorRequests);
-    const fetchCoordinatorRequestsByRequesterId = useCoordinatorStore((s) => s.fetchCoordinatorRequestsByRequesterId);
-    const fetchCoordinatorRequestById = useCoordinatorStore((s) => s.fetchCoordinatorRequestById);
+    const getCoordinatorRequests = useCoordinatorStore((s) => s.getCoordinatorRequests);
+    const getCoordinatorRequestsByRequesterId = useCoordinatorStore((s) => s.getCoordinatorRequestsByRequesterId);
+    const getCoordinatorRequestById = useCoordinatorStore((s) => s.getCoordinatorRequestById);
     const createCoordinatorRequest = useCoordinatorStore((s) => s.createCoordinatorRequest);
     const updateCoordinatorRequest = useCoordinatorStore((s) => s.updateCoordinatorRequest);
     const updateCoordinatorRequests = useCoordinatorStore((s) => s.updateCoordinatorRequests);
@@ -26,27 +26,27 @@ export const useCoordinator = () => {
 
     // --- HANDLERS ---
 
-    const handleFetchRequests = useCallback(
-        (filters) => fetchCoordinatorRequests(filters),
-        [fetchCoordinatorRequests],
+    const handleGetCoordinatorRequests = useCallback(
+        (filters) => getCoordinatorRequests(filters),
+        [getCoordinatorRequests],
     );
 
-    const handleFetchById = useCallback(
-        (id) => fetchCoordinatorRequestById(id),
-        [fetchCoordinatorRequestById],
+    const handleGetCoordinatorRequestById = useCallback(
+        (id) => getCoordinatorRequestById(id),
+        [getCoordinatorRequestById],
     );
 
-    const handleCreateRequest = useCallback(
+    const handleCreateCoordinatorRequest = useCallback(
         (payload) => createCoordinatorRequest(payload),
         [createCoordinatorRequest],
     );
 
-    const handleUpdateRequest = useCallback(
+    const handleUpdateCoordinatorRequest = useCallback(
         (id, payload) => updateCoordinatorRequest(id, payload),
         [updateCoordinatorRequest],
     );
 
-    const handleDeleteRequests = useCallback(
+    const handleDeleteCoordinatorRequests = useCallback(
         (ids) => deleteCoordinatorRequests(ids),
         [deleteCoordinatorRequests],
     );
@@ -61,14 +61,14 @@ export const useCoordinator = () => {
         error,
 
         // Handlers
-        handleFetchRequests,
-        handleFetchById,
-        handleCreateRequest,
-        handleUpdateRequest,
-        handleDeleteRequests,
+        handleGetCoordinatorRequests,
+        handleGetCoordinatorRequestById,
+        handleCreateCoordinatorRequest,
+        handleUpdateCoordinatorRequest,
+        handleDeleteCoordinatorRequests,
 
         // Direct
-        fetchCoordinatorRequestsByRequesterId,
+        getCoordinatorRequestsByRequesterId,
         updateCoordinatorRequests,
         setSelectedCoordinatorRequest,
         clearError,

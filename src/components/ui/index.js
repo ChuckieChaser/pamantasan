@@ -1,7 +1,8 @@
 // --- EXPORTS ---
-export { Account } from './Account';
-export { GlobalSearchDropdown } from './GlobalSearchDropdown';
-export { Notifications } from './Notifications';
-export { Settings } from './Settings';
-export { Sidebar } from './Sidebar';
-export { TopBar } from './TopBar';
+export { Avatar } from './Avatar';
+export { Badge } from './Badge';
+export { Button } from './Button';
+export { Card } from './Card';
+export { Callout } from './Callout';
+export { SegmentedControl } from './SegmentedControl';
+export { Toggle } from './Toggle';

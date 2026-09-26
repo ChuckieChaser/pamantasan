@@ -11,10 +11,10 @@ export const useNotification = () => {
     const isMutating = useNotificationStore((s) => s.isMutating);
     const error = useNotificationStore((s) => s.error);
 
-    const fetchNotifications = useNotificationStore((s) => s.fetchNotifications);
+    const getNotificationsByRecipientId = useNotificationStore((s) => s.getNotificationsByRecipientId);
     const createNotification = useNotificationStore((s) => s.createNotification);
-    const markAsRead = useNotificationStore((s) => s.markAsRead);
-    const markAllAsRead = useNotificationStore((s) => s.markAllAsRead);
+    const updateNotification = useNotificationStore((s) => s.updateNotification);
+    const updateNotifications = useNotificationStore((s) => s.updateNotifications);
     const deleteNotifications = useNotificationStore((s) => s.deleteNotifications);
     const clearError = useNotificationStore((s) => s.clearError);
     const reset = useNotificationStore((s) => s.reset);
@@ -25,23 +25,23 @@ export const useNotification = () => {
 
     // --- HANDLERS ---
 
-    const handleFetchNotifications = useCallback(
-        (filters) => fetchNotifications(filters),
-        [fetchNotifications],
+    const handleGetNotifications = useCallback(
+        (filters) => getNotificationsByRecipientId(filters),
+        [getNotificationsByRecipientId],
     );
 
     const handleMarkAsRead = useCallback(
-        (id) => markAsRead(id),
-        [markAsRead],
+        (id) => updateNotification(id, { isRead: true }),
+        [updateNotification],
     );
 
     const handleMarkAllAsRead = useCallback(
         () => {
             const unreadIds = notifications.filter((n) => !n?.isRead).map((n) => n.id);
             if (unreadIds.length === 0) return Promise.resolve();
-            return markAllAsRead(unreadIds);
+            return updateNotifications(unreadIds, { isRead: true });
         },
-        [notifications, markAllAsRead],
+        [notifications, updateNotifications],
     );
 
     const handleDeleteNotifications = useCallback(
@@ -60,13 +60,16 @@ export const useNotification = () => {
         error,
 
         // Handlers
-        handleFetchNotifications,
+        handleGetNotifications,
         handleMarkAsRead,
         handleMarkAllAsRead,
         handleDeleteNotifications,
 
         // Direct
+        getNotificationsByRecipientId,
         createNotification,
+        updateNotification,
+        updateNotifications,
         clearError,
         reset,
     };
