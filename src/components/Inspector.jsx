@@ -63,6 +63,7 @@ import { Modal } from './Modal';
 import { SelectField, TextField } from './Fields';
 import { SegmentSelection } from './Selections';
 import { Account } from './ui/Account';
+import { formatMimeTypeLabel } from './common';
 import { constants } from '../constants';
 import { storageService, coordinatorApprovalService } from '../services';
 
@@ -151,6 +152,7 @@ const Inspector = ({
     item = null,
     currentUser = null,
     targetTab = null,
+    onTabChange = null,
     onAction,
     className,
     ...props
@@ -213,8 +215,13 @@ const Inspector = ({
 
     if (item?.id !== previousItemId) {
         setPreviousItemId(item?.id);
-        const resolvedTab = normalizeTab(targetTab || item?._targetTab || 'information');
-        setActiveTab(isMember && resolvedTab === 'share' ? 'information' : resolvedTab);
+        const explicitTab = targetTab || item?._targetTab;
+        if (explicitTab) {
+            const resolvedTab = normalizeTab(explicitTab);
+            const target = isMember && resolvedTab === 'share' ? 'information' : resolvedTab;
+            setActiveTab(target);
+            onTabChange?.(target);
+        }
         setChatInputText('');
         setStagedAttachments([]);
         setIsAttachModalOpen(false);
@@ -408,8 +415,9 @@ const Inspector = ({
                     : (latestVer?.classification ?? item.classification ?? constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED),
                 version: item.isFolder
                     ? '—'
-                    : (latestVer ? `v${latestVer.versionNumber ?? latestVer.version ?? 1}.0` : item.version),
-                sizeBytes: latestVer?.sizeBytes ?? item.sizeBytes,
+                    : (latestVer ? `v${latestVer.versionNumber ?? latestVer.version ?? 1}.0` : (item.version || 'v1.0')),
+                sizeBytes: latestVer?.sizeBytes ?? item.sizeBytes ?? (typeof item.size === 'number' ? item.size : undefined),
+                size: item.size || (latestVer?.sizeBytes ? formatBytes(latestVer.sizeBytes) : (item.sizeBytes ? formatBytes(item.sizeBytes) : null)),
                 mimeType: latestVer?.mimeType ?? item.mimeType,
                 path: latestVer?.path ?? item.path,
                 checksum: latestVer?.checksum ?? item.checksum,
@@ -516,11 +524,15 @@ const Inspector = ({
             );
         }
 
+        const parsedVersion = item.version
+            ? (parseInt(String(item.version).replace(/^v/i, '').split('.')[0], 10) || 1)
+            : 1;
+
         return [
             {
                 id:             `ver-${item.id}`,
                 documentId:     item.id,
-                version:        item.version ? parseInt(String(item.version).replace(/\D/g, '')) || 1 : 1,
+                version:        parsedVersion,
                 sizeBytes:      item.sizeBytes ?? 1048576,
                 classification: item.classification ?? constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED,
                 changeSummary:  item.changeSummary ?? 'Initial document release.',
@@ -908,9 +920,12 @@ const Inspector = ({
     useEffect(() => {
         if (tabOptions.length > 0 && !tabOptions.some((opt) => opt.value === activeTab)) {
             const fallback = tabOptions[0]?.value || 'information';
-            queueMicrotask(() => setActiveTab(fallback));
+            queueMicrotask(() => {
+                setActiveTab(fallback);
+                onTabChange?.(fallback);
+            });
         }
-    }, [tabOptions, activeTab]);
+    }, [tabOptions, activeTab, onTabChange]);
 
     const attachableDocuments = useMemo(() => {
         return allDocuments
@@ -1084,7 +1099,7 @@ const Inspector = ({
         setUserFormFirstName(u?.firstName ?? '');
         setUserFormMiddleName(u?.middleName ?? '');
         setUserFormLastName(u?.lastName ?? '');
-        setUserFormEmail(u?.email ?? '');
+        setUserFormEmail(u?.email ? u.email.replace(/@.*$/, '') : '');
         setUserFormRole(rawRole);
         setUserFormDepartmentId(isLocked ? resolvedRmoId : (u?.departmentId ?? allDepartments[0]?.id ?? ''));
         setUserFormAvatarPath(u?.avatarPath ?? null);
@@ -1099,9 +1114,11 @@ const Inspector = ({
         if (!userFormFirstName.trim()) errors.firstName = 'First name is required.';
         if (!userFormLastName.trim()) errors.lastName = 'Last name is required.';
 
-        const cleanEmail = userFormEmail.trim().toLowerCase();
+        const rawUsername = userFormEmail.trim().toLowerCase().replace(/@.*$/, '');
+        const cleanEmail = rawUsername ? `${rawUsername}${constants.INSTITUTIONAL_CONFIGURATION.EMAIL_DOMAIN}` : '';
+
         if (!cleanEmail) {
-            errors.email = 'Email is required.';
+            errors.email = 'Email username is required.';
         } else if (!cleanEmail.endsWith(constants.INSTITUTIONAL_CONFIGURATION.EMAIL_DOMAIN)) {
             errors.email = `Must end with ${constants.INSTITUTIONAL_CONFIGURATION.EMAIL_DOMAIN}`;
         } else if (!constants.VALIDATION_PATTERNS.EMAIL.test(cleanEmail)) {
@@ -1145,7 +1162,7 @@ const Inspector = ({
                         firstName: userFormFirstName.trim(),
                         middleName: userFormMiddleName.trim() || null,
                         lastName: userFormLastName.trim(),
-                        email: userFormEmail.trim().toLowerCase(),
+                        email: cleanEmail,
                         departmentId: finalDepartmentId,
                         role: userFormRole,
                         avatarPath: uploadedAvatarPath,
@@ -1176,7 +1193,7 @@ const Inspector = ({
                     firstName: userFormFirstName.trim(),
                     middleName: userFormMiddleName.trim() || null,
                     lastName: userFormLastName.trim(),
-                    email: userFormEmail.trim().toLowerCase(),
+                    email: cleanEmail,
                     departmentId: finalDepartmentId,
                     role: userFormRole,
                     avatarPath: uploadedAvatarPath,
@@ -1436,7 +1453,10 @@ const Inspector = ({
     }
 
     // DERIVED VALUES
-    const primaryTitle = activeItem.title ?? activeItem.name ?? activeItem.subject ?? 'Record Details';
+    const rawTitle = activeItem.title ?? activeItem.name ?? activeItem.subject ?? 'Record Details';
+    const primaryTitle = (isFolder || isUser || isDepartment || isDocumentRequest || isCoordinatorRequest)
+        ? rawTitle
+        : (typeof rawTitle === 'string' ? rawTitle.replace(/\.[^/.]+$/, '').trim() || rawTitle : rawTitle);
     const primarySubtitle =
         activeItem.code ??
         activeItem.universityId ??
@@ -1459,9 +1479,9 @@ const Inspector = ({
     const formattedUpdatedDate = formatTimestamp(
         activeItem.updatedAt ?? activeItem.createdAt ?? activeItem.date
     ) ?? formattedCreatedDate;
-    const formattedFileSize = (activeItem.sizeBytes !== undefined && activeItem.sizeBytes !== null)
+    const formattedFileSize = (activeItem.sizeBytes !== undefined && activeItem.sizeBytes !== null && activeItem.sizeBytes > 0)
         ? formatBytes(activeItem.sizeBytes)
-        : (activeItem.size ?? (isFolder ? '0 B' : null));
+        : (activeItem.size && activeItem.size !== '—' ? activeItem.size : (isFolder ? '0 B' : null));
     const mimeType = activeItem.mimeType ?? getMimeTypeFromExtension(activeItem.name ?? activeItem.title);
     const checksum = activeItem.checksum ?? null;
 
@@ -1565,7 +1585,10 @@ const Inspector = ({
                 <SegmentSelection
                     value={activeTab}
                     options={tabOptions}
-                    onChange={setActiveTab}
+                    onChange={(newTab) => {
+                        setActiveTab(newTab);
+                        onTabChange?.(newTab);
+                    }}
                     className="w-full justify-stretch [&>button]:flex-1 mt-1"
                 />
             </div>
@@ -1693,10 +1716,10 @@ const Inspector = ({
                                                     <FileType className={ICON_STYLE} /> MIME Type
                                                 </span>
                                                 <span
-                                                    className="text-xs text-text-muted truncate max-w-48 cursor-default select-text"
+                                                    className="text-xs text-text font-medium truncate max-w-48 cursor-default select-text"
                                                     title={mimeType}
                                                 >
-                                                    {mimeType}
+                                                    {formatMimeTypeLabel(mimeType)}
                                                 </span>
                                             </div>
                                         )}
@@ -3437,23 +3460,11 @@ const Inspector = ({
                                                     </span>
                                                 </div>
                                             </div>
-                                            {canSeePendingStatus && pendingStatusRequest?.action === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_REOPEN ? (
+                                            {canSeePendingStatus && (
                                                 <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-700 dark:text-amber-300 shrink-0">
                                                     <Clock className="w-3.5 h-3.5 text-amber-500 animate-pulse shrink-0" />
-                                                    <span className="font-semibold">Reopen Awaiting Approval</span>
+                                                    <span className="font-semibold">Action Awaiting Approval</span>
                                                 </div>
-                                            ) : isStaff && (
-                                                <Button
-                                                    variant="secondary"
-                                                    size="sm"
-                                                    leadingIcon={RotateCcw}
-                                                    onClick={() => handleActionClick('open_request')}
-                                                    isLoading={activeActionLoading === 'open_request'}
-                                                    isDisabled={Boolean(activeActionLoading) || Boolean(canSeePendingStatus)}
-                                                    className="h-7 px-2.5 text-[11px] shrink-0"
-                                                >
-                                                    Reopen
-                                                </Button>
                                             )}
                                         </div>
                                     );
@@ -3812,7 +3823,7 @@ const Inspector = ({
                                     Reject
                                 </Button>
                             </div>
-                        ) : (
+                        ) : item.status === constants.COORDINATOR_REQUESTS_STATUS.PENDING ? (
                             <Button
                                 variant="destructive"
                                 leadingIcon={Trash2}
@@ -3821,7 +3832,7 @@ const Inspector = ({
                             >
                                 Delete
                             </Button>
-                        )}
+                        ) : null}
                     </div>
                 )}
 
@@ -3907,29 +3918,20 @@ const Inspector = ({
                                         Reject
                                     </Button>
                                 </div>
-                            ) : (
+                            ) : null
+                        ) : (
+                            activeItem.status === constants.DOCUMENT_REQUESTS_STATUS.OPEN ? (
                                 <Button
-                                    variant="primary"
-                                    leadingIcon={RotateCcw}
-                                    onClick={() => handleActionClick('open_request')}
-                                    isLoading={activeActionLoading === 'open_request'}
-                                    isDisabled={Boolean(activeActionLoading) || Boolean(canSeePendingStatus)}
+                                    variant="destructive"
+                                    leadingIcon={Trash2}
+                                    onClick={() => handleActionClick('delete')}
+                                    isLoading={activeActionLoading === 'delete'}
+                                    isDisabled={Boolean(activeActionLoading)}
                                     className="w-full justify-center"
                                 >
-                                    Open
+                                    Delete
                                 </Button>
-                            )
-                        ) : (
-                            <Button
-                                variant="destructive"
-                                leadingIcon={Trash2}
-                                onClick={() => handleActionClick('delete')}
-                                isLoading={activeActionLoading === 'delete'}
-                                isDisabled={Boolean(activeActionLoading)}
-                                className="w-full justify-center"
-                            >
-                                Delete
-                            </Button>
+                            ) : null
                         )}
                     </div>
                 )}
@@ -4027,7 +4029,7 @@ const Inspector = ({
                     <div className="flex flex-col gap-4 py-2">
                         <TextField
                             label="Code"
-                            placeholder="Enter your department code"
+                            placeholder="Enter Code"
                             value={deptFormCode}
                             onChange={(changeEvent) => {
                                 setDeptFormCode(changeEvent.target.value.toUpperCase());
@@ -4038,7 +4040,7 @@ const Inspector = ({
                         />
                         <TextField
                             label="Name"
-                            placeholder="Enter your department name"
+                            placeholder="Enter Name"
                             value={deptFormName}
                             onChange={(changeEvent) => {
                                 setDeptFormName(changeEvent.target.value);
@@ -4160,13 +4162,18 @@ const Inspector = ({
                             {/* EMAIL */}
                             <TextField
                                 label="Email Address"
-                                type="email"
-                                placeholder="name@pamantasan.edu.ph"
+                                placeholder="Enter username"
                                 value={userFormEmail}
+                                suffixButton={constants.INSTITUTIONAL_CONFIGURATION.EMAIL_DOMAIN}
                                 onChange={(e) => {
-                                    setUserFormEmail(e.target.value);
+                                    let val = e.target.value;
+                                    if (val.includes('@')) {
+                                        val = val.replace(/@.*$/, '');
+                                    }
+                                    setUserFormEmail(val);
                                     if (userFormErrors.email) setUserFormErrors((prev) => ({ ...prev, email: undefined }));
                                 }}
+                                helperText={`Domain: ${constants.INSTITUTIONAL_CONFIGURATION.EMAIL_DOMAIN}`}
                                 required
                                 error={userFormErrors.email}
                             />

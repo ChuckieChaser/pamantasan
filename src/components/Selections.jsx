@@ -13,7 +13,7 @@ const NAVIGATION_ITEM_STATE_STYLE = {
     inactive: 'bg-surface text-text-muted border-surface-border hover:text-text hover:bg-surface-hover',
 };
 
-const TOGGLE_BASE_STYLE = 'h-7 w-7 inline-flex items-center justify-center rounded-md border transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50';
+const TOGGLE_BASE_STYLE = 'h-9 w-9 inline-flex items-center justify-center rounded-md border transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-50';
 const TOGGLE_STATE_STYLE = {
     active:   'bg-accent-background text-accent border-accent-border hover:bg-accent-background',
     inactive: 'bg-transparent text-text-muted border-transparent hover:text-text hover:bg-surface-hover hover:border-surface-border',

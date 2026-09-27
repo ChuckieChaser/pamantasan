@@ -515,6 +515,7 @@ const documentService = {
             resolverId: payload.resolverId ?? null,
             subject: payload.subject,
             status: payload.status ?? constants.DOCUMENT_REQUESTS_STATUS.OPEN,
+            rejectionReason: payload.rejectionReason ?? null,
             createdAt: timestamp,
             updatedAt: payload.updatedAt || timestamp,
         });
@@ -530,6 +531,7 @@ const documentService = {
             resolver: payload.resolver ?? null,
             subject: payload.subject,
             status: payload.status ?? constants.DOCUMENT_REQUESTS_STATUS.OPEN,
+            rejectionReason: payload.rejectionReason ?? null,
             createdAt: timestamp,
             updatedAt: payload.updatedAt || timestamp,
         };
@@ -542,6 +544,7 @@ const documentService = {
             resolverId: payload.resolverId,
             subject: payload.subject,
             status: payload.status,
+            rejectionReason: payload.rejectionReason,
             updatedAt: timestamp,
         });
 
@@ -751,6 +754,7 @@ function formatLiveDocumentRequest(rawRequest) {
         resolverId: resolverId,
         subject: rawRequest.subject,
         status: rawRequest.status,
+        rejectionReason: rawRequest.rejectionReason ?? null,
         createdAt: rawRequest.createdAt,
         updatedAt: rawRequest.updatedAt,
     };

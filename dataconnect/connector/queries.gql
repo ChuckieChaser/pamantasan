@@ -497,6 +497,7 @@ query FetchDocumentRequests @auth(level: PUBLIC) {
         }
         subject
         status
+        rejectionReason
         createdAt
         updatedAt
     }
@@ -521,6 +522,7 @@ query FetchDocumentRequestsByRequesterId(
         }
         subject
         status
+        rejectionReason
         createdAt
         updatedAt
     }
@@ -545,6 +547,7 @@ query FetchDocumentRequestById(
         }
         subject
         status
+        rejectionReason
         createdAt
         updatedAt
     }

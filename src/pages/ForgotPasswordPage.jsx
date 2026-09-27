@@ -61,11 +61,13 @@ const ForgotPasswordPage = ({ onBackToLogin }) => {
             event.stopPropagation();
         }
 
-        const trimmedEmail = email.trim().toLowerCase();
+        const rawUsername = email.trim().toLowerCase().replace(/@.*$/, '');
+        const trimmedEmail = rawUsername ? `${rawUsername}${constants.INSTITUTIONAL_CONFIGURATION.EMAIL_DOMAIN}` : '';
+
         const errors = {};
 
         if (!trimmedEmail) {
-            errors.email = 'Email is required.';
+            errors.email = 'Email username is required.';
         } else if (!constants.VALIDATION_PATTERNS.EMAIL.test(trimmedEmail)) {
             errors.email = `Must be ${constants.INSTITUTIONAL_CONFIGURATION.EMAIL_DOMAIN}`;
         }
@@ -406,17 +408,21 @@ const ForgotPasswordPage = ({ onBackToLogin }) => {
             <form onSubmit={handleEmailSubmit} className="flex flex-col gap-4">
                 <TextField
                     label="Email"
-                    placeholder="Enter your email"
+                    placeholder="Enter username"
                     value={email}
+                    suffixButton={constants.INSTITUTIONAL_CONFIGURATION.EMAIL_DOMAIN}
                     onChange={(e) => {
-                        setEmail(e.target.value);
+                        let val = e.target.value;
+                        if (val.includes('@')) {
+                            val = val.replace(/@.*$/, '');
+                        }
+                        setEmail(val);
                         if (fieldErrors.email) setFieldErrors((p) => ({ ...p, email: '' }));
                     }}
                     error={fieldErrors.email}
                     leadingIcon={Mail}
-                    type="email"
                     autoComplete="email"
-                    helper="Must be @plpasig.edu.ph"
+                    helperText={`Domain: ${constants.INSTITUTIONAL_CONFIGURATION.EMAIL_DOMAIN}`}
                     required
                     autoFocus
                 />

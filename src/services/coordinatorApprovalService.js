@@ -287,9 +287,18 @@ const coordinatorApprovalService = {
                 const docStore = useDocumentStore.getState();
                 const reqId = payloadData.documentRequestId ?? payloadData.id;
                 if (!reqId) throw new Error('Document Request ID missing from request payload.');
+                const reason = payloadData.rejectionReason || null;
                 await docStore.updateDocumentRequest(reqId, {
                     status: constants.DOCUMENT_REQUESTS_STATUS.REJECTED,
+                    rejectionReason: reason,
                 });
+                if (reason) {
+                    await docStore.insertDocumentRequestMessage({
+                        documentRequestId: reqId,
+                        userId: adminUser?.id || coordinatorId,
+                        message: `Rejection Note: ${reason}`,
+                    }).catch(() => {});
+                }
                 break;
             }
 
@@ -335,7 +344,27 @@ const coordinatorApprovalService = {
     },
 
     /**
-     * Rejects a coordinator request. Per user ruleset: "reject simply removes it, it wont go and do it".
+     * Updates coordinator request status with rejectionReason and syncs data payload.
+     */
+    updateCoordinatorRequestStatus: async ({ requestId, status, rejectionReason = null }) => {
+        if (!requestId) throw new Error('Request ID is required.');
+        const coordinatorStore = useCoordinatorStore.getState();
+        const existing = coordinatorStore.coordinatorRequests.find((r) => r.id === requestId);
+        const currentData = parsePayloadData(existing?.data);
+        const reason = rejectionReason || currentData.rejectionReason || null;
+        const updatedData = {
+            ...currentData,
+            ...(reason ? { rejectionReason: reason } : {}),
+        };
+        return await coordinatorStore.updateCoordinatorRequest(requestId, {
+            status,
+            rejectionReason: reason,
+            data: JSON.stringify(updatedData),
+        });
+    },
+
+    /**
+     * Rejects a coordinator request and updates its status to REJECTED with optional rejection reason.
      */
     rejectCoordinatorRequest: async (coordinatorRequest) => {
         if (!coordinatorRequest?.id) {
@@ -347,8 +376,18 @@ const coordinatorApprovalService = {
                 ? coordinatorRequest.requester?.id
                 : coordinatorRequest.requesterId ?? coordinatorRequest.requester) || null;
 
-        // Delete from store/database so it is cleanly removed
-        const isDeleted = await useCoordinatorStore.getState().deleteCoordinatorRequest(coordinatorRequest.id);
+        const currentData = parsePayloadData(coordinatorRequest.data);
+        const reason = coordinatorRequest.rejectionReason || currentData.rejectionReason || null;
+        const updatedData = {
+            ...currentData,
+            rejectionReason: reason,
+        };
+
+        const updated = await useCoordinatorStore.getState().updateCoordinatorRequest(coordinatorRequest.id, {
+            status: constants.COORDINATOR_REQUESTS_STATUS.REJECTED,
+            rejectionReason: reason,
+            data: JSON.stringify(updatedData),
+        });
 
         systemEventService.recordSystemEvent({
             actorId: null,
@@ -357,13 +396,14 @@ const coordinatorApprovalService = {
             action: constants.AUDIT_LOGS_ACTION.REJECTED,
             data: {
                 action: coordinatorRequest.action,
+                rejectionReason: reason,
                 targetCoordinatorId: coordinatorId,
             },
             targetUserIds: coordinatorId ? [coordinatorId] : [],
             isMajor: true,
         }).catch(() => {});
 
-        return isDeleted;
+        return updated;
     },
 };
 

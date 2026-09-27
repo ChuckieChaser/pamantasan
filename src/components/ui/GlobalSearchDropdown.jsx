@@ -20,7 +20,7 @@ import { Container } from '../Container';
 import { constants } from '../../constants';
 
 // --- CONFIGURATIONS ---
-const BASE_STYLE = 'absolute right-0 top-full mt-2 z-50 w-80 sm:w-96 md:w-[32rem]';
+const BASE_STYLE = 'absolute left-0 top-full mt-2 z-50 w-[calc(100vw-2rem)] sm:w-96 md:w-[32rem] max-w-[90vw]';
 
 const getClassificationIcon = (classification) => {
     switch (classification) {

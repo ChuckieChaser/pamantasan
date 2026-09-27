@@ -159,8 +159,10 @@ const DocumentViewerModal = ({
         return [...versionsForDoc].sort((a, b) => (b.version || 1) - (a.version || 1))[0];
     }, [targetVersion, resolvedDoc, documentVersions]);
 
-    const fileName = activeVersion?.path?.split('/')?.pop() || resolvedDoc?.name || resolvedDoc?.title || 'Document';
-    const fileExtension = useMemo(() => getFileExtension(fileName), [fileName]);
+    const rawFileName = activeVersion?.path?.split('/')?.pop() || resolvedDoc?.name || resolvedDoc?.title || 'Document';
+    const fileName = rawFileName;
+    const fileExtension = useMemo(() => getFileExtension(rawFileName), [rawFileName]);
+    const cleanDisplayName = (resolvedDoc?.name || resolvedDoc?.title || rawFileName).replace(/\.[^/.]+$/, '').trim() || rawFileName;
     const isEditable = EDITABLE_EXTENSIONS.has(fileExtension);
     const isImage = IMAGE_EXTENSIONS.has(fileExtension);
     const isPdf = fileExtension === 'pdf';
@@ -764,9 +766,9 @@ const DocumentViewerModal = ({
                             <div className="flex items-center gap-1.5 min-w-0">
                                 <h2
                                     className="text-sm font-semibold text-text truncate max-w-[140px] sm:max-w-[240px] md:max-w-[320px] lg:max-w-[420px]"
-                                    title={fileName}
+                                    title={cleanDisplayName}
                                 >
-                                    {fileName}
+                                    {cleanDisplayName}
                                 </h2>
                                 <span className="px-1.5 py-0.2 rounded text-[11px] font-mono bg-surface-hover text-text-muted border border-surface-border shrink-0">
                                     v{versionNumber}.0

@@ -32,7 +32,7 @@ const DEFAULT_NAVIGATION_ITEMS = [
     },
 ];
 
-const DETAIL_PANEL_BASE_STYLE = 'w-96 lg:w-[26rem] xl:w-[30rem] h-screen sticky top-0 bg-surface border-l border-surface-border flex flex-col shrink-0 z-20 transition-all duration-200';
+const DETAIL_PANEL_BASE_STYLE = 'hidden lg:flex w-[420px] lg:w-[460px] xl:w-[500px] 2xl:w-[540px] max-w-[45vw] h-screen sticky top-0 bg-surface border-l border-surface-border flex-col shrink-0 z-20 transition-all duration-200';
 
 // --- COMPONENTS ---
 const MainLayout = ({
@@ -84,6 +84,7 @@ const MainLayout = ({
     const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
     const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
     const [isNotificationPanelOpen, setIsNotificationPanelOpen] = useState(false);
+    const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
 
     const [selectedTheme, setSelectedTheme] = useState(() => {
         if (typeof window === 'undefined') {
@@ -414,7 +415,12 @@ const MainLayout = ({
                     navigationItems={navigationItems}
                     adminNavigationItems={adminNavigationItems}
                     activeNavigationKey={activeNavigationKey}
-                    onNavigationChange={handleNavigationChange}
+                    isMobileOpen={isMobileSidebarOpen}
+                    onCloseMobile={() => setIsMobileSidebarOpen(false)}
+                    onNavigationChange={(key) => {
+                        setIsMobileSidebarOpen(false);
+                        handleNavigationChange(key);
+                    }}
                     onAccountClick={handleOpenAccountModal}
                     onSettingsClick={handleOpenSettingsModal}
                     onSignOut={handleSignOut}
@@ -434,6 +440,7 @@ const MainLayout = ({
                         onSearchChange={handleSearchChange}
                         onSearchClear={handleSearchClear}
                         onSearchFocus={handleSearchFocus}
+                        onToggleMobileSidebar={() => setIsMobileSidebarOpen((prev) => !prev)}
                         searchContent={
                             <GlobalSearchDropdown
                                 isOpen={isSearchDropdownOpen}
@@ -465,18 +472,18 @@ const MainLayout = ({
                     />
                 )}
 
-                <main className="flex-1 p-4 sm:p-6 lg:p-8 flex flex-col gap-6 overflow-y-auto">
+                <main className="flex-1 p-2 sm:p-3 md:p-4 lg:p-5 flex flex-col gap-2.5 sm:gap-3.5 overflow-y-auto">
                     {children ?? <Outlet />}
                 </main>
             </div>
 
-            {/* DETAIL PANEL / INSPECTOR CONTAINER */}
+            {/* DESKTOP DETAIL PANEL / INSPECTOR CONTAINER */}
             {shouldRenderDetailPanel && effectiveIsDetailPanelOpen && (
                 <aside className={DETAIL_PANEL_BASE_STYLE}>
-                    <div className="h-16 px-5 border-b border-surface-border flex items-center justify-between shrink-0 bg-surface">
+                    <div className="h-14 px-4 border-b border-surface-border flex items-center justify-between shrink-0 bg-surface">
                         <div className="flex items-center gap-2">
                             <PanelRight className="h-4 w-4 text-accent" />
-                            <h2 className="text-sm font-bold text-text">
+                            <h2 className="text-sm font-bold text-text truncate">
                                 {detailPanelTitle}
                             </h2>
                         </div>
@@ -491,7 +498,7 @@ const MainLayout = ({
                         </button>
                     </div>
 
-                    <div className="flex-1 overflow-y-auto p-5 flex flex-col gap-4">
+                    <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
                         {detailPanelContent ?? (
                             <div className="flex-1 flex flex-col items-center justify-center text-center p-6 text-text-muted gap-2">
                                 <PanelRight className="h-8 w-8 text-surface-border stroke-1" />
@@ -505,6 +512,52 @@ const MainLayout = ({
                         )}
                     </div>
                 </aside>
+            )}
+
+            {/* MOBILE & TABLET DETAIL PANEL BOTTOM SHEET OVERLAY */}
+            {shouldRenderDetailPanel && effectiveIsDetailPanelOpen && (
+                <div className="fixed inset-0 z-50 lg:hidden bg-background/70 backdrop-blur-xs flex flex-col justify-end animate-fade-in">
+                    <div className="w-full max-h-[85vh] bg-surface border-t border-surface-border rounded-t-2xl shadow-2xl flex flex-col overflow-hidden animate-slide-up">
+                        {/* DRAG HANDLE BAR */}
+                        <div className="w-full flex items-center justify-center pt-2.5 pb-1 shrink-0">
+                            <div className="w-10 h-1 rounded-full bg-surface-border" />
+                        </div>
+
+                        {/* HEADER */}
+                        <div className="h-12 px-4 border-b border-surface-border flex items-center justify-between shrink-0 bg-surface">
+                            <div className="flex items-center gap-2">
+                                <PanelRight className="h-4 w-4 text-accent" />
+                                <h2 className="text-sm font-bold text-text truncate">
+                                    {detailPanelTitle}
+                                </h2>
+                            </div>
+
+                            <button
+                                type="button"
+                                onClick={handleCloseDetailPanel}
+                                className="h-8 w-8 rounded-md flex items-center justify-center text-text-muted hover:text-text hover:bg-surface-hover transition-colors cursor-pointer"
+                                title="Close details"
+                            >
+                                <X className="h-4 w-4" />
+                            </button>
+                        </div>
+
+                        {/* CONTENT */}
+                        <div className="flex-1 overflow-y-auto p-3.5 flex flex-col gap-3">
+                            {detailPanelContent ?? (
+                                <div className="flex-1 flex flex-col items-center justify-center text-center p-6 text-text-muted gap-2">
+                                    <PanelRight className="h-8 w-8 text-surface-border stroke-1" />
+                                    <span className="text-xs font-medium text-text">
+                                        No item selected
+                                    </span>
+                                    <p className="text-xs text-text-muted max-w-xs">
+                                        Select a document, request, or record from the main workspace to inspect its properties.
+                                    </p>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
             )}
 
             {/* ACCOUNT MODAL */}

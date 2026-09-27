@@ -5,6 +5,9 @@ import {
     Plus,
     CheckCircle2,
     Trash2,
+    ArrowDownAZ,
+    ArrowUpAZ,
+    Clock,
 } from 'lucide-react';
 import {
     Browser,
@@ -27,10 +30,10 @@ const DEPARTMENT_COLUMNS = [
 ];
 
 const DEPARTMENT_SORT_OPTIONS = [
-    { value: 'name-asc', label: 'Name (A to Z)', icon: Building2 },
-    { value: 'name-desc', label: 'Name (Z to A)', icon: Building2 },
-    { value: 'date-desc', label: 'Recently Added', icon: CheckCircle2 },
-    { value: 'date-asc', label: 'Oldest Added', icon: CheckCircle2 },
+    { value: 'name-asc', label: 'Name (A to Z)', icon: ArrowDownAZ },
+    { value: 'name-desc', label: 'Name (Z to A)', icon: ArrowUpAZ },
+    { value: 'date-desc', label: 'Recently Added', icon: Clock },
+    { value: 'date-asc', label: 'Oldest Added', icon: Clock },
 ];
 
 // --- COMPONENTS ---
@@ -89,8 +92,8 @@ const DepartmentsPage = ({
     const { showToast } = useToast();
 
     // HANDLERS
-    const handleSelectDepartment = (item, targetTab = 'information') => {
-        const itemWithTab = item ? { ...item, _targetTab: targetTab } : null;
+    const handleSelectDepartment = (item, targetTab = null) => {
+        const itemWithTab = item ? (targetTab ? { ...item, _targetTab: targetTab } : item) : null;
         setSelectedDepartment(itemWithTab);
         onSelectDepartment?.(itemWithTab, targetTab);
     };
@@ -181,7 +184,7 @@ const DepartmentsPage = ({
             }
 
             const minTimer = new Promise((resolve) => setTimeout(resolve, 500));
-            await Promise.all([
+            const [newDept] = await Promise.all([
                 insertDepartment({
                     code: formCode.trim().toUpperCase(),
                     name: formName.trim(),
@@ -189,10 +192,30 @@ const DepartmentsPage = ({
                 minTimer,
             ]);
 
+            const resolvedCode = newDept?.code ?? formCode.trim().toUpperCase();
+            const resolvedName = newDept?.name ?? formName.trim();
+            const createdAtDate = newDept?.createdAt || new Date().toISOString();
+            const formattedNewDept = {
+                id: newDept?.id,
+                code: resolvedCode,
+                title: resolvedName,
+                name: resolvedName,
+                subtitle: resolvedCode,
+                memberCount: '0 personnel',
+                metadata: `${resolvedCode} · 0 personnel`,
+                createdAt: createdAtDate,
+                updatedAt: createdAtDate,
+                date: formatDateTime(createdAtDate),
+                badge: resolvedCode,
+            };
+
+            setSelectedDepartment(formattedNewDept);
+            onSelectDepartment?.(formattedNewDept);
+
             showToast({
                 type: 'success',
                 title: 'Department Created',
-                description: `Successfully added ${formCode.toUpperCase()} (${formName.trim()}).`,
+                description: `Successfully added ${resolvedCode} (${resolvedName}).`,
             });
             handleCloseModals();
         } catch (error) {
@@ -390,9 +413,9 @@ const DepartmentsPage = ({
                 code: department.code ?? '',
                 title: department.name ?? department.code ?? 'Unnamed Department',
                 name: department.name ?? department.code ?? 'Unnamed Department',
-                subtitle: department.code ?? '',
+                subtitle: null,
                 memberCount: `${count} personnel`,
-                metadata: `${department.code ?? ''} · ${count} personnel`,
+                metadata: `${count} personnel`,
                 createdAt: createdAtDate,
                 updatedAt: updatedAtDate,
                 date: (updatedAtDate || createdAtDate) && !isNaN(new Date(updatedAtDate || createdAtDate).getTime())
@@ -407,20 +430,20 @@ const DepartmentsPage = ({
     return (
         <Container
             variant="page"
-            className={`flex flex-col gap-6 ${className ?? ''}`}
+            className={`flex flex-col gap-4 sm:gap-5 ${className ?? ''}`}
             {...props}
         >
             <Browser
                 resourceName="departments"
                 title="Manage Departments"
-                description="Configure institutional departments and academic office codes."
+                description="Manage institutional departments."
                 data={formattedDepartmentData}
                 columns={DEPARTMENT_COLUMNS}
                 sortOptions={DEPARTMENT_SORT_OPTIONS}
                 selectedItem={activeSelectedDepartment}
                 addItemLabel="New Department"
                 addItemIcon={Plus}
-                searchPlaceholder="Search departments by code or name..."
+                searchPlaceholder="Search department..."
                 onAddItem={handleOpenAddModal}
                 onSelectItem={handleSelectDepartment}
                 onOpenItem={handleSelectDepartment}
@@ -433,10 +456,10 @@ const DepartmentsPage = ({
                     isOpen={isAddModalOpen}
                     onClose={handleCloseModals}
                     title="New Department"
-                    description="Create an institutional department code and name."
-                    icon={Building2}
-                    callout="Departments organize institutional faculty, academic document shares, and university workflows."
+                    description="Register a new academic college or administrative office."
+                    callout="Create an institutional department to organize academic faculty, manage document archives, and coordinate unit clearances."
                     calloutVariant="neutral"
+                    icon={Building2}
                     onConfirm={handleCreateDepartment}
                     confirmLabel={isCreatingDepartment ? 'Creating Department...' : 'Create Department'}
                     cancelLabel="Cancel"
@@ -446,19 +469,19 @@ const DepartmentsPage = ({
                     <div className="flex flex-col gap-4 py-2">
                         <TextField
                             label="Code"
-                            placeholder="Enter your department code"
+                            placeholder="Enter Code"
                             value={formCode}
                             onChange={(changeEvent) => {
                                 setFormCode(changeEvent.target.value.toUpperCase());
                                 if (formErrors.code) setFormErrors((prev) => ({ ...prev, code: undefined }));
                             }}
-                            helperText="Uppercase code."
                             required
                             error={formErrors.code}
+                            autoFocus
                         />
                         <TextField
                             label="Name"
-                            placeholder="Enter your department name"
+                            placeholder="Enter Name"
                             value={formName}
                             onChange={(changeEvent) => {
                                 setFormName(changeEvent.target.value);
@@ -477,10 +500,8 @@ const DepartmentsPage = ({
                     isOpen={Boolean(editingDepartment)}
                     onClose={handleCloseModals}
                     title="Edit Department"
-                    description={`Update records for ${editingDepartment.code}.`}
+                    description="Manage institutional departments."
                     icon={Building2}
-                    callout="Modifying department properties will update associated faculty rosters and access rules."
-                    calloutVariant="neutral"
                     onConfirm={handleUpdateDepartment}
                     confirmLabel={isUpdatingDepartment ? 'Saving Changes...' : 'Save Changes'}
                     cancelLabel="Cancel"
@@ -490,7 +511,7 @@ const DepartmentsPage = ({
                     <div className="flex flex-col gap-4 py-2">
                         <TextField
                             label="Code"
-                            placeholder="Enter your department code"
+                            placeholder="Enter Code"
                             value={formCode}
                             onChange={(changeEvent) => {
                                 setFormCode(changeEvent.target.value.toUpperCase());
@@ -501,7 +522,7 @@ const DepartmentsPage = ({
                         />
                         <TextField
                             label="Name"
-                            placeholder="Enter your department name"
+                            placeholder="Enter Name"
                             value={formName}
                             onChange={(changeEvent) => {
                                 setFormName(changeEvent.target.value);

@@ -3,7 +3,9 @@ import { constants, isStaffRole, isAdminRole, isCoordinatorRole, isDirectorRole,
 import { useAuditStore } from '../stores/useAuditStore';
 import { useNotificationStore } from '../stores/useNotificationStore';
 import { useUserStore } from '../stores/useUserStore';
+import { useAuthStore } from '../stores/useAuthStore';
 import { userService } from './userService';
+import { realtimeSyncService } from './realtimeSyncService';
 
 // --- IN-MEMORY CACHE FOR READ DEBOUNCING ---
 const recentReadCache = new Map(); // key: `${userId}:${documentId}` -> timestamp
@@ -145,7 +147,11 @@ const systemEventService = {
         isMajor = null,
         excludeActor = true,
     }) => {
-        const resolvedActorId = actorId || (typeof actor === 'object' ? actor?.id : actor) || null;
+        const resolvedActorId =
+            actorId ||
+            (typeof actor === 'object' ? actor?.id : actor) ||
+            useAuthStore.getState().currentUser?.id ||
+            null;
         const stringifiedData = typeof data === 'string' ? data : JSON.stringify(data);
         const resolvedIsMajor = isMajor !== null ? isMajor : isMajorAction(entityType, action);
 
@@ -247,6 +253,13 @@ const systemEventService = {
         });
 
         const notifications = await Promise.allSettled(notificationPromises);
+
+        // Realtime cross-browser broadcast
+        try {
+            realtimeSyncService.broadcast(entityType, action, { entityId, ...data });
+        } catch {
+            /* ignore */
+        }
 
         return {
             auditLog: auditLogEntry,

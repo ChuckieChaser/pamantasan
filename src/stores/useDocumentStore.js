@@ -438,14 +438,15 @@ const useDocumentStore = create((set, get) => ({
             const validatedPayload = mutationSchema.UpdateDocumentVersionSchema.parse(payloadWithDates);
             const updatedVersion = await documentService.updateDocumentVersion(id, validatedPayload);
 
-            const docId = updatedVersion?.documentId ?? updatedVersion?.document?.id;
+            const existingVersion = get().documentVersions.find((item) => item.id === id);
+            const docId = payload.documentId ?? updatedVersion?.documentId ?? updatedVersion?.document?.id ?? existingVersion?.documentId ?? existingVersion?.document?.id;
             if (docId) {
                 await documentService.updateDocument(docId, { updatedAt: timestamp }).catch(() => null);
             }
 
             set((state) => ({
                 documentVersions: state.documentVersions.map((item) =>
-                    item.id === id ? updatedVersion : item
+                    item.id === id ? { ...item, ...updatedVersion, mimeType: payload.mimeType || updatedVersion.mimeType || item.mimeType } : item
                 ),
                 documents: docId
                     ? state.documents.map((d) => (d.id === docId ? { ...d, updatedAt: timestamp } : d))
@@ -454,7 +455,7 @@ const useDocumentStore = create((set, get) => ({
                     ? { ...state.selectedDocument, updatedAt: timestamp }
                     : state.selectedDocument,
                 selectedVersion: state.selectedVersion?.id === id
-                    ? updatedVersion
+                    ? { ...state.selectedVersion, ...updatedVersion, mimeType: payload.mimeType || updatedVersion.mimeType || state.selectedVersion.mimeType }
                     : state.selectedVersion,
                 isLoading: false,
                 error: null,
@@ -732,6 +733,7 @@ const useDocumentStore = create((set, get) => ({
         set({ isLoading: true, error: null });
 
         try {
+            const existingShare = (get().documentShares || []).find((item) => item.id === id);
             const isDeleted = await documentService.deleteDocumentShare(id);
 
             if (isDeleted) {
@@ -740,6 +742,23 @@ const useDocumentStore = create((set, get) => ({
                     isLoading: false,
                     error: null,
                 }));
+
+                const targetRecId = existingShare?.recipient?.id ?? existingShare?.recipientId;
+                const targetDeptId = existingShare?.department?.id ?? existingShare?.departmentId;
+                systemEventService.recordSystemEvent({
+                    entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_SHARE,
+                    entityId: id,
+                    action: constants.AUDIT_LOGS_ACTION.UNSHARED,
+                    data: {
+                        documentId: existingShare?.documentId ?? existingShare?.document?.id,
+                        departmentId: targetDeptId,
+                        recipientId: targetRecId,
+                    },
+                    targetUserIds: targetRecId ? [targetRecId] : [],
+                    targetRoles: targetRecId ? [] : ['DIRECTOR', 'OFFICER'],
+                    targetDepartmentId: targetDeptId,
+                    isMajor: true,
+                }).catch(() => {});
             } else {
                 set({ isLoading: false });
             }
@@ -1715,6 +1734,7 @@ const useDocumentStore = create((set, get) => ({
         set({ isLoading: true, error: null });
 
         try {
+            const existingRequest = (get().documentRequests || []).find((item) => item?.id === id);
             const isDeleted = await documentService.deleteDocumentRequest(id);
 
             if (isDeleted) {
@@ -1726,6 +1746,17 @@ const useDocumentStore = create((set, get) => ({
                     isLoading: false,
                     error: null,
                 }));
+
+                systemEventService.recordSystemEvent({
+                    entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_REQUEST,
+                    entityId: id,
+                    action: constants.AUDIT_LOGS_ACTION.DELETED,
+                    data: {
+                        subject: existingRequest?.subject || 'Document Request',
+                    },
+                    targetRoles: ['RMO_STAFF'],
+                    isMajor: true,
+                }).catch(() => {});
             } else {
                 set({ isLoading: false });
             }

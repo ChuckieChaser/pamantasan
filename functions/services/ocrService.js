@@ -184,7 +184,7 @@ async function processImageOcr(imageBuffer, autoWhiten = true) {
         try {
             console.log(`[CloudOCR] Using Vertex AI Gemini 2.0 Flash for OCR extraction...`);
             const ai = new GoogleGenAI({
-                vertexai: true,
+                vertexAI: true,
                 project: PROJECT_ID,
                 location: VERTEX_LOCATION,
             });

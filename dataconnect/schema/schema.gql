@@ -95,6 +95,7 @@ type DocumentRequest @table {
     resolver: User
     subject: String!
     status: String!
+    rejectionReason: String
     createdAt: Timestamp! @default(expr: "request.time")
     updatedAt: Timestamp! @default(expr: "request.time")
 }

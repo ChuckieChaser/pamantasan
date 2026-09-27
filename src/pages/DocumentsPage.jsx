@@ -4,6 +4,7 @@ import {
     Plus,
     UploadCloud,
     FolderPlus,
+    FolderUp,
     FileText,
     Folder,
     FileUp,
@@ -46,6 +47,9 @@ import {
     resolveUserAvatar,
     formatDateTime,
     getMimeTypeFromFilename,
+    formatMimeTypeLabel,
+    getExtensionFromMimeType,
+    fileToBase64,
 } from '../components';
 import { useToast, useAuth } from '../hooks';
 import { constants } from '../constants';
@@ -68,6 +72,8 @@ import {
 
 
 // --- CONFIGURATIONS ---
+const FILE_EXTENSION_OPTIONS = ['.pdf', '.docx', '.xlsx', '.pptx', '.txt', '.csv', '.png', '.jpg'];
+
 const DOCUMENT_COLUMNS = [
     { key: 'title', label: 'Name' },
     { key: 'classification', label: 'Classification' },
@@ -133,6 +139,7 @@ const DocumentsPage = ({
 
     // REFS
     const fileInputReference = useRef(null);
+    const folderInputReference = useRef(null);
 
     // STATES: REPOSITORY & NAVIGATION
     const [localCreatedItems, setLocalCreatedItems] = useState([]);
@@ -174,6 +181,7 @@ const DocumentsPage = ({
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
     const [editItem, setEditItem] = useState(null);
     const [editFormName, setEditFormName] = useState('');
+    const [editFormExtension, setEditFormExtension] = useState('.pdf');
     const [editFormSummary, setEditFormSummary] = useState('');
     const [editFormClassification, setEditFormClassification] = useState(constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED);
     const [editFormComment, setEditFormComment] = useState('');
@@ -535,12 +543,15 @@ const DocumentsPage = ({
             })();
             const itemStatus = shareMeta?.status ?? '—';
 
+            const displayName = doc.isFolder ? doc.name : (doc.name || '').replace(/\.[^/.]+$/, '').trim() || doc.name;
+
             return {
                 id: doc.id,
                 parentId: doc.parentId ?? 'root',
-                title: doc.name,
-                name: doc.name,
+                title: displayName,
+                name: displayName,
                 subtitle: doc.isFolder ? 'DIR' : 'Document',
+                mimeType: doc.isFolder ? 'folder' : (latestVer?.mimeType ?? null),
                 description: doc.comment ?? null,
                 summary: doc.isFolder ? null : (latestVer?.summary ?? null),
                 comment: doc.comment ?? null,
@@ -867,17 +878,18 @@ const DocumentsPage = ({
                     : null;
                 const path = latestVer?.path || editItem.path;
 
+                const fullFileName = editItem.isFolder ? editFormName.trim() : `${editFormName.trim()}${editFormExtension}`;
                 if (path) {
                     showToast({
                         type: 'information',
                         title: 'Analyzing Document with AI',
-                        description: `Reading content of "${editFormName || editItem.name}" via Vertex AI Gemini Flash...`,
+                        description: `Reading content of "${fullFileName || editItem.name}" via Vertex AI Gemini Flash...`,
                     });
 
                     const res = await aiService.analyzeDocumentFile({
                         storagePath: path,
                         mimeType: latestVer?.mimeType || 'application/octet-stream',
-                        fileName: editFormName.trim() || editItem.name || 'document',
+                        fileName: fullFileName || editItem.name || 'document',
                         fileSize: latestVer?.sizeBytes || 0,
                     });
 
@@ -897,7 +909,7 @@ const DocumentsPage = ({
                         description: `Summary and classification updated (${res?.classification || 'Analyzed'}).`,
                     });
                 } else {
-                    const cleanedName = editFormName.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
+                    const cleanedName = (editItem.isFolder ? editFormName : `${editFormName}${editFormExtension}`).replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
                     const generated = `Institutional documentation and operational records pertaining to ${cleanedName}.`;
                     setEditFormSummary(generated);
                     if (editFormErrors.summary) {
@@ -932,6 +944,7 @@ const DocumentsPage = ({
             : null;
         const path = latestVer?.path || editItem.path;
 
+        const fullFileName = editItem.isFolder ? editFormName.trim() : `${editFormName.trim()}${editFormExtension}`;
         if (path) {
             showToast({
                 type: 'information',
@@ -942,8 +955,9 @@ const DocumentsPage = ({
                 const res = await aiService.analyzeDocumentFile({
                     storagePath: path,
                     mimeType: latestVer?.mimeType || 'application/octet-stream',
-                    fileName: editFormName.trim() || editItem.name || 'document',
+                    fileName: fullFileName || editItem.name || 'document',
                     fileSize: latestVer?.sizeBytes || 0,
+                    extractedText: editFormSummary || latestVer?.summary || null,
                 });
                 if (res?.classification && res.classification !== 'UNCLASSIFIED') {
                     setEditFormClassification(res.classification);
@@ -997,18 +1011,27 @@ const DocumentsPage = ({
             return;
         }
 
+        const cleanSavedName = editItem.isFolder
+            ? editFormName.trim()
+            : editFormName.trim().replace(/\.[^/.]+$/, '').trim();
+
+        const targetMimeType = editItem.isFolder
+            ? undefined
+            : (getMimeTypeFromFilename(`file${editFormExtension}`) || 'application/pdf');
+
         setIsSavingEdit(true);
         try {
             if (isCoordinator) {
                 const docPayload = {
                     documentId: editItem.id,
-                    documentTitle: editFormName.trim(),
+                    documentTitle: cleanSavedName,
                     isFolder: Boolean(editItem.isFolder),
                     new: {
-                        name: editFormName.trim(),
+                        name: cleanSavedName,
                         comment: editFormComment.trim() || null,
                         summary: editItem.isFolder ? null : (editFormSummary.trim() || null),
                         classification: editItem.isFolder ? null : editFormClassification,
+                        mimeType: editItem.isFolder ? null : targetMimeType,
                     },
                 };
 
@@ -1023,18 +1046,17 @@ const DocumentsPage = ({
                 showToast({
                     type: 'success',
                     title: 'Request Submitted',
-                    description: `Edit request for "${editFormName.trim()}" sent for Administrator approval.`,
+                    description: `Edit request for "${cleanSavedName}" sent for Administrator approval.`,
                 });
                 setIsEditModalOpen(false);
                 return;
             }
 
             await useDocumentStore.getState().updateDocument(editItem.id, {
-                name: editFormName.trim(),
+                name: cleanSavedName,
                 comment: editFormComment.trim() || null,
             });
 
-            let updatedMimeType = editItem.mimeType;
             if (!editItem.isFolder) {
                 const vers = (documentVersions || []).filter(
                     (v) => (v.document?.id ?? v.documentId) === editItem.id
@@ -1043,13 +1065,12 @@ const DocumentsPage = ({
                     ? [...vers].sort((a, b) => b.version - a.version)[0]
                     : null;
                 if (latestVer) {
-                    const derivedMimeType = getMimeTypeFromFilename(editFormName.trim());
-                    updatedMimeType = derivedMimeType;
                     await useDocumentStore.getState().updateDocumentVersion(latestVer.id, {
+                        documentId: editItem.id,
                         summary: editFormSummary.trim() || null,
                         classification: editFormClassification,
                         changeSummary: 'Updated metadata via editor',
-                        ...(derivedMimeType ? { mimeType: derivedMimeType } : {}),
+                        mimeType: targetMimeType,
                     });
                 }
             }
@@ -1059,13 +1080,13 @@ const DocumentsPage = ({
             const timestamp = new Date().toISOString();
             const updatedSelected = {
                 ...editItem,
-                name: editFormName.trim(),
-                title: editFormName.trim(),
+                name: cleanSavedName,
+                title: cleanSavedName,
                 comment: editFormComment.trim() || null,
                 description: editItem.isFolder ? (editFormComment.trim() || null) : (editFormSummary.trim() || null),
                 summary: editItem.isFolder ? null : (editFormSummary.trim() || null),
                 classification: editItem.isFolder ? '—' : editFormClassification,
-                mimeType: editItem.isFolder ? undefined : updatedMimeType,
+                mimeType: editItem.isFolder ? undefined : targetMimeType,
                 updatedAt: timestamp,
                 date: formatDateTime(timestamp),
             };
@@ -1078,7 +1099,7 @@ const DocumentsPage = ({
             showToast({
                 type: 'success',
                 title: editItem.isFolder ? 'Folder Updated' : 'Document Updated',
-                description: `Changes to "${editFormName.trim()}" have been saved.`,
+                description: `Changes to "${cleanSavedName}" have been saved.`,
             });
 
             setIsEditModalOpen(false);
@@ -1264,7 +1285,28 @@ const DocumentsPage = ({
 
         if (actionKey === 'edit') {
             setEditItem(item);
-            setEditFormName(item.name || item.title || '');
+            let rawName = (item.name || item.title || '').replace(/\.[^/.]+$/, '').trim();
+            let rawExtension = '.pdf';
+            if (!item.isFolder) {
+                const vers = (documentVersions || []).filter(
+                    (v) => (v.document?.id ?? v.documentId) === item.id
+                );
+                const latestVer = vers.length > 0
+                    ? [...vers].sort((a, b) => b.version - a.version)[0]
+                    : null;
+                const effectiveMime = latestVer?.mimeType || item.mimeType;
+                if (effectiveMime) {
+                    rawExtension = getExtensionFromMimeType(effectiveMime);
+                } else {
+                    const originalRaw = item.name || item.title || '';
+                    const lastDot = originalRaw.lastIndexOf('.');
+                    if (lastDot > 0) {
+                        rawExtension = originalRaw.slice(lastDot).toLowerCase();
+                    }
+                }
+            }
+            setEditFormName(rawName);
+            setEditFormExtension(rawExtension);
             setEditFormComment(item.comment || item.description || '');
 
             if (!item.isFolder) {
@@ -1770,13 +1812,17 @@ const DocumentsPage = ({
                 }
 
                 const finalFileName = item.fileName || item.file?.name || (item.title ? item.title.split('/').pop() : 'document');
+                const cleanDocName = finalFileName.replace(/\.[^/.]+$/, '').trim() || finalFileName;
 
                 // 2. Check if creating new version or new document
                 let targetDocumentId = item.action === 'create_new' ? null : item.existingDocumentId;
 
                 if (!targetDocumentId && activeUserId && item.action !== 'create_new') {
                     const existingDoc = knownDocs.find(
-                        (d) => !d.isFolder && (d.parentId ?? null) === targetParentId && !d.isArchived && d.name.toLowerCase() === finalFileName.toLowerCase()
+                        (d) => !d.isFolder && (d.parentId ?? null) === targetParentId && !d.isArchived && (
+                            d.name.toLowerCase() === cleanDocName.toLowerCase() ||
+                            d.name.toLowerCase() === finalFileName.toLowerCase()
+                        )
                     );
                     if (existingDoc) {
                         targetDocumentId = existingDoc.id;
@@ -1854,8 +1900,15 @@ const DocumentsPage = ({
                     // Call Vertex AI for version diffing, OCR/summary, and embeddings
                     let aiResult = null;
                     try {
+                        let fileBase64 = null;
+                        if (item.file && item.file.size <= 15 * 1024 * 1024) {
+                            fileBase64 = await fileToBase64(item.file).catch(() => null);
+                        }
+
                         aiResult = await aiService.analyzeDocumentFile({
                             storagePath: storageResult.path,
+                            downloadUrl: storageResult.downloadUrl || null,
+                            fileBase64,
                             mimeType: storageResult.mimeType || item.file.type || getMimeTypeFromFilename(finalFileName),
                             fileName: finalFileName,
                             fileSize: storageResult.sizeBytes || item.file.size || 0,
@@ -1902,7 +1955,7 @@ const DocumentsPage = ({
                             entityId: String(targetDocumentId),
                             action: constants.AUDIT_LOGS_ACTION.UPDATED,
                             data: JSON.stringify({
-                                title: finalFileName,
+                                title: cleanDocName,
                                 version: nextVersionNum,
                                 isVersionUpdate: true,
                                 isFolder: false,
@@ -1921,7 +1974,7 @@ const DocumentsPage = ({
                     let createdDoc = null;
                     if (activeUserId) {
                         createdDoc = await documentService.insertDocument({
-                            name: finalFileName,
+                            name: cleanDocName,
                             isFolder: false,
                             isArchived: false,
                             parentId: targetParentId,
@@ -1961,8 +2014,15 @@ const DocumentsPage = ({
                     // Call Vertex AI for multimodal analysis, OCR, classification, and embeddings
                     let aiResult = null;
                     try {
+                        let fileBase64 = null;
+                        if (item.file && item.file.size <= 15 * 1024 * 1024) {
+                            fileBase64 = await fileToBase64(item.file).catch(() => null);
+                        }
+
                         aiResult = await aiService.analyzeDocumentFile({
                             storagePath: storageResult.path,
+                            downloadUrl: storageResult.downloadUrl || null,
+                            fileBase64,
                             mimeType: storageResult.mimeType || item.file.type || getMimeTypeFromFilename(finalFileName),
                             fileName: finalFileName,
                             fileSize: storageResult.sizeBytes || item.file.size || 0,
@@ -2003,7 +2063,7 @@ const DocumentsPage = ({
                                 entityId: String(targetDocumentId),
                                 action: constants.AUDIT_LOGS_ACTION.UPLOADED,
                                 data: JSON.stringify({
-                                    title: finalFileName,
+                                    title: cleanDocName,
                                     version: 1,
                                     isVersionUpdate: false,
                                     isFolder: false,
@@ -2051,6 +2111,21 @@ const DocumentsPage = ({
 
         await fetchDocuments().catch(() => {});
         toastProcess.complete();
+
+        // Auto-select the newly uploaded primary document
+        if (validItems.length > 0) {
+            const primaryItem = validItems[0];
+            const latestDocs = useDocumentStore.getState().documents || [];
+            const primaryName = primaryItem?.fileName || primaryItem?.title || primaryItem?.name;
+            const matchedUploadedDoc = latestDocs.find(
+                (d) => (primaryItem?.existingDocumentId && d.id === primaryItem.existingDocumentId) ||
+                       (primaryName && (d.name === primaryName || d.title === primaryName))
+            );
+            if (matchedUploadedDoc) {
+                setSelectedDocument(matchedUploadedDoc);
+                onSelectDocument?.(matchedUploadedDoc);
+            }
+        }
 
         // DISPATCH NOTIFICATIONS TO RMO STAFF
         if (activeUserId && validItems.length > 0) {
@@ -2147,13 +2222,16 @@ const DocumentsPage = ({
 
         const fallbackExtractedItems = selectedFiles.map((file) => {
             const isImage = ocrService.isImageFile(file);
+            const pathParts = file.webkitRelativePath ? file.webkitRelativePath.split('/').filter(Boolean) : [];
+            const folderPathParts = pathParts.length > 1 ? pathParts.slice(0, -1) : [];
+            const relativePath = file.webkitRelativePath ? `/${file.webkitRelativePath}` : `/${file.name}`;
             return {
                 id: `doc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
                 parentId: currentFolderId,
-                relativePath: `/${file.name}`,
+                relativePath: relativePath,
                 fileName: file.name,
-                folderPathParts: [],
-                title: `/${file.name}`,
+                folderPathParts: folderPathParts,
+                title: relativePath,
                 subtitle: `DOC-${new Date().getFullYear()}-GEN-${Math.floor(100 + Math.random() * 900)}`,
                 description: null,
                 category: isImage ? 'Image' : 'Document',
@@ -2371,6 +2449,12 @@ const DocumentsPage = ({
                     }).catch(() => {});
                 }
                 await fetchDocuments();
+                if (created?.id) {
+                    const latestDocs = useDocumentStore.getState().documents || [];
+                    const matchedFolder = latestDocs.find((d) => d.id === created.id) || created;
+                    setSelectedDocument(matchedFolder);
+                    onSelectDocument?.(matchedFolder);
+                }
             } else {
                 const newFolderItem = {
                     id: `folder-${Date.now()}`,
@@ -2391,6 +2475,8 @@ const DocumentsPage = ({
                     tags: ['Folder'],
                 };
                 setLocalCreatedItems((previousItems) => [newFolderItem, ...previousItems]);
+                setSelectedDocument(newFolderItem);
+                onSelectDocument?.(newFolderItem);
             }
 
             setIsCreateModalOpen(false);
@@ -2810,139 +2896,140 @@ const DocumentsPage = ({
             <Modal
                 isOpen={isCreateModalOpen}
                 onClose={handleRequestCloseCreateModal}
-                title="Add to Repository"
-                description={`Choose an action to add items into ${currentDirectoryLabel}.`}
+                title={creationMode === 'file' ? 'Upload to Repository' : 'Create New Folder'}
+                description={`Items will be placed in ${currentDirectoryLabel}.`}
                 icon={creationMode === 'file' ? FileUp : FolderPlus}
                 size="lg"
+                confirmOnClose={false}
                 primaryAction={modalPrimaryAction}
                 secondaryAction={modalSecondaryAction}
             >
-                {/* 1. CREATION MODE SELECTOR: 3 TILES INCLUDING PHONE SCAN */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <button
-                        type="button"
-                        onClick={() => handleCreationModeChange('file')}
-                        className={`p-4 rounded-xl border-2 flex flex-col items-center justify-center text-center gap-2.5 transition-colors cursor-pointer select-none ${
-                            creationMode === 'file'
-                                ? 'bg-accent-background border-accent text-text'
-                                : 'bg-surface border-surface-border hover:bg-surface-hover hover:border-surface-border text-text'
-                        }`}
-                    >
-                        <div
-                            className={`p-2.5 rounded-full transition-colors ${
+                {/* 1. TOP HEADER CONTROLS: SEGMENTED SWITCHER & QUICK SCAN ACTION */}
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pb-3 border-b border-surface-border">
+                    {/* Modern Segmented Control */}
+                    <div className="inline-flex p-1 rounded-xl bg-surface-hover/80 border border-surface-border self-start">
+                        <button
+                            type="button"
+                            onClick={() => handleCreationModeChange('file')}
+                            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                                 creationMode === 'file'
-                                    ? 'bg-accent text-text-inverted'
-                                    : 'bg-surface-hover text-text-muted'
+                                    ? 'bg-surface text-text shadow-xs border border-surface-border/80'
+                                    : 'text-text-muted hover:text-text'
                             }`}
                         >
-                            <FileUp className="h-5 w-5" />
-                        </div>
-                        <div className="flex flex-col gap-0.5">
-                            <span className="font-bold text-xs text-text">Upload Documents</span>
-                            <span className="text-[10px] text-text-muted">
-                                Single files or folder trees
-                            </span>
-                        </div>
-                    </button>
+                            <FileUp className={`h-4 w-4 ${creationMode === 'file' ? 'text-accent' : 'text-text-muted'}`} />
+                            <span>Upload Documents</span>
+                            {stagedDroppedItems.length > 0 && (
+                                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-accent/15 text-accent">
+                                    {stagedDroppedItems.length}
+                                </span>
+                            )}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => handleCreationModeChange('folder')}
+                            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                                creationMode === 'folder'
+                                    ? 'bg-surface text-text shadow-xs border border-surface-border/80'
+                                    : 'text-text-muted hover:text-text'
+                            }`}
+                        >
+                            <FolderPlus className={`h-4 w-4 ${creationMode === 'folder' ? 'text-accent' : 'text-text-muted'}`} />
+                            <span>Create Folder</span>
+                        </button>
+                    </div>
 
+                    {/* Wireless Phone Camera Quick Action */}
                     <button
                         type="button"
                         onClick={() => setIsMobileScanModalOpen(true)}
-                        className="p-4 rounded-xl border-2 border-accent/40 bg-accent/5 hover:bg-accent/15 hover:border-accent flex flex-col items-center justify-center text-center gap-2.5 transition-all cursor-pointer select-none shadow-xs group"
-                        title="Scan documents with your phone's camera"
+                        className="inline-flex items-center justify-center gap-2 px-3 py-1.5 rounded-xl border border-accent/30 bg-accent/5 hover:bg-accent/10 text-accent text-xs font-medium transition-all cursor-pointer shadow-2xs group"
+                        title="Scan documents wirelessly using your smartphone camera"
                     >
-                        <div className="p-2.5 rounded-full bg-accent/20 text-accent group-hover:scale-110 transition-transform">
-                            <Smartphone className="h-5 w-5" />
-                        </div>
-                        <div className="flex flex-col gap-0.5">
-                            <span className="font-bold text-xs text-accent flex items-center gap-1 justify-center">
-                                <span>Scan with Phone</span>
-                                <span className="text-[8px] px-1 py-0.2 rounded bg-accent text-text-inverted font-extrabold uppercase">New</span>
-                            </span>
-                            <span className="text-[10px] text-text-muted">
-                                Snap document wirelessly
-                            </span>
-                        </div>
-                    </button>
-
-                    <button
-                        type="button"
-                        onClick={() => handleCreationModeChange('folder')}
-                        className={`p-4 rounded-xl border-2 flex flex-col items-center justify-center text-center gap-2.5 transition-colors cursor-pointer select-none ${
-                            creationMode === 'folder'
-                                ? 'bg-accent-background border-accent text-text'
-                                : 'bg-surface border-surface-border hover:bg-surface-hover hover:border-surface-border text-text'
-                        }`}
-                    >
-                        <div
-                            className={`p-2.5 rounded-full transition-colors ${
-                                creationMode === 'folder'
-                                    ? 'bg-accent text-text-inverted'
-                                    : 'bg-surface-hover text-text-muted'
-                            }`}
-                        >
-                            <FolderPlus className="h-5 w-5" />
-                        </div>
-                        <div className="flex flex-col gap-0.5">
-                            <span className="font-bold text-xs text-text">Create Folder</span>
-                            <span className="text-[10px] text-text-muted">
-                                Group and organize files
-                            </span>
-                        </div>
+                        <Smartphone className="h-3.5 w-3.5 transition-transform group-hover:scale-110" />
+                        <span>Scan with Phone</span>
+                        <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-accent/20 text-accent uppercase tracking-wider">
+                            Camera
+                        </span>
                     </button>
                 </div>
 
                 {/* 2. MODE CONTENT A: FILE / FOLDER DROPZONE */}
                 {creationMode === 'file' && (
-                    <div className="flex flex-col gap-4 mt-2">
+                    <div className="flex flex-col gap-4 mt-1">
                         {fileError && (
-                            <div className="p-3 rounded-lg bg-error-background border border-error-border text-xs text-error">
-                                {fileError}
+                            <div className="p-3 rounded-lg bg-error-background border border-error-border text-xs text-error flex items-center gap-2">
+                                <AlertTriangle className="h-4 w-4 shrink-0" />
+                                <span>{fileError}</span>
                             </div>
                         )}
 
-                        {/* DROPZONE AREA */}
+                        {/* REFINED DROPZONE */}
                         <div
                             onDragOver={handleDropzoneDragOver}
                             onDragLeave={handleDropzoneDragLeave}
                             onDrop={handleDropzoneDrop}
-                            onClick={() => fileInputReference.current?.click()}
-                            className={`border-2 border-dashed rounded-xl p-8 flex flex-col items-center justify-center text-center gap-3 transition-colors cursor-pointer ${
+                            className={`relative group border-2 border-dashed rounded-2xl p-7 flex flex-col items-center justify-center text-center gap-3 transition-all ${
                                 isDropzoneDragActive
-                                    ? 'border-accent bg-accent-background/50 scale-[0.99]'
-                                    : 'border-surface-border hover:border-accent/60 bg-surface hover:bg-surface-hover/50'
+                                    ? 'border-accent bg-accent/10 scale-[0.995] ring-4 ring-accent/10'
+                                    : 'border-surface-border hover:border-accent/50 bg-surface hover:bg-surface-hover/30'
                             }`}
                         >
-                            <div className="p-3 rounded-full bg-surface-hover border border-surface-border text-text-muted">
-                                <UploadCloud className="h-8 w-8 text-accent" />
+                            <div className="p-3.5 rounded-2xl bg-surface-hover border border-surface-border text-accent group-hover:scale-105 transition-transform shadow-2xs">
+                                <UploadCloud className="h-7 w-7 text-accent" />
                             </div>
-                            <div className="flex flex-col gap-1">
+
+                            <div className="flex flex-col gap-1 max-w-sm">
                                 <span className="text-sm font-semibold text-text">
-                                    Click to browse files or drag & drop here
+                                    Drag and drop documents or directories here
                                 </span>
                                 <span className="text-xs text-text-muted">
-                                    Drop single files or nested folder structures to upload
+                                    Preserves nested folder structures automatically
                                 </span>
                             </div>
-                            <div className="flex items-center gap-2">
-                                <span className="text-xs font-medium text-text-muted px-3 py-1 rounded-full bg-surface-hover border border-surface-border">
-                                    Destination: {currentDirectoryLabel}
-                                </span>
+
+                            {/* Dual browse action buttons */}
+                            <div className="flex items-center gap-2 mt-1">
                                 <button
                                     type="button"
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        setIsMobileScanModalOpen(true);
-                                    }}
-                                    className="text-xs font-medium text-accent hover:underline flex items-center gap-1 cursor-pointer"
+                                    onClick={() => fileInputReference.current?.click()}
+                                    className="px-3.5 py-1.5 rounded-lg bg-accent text-text-inverted text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer shadow-xs flex items-center gap-1.5"
                                 >
-                                    <Smartphone className="h-3 w-3" />
-                                    <span>Scan with Phone Camera</span>
+                                    <FileUp className="h-3.5 w-3.5" />
+                                    <span>Browse Files</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => folderInputReference.current?.click()}
+                                    className="px-3.5 py-1.5 rounded-lg bg-surface-hover hover:bg-surface-border border border-surface-border text-text text-xs font-semibold transition-colors cursor-pointer shadow-2xs flex items-center gap-1.5"
+                                    title="Select an entire folder from your computer"
+                                >
+                                    <FolderUp className="h-3.5 w-3.5 text-text-muted" />
+                                    <span>Browse Folder</span>
                                 </button>
                             </div>
+
+                            <div className="flex items-center gap-2 mt-2 pt-2 border-t border-surface-border/60 w-full justify-center">
+                                <span className="text-[11px] text-text-muted flex items-center gap-1">
+                                    <span>Destination:</span>
+                                    <span className="font-semibold text-text px-2 py-0.5 rounded-md bg-surface-hover border border-surface-border font-mono text-[10px]">
+                                        {currentDirectoryLabel}
+                                    </span>
+                                </span>
+                            </div>
+
                             <input
                                 ref={fileInputReference}
                                 type="file"
+                                multiple
+                                onChange={handleFileInputChange}
+                                className="hidden"
+                            />
+                            <input
+                                ref={folderInputReference}
+                                type="file"
+                                webkitdirectory=""
+                                directory=""
                                 multiple
                                 onChange={handleFileInputChange}
                                 className="hidden"
@@ -2951,15 +3038,18 @@ const DocumentsPage = ({
 
                         {/* STAGED ITEMS QUEUE PREVIEW */}
                         {stagedDroppedItems.length > 0 && (
-                            <div className="flex flex-col gap-2">
-                                <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="flex flex-col gap-2.5 mt-1">
+                                <div className="flex flex-wrap items-center justify-between gap-2 px-0.5">
                                     <span className="text-xs font-semibold text-text flex items-center gap-2">
                                         <Layers className="h-4 w-4 text-accent" />
-                                        Staged for Upload ({stagedDroppedItems.length} {stagedDroppedItems.length === 1 ? 'item' : 'items'})
+                                        <span>Staged Items</span>
+                                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-accent/15 text-accent">
+                                            {stagedDroppedItems.length}
+                                        </span>
                                     </span>
-                                    <div className="flex items-center gap-3">
+                                    <div className="flex items-center gap-2 flex-wrap">
                                         {stagedDroppedItems.some((item) => item.isImage) && (
-                                            <div className="flex items-center gap-1.5 text-[11px] text-text-muted bg-surface-hover/60 px-2 py-0.5 rounded-md border border-surface-border">
+                                            <div className="flex items-center gap-1.5 text-[11px] text-text-muted bg-surface-hover/70 px-2.5 py-1 rounded-lg border border-surface-border">
                                                 <span className="font-medium">Images:</span>
                                                 <button
                                                     type="button"
@@ -2969,7 +3059,7 @@ const DocumentsPage = ({
                                                 >
                                                     All OCR to PDF
                                                 </button>
-                                                <span>•</span>
+                                                <span className="text-surface-border">•</span>
                                                 <button
                                                     type="button"
                                                     onClick={() => handleSetAllImagesOcrMode('normal_image')}
@@ -2980,8 +3070,8 @@ const DocumentsPage = ({
                                                 </button>
                                             </div>
                                         )}
-                                        <div className="flex items-center gap-1.5 text-[11px] text-text-muted bg-surface-hover/60 px-2 py-0.5 rounded-md border border-surface-border">
-                                            <span className="font-medium">Set All:</span>
+                                        <div className="flex items-center gap-1.5 text-[11px] text-text-muted bg-surface-hover/70 px-2.5 py-1 rounded-lg border border-surface-border">
+                                            <span className="font-medium">Classification:</span>
                                             <button
                                                 type="button"
                                                 onClick={() => handleSetAllStagedClassification(constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED)}
@@ -2990,7 +3080,7 @@ const DocumentsPage = ({
                                             >
                                                 Auto AI
                                             </button>
-                                            <span>•</span>
+                                            <span className="text-surface-border">•</span>
                                             <button
                                                 type="button"
                                                 onClick={() => handleSetAllStagedClassification(constants.DOCUMENT_VERSIONS_CLASSIFICATION.PUBLIC)}
@@ -2999,7 +3089,7 @@ const DocumentsPage = ({
                                             >
                                                 Public
                                             </button>
-                                            <span>•</span>
+                                            <span className="text-surface-border">•</span>
                                             <button
                                                 type="button"
                                                 onClick={() => handleSetAllStagedClassification(constants.DOCUMENT_VERSIONS_CLASSIFICATION.PRIVATE)}
@@ -3012,43 +3102,49 @@ const DocumentsPage = ({
                                         <button
                                             type="button"
                                             onClick={handleClearAllStagedItems}
-                                            className="text-xs text-error hover:underline cursor-pointer"
+                                            className="text-xs text-error hover:underline cursor-pointer font-medium px-1"
                                         >
                                             Clear All
                                         </button>
                                     </div>
                                 </div>
 
-                                <div className="max-h-56 overflow-y-auto divide-y divide-surface-border border border-surface-border rounded-lg bg-surface">
+                                <div className="max-h-60 overflow-y-auto divide-y divide-surface-border border border-surface-border rounded-xl bg-surface shadow-2xs">
                                     {stagedDroppedItems.map((stagedItem) => (
                                         <div
                                             key={stagedItem.id}
-                                            className="px-3 py-2.5 flex items-center justify-between text-xs hover:bg-surface-hover gap-3"
+                                            className="px-3.5 py-2.5 flex items-center justify-between text-xs hover:bg-surface-hover/60 transition-colors gap-3"
                                         >
-                                            <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                                            <div className="flex items-center gap-3 min-w-0 flex-1">
                                                 {stagedItem.previewUrl ? (
                                                     <img
                                                         src={stagedItem.previewUrl}
                                                         alt="Document Preview"
-                                                        className="h-8 w-8 rounded object-cover border border-accent/40 shadow-xs shrink-0 cursor-pointer"
+                                                        className="h-9 w-9 rounded-lg object-cover border border-accent/40 shadow-xs shrink-0 cursor-pointer hover:opacity-80 transition-opacity"
                                                         onClick={() => handleOpenScanner(stagedItem)}
                                                         title="Click to re-adjust crop/whitening"
                                                     />
                                                 ) : stagedItem.isImage ? (
                                                     stagedItem.ocrMode === 'ocr_pdf' ? (
-                                                        <ScanText className="h-4 w-4 text-accent shrink-0" />
+                                                        <div className="h-9 w-9 rounded-lg bg-accent/10 border border-accent/20 flex items-center justify-center shrink-0">
+                                                            <ScanText className="h-4 w-4 text-accent" />
+                                                        </div>
                                                     ) : (
-                                                        <ImageIcon className="h-4 w-4 text-information shrink-0" />
+                                                        <div className="h-9 w-9 rounded-lg bg-surface-hover border border-surface-border flex items-center justify-center shrink-0">
+                                                            <ImageIcon className="h-4 w-4 text-information" />
+                                                        </div>
                                                     )
                                                 ) : (
-                                                    <FileText className="h-4 w-4 text-accent shrink-0" />
+                                                    <div className="h-9 w-9 rounded-lg bg-surface-hover border border-surface-border flex items-center justify-center shrink-0">
+                                                        <FileText className="h-4 w-4 text-accent" />
+                                                    </div>
                                                 )}
                                                 <div className="flex flex-col min-w-0">
                                                     <div className="flex items-center gap-1.5 flex-wrap">
                                                         <span className="truncate font-medium text-text font-mono text-[11px]" title={stagedItem.relativePath}>
                                                             {stagedItem.relativePath}
                                                         </span>
-                                                        <span className="text-[10px] text-text-muted shrink-0">
+                                                        <span className="text-[10px] text-text-muted shrink-0 font-mono">
                                                             ({stagedItem.size})
                                                         </span>
                                                         {stagedItem.isScannerEnhanced && (
@@ -3063,12 +3159,12 @@ const DocumentsPage = ({
                                                             }`}>
                                                                 <Sparkles className="h-2.5 w-2.5" />
                                                                 {stagedItem.scannerFilter === 'original'
-                                                                    ? 'Original Color'
+                                                                    ? 'Original'
                                                                     : stagedItem.scannerFilter === 'bw'
-                                                                    ? 'B&W Clean'
+                                                                    ? 'B&W'
                                                                     : stagedItem.scannerFilter === 'gray'
                                                                     ? 'Grayscale'
-                                                                    : 'Magic White'}
+                                                                    : 'Whitened'}
                                                             </span>
                                                         )}
                                                         {stagedItem.isMobileCaptured && (
@@ -3081,15 +3177,15 @@ const DocumentsPage = ({
                                                     <div className="flex items-center gap-3 mt-1 flex-wrap">
                                                         {stagedItem.isImage && stagedItem.ocrMode === 'ocr_pdf' && (
                                                             <span className="text-[10px] text-accent font-medium flex items-center gap-1">
-                                                                <span>➔ Will convert to <strong>{(stagedItem.fileName || '').replace(/\.[^/.]+$/, '')}.pdf</strong> via Cloud OCR</span>
+                                                                <span>➔ Convert to <strong>{(stagedItem.fileName || '').replace(/\.[^/.]+$/, '')}.pdf</strong> via Cloud OCR</span>
                                                             </span>
                                                         )}
-                                                        <div className="flex items-center gap-1 text-[10px] text-text-muted">
-                                                            <span>Class:</span>
+                                                        <div className="flex items-center gap-1.5 text-[10px] text-text-muted">
+                                                            <span className="font-medium">Class:</span>
                                                             <select
                                                                 value={stagedItem.classification || constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED}
                                                                 onChange={(e) => handleSetStagedItemClassification(stagedItem.id, e.target.value)}
-                                                                className="text-[10px] py-0.5 px-1.5 rounded bg-surface hover:bg-surface-border border border-surface-border text-text font-medium cursor-pointer focus:outline-none focus:border-accent"
+                                                                className="text-[10px] py-0.5 px-2 rounded-md bg-surface hover:bg-surface-hover border border-surface-border text-text font-medium cursor-pointer focus:outline-none focus:border-accent"
                                                                 title="Security classification for this document"
                                                             >
                                                                 <option value={constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED}>✨ Auto (AI Classify)</option>
@@ -3109,7 +3205,7 @@ const DocumentsPage = ({
                                                     <button
                                                         type="button"
                                                         onClick={() => handleOpenScanner(stagedItem)}
-                                                        className={`flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium border cursor-pointer transition-all shadow-xs ${
+                                                        className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-medium border cursor-pointer transition-all shadow-2xs ${
                                                             stagedItem.isScannerEnhanced
                                                                 ? 'bg-accent/15 border-accent/40 text-accent hover:bg-accent/25'
                                                                 : 'bg-surface-hover hover:bg-surface-border text-text hover:text-accent border-surface-border'
@@ -3123,7 +3219,7 @@ const DocumentsPage = ({
 
                                                 {/* OCR MODE TOGGLE BUTTONS FOR IMAGES */}
                                                 {stagedItem.isImage && (
-                                                    <div className="flex items-center gap-1 bg-surface-hover p-0.5 rounded-lg border border-surface-border">
+                                                    <div className="flex items-center gap-0.5 bg-surface-hover p-0.5 rounded-lg border border-surface-border">
                                                         <button
                                                             type="button"
                                                             onClick={() => handleToggleOcrMode(stagedItem.id, 'ocr_pdf')}
@@ -3135,7 +3231,7 @@ const DocumentsPage = ({
                                                             title="Scan image text with Cloud OCR and convert into searchable PDF"
                                                         >
                                                             <ScanText className="h-3 w-3" />
-                                                            <span>OCR to PDF</span>
+                                                            <span>OCR</span>
                                                         </button>
                                                         <button
                                                             type="button"
@@ -3148,7 +3244,7 @@ const DocumentsPage = ({
                                                             title="Upload file directly as normal image"
                                                         >
                                                             <ImageIcon className="h-3 w-3" />
-                                                            <span>Image Only</span>
+                                                            <span>Raw</span>
                                                         </button>
                                                     </div>
                                                 )}
@@ -3165,14 +3261,14 @@ const DocumentsPage = ({
                                                 ) : (
                                                     <>
                                                         {stagedItem.action === 'create_version' && (
-                                                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-accent/15 text-accent border border-accent/30">
+                                                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-accent/15 text-accent border border-accent/30 font-mono">
                                                                 v{stagedItem.nextVersion ?? 2}.0
                                                             </span>
                                                         )}
                                                         <button
                                                             type="button"
                                                             onClick={() => handleRemoveStagedItem(stagedItem.id)}
-                                                            className="group/btn h-7 w-7 rounded-md hover:bg-error/10 text-text-muted hover:text-error flex items-center justify-center cursor-pointer transition-colors"
+                                                            className="group/btn h-7 w-7 rounded-lg hover:bg-error/10 text-text-muted hover:text-error flex items-center justify-center cursor-pointer transition-colors"
                                                             title="Click to remove from staging"
                                                         >
                                                             <Check className="h-4 w-4 text-accent group-hover/btn:hidden transition-all" />
@@ -3192,9 +3288,16 @@ const DocumentsPage = ({
                 {/* 3. MODE CONTENT B: FOLDER DETAILS FORM */}
                 {creationMode === 'folder' && (
                     <div className="flex flex-col gap-4 mt-2">
+                        <div className="p-3 rounded-xl bg-surface-hover/70 border border-surface-border flex items-center gap-2.5 text-xs text-text-muted">
+                            <Folder className="h-4 w-4 text-accent shrink-0" />
+                            <span>
+                                Creating folder inside <strong className="text-text font-mono font-medium">{currentDirectoryLabel}</strong>
+                            </span>
+                        </div>
+
                         <TextField
-                            label="Name"
-                            placeholder="Enter folder name"
+                            label="Folder Name"
+                            placeholder="e.g. Research Papers, Memorandums 2026..."
                             value={folderTitle}
                             onChange={(event) => {
                                 setFolderTitle(event.target.value);
@@ -3208,8 +3311,8 @@ const DocumentsPage = ({
                         />
 
                         <AreaField
-                            label="Comment"
-                            placeholder="Enter comment..."
+                            label="Description / Purpose (Optional)"
+                            placeholder="Add brief context or notes regarding this folder..."
                             value={folderDescription}
                             onChange={(event) => setFolderDescription(event.target.value)}
                             rows={3}
@@ -3348,18 +3451,41 @@ const DocumentsPage = ({
                 >
                     <div className="flex flex-col gap-4 py-2">
                         {/* 1. NAME (REQUIRED FOR BOTH) */}
-                        <TextField
-                            label="Name"
-                            placeholder={editItem.isFolder ? 'Enter folder name...' : 'Enter document filename...'}
-                            value={editFormName}
-                            onChange={(event) => {
-                                setEditFormName(event.target.value);
-                                if (editFormErrors.name) setEditFormErrors((prev) => ({ ...prev, name: '' }));
-                            }}
-                            error={editFormErrors.name}
-                            leadingIcon={editItem.isFolder ? Folder : FileText}
-                            required
-                        />
+                        {editItem.isFolder ? (
+                            <TextField
+                                label="Name"
+                                placeholder="Enter folder name..."
+                                value={editFormName}
+                                onChange={(event) => {
+                                    setEditFormName(event.target.value);
+                                    if (editFormErrors.name) setEditFormErrors((prev) => ({ ...prev, name: '' }));
+                                }}
+                                error={editFormErrors.name}
+                                leadingIcon={Folder}
+                                required
+                            />
+                        ) : (
+                            <TextField
+                                label="File Name"
+                                placeholder="Enter document filename..."
+                                value={editFormName}
+                                onChange={(event) => {
+                                    let val = event.target.value;
+                                    if (editFormExtension && val.toLowerCase().endsWith(editFormExtension.toLowerCase())) {
+                                        val = val.slice(0, -editFormExtension.length);
+                                    }
+                                    setEditFormName(val);
+                                    if (editFormErrors.name) setEditFormErrors((prev) => ({ ...prev, name: '' }));
+                                }}
+                                suffixOptions={FILE_EXTENSION_OPTIONS}
+                                selectedSuffix={editFormExtension}
+                                onSuffixChange={(ext) => setEditFormExtension(ext)}
+                                error={editFormErrors.name}
+                                leadingIcon={FileText}
+                                helperText={`Format: ${formatMimeTypeLabel(getMimeTypeFromFilename(`file${editFormExtension}`))}`}
+                                required
+                            />
+                        )}
 
                         {/* 2. FOR FILES ONLY: CLASSIFICATION WITH SPARKLES AI BUTTON */}
                         {!editItem.isFolder && (
@@ -4222,11 +4348,16 @@ function annotateDuplicates(extractedList, targetParentId, existingDocs, existin
         }
 
         if (resolvedParentId !== 'will-create-folder') {
+            const rawItemName = (item.fileName || item.title || '').trim();
+            const cleanItemName = rawItemName.replace(/\.[^/.]+$/, '').trim();
             const matchingDoc = (existingDocs || []).find(
                 (d) => !d.isFolder &&
                 !d.isArchived &&
                 (d.parentId ?? null) === resolvedParentId &&
-                d.name.toLowerCase() === (item.fileName || item.title).toLowerCase()
+                (
+                    d.name.toLowerCase() === cleanItemName.toLowerCase() ||
+                    d.name.toLowerCase() === rawItemName.toLowerCase()
+                )
             );
 
             if (matchingDoc) {

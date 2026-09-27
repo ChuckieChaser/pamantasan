@@ -1,10 +1,10 @@
 // --- IMPORTS ---
-import { Bell, PanelRight } from 'lucide-react';
+import { Bell, Menu, PanelRight } from 'lucide-react';
 import { SearchField } from '../Fields';
 import { ToggleSelection } from '../Selections';
 
 // --- CONFIGURATIONS ---
-const BASE_STYLE = 'h-16 px-4 sm:px-6 bg-background/80 backdrop-blur-sm sticky top-0 z-20 flex items-center justify-between gap-4 shrink-0';
+const BASE_STYLE = 'h-12 sm:h-14 px-2.5 sm:px-4 bg-background/90 backdrop-blur-md sticky top-0 z-20 flex items-center justify-between gap-2 shrink-0 border-b border-surface-border/60 transition-all';
 
 // --- COMPONENTS ---
 const TopBar = ({
@@ -25,6 +25,7 @@ const TopBar = ({
     onToggleNotifications,
     notificationTriggerRef,
     notificationContent = null,
+    onToggleMobileSidebar,
     className,
     ...props
 }) => {
@@ -54,22 +55,23 @@ const TopBar = ({
             className={composedClassName}
             {...props}
         >
-            {/* CURRENT PAGE TITLE */}
-            <div className="flex items-center min-w-0">
-                <h1 className="text-xl font-bold font-serif text-text truncate tracking-tight">
-                    {pageTitle}
-                </h1>
-            </div>
+            {/* LEFT: MOBILE MENU HAMBURGER & SEARCH BAR */}
+            <div className="flex items-center gap-1.5 sm:gap-2.5 flex-1 min-w-0 max-w-xs sm:max-w-sm md:max-w-md lg:max-w-lg">
+                {onToggleMobileSidebar && (
+                    <button
+                        type="button"
+                        onClick={onToggleMobileSidebar}
+                        className="md:hidden h-8 w-8 rounded-md flex items-center justify-center text-text-muted hover:text-text hover:bg-surface-hover cursor-pointer shrink-0 transition-colors"
+                        title="Toggle navigation menu"
+                    >
+                        <Menu className="h-4 w-4" />
+                    </button>
+                )}
 
-            {/* SEARCH FIELD & ACTION CONTROLS */}
-            <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-                {headerActions}
-
-                {/* SEARCH FIELD WITH GLOBAL DROPDOWN SLOT */}
                 {hasSearch && (
                     <div
                         ref={searchContainerRef}
-                        className="w-48 sm:w-64 md:w-80 relative"
+                        className="flex-1 relative min-w-0"
                     >
                         <SearchField
                             value={searchQuery}
@@ -77,11 +79,17 @@ const TopBar = ({
                             onChange={handleSearchChange}
                             onClear={handleSearchClear}
                             onFocus={onSearchFocus}
+                            size="sm"
                         />
 
                         {searchContent}
                     </div>
                 )}
+            </div>
+
+            {/* RIGHT: ACTION CONTROLS & UTILITIES */}
+            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+                {headerActions}
 
                 {/* NOTIFICATION TOGGLE WITH POPOVER SLOT */}
                 <div

@@ -13,7 +13,7 @@ import { constants } from '../../constants';
 
 // --- CONFIGURATIONS ---
 const ICON_STYLE = 'h-4 w-4 shrink-0';
-const LARGE_ICON_STYLE = 'h-5 w-5 shrink-0';
+const LARGE_ICON_STYLE = 'h-4 w-4 shrink-0';
 
 
 // --- HELPERS ---
@@ -42,7 +42,7 @@ const renderItemIcon = (item, resourceName) => {
                 user={item.user ?? item}
                 alt={item.title ?? item.name}
                 size="small"
-                className="h-5 w-5"
+                className="h-full w-full rounded-full aspect-square"
             />
         );
     }

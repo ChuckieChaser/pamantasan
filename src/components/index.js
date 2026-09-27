@@ -2,8 +2,9 @@
 export { Badge } from './Badge';
 export { Button } from './Button';
 export { Container } from './Container';
-export { AreaField, ComboField, PasswordField, SearchField, SelectField, TextField } from './Fields';
+export { AreaField, ComboField, PasswordField, SearchField, SelectField, SuffixField, TextField } from './Fields';
 export { Modal, ModalCallout } from './Modal';
+export { History } from './History';
 export {
     NavigationSelection,
     SegmentSelection,
@@ -38,4 +39,4 @@ export { MobileScanModal } from './MobileScanModal';
 
 export { ReadershipChart, compute7DaySlots } from './ReadershipChart';
 export { Account, GlobalSearchDropdown, Notifications, Settings, Sidebar, TopBar } from './ui';
-export { formatUniversityId, renderIcon, formatDateTime, getMimeTypeFromFilename } from './common';
+export { formatUniversityId, renderIcon, formatDateTime, getMimeTypeFromFilename, formatMimeTypeLabel, getExtensionFromMimeType, fileToBase64 } from './common';
