@@ -11,7 +11,7 @@ const {
     provisionUser,
 } = require('./authService');
 
-const INSTITUTIONAL_DOMAIN = '@plpasig.edu.ph';
+const { INSTITUTIONAL_DOMAIN } = require('../../shared/constants');
 
 
 // --- HANDLERS ---

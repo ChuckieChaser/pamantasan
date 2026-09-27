@@ -1,7 +1,7 @@
 // --- IMPORTS ---
 import { useEffect } from 'react';
 import { BrowserRouter } from 'react-router-dom';
-import { ToastProvider } from './components/feedback/ToastProvider';
+import { ToastProvider, useToast } from './components/feedback/ToastProvider';
 import { DialogProvider } from './components/feedback/DialogProvider';
 import { useAuth } from './features/auth/hooks/useAuth';
 import { useInactivityTimeout } from './features/auth/hooks/useInactivityTimeout';

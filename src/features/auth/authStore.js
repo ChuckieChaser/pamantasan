@@ -13,6 +13,7 @@ import {
     linkGoogleAccount,
     verifySessionHeartbeat,
 } from './authService';
+import { SESSION_STORAGE_KEY } from './authConstants';
 
 
 // --- STORE ---
@@ -129,8 +130,8 @@ export const useAuthStore = create((set) => ({
         const unsubscribe = onAuthStateChanged(auth, async (user) => {
             if (!user) {
                 try {
-                    localStorage.removeItem('pamantasan_session_id');
-                    localStorage.removeItem('pamantasan_last_active_time');
+                    localStorage.removeItem(SESSION_STORAGE_KEY.SESSION_ID);
+                    localStorage.removeItem(SESSION_STORAGE_KEY.LAST_ACTIVE);
                 } catch {
                     // Ignore storage errors
                 }
@@ -139,7 +140,7 @@ export const useAuthStore = create((set) => ({
             }
 
             // Session Binding: Verify active session ID is present
-            const sessionId = localStorage.getItem('pamantasan_session_id');
+            const sessionId = localStorage.getItem(SESSION_STORAGE_KEY.SESSION_ID);
             if (!sessionId) {
                 // If the session record was deleted, immediately terminate actual user session
                 await logout().catch(() => {});

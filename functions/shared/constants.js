@@ -8,6 +8,9 @@ const DOCUMENT_VERSIONS_CLASSIFICATION = Object.freeze({
     RESTRICTED: 'RESTRICTED',
 });
 
+const INSTITUTIONAL_DOMAIN = '@plpasig.edu.ph';
+
 module.exports = {
     DOCUMENT_VERSIONS_CLASSIFICATION,
+    INSTITUTIONAL_DOMAIN,
 };

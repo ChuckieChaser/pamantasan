@@ -5,6 +5,7 @@ import { signInWithPopup, signInWithCustomToken, signOut } from 'firebase/auth';
 import { auth, functions, googleProvider } from '../../services/firebase';
 
 import { LoginSchema, ForgotPasswordSchema, VerificationSchema, ResetPasswordSchema, ChangePasswordSchema } from './authSchema';
+import { SESSION_STORAGE_KEY } from './authConstants';
 import { SYSTEM } from '../../constants';
 
 
@@ -47,8 +48,8 @@ export const loginWithUniversityId = async (payload) => {
 
     if (result?.data?.sessionId) {
         try {
-            localStorage.setItem('pamantasan_session_id', result.data.sessionId);
-            localStorage.setItem('pamantasan_last_active_time', Date.now().toString());
+            localStorage.setItem(SESSION_STORAGE_KEY.SESSION_ID, result.data.sessionId);
+            localStorage.setItem(SESSION_STORAGE_KEY.LAST_ACTIVE, Date.now().toString());
         } catch {
             // Ignore storage write errors
         }
@@ -78,8 +79,8 @@ export const verifySessionHeartbeat = async ({ sessionId, userId }) => {
 
 export const terminateSession = async () => {
     try {
-        localStorage.removeItem('pamantasan_session_id');
-        localStorage.removeItem('pamantasan_last_active_time');
+        localStorage.removeItem(SESSION_STORAGE_KEY.SESSION_ID);
+        localStorage.removeItem(SESSION_STORAGE_KEY.LAST_ACTIVE);
     } catch {
         // Ignore
     }

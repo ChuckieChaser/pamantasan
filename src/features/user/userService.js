@@ -85,41 +85,26 @@ export const createUser = async (payload) => {
         ...payload,
     });
 
-    // Prefer atomic Cloud Functions provisioning (hashes password on server & emails temporary credentials)
-    if (functions) {
-        try {
-            const provision = httpsCallable(functions, 'provisionUser');
-            const res = await provision({
-                id: validated.id,
-                universityId: validated.universityId,
-                departmentId: validated.departmentId,
-                role: validated.role,
-                email: validated.email,
-                givenName: validated.givenName,
-                lastName: validated.lastName,
-            });
-            if (res?.data?.user) {
-                return res.data.user;
-            }
-        } catch (fnErr) {
-            console.warn('[createUser] Cloud Function provisioning fallback:', fnErr?.message);
-        }
+    if (!functions) {
+        throw new Error('Firebase Functions is not initialized.');
     }
 
-    const data = await executeDataMutation('CreateUser', {
+    const provision = httpsCallable(functions, 'provisionUser');
+    const res = await provision({
         id: validated.id,
         universityId: validated.universityId,
         departmentId: validated.departmentId,
         role: validated.role,
         email: validated.email,
-        avatar: validated.avatar ?? null,
         givenName: validated.givenName,
         lastName: validated.lastName,
-        passwordHash: validated.passwordHash || 'PENDING_PROVISIONING',
-        googleId: validated.googleId ?? null,
     });
 
-    return data?.user_insert ?? null;
+    if (res?.data?.user) {
+        return res.data.user;
+    }
+
+    throw new Error(res?.data?.message || 'Failed to provision user.');
 };
 
 export const updateUser = async (id, payload) => {

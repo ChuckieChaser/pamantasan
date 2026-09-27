@@ -33,36 +33,30 @@ const verifyPassword = async (plainPassword, storedHash) => {
     if (!plainPassword || !storedHash) return false;
 
     // Standard scrypt format
-    if (storedHash.startsWith('scrypt:')) {
-        const parts = storedHash.split(':');
-        if (parts.length !== 3) return false;
-        const salt = parts[1];
-        const expectedHash = parts[2];
+    if (!storedHash.startsWith('scrypt:')) {
+        return false;
+    }
 
-        return new Promise((resolve) => {
-            crypto.scrypt(plainPassword, salt, 64, (err, derivedKey) => {
-                if (err) return resolve(false);
-                const actualHash = derivedKey.toString('hex');
-                try {
-                    const match = crypto.timingSafeEqual(
-                        Buffer.from(actualHash, 'utf8'),
-                        Buffer.from(expectedHash, 'utf8'),
-                    );
-                    resolve(match);
-                } catch {
-                    resolve(false);
-                }
-            });
+    const parts = storedHash.split(':');
+    if (parts.length !== 3) return false;
+    const salt = parts[1];
+    const expectedHash = parts[2];
+
+    return new Promise((resolve) => {
+        crypto.scrypt(plainPassword, salt, 64, (err, derivedKey) => {
+            if (err) return resolve(false);
+            const actualHash = derivedKey.toString('hex');
+            try {
+                const match = crypto.timingSafeEqual(
+                    Buffer.from(actualHash, 'utf8'),
+                    Buffer.from(expectedHash, 'utf8'),
+                );
+                resolve(match);
+            } catch {
+                resolve(false);
+            }
         });
-    }
-
-    // SHA-256 fallback for any legacy hash
-    const sha256 = crypto.createHash('sha256').update(plainPassword).digest('hex');
-    if (sha256 === storedHash || plainPassword === storedHash) {
-        return true;
-    }
-
-    return false;
+    });
 };
 
 const maskEmail = (email) => {

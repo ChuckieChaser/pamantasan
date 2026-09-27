@@ -25,7 +25,6 @@ import { USER_ROLE } from '../features/user/userConstants';
 const ADMIN_ROLES = [
     USER_ROLE.ADMINISTRATOR,
     USER_ROLE.COORDINATOR,
-    USER_ROLE.DIRECTOR,
 ];
 
 const COORDINATOR_ROLES = [
