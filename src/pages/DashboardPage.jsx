@@ -29,6 +29,7 @@ import {
     Zap,
     Check,
     Copy,
+    FileCheck,
 } from 'lucide-react';
 import {
     Avatar,
@@ -55,7 +56,13 @@ import {
     getRecursiveDescendantDocIds,
 } from '../stores';
 import { useAuth } from '../hooks';
-import { constants, isStaffRole } from '../constants';
+import {
+    constants,
+    isStaffRole,
+    isOfficerRole,
+    isDirectorRole,
+    isMemberRole,
+} from '../constants';
 
 
 // --- CONFIGURATIONS ---
@@ -444,12 +451,14 @@ const DashboardPage = ({
     const [analysisSearch, setAnalysisSearch] = useState('');
     const [pendingRequestType, setPendingRequestType] = useState('DOCUMENT'); // 'DOCUMENT' | 'COORDINATOR'
     const [pendingSearch, setPendingSearch] = useState('');
+    const [specializedSearch, setSpecializedSearch] = useState('');
 
     // RESPONSIVE CONTAINER TIERS FOR CARDS (CONTAINER-QUERY BEHAVIOR LIKE BROWSER)
     const [bannerRef, bannerTier] = useContainerTier({ full: 960, half: 520, quarter: 520 });
     const [pendingCardRef, pendingTier] = useContainerTier({ full: 620, half: 480, quarter: 360 });
     const [analysisCardRef, analysisTier] = useContainerTier({ full: 620, half: 480, quarter: 360 });
     const [auditCardRef, auditTier, auditWidth] = useContainerTier({ full: 1040, half: 720, quarter: 500 });
+    const [specializedCardRef, specializedTier] = useContainerTier({ full: 620, half: 480, quarter: 360 });
 
     // DERIVED VALUES
     const { currentUser: authUser } = useAuth();
@@ -457,7 +466,12 @@ const DashboardPage = ({
     const activeUser = currentUser ?? authUser ?? storeUser ?? useAuthStore.getState().currentUser;
     const isStaff = isStaffRole(activeUser?.role);
     const isAdmin = constants.isAdminRole(activeUser?.role);
+    const isOfficer = isOfficerRole(activeUser?.role);
+    const isDirector = isDirectorRole(activeUser?.role);
+    const isMember = isMemberRole(activeUser?.role);
+    const isSpecializedRole = isOfficer || isDirector || isMember;
     const activeUserId = activeUser?.id;
+    const userDeptId = activeUser?.departmentId || activeUser?.department?.id;
     const greeting = useMemo(() => getTimeOfDayGreeting(), []);
 
     // FETCH DATA (ONLY FETCH UNINITIALIZED STORES TO PREVENT NETWORK THRASHING & LAG)
@@ -469,6 +483,9 @@ const DashboardPage = ({
         if (!users || users.length === 0) fetchUsers().catch(() => {});
         if (!coordinatorRequests || coordinatorRequests.length === 0) fetchCoordinatorRequests().catch(() => {});
         if (!auditLogs || auditLogs.length === 0) fetchAuditLogs().catch(() => {});
+        if (activeUser && typeof syncAllDocumentShares === 'function') {
+            syncAllDocumentShares(activeUser, departments).catch(() => {});
+        }
     }, [
         fetchDocuments,
         fetchAllDocumentVersions,
@@ -477,7 +494,217 @@ const DashboardPage = ({
         fetchUsers,
         fetchCoordinatorRequests,
         fetchAuditLogs,
+        activeUser,
+        departments,
+        syncAllDocumentShares,
     ]);
+
+    // DEPARTMENT FACULTY COUNT
+    const departmentFacultyCount = useMemo(() => {
+        if (!userDeptId) return 0;
+        const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
+        const cleanUserDept = cleanId(userDeptId);
+        const safeUsers = Array.isArray(users) ? users : [];
+        return safeUsers.filter((u) => {
+            const uDept = u.departmentId || u.department?.id;
+            return uDept && cleanId(uDept) === cleanUserDept;
+        }).length;
+    }, [users, userDeptId]);
+
+    // DEPARTMENTAL SHARED DOCUMENTS RESOLVER (FOR OFFICER, DIRECTOR, MEMBER)
+    const {
+        departmentSharedDocs,
+        officerPendingDocs,
+        directorPendingDocs,
+        memberPublishedDocs,
+    } = useMemo(() => {
+        if (isStaff || !userDeptId) {
+            return {
+                departmentSharedDocs: [],
+                officerPendingDocs: [],
+                directorPendingDocs: [],
+                memberPublishedDocs: [],
+            };
+        }
+
+        const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
+        const userDeptClean = cleanId(userDeptId);
+        const safeDocs = Array.isArray(documents) ? documents.filter((d) => !d?.isArchived && !d?.isFolder) : [];
+        const allDocs = Array.isArray(documents) ? documents : [];
+        const safeShares = Array.isArray(documentShares) ? documentShares : [];
+        const safeVersions = Array.isArray(documentVersions) ? documentVersions : [];
+
+        const sharedList = [];
+        const pendingApprovalList = [];
+        const approvedPendingPubList = [];
+        const publishedList = [];
+
+        safeDocs.forEach((doc) => {
+            const docClean = cleanId(doc.id);
+
+            // Direct departmental shares
+            const directShares = safeShares.filter((s) => {
+                const sDocId = s.document?.id ?? s.documentId;
+                const sDeptId = s.department?.id ?? s.departmentId;
+                const status = String(s.status || '').toUpperCase();
+                if (['REVOKED', 'DELETED', 'UNSHARED'].includes(status)) return false;
+                return cleanId(sDocId) === docClean && cleanId(sDeptId) === userDeptClean;
+            });
+
+            let effectiveShares = [...directShares];
+            let isInherited = false;
+            let parentFolderName = null;
+
+            if (effectiveShares.length === 0) {
+                let currParentId = doc.parentId ?? doc.parent?.id ?? doc.parentFolderId;
+                while (currParentId && currParentId !== 'root') {
+                    const parentDoc = allDocs.find((d) => cleanId(d.id) === cleanId(currParentId));
+                    if (!parentDoc) break;
+                    const parentDeptShares = safeShares.filter((s) => {
+                        const sDocId = s.document?.id ?? s.documentId;
+                        const sDeptId = s.department?.id ?? s.departmentId;
+                        const status = String(s.status || '').toUpperCase();
+                        if (['REVOKED', 'DELETED', 'UNSHARED'].includes(status)) return false;
+                        return cleanId(sDocId) === cleanId(parentDoc.id) && cleanId(sDeptId) === userDeptClean;
+                    });
+                    if (parentDeptShares.length > 0) {
+                        effectiveShares = parentDeptShares;
+                        isInherited = true;
+                        parentFolderName = parentDoc.name || parentDoc.title || 'Institutional Folder';
+                        break;
+                    }
+                    currParentId = parentDoc.parentId ?? parentDoc.parent?.id ?? parentDoc.parentFolderId;
+                }
+            }
+
+            if (effectiveShares.length === 0) {
+                return;
+            }
+
+            // Status resolution priority: PUBLISHED > STASHED > APPROVED > PENDING_APPROVAL
+            let resolvedStatus = constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL;
+            if (effectiveShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED)) {
+                resolvedStatus = constants.DOCUMENT_SHARES_STATUS.PUBLISHED;
+            } else if (effectiveShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.STASHED)) {
+                resolvedStatus = constants.DOCUMENT_SHARES_STATUS.STASHED;
+            } else if (effectiveShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.APPROVED)) {
+                resolvedStatus = constants.DOCUMENT_SHARES_STATUS.APPROVED;
+            } else if (effectiveShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL)) {
+                resolvedStatus = constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL;
+            } else {
+                resolvedStatus = effectiveShares[0]?.status || constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL;
+            }
+
+            const primaryShare = effectiveShares.find((s) => s.status === resolvedStatus) || effectiveShares[0];
+
+            // Resolve latest version & classification
+            const docVers = safeVersions.filter((v) => cleanId(v.document?.id ?? v.documentId) === docClean);
+            const latestVer = docVers.length > 0
+                ? [...docVers].sort((a, b) => (b.version ?? 0) - (a.version ?? 0))[0]
+                : (Array.isArray(doc.versions) && doc.versions.length > 0 ? doc.versions[0] : (doc.latestVersion ?? null));
+            const rawClassification = String(
+                latestVer?.classification || doc.classification || constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED
+            ).toUpperCase();
+            const classification = CLASSIFICATION_STYLES[rawClassification] ? rawClassification : 'UNCLASSIFIED';
+            const classificationLabel = CLASSIFICATION_LABELS[classification] || 'Unclassified';
+
+            // Resolve sharer name
+            const sharerUser = primaryShare?.sharer;
+            const sharerName = sharerUser
+                ? `${sharerUser.firstName ?? ''} ${sharerUser.lastName ?? ''}`.trim() || sharerUser.name
+                : 'Central Records Office';
+
+            // Format date
+            const shareDateRaw = primaryShare?.updatedAt || primaryShare?.createdAt || doc.updatedAt || doc.createdAt;
+            const shareDateObj = shareDateRaw ? new Date(shareDateRaw) : null;
+            const formattedDate = shareDateObj && !isNaN(shareDateObj.getTime())
+                ? (shareDateObj.toDateString() === new Date().toDateString()
+                    ? shareDateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                    : shareDateObj.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }))
+                : 'Recent';
+
+            const itemPayload = {
+                id: doc.id,
+                title: doc.name || doc.title || 'Institutional Record',
+                extension: doc.name ? doc.name.split('.').pop() : 'pdf',
+                parentFolderName,
+                isInherited,
+                status: resolvedStatus,
+                primaryShare,
+                effectiveShares,
+                sharerName,
+                timestamp: formattedDate,
+                rawDate: shareDateObj ? shareDateObj.getTime() : 0,
+                classification,
+                classificationLabel,
+                documentItem: {
+                    ...doc,
+                    classification,
+                    latestVersion: latestVer,
+                    versions: docVers,
+                },
+            };
+
+            sharedList.push(itemPayload);
+
+            if (resolvedStatus === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL) {
+                pendingApprovalList.push(itemPayload);
+            }
+            if (resolvedStatus === constants.DOCUMENT_SHARES_STATUS.APPROVED) {
+                approvedPendingPubList.push(itemPayload);
+            }
+            if (resolvedStatus === constants.DOCUMENT_SHARES_STATUS.PUBLISHED) {
+                if (isMember) {
+                    const memberSpecificShares = effectiveShares.filter((s) => s.recipient?.id ?? s.recipientId);
+                    if (memberSpecificShares.length > 0) {
+                        const userShare = memberSpecificShares.find(
+                            (s) => cleanId(s.recipient?.id ?? s.recipientId) === cleanId(activeUser?.id)
+                        );
+                        if (userShare && userShare.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED) {
+                            publishedList.push(itemPayload);
+                        }
+                    } else {
+                        publishedList.push(itemPayload);
+                    }
+                } else {
+                    publishedList.push(itemPayload);
+                }
+            }
+        });
+
+        // Sort descending by date
+        sharedList.sort((a, b) => b.rawDate - a.rawDate);
+        pendingApprovalList.sort((a, b) => b.rawDate - a.rawDate);
+        approvedPendingPubList.sort((a, b) => b.rawDate - a.rawDate);
+        publishedList.sort((a, b) => b.rawDate - a.rawDate);
+
+        return {
+            departmentSharedDocs: sharedList,
+            officerPendingDocs: pendingApprovalList,
+            directorPendingDocs: approvedPendingPubList,
+            memberPublishedDocs: publishedList,
+        };
+    }, [documents, documentShares, documentVersions, isStaff, isMember, userDeptId, activeUser?.id]);
+
+    const activeSpecializedList = useMemo(() => {
+        let sourceList = [];
+        if (isOfficer) sourceList = officerPendingDocs;
+        else if (isDirector) sourceList = directorPendingDocs;
+        else sourceList = memberPublishedDocs;
+
+        const query = specializedSearch.trim().toLowerCase();
+        if (!query) return sourceList;
+
+        return sourceList.filter((item) => {
+            return (
+                (item.title || '').toLowerCase().includes(query) ||
+                (item.parentFolderName || '').toLowerCase().includes(query) ||
+                (item.sharerName || '').toLowerCase().includes(query) ||
+                (item.classificationLabel || '').toLowerCase().includes(query) ||
+                (item.extension || '').toLowerCase().includes(query)
+            );
+        });
+    }, [isOfficer, isDirector, officerPendingDocs, directorPendingDocs, memberPublishedDocs, specializedSearch]);
 
     // Resolve user's unit
     const userUnitName = useMemo(() => {
@@ -1168,7 +1395,13 @@ const DashboardPage = ({
                             </h1>
 
                             <p className="text-xs sm:text-sm text-text-muted leading-relaxed">
-                                Welcome to the institutional records repository. Browse charters, review clearances, inspect real-time departmental readership, and monitor authenticated compliance logs.
+                                {isOfficer
+                                    ? 'Welcome to your department governance console. Review pending document clearances, monitor shared institutional records, and collaborate with your academic unit.'
+                                    : isDirector
+                                    ? 'Welcome to your executive department console. Inspect officer-approved institutional records, authorize publications, and manage departmental distributions.'
+                                    : isMember
+                                    ? 'Welcome to your academic records repository. Access published circulars, review departmental documentation, and consult institutional guidelines.'
+                                    : 'Welcome to the institutional records repository. Browse charters, review clearances, inspect real-time departmental readership, and monitor authenticated compliance logs.'}
                             </p>
                         </div>
                     );
@@ -1242,113 +1475,587 @@ const DashboardPage = ({
                 })()}
             </div>
 
-            {/* 2. BENTO-GRID KPI METRIC CARDS (ADAPTIVE: 1 COL MOBILE/QUARTER, 2 COLS HALF-WINDOW, 3 COLS FULL DESKTOP) */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-4">
-                {/* CARD 1: TOTAL DOCUMENTS */}
-                <div
-                    onClick={() => onNavigate?.('documents')}
-                    className="p-3.5 sm:p-4 rounded-xl bg-surface border border-surface-border hover:border-accent/50 hover:shadow-md transition-all duration-200 cursor-pointer flex flex-col justify-between gap-2.5 group"
-                >
-                    <div className="flex items-center justify-between">
-                        <span className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">
-                            Active Documents
-                        </span>
-                        <div className="p-2 rounded-lg bg-accent-background text-accent group-hover:scale-105 transition-transform">
-                            <FileText className="h-4 w-4" />
+            {/* 2. BENTO-GRID KPI METRIC CARDS */}
+            {isMember ? (
+                /* MEMBER: EXACTLY 2 METRIC CARDS */
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                    {/* CARD 1: PUBLISHED DOCUMENTS */}
+                    <div
+                        onClick={() => onNavigate?.('documents')}
+                        className="p-3.5 sm:p-4 rounded-xl bg-surface border border-surface-border hover:border-accent/50 hover:shadow-md transition-all duration-200 cursor-pointer flex flex-col justify-between gap-2.5 group"
+                    >
+                        <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">
+                                Published Documents
+                            </span>
+                            <div className="p-2 rounded-lg bg-accent-background text-accent group-hover:scale-105 transition-transform">
+                                <FileText className="h-4 w-4" />
+                            </div>
+                        </div>
+
+                        <div className="flex flex-col gap-0.5">
+                            <span className="text-2xl sm:text-3xl font-bold text-text font-serif tracking-tight">
+                                {memberPublishedDocs.length}
+                            </span>
+                            <span className="text-xs text-text-muted">
+                                Available in {userUnitName}
+                            </span>
+                        </div>
+
+                        <div className="pt-2 border-t border-surface-border flex items-center justify-between text-[11px] text-text-muted">
+                            <span className="flex items-center gap-1 text-accent font-semibold">
+                                <Zap className="h-3 w-3" /> Live Repository
+                            </span>
+                            <span>{memberPublishedDocs.length} published {memberPublishedDocs.length === 1 ? 'file' : 'files'}</span>
                         </div>
                     </div>
 
-                    <div className="flex flex-col gap-0.5">
-                        <span className="text-2xl sm:text-3xl font-bold text-text font-serif tracking-tight">
-                            {dynamicMetrics.totalDocsCount}
-                        </span>
-                        <span className="text-xs text-text-muted">
-                            Across {dynamicMetrics.totalFoldersCount} organized directories
-                        </span>
-                    </div>
+                    {/* CARD 2: DEPARTMENT FACULTY */}
+                    <div
+                        className="p-3.5 sm:p-4 rounded-xl bg-surface border border-surface-border hover:border-information/50 hover:shadow-md transition-all duration-200 flex flex-col justify-between gap-2.5 group"
+                    >
+                        <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">
+                                Department Faculty
+                            </span>
+                            <div className="p-2 rounded-lg bg-information-background text-information group-hover:scale-105 transition-transform">
+                                <Users className="h-4 w-4" />
+                            </div>
+                        </div>
 
-                    <div className="pt-2 border-t border-surface-border flex items-center justify-between text-[11px] text-text-muted">
-                        <span className="flex items-center gap-1 text-accent font-semibold">
-                            <Zap className="h-3 w-3" /> Live Catalog
-                        </span>
-                        <span>{dynamicMetrics.totalNodesCount} total nodes</span>
+                        <div className="flex flex-col gap-0.5">
+                            <span className="text-2xl sm:text-3xl font-bold text-text font-serif tracking-tight">
+                                {departmentFacultyCount}
+                            </span>
+                            <span className="text-xs text-text-muted">
+                                Faculty colleagues in {userUnitName}
+                            </span>
+                        </div>
+
+                        <div className="pt-2 border-t border-surface-border flex items-center justify-between text-[11px] text-text-muted">
+                            <span className="text-information font-semibold flex items-center gap-1">
+                                <Users className="h-3 w-3" /> Institutional Directory
+                            </span>
+                            <span>Active Roster</span>
+                        </div>
                     </div>
                 </div>
+            ) : isOfficer ? (
+                /* OFFICER: EXACTLY 3 METRIC CARDS */
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-4">
+                    {/* CARD 1: SHARED DOCUMENTS */}
+                    <div
+                        onClick={() => onNavigate?.('documents')}
+                        className="p-3.5 sm:p-4 rounded-xl bg-surface border border-surface-border hover:border-accent/50 hover:shadow-md transition-all duration-200 cursor-pointer flex flex-col justify-between gap-2.5 group"
+                    >
+                        <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">
+                                Shared Documents
+                            </span>
+                            <div className="p-2 rounded-lg bg-accent-background text-accent group-hover:scale-105 transition-transform">
+                                <FileText className="h-4 w-4" />
+                            </div>
+                        </div>
 
-                {/* CARD 2: PENDING CLEARANCES */}
-                <div
-                    onClick={() => onNavigate?.(isStaff ? 'coordinator' : 'requests')}
-                    className="p-3.5 sm:p-4 rounded-xl bg-surface border border-surface-border hover:border-warning/50 hover:shadow-md transition-all duration-200 cursor-pointer flex flex-col justify-between gap-2.5 group"
-                >
-                    <div className="flex items-center justify-between">
-                        <span className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">
-                            Pending Clearances
-                        </span>
-                        <div className={`p-2 rounded-lg ${dynamicMetrics.totalPendingCount > 0 ? 'bg-warning-background text-warning' : 'bg-accent-background text-accent'} group-hover:scale-105 transition-transform`}>
-                            <Clock className="h-4 w-4" />
+                        <div className="flex flex-col gap-0.5">
+                            <span className="text-2xl sm:text-3xl font-bold text-text font-serif tracking-tight">
+                                {departmentSharedDocs.length}
+                            </span>
+                            <span className="text-xs text-text-muted">
+                                Shared with {userUnitName}
+                            </span>
+                        </div>
+
+                        <div className="pt-2 border-t border-surface-border flex items-center justify-between text-[11px] text-text-muted">
+                            <span className="flex items-center gap-1 text-accent font-semibold">
+                                <Zap className="h-3 w-3" /> Department Catalog
+                            </span>
+                            <span>{departmentSharedDocs.length} total shared</span>
                         </div>
                     </div>
 
-                    <div className="flex flex-col gap-0.5">
-                        <span className="text-2xl sm:text-3xl font-bold text-text font-serif tracking-tight">
-                            {dynamicMetrics.totalPendingCount}
-                        </span>
-                        <span className="text-xs text-text-muted">
-                            {dynamicMetrics.totalPendingCount > 0
-                                ? `${dynamicMetrics.pendingDocRequestsCount} requests • ${dynamicMetrics.pendingCoordRequestsCount} coordinator`
-                                : 'All clearance queues resolved'}
-                        </span>
+                    {/* CARD 2: PENDING APPROVAL */}
+                    <div
+                        className="p-3.5 sm:p-4 rounded-xl bg-surface border border-surface-border hover:border-warning/50 hover:shadow-md transition-all duration-200 flex flex-col justify-between gap-2.5 group"
+                    >
+                        <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">
+                                Pending Approval
+                            </span>
+                            <div className={`p-2 rounded-lg ${officerPendingDocs.length > 0 ? 'bg-warning-background text-warning' : 'bg-accent-background text-accent'} group-hover:scale-105 transition-transform`}>
+                                <Clock className="h-4 w-4" />
+                            </div>
+                        </div>
+
+                        <div className="flex flex-col gap-0.5">
+                            <span className="text-2xl sm:text-3xl font-bold text-text font-serif tracking-tight">
+                                {officerPendingDocs.length}
+                            </span>
+                            <span className="text-xs text-text-muted">
+                                {officerPendingDocs.length > 0
+                                    ? `${officerPendingDocs.length} ${officerPendingDocs.length === 1 ? 'document' : 'documents'} awaiting officer review`
+                                    : 'All approvals resolved'}
+                            </span>
+                        </div>
+
+                        <div className="pt-2 border-t border-surface-border flex items-center justify-between text-[11px]">
+                            {officerPendingDocs.length > 0 ? (
+                                <span className="text-warning font-semibold flex items-center gap-1">
+                                    <span className="h-1.5 w-1.5 rounded-full bg-warning animate-pulse" />
+                                    Action Needed
+                                </span>
+                            ) : (
+                                <span className="text-accent font-semibold flex items-center gap-1">
+                                    <Check className="h-3.5 w-3.5" /> All Clear
+                                </span>
+                            )}
+                            <span className="text-text-muted">Officer Queue</span>
+                        </div>
                     </div>
 
-                    <div className="pt-2 border-t border-surface-border flex items-center justify-between text-[11px]">
-                        {dynamicMetrics.totalPendingCount > 0 ? (
-                            <span className="text-warning font-semibold flex items-center gap-1">
-                                <span className="h-1.5 w-1.5 rounded-full bg-warning animate-pulse" />
-                                Action Needed
+                    {/* CARD 3: DEPARTMENT FACULTY */}
+                    <div
+                        className="p-3.5 sm:p-4 rounded-xl bg-surface border border-surface-border hover:border-information/50 hover:shadow-md transition-all duration-200 flex flex-col justify-between gap-2.5 group sm:col-span-2 xl:col-span-1"
+                    >
+                        <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">
+                                Department Faculty
                             </span>
+                            <div className="p-2 rounded-lg bg-information-background text-information group-hover:scale-105 transition-transform">
+                                <Users className="h-4 w-4" />
+                            </div>
+                        </div>
+
+                        <div className="flex flex-col gap-0.5">
+                            <span className="text-2xl sm:text-3xl font-bold text-text font-serif tracking-tight">
+                                {departmentFacultyCount}
+                            </span>
+                            <span className="text-xs text-text-muted">
+                                Faculty members in {userUnitName}
+                            </span>
+                        </div>
+
+                        <div className="pt-2 border-t border-surface-border flex items-center justify-between text-[11px] text-text-muted">
+                            <span className="text-information font-semibold flex items-center gap-1">
+                                <Users className="h-3 w-3" /> Institutional Directory
+                            </span>
+                            <span>Active Roster</span>
+                        </div>
+                    </div>
+                </div>
+            ) : isDirector ? (
+                /* DIRECTOR: EXACTLY 3 METRIC CARDS */
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-4">
+                    {/* CARD 1: SHARED DOCUMENTS */}
+                    <div
+                        onClick={() => onNavigate?.('documents')}
+                        className="p-3.5 sm:p-4 rounded-xl bg-surface border border-surface-border hover:border-accent/50 hover:shadow-md transition-all duration-200 cursor-pointer flex flex-col justify-between gap-2.5 group"
+                    >
+                        <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">
+                                Shared Documents
+                            </span>
+                            <div className="p-2 rounded-lg bg-accent-background text-accent group-hover:scale-105 transition-transform">
+                                <FileText className="h-4 w-4" />
+                            </div>
+                        </div>
+
+                        <div className="flex flex-col gap-0.5">
+                            <span className="text-2xl sm:text-3xl font-bold text-text font-serif tracking-tight">
+                                {departmentSharedDocs.length}
+                            </span>
+                            <span className="text-xs text-text-muted">
+                                Shared with {userUnitName}
+                            </span>
+                        </div>
+
+                        <div className="pt-2 border-t border-surface-border flex items-center justify-between text-[11px] text-text-muted">
+                            <span className="flex items-center gap-1 text-accent font-semibold">
+                                <Zap className="h-3 w-3" /> Department Catalog
+                            </span>
+                            <span>{departmentSharedDocs.length} total shared</span>
+                        </div>
+                    </div>
+
+                    {/* CARD 2: PENDING PUBLICATION */}
+                    <div
+                        className="p-3.5 sm:p-4 rounded-xl bg-surface border border-surface-border hover:border-sky-500/50 hover:shadow-md transition-all duration-200 flex flex-col justify-between gap-2.5 group"
+                    >
+                        <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">
+                                Pending Publication
+                            </span>
+                            <div className={`p-2 rounded-lg ${directorPendingDocs.length > 0 ? 'bg-sky-500/10 text-sky-600 dark:text-sky-400' : 'bg-accent-background text-accent'} group-hover:scale-105 transition-transform`}>
+                                <FileCheck className="h-4 w-4" />
+                            </div>
+                        </div>
+
+                        <div className="flex flex-col gap-0.5">
+                            <span className="text-2xl sm:text-3xl font-bold text-text font-serif tracking-tight">
+                                {directorPendingDocs.length}
+                            </span>
+                            <span className="text-xs text-text-muted">
+                                {directorPendingDocs.length > 0
+                                    ? `${directorPendingDocs.length} ${directorPendingDocs.length === 1 ? 'document' : 'documents'} ready for publication`
+                                    : 'All approved documents published'}
+                            </span>
+                        </div>
+
+                        <div className="pt-2 border-t border-surface-border flex items-center justify-between text-[11px]">
+                            {directorPendingDocs.length > 0 ? (
+                                <span className="text-sky-600 dark:text-sky-400 font-semibold flex items-center gap-1">
+                                    <span className="h-1.5 w-1.5 rounded-full bg-sky-500 animate-pulse" />
+                                    Ready to Publish
+                                </span>
+                            ) : (
+                                <span className="text-accent font-semibold flex items-center gap-1">
+                                    <Check className="h-3.5 w-3.5" /> All Clear
+                                </span>
+                            )}
+                            <span className="text-text-muted">Director Queue</span>
+                        </div>
+                    </div>
+
+                    {/* CARD 3: DEPARTMENT FACULTY */}
+                    <div
+                        className="p-3.5 sm:p-4 rounded-xl bg-surface border border-surface-border hover:border-information/50 hover:shadow-md transition-all duration-200 flex flex-col justify-between gap-2.5 group sm:col-span-2 xl:col-span-1"
+                    >
+                        <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">
+                                Department Faculty
+                            </span>
+                            <div className="p-2 rounded-lg bg-information-background text-information group-hover:scale-105 transition-transform">
+                                <Users className="h-4 w-4" />
+                            </div>
+                        </div>
+
+                        <div className="flex flex-col gap-0.5">
+                            <span className="text-2xl sm:text-3xl font-bold text-text font-serif tracking-tight">
+                                {departmentFacultyCount}
+                            </span>
+                            <span className="text-xs text-text-muted">
+                                Faculty members in {userUnitName}
+                            </span>
+                        </div>
+
+                        <div className="pt-2 border-t border-surface-border flex items-center justify-between text-[11px] text-text-muted">
+                            <span className="text-information font-semibold flex items-center gap-1">
+                                <Users className="h-3 w-3" /> Institutional Directory
+                            </span>
+                            <span>Active Roster</span>
+                        </div>
+                    </div>
+                </div>
+            ) : (
+                /* ADMINISTRATIVE ROLES: EXISTING 3 CARDS */
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-4">
+                    {/* CARD 1: TOTAL DOCUMENTS */}
+                    <div
+                        onClick={() => onNavigate?.('documents')}
+                        className="p-3.5 sm:p-4 rounded-xl bg-surface border border-surface-border hover:border-accent/50 hover:shadow-md transition-all duration-200 cursor-pointer flex flex-col justify-between gap-2.5 group"
+                    >
+                        <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">
+                                Active Documents
+                            </span>
+                            <div className="p-2 rounded-lg bg-accent-background text-accent group-hover:scale-105 transition-transform">
+                                <FileText className="h-4 w-4" />
+                            </div>
+                        </div>
+
+                        <div className="flex flex-col gap-0.5">
+                            <span className="text-2xl sm:text-3xl font-bold text-text font-serif tracking-tight">
+                                {dynamicMetrics.totalDocsCount}
+                            </span>
+                            <span className="text-xs text-text-muted">
+                                Across {dynamicMetrics.totalFoldersCount} organized directories
+                            </span>
+                        </div>
+
+                        <div className="pt-2 border-t border-surface-border flex items-center justify-between text-[11px] text-text-muted">
+                            <span className="flex items-center gap-1 text-accent font-semibold">
+                                <Zap className="h-3 w-3" /> Live Catalog
+                            </span>
+                            <span>{dynamicMetrics.totalNodesCount} total nodes</span>
+                        </div>
+                    </div>
+
+                    {/* CARD 2: PENDING CLEARANCES */}
+                    <div
+                        onClick={() => onNavigate?.(isStaff ? 'coordinator' : 'requests')}
+                        className="p-3.5 sm:p-4 rounded-xl bg-surface border border-surface-border hover:border-warning/50 hover:shadow-md transition-all duration-200 cursor-pointer flex flex-col justify-between gap-2.5 group"
+                    >
+                        <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">
+                                Pending Clearances
+                            </span>
+                            <div className={`p-2 rounded-lg ${dynamicMetrics.totalPendingCount > 0 ? 'bg-warning-background text-warning' : 'bg-accent-background text-accent'} group-hover:scale-105 transition-transform`}>
+                                <Clock className="h-4 w-4" />
+                            </div>
+                        </div>
+
+                        <div className="flex flex-col gap-0.5">
+                            <span className="text-2xl sm:text-3xl font-bold text-text font-serif tracking-tight">
+                                {dynamicMetrics.totalPendingCount}
+                            </span>
+                            <span className="text-xs text-text-muted">
+                                {dynamicMetrics.totalPendingCount > 0
+                                    ? `${dynamicMetrics.pendingDocRequestsCount} requests • ${dynamicMetrics.pendingCoordRequestsCount} coordinator`
+                                    : 'All clearance queues resolved'}
+                            </span>
+                        </div>
+
+                        <div className="pt-2 border-t border-surface-border flex items-center justify-between text-[11px]">
+                            {dynamicMetrics.totalPendingCount > 0 ? (
+                                <span className="text-warning font-semibold flex items-center gap-1">
+                                    <span className="h-1.5 w-1.5 rounded-full bg-warning animate-pulse" />
+                                    Action Needed
+                                </span>
+                            ) : (
+                                <span className="text-accent font-semibold flex items-center gap-1">
+                                    <Check className="h-3.5 w-3.5" /> All Clear
+                                </span>
+                            )}
+                            <span className="text-text-muted">Review Queue</span>
+                        </div>
+                    </div>
+
+                    {/* CARD 3: CONNECTED UNITS (SPANS 2 COLS IN HALF-WINDOW FOR BALANCED PROPORTIONS) */}
+                    <div
+                        onClick={() => onNavigate?.('departments')}
+                        className="p-3.5 sm:p-4 rounded-xl bg-surface border border-surface-border hover:border-information/50 hover:shadow-md transition-all duration-200 cursor-pointer flex flex-col justify-between gap-2.5 group sm:col-span-2 xl:col-span-1"
+                    >
+                        <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">
+                                Academic Units
+                            </span>
+                            <div className="p-2 rounded-lg bg-information-background text-information group-hover:scale-105 transition-transform">
+                                <Building2 className="h-4 w-4" />
+                            </div>
+                        </div>
+
+                        <div className="flex flex-col gap-0.5">
+                            <span className="text-2xl sm:text-3xl font-bold text-text font-serif tracking-tight">
+                                {dynamicMetrics.totalUnitsCount}
+                            </span>
+                            <span className="text-xs text-text-muted">
+                                Colleges & administrative offices
+                            </span>
+                        </div>
+
+                        <div className="pt-2 border-t border-surface-border flex items-center justify-between text-[11px] text-text-muted">
+                            <span className="text-information font-semibold flex items-center gap-1">
+                                <Users className="h-3 w-3" /> {dynamicMetrics.totalUsersCount} Accounts
+                            </span>
+                            <span>Institutional Directory</span>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {isSpecializedRole ? (
+                /* SPECIALIZED ROLES (OFFICER, DIRECTOR, MEMBER): DEDICATED QUEUE HUB */
+                <div ref={specializedCardRef} className="p-4 sm:p-5 rounded-2xl bg-surface border border-surface-border flex flex-col gap-3.5 shadow-xs">
+                    {/* SPECIALIZED HEADER & CONTROLS */}
+                    {(() => {
+                        let iconNode = null;
+                        let titleText = '';
+                        let countBadge = 0;
+                        let badgeColorClass = '';
+                        let searchPlaceholder = '';
+
+                        if (isOfficer) {
+                            iconNode = (
+                                <div className="p-2 rounded-lg bg-warning-background text-warning shrink-0">
+                                    <Clock className="h-4 w-4" />
+                                </div>
+                            );
+                            titleText = 'Pending Approvals';
+                            countBadge = officerPendingDocs.length;
+                            badgeColorClass = 'bg-warning-background text-warning border-warning-border';
+                            searchPlaceholder = 'Search pending approvals...';
+                        } else if (isDirector) {
+                            iconNode = (
+                                <div className="p-2 rounded-lg bg-sky-500/10 text-sky-600 dark:text-sky-400 shrink-0">
+                                    <FileCheck className="h-4 w-4" />
+                                </div>
+                            );
+                            titleText = 'Pending Publication';
+                            countBadge = directorPendingDocs.length;
+                            badgeColorClass = 'bg-sky-500/10 text-sky-700 dark:text-sky-400 border-sky-500/20';
+                            searchPlaceholder = 'Search pending publications...';
+                        } else {
+                            iconNode = (
+                                <div className="p-2 rounded-lg bg-accent-background text-accent shrink-0">
+                                    <Sparkles className="h-4 w-4" />
+                                </div>
+                            );
+                            titleText = 'Recent Published Documents';
+                            countBadge = memberPublishedDocs.length;
+                            badgeColorClass = 'bg-accent-background text-accent border-accent-border';
+                            searchPlaceholder = 'Search published documents...';
+                        }
+
+                        const headerLeft = (
+                            <div className="flex items-center gap-2.5 shrink-0 min-w-0">
+                                {iconNode}
+                                <div className="flex items-center gap-2 min-w-0 flex-wrap">
+                                    <h2 className="text-base font-bold text-text truncate">
+                                        {titleText}
+                                    </h2>
+                                    <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border ${badgeColorClass} shrink-0`}>
+                                        {countBadge} {countBadge === 1 ? 'document' : 'documents'}
+                                    </span>
+                                </div>
+                            </div>
+                        );
+
+                        const searchBox = (
+                            <SearchField
+                                placeholder={searchPlaceholder}
+                                value={specializedSearch}
+                                onChange={(e) => setSpecializedSearch(e.target.value)}
+                                onClear={() => setSpecializedSearch('')}
+                                size="sm"
+                            />
+                        );
+
+                        if (specializedTier === 'full' || specializedTier === 'half') {
+                            return (
+                                <div className="flex items-center justify-between gap-3 border-b border-surface-border pb-3">
+                                    {headerLeft}
+                                    <div className="w-56 sm:w-64 md:w-72 shrink-0">{searchBox}</div>
+                                </div>
+                            );
+                        }
+
+                        return (
+                            <div className="flex flex-col gap-2.5 border-b border-surface-border pb-3 w-full">
+                                <div className="w-full flex items-center justify-between">
+                                    {headerLeft}
+                                </div>
+                                <div className="w-full">{searchBox}</div>
+                            </div>
+                        );
+                    })()}
+
+                    {/* SPECIALIZED SCROLLABLE LIST */}
+                    <div className="min-h-[360px] max-h-[520px] overflow-y-auto pr-1 flex flex-col gap-2">
+                        {activeSpecializedList.length === 0 ? (
+                            <div className="h-full min-h-[260px] flex flex-col items-center justify-center gap-2.5 text-center text-text-muted border border-dashed border-surface-border rounded-xl p-6">
+                                <div className={`p-3 rounded-full ${
+                                    specializedSearch
+                                        ? 'bg-surface-hover text-text-muted'
+                                        : (isOfficer
+                                            ? 'bg-accent-background text-accent'
+                                            : isDirector
+                                            ? 'bg-sky-500/10 text-sky-600 dark:text-sky-400'
+                                            : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400')
+                                }`}>
+                                    {specializedSearch ? <Search className="h-5 w-5" /> : <CheckCircle2 className="h-6 w-6" />}
+                                </div>
+                                <span className="text-sm font-bold text-text">
+                                    {specializedSearch
+                                        ? 'No Matching Documents'
+                                        : isOfficer
+                                        ? 'All Clear — No Pending Approvals'
+                                        : isDirector
+                                        ? 'All Clear — No Pending Publications'
+                                        : 'No Published Documents Yet'}
+                                </span>
+                                <span className="text-xs text-text-muted max-w-sm">
+                                    {specializedSearch
+                                        ? `No documents found matching "${specializedSearch}".`
+                                        : isOfficer
+                                        ? 'All institutional documents shared to your department have been reviewed and approved.'
+                                        : isDirector
+                                        ? 'There are currently no officer-approved documents awaiting publication in your department.'
+                                        : 'No institutional records or circulars have been published to your department repository yet.'}
+                                </span>
+                            </div>
                         ) : (
-                            <span className="text-accent font-semibold flex items-center gap-1">
-                                <Check className="h-3.5 w-3.5" /> All Clear
-                            </span>
+                            activeSpecializedList.map((item) => (
+                                <div
+                                    key={item.id}
+                                    onClick={() => {
+                                        navigate('/documents');
+                                        onSelectActivity?.({
+                                            ...item.documentItem,
+                                            _targetTab: (isOfficer || isDirector) ? 'share' : 'information',
+                                        });
+                                    }}
+                                    className="py-2.5 px-3.5 sm:py-3 sm:px-4 rounded-xl border border-surface-border bg-surface hover:bg-surface-hover/70 hover:border-accent/40 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-4 cursor-pointer group shadow-2xs shrink-0"
+                                >
+                                    {/* Left: Document Icon + Name & Folder/Sharer details */}
+                                    <div className="flex items-center gap-3 min-w-0 flex-1">
+                                        <div className="p-2 rounded-lg bg-surface-hover/80 border border-surface-border text-text-muted group-hover:text-accent group-hover:border-accent/40 transition-colors shrink-0">
+                                            <FileText className="h-4 w-4" />
+                                        </div>
+                                        <div className="flex flex-col gap-1 min-w-0 flex-1">
+                                            <div className="flex items-center gap-2 flex-wrap min-w-0">
+                                                <span className="text-xs sm:text-sm font-bold text-text truncate group-hover:text-accent transition-colors" title={item.title}>
+                                                    {item.title}
+                                                </span>
+                                                <span className="text-[10px] font-mono uppercase px-1.5 py-0.2 rounded bg-surface-hover text-text-muted border border-surface-border shrink-0">
+                                                    {item.extension}
+                                                </span>
+                                                {item.classification && (
+                                                    <span className={`text-[10px] font-semibold px-2 py-0.2 rounded-full border shrink-0 ${CLASSIFICATION_STYLES[item.classification] || CLASSIFICATION_STYLES.UNCLASSIFIED}`}>
+                                                        {item.classificationLabel}
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <div className="flex items-center gap-1.5 text-xs text-text-muted truncate">
+                                                {item.parentFolderName && (
+                                                    <>
+                                                        <span className="truncate flex items-center gap-1 font-medium text-text/80">
+                                                            📁 {item.parentFolderName}
+                                                        </span>
+                                                        <span>•</span>
+                                                    </>
+                                                )}
+                                                <span className="truncate">
+                                                    {isOfficer ? `Shared by ${item.sharerName}` : isDirector ? `Reviewed by ${item.sharerName}` : `Shared with ${userUnitName}`}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Right: Status badge + timestamp + arrow */}
+                                    <div className="flex items-center gap-2 sm:gap-2.5 shrink-0 self-end sm:self-center">
+                                        {isOfficer && (
+                                            <span className="text-[10px] font-semibold px-2.5 py-1 rounded-full border bg-warning-background text-warning border-warning-border flex items-center gap-1">
+                                                <span className="h-1.5 w-1.5 rounded-full bg-warning animate-pulse" />
+                                                Pending Approval
+                                            </span>
+                                        )}
+                                        {isDirector && (
+                                            <span className="text-[10px] font-semibold px-2.5 py-1 rounded-full border bg-sky-500/10 text-sky-700 dark:text-sky-400 border-sky-500/20 flex items-center gap-1">
+                                                <Check className="h-3 w-3 text-sky-600 dark:text-sky-400" />
+                                                Approved • Ready to Publish
+                                            </span>
+                                        )}
+                                        {isMember && (
+                                            <span className="text-[10px] font-semibold px-2.5 py-1 rounded-full border bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/20 flex items-center gap-1">
+                                                <Check className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
+                                                Published
+                                            </span>
+                                        )}
+                                        <span className="text-[11px] text-text-muted font-mono bg-surface-hover/70 px-2 py-0.5 rounded-md border border-surface-border/50 shrink-0">
+                                            {item.timestamp}
+                                        </span>
+                                        <ArrowRight className="h-4 w-4 text-text-muted opacity-0 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all shrink-0 hidden sm:inline" />
+                                    </div>
+                                </div>
+                            ))
                         )}
-                        <span className="text-text-muted">Review Queue</span>
                     </div>
                 </div>
-
-                {/* CARD 3: CONNECTED UNITS (SPANS 2 COLS IN HALF-WINDOW FOR BALANCED PROPORTIONS) */}
-                <div
-                    onClick={() => onNavigate?.('departments')}
-                    className="p-3.5 sm:p-4 rounded-xl bg-surface border border-surface-border hover:border-information/50 hover:shadow-md transition-all duration-200 cursor-pointer flex flex-col justify-between gap-2.5 group sm:col-span-2 xl:col-span-1"
-                >
-                    <div className="flex items-center justify-between">
-                        <span className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">
-                            Academic Units
-                        </span>
-                        <div className="p-2 rounded-lg bg-information-background text-information group-hover:scale-105 transition-transform">
-                            <Building2 className="h-4 w-4" />
-                        </div>
-                    </div>
-
-                    <div className="flex flex-col gap-0.5">
-                        <span className="text-2xl sm:text-3xl font-bold text-text font-serif tracking-tight">
-                            {dynamicMetrics.totalUnitsCount}
-                        </span>
-                        <span className="text-xs text-text-muted">
-                            Colleges & administrative offices
-                        </span>
-                    </div>
-
-                    <div className="pt-2 border-t border-surface-border flex items-center justify-between text-[11px] text-text-muted">
-                        <span className="text-information font-semibold flex items-center gap-1">
-                            <Users className="h-3 w-3" /> {dynamicMetrics.totalUsersCount} Accounts
-                        </span>
-                        <span>Institutional Directory</span>
-                    </div>
-                </div>
-            </div>
-
-            {/* 3. TWO-COLUMN ROW: PENDING REQUESTS + DOCUMENT ANALYSIS */}
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-3.5 sm:gap-4.5">
+            ) : (
+                /* ADMINISTRATIVE ROLES (ADMIN & COORDINATOR): EXISTING 2-COLUMN + AUDIT LOG SECTIONS */
+                <>
+                    {/* 3. TWO-COLUMN ROW: PENDING REQUESTS + DOCUMENT ANALYSIS */}
+                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-3.5 sm:gap-4.5">
                 {/* LEFT COLUMN: PENDING REQUESTS */}
                 <div ref={pendingCardRef} className="p-4 sm:p-5 rounded-2xl bg-surface border border-surface-border flex flex-col gap-3.5 shadow-xs">
                     {/* PENDING HEADER & CONTROLS (RESPONSIVE TIERS) */}
@@ -1982,6 +2689,8 @@ const DashboardPage = ({
                     </div>
                 )}
             </div>
+                </>
+            )}
 
             {/* AUDIT LOG DETAILS MODAL (PAYLOAD & STATE SNAPSHOT INSPECTION, SAFE READ-ONLY) */}
             {viewingAuditLog && (() => {

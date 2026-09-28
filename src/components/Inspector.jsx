@@ -60,7 +60,7 @@ import { Avatar, resolveUserAvatar } from './Avatar';
 import { Badge } from './Badge';
 import { Button } from './Button';
 import { Modal } from './Modal';
-import { SelectField, TextField } from './Fields';
+import { AreaField, SelectField, TextField } from './Fields';
 import { SegmentSelection } from './Selections';
 import { Account } from './ui/Account';
 import { formatMimeTypeLabel } from './common';
@@ -193,6 +193,11 @@ const Inspector = ({
     // VERSION REVERT CONFIRMATION STATE
     const [revertingVersionItem, setRevertingVersionItem] = useState(null);
     const [isRevertingVersion, setIsRevertingVersion] = useState(false);
+
+    // COORDINATOR REJECT CONFIRMATION MODAL STATES (B1 & A4)
+    const [rejectingCoordinatorReq, setRejectingCoordinatorReq] = useState(null);
+    const [coordinatorRejectReason, setCoordinatorRejectReason] = useState('');
+    const [isSubmittingCoordinatorReject, setIsSubmittingCoordinatorReject] = useState(false);
 
     // DEPARTMENT MODALS & FACULTY INSPECTION STATES
     const [viewingFacultyMember, setViewingFacultyMember] = useState(null);
@@ -1055,6 +1060,43 @@ const Inspector = ({
             if (!shouldSkipLoading) {
                 setActiveActionLoading(null);
             }
+        }
+    };
+
+    const handleOpenRejectCoordinatorModal = (req) => {
+        setRejectingCoordinatorReq(req);
+        setCoordinatorRejectReason('');
+    };
+
+    const handleCloseRejectCoordinatorModal = () => {
+        if (isSubmittingCoordinatorReject) return;
+        setRejectingCoordinatorReq(null);
+        setCoordinatorRejectReason('');
+    };
+
+    const handleConfirmRejectCoordinatorReq = async () => {
+        if (!rejectingCoordinatorReq) return;
+        setIsSubmittingCoordinatorReject(true);
+        try {
+            await coordinatorApprovalService.rejectCoordinatorRequest({
+                ...rejectingCoordinatorReq,
+                rejectionReason: coordinatorRejectReason.trim() || undefined,
+            }, activeUser);
+            await useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
+            showToast({
+                type: 'warning',
+                title: 'Request Rejected',
+                description: 'Coordinator request was rejected.',
+            });
+            handleCloseRejectCoordinatorModal();
+        } catch (err) {
+            showToast({
+                type: 'error',
+                title: 'Rejection Failed',
+                description: err?.message ?? 'Could not reject request.',
+            });
+        } finally {
+            setIsSubmittingCoordinatorReject(false);
         }
     };
 
@@ -3654,7 +3696,7 @@ const Inspector = ({
                                                                         variant="destructive"
                                                                         size="sm"
                                                                         leadingIcon={XCircle}
-                                                                        onClick={() => handleActionClick('reject', pendingReq)}
+                                                                        onClick={() => handleOpenRejectCoordinatorModal(pendingReq)}
                                                                         className="h-7 px-2 text-xs"
                                                                     >
                                                                         Reject
@@ -4084,7 +4126,7 @@ const Inspector = ({
                                 <Button
                                     variant="destructive"
                                     leadingIcon={XCircle}
-                                    onClick={() => handleActionClick('reject')}
+                                    onClick={() => handleOpenRejectCoordinatorModal(activeItem ?? item)}
                                     className="justify-center truncate"
                                     isDisabled={item.status !== constants.COORDINATOR_REQUESTS_STATUS.PENDING}
                                 >
@@ -4139,18 +4181,7 @@ const Inspector = ({
                                         </button>
                                         <button
                                             type="button"
-                                            onClick={async () => {
-                                                try {
-                                                    await coordinatorApprovalService.updateCoordinatorRequestStatus({
-                                                        requestId: pendingStatusRequest.id,
-                                                        status: constants.COORDINATOR_REQUESTS_STATUS.REJECTED,
-                                                    });
-                                                    useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
-                                                    showToast({ type: 'warning', title: 'Request Rejected', description: 'Request was rejected.' });
-                                                } catch (err) {
-                                                    showToast({ type: 'error', title: 'Rejection Failed', description: err?.message ?? 'Could not reject request.' });
-                                                }
-                                            }}
+                                            onClick={() => handleOpenRejectCoordinatorModal(pendingStatusRequest)}
                                             className="px-2 py-0.5 rounded bg-rose-600 hover:bg-rose-700 text-white font-semibold text-[11px] cursor-pointer"
                                         >
                                             Reject
@@ -4184,7 +4215,20 @@ const Inspector = ({
                                         Reject
                                     </Button>
                                 </div>
-                            ) : null
+                            ) : (
+                                isAdmin ? (
+                                    <Button
+                                        variant="destructive"
+                                        leadingIcon={Trash2}
+                                        onClick={() => handleActionClick('delete')}
+                                        isLoading={activeActionLoading === 'delete'}
+                                        isDisabled={Boolean(activeActionLoading)}
+                                        className="w-full justify-center"
+                                    >
+                                        Delete
+                                    </Button>
+                                ) : null
+                            )
                         ) : (
                             activeItem.status === constants.DOCUMENT_REQUESTS_STATUS.OPEN ? (
                                 <Button
@@ -4197,7 +4241,20 @@ const Inspector = ({
                                 >
                                     Delete
                                 </Button>
-                            ) : null
+                            ) : (
+                                isAdmin ? (
+                                    <Button
+                                        variant="destructive"
+                                        leadingIcon={Trash2}
+                                        onClick={() => handleActionClick('delete')}
+                                        isLoading={activeActionLoading === 'delete'}
+                                        isDisabled={Boolean(activeActionLoading)}
+                                        className="w-full justify-center"
+                                    >
+                                        Delete
+                                    </Button>
+                                ) : null
+                            )
                         )}
                     </div>
                 )}
@@ -4504,6 +4561,35 @@ const Inspector = ({
                     isConfirmLoading={isRevertingVersion}
                     isConfirmDisabled={isRevertingVersion}
                 />
+            )}
+
+            {/* COORDINATOR REJECT CONFIRMATION MODAL */}
+            {rejectingCoordinatorReq && (
+                <Modal
+                    isOpen={Boolean(rejectingCoordinatorReq)}
+                    onClose={handleCloseRejectCoordinatorModal}
+                    title="Reject Coordinator Request"
+                    description="Please provide a reason for rejecting this coordinator request. This feedback will be recorded in the audit trail and visible to the coordinator."
+                    icon={XCircle}
+                    variant="destructive"
+                    callout="Rejection will notify the department coordinator and terminate the requested operation."
+                    calloutVariant="destructive"
+                    size="sm"
+                    confirmLabel={isSubmittingCoordinatorReject ? 'Rejecting...' : 'Reject Request'}
+                    cancelLabel="Cancel"
+                    isConfirmLoading={isSubmittingCoordinatorReject}
+                    isConfirmDisabled={isSubmittingCoordinatorReject}
+                    onConfirm={handleConfirmRejectCoordinatorReq}
+                >
+                    <div className="flex flex-col gap-3 py-2">
+                        <AreaField
+                            label="Rejection Reason"
+                            placeholder="Enter rejection reason..."
+                            value={coordinatorRejectReason}
+                            onChange={(e) => setCoordinatorRejectReason(e.target.value)}
+                        />
+                    </div>
+                </Modal>
             )}
 
             {/* VIEW FACULTY PROFILE MODAL */}

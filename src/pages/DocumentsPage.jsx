@@ -30,6 +30,7 @@ import {
     Image as ImageIcon,
     Crop,
     Smartphone,
+    Building2,
 } from 'lucide-react';
 import {
     Badge,
@@ -2599,8 +2600,29 @@ const DocumentsPage = ({
         const sharedDeptIds = new Set(
             activeSharesForModalDoc.map((s) => cleanId(s.department?.id ?? s.departmentId))
         );
-        return (departments || []).filter((d) => !sharedDeptIds.has(cleanId(d.id)));
-    }, [departments, activeSharesForModalDoc, shareModalDocument]);
+        const userDeptClean = cleanId(currentUser?.departmentId || (typeof currentUser?.department === 'object' ? currentUser?.department?.id : null));
+        const docDeptClean = cleanId(shareModalDocument?.departmentId || shareModalDocument?.department?.id);
+        const userDeptNameLower = (typeof currentUser?.department === 'string' ? currentUser?.department : currentUser?.department?.name || '').toLowerCase().trim();
+
+        return (departments || []).filter((d) => {
+            const dClean = cleanId(d.id);
+            // 1. Exclude already shared departments
+            if (sharedDeptIds.has(dClean)) return false;
+
+            const name = (d.name || '').toLowerCase().trim();
+            const code = (d.code || '').toLowerCase().trim();
+
+            // 2. Exclude Records Management Office (RMO)
+            if (name.includes('records management') || code === 'rmo') return false;
+
+            // 3. Exclude user's own department and the document's own department
+            if (userDeptClean && dClean === userDeptClean) return false;
+            if (docDeptClean && dClean === docDeptClean) return false;
+            if (userDeptNameLower && name === userDeptNameLower) return false;
+
+            return true;
+        });
+    }, [departments, activeSharesForModalDoc, shareModalDocument, currentUser]);
 
     const filteredAvailableDepartments = useMemo(() => {
         if (!departmentSearchQuery.trim()) return availableDepartmentsToShare;
@@ -2790,6 +2812,11 @@ const DocumentsPage = ({
             return fullName.includes(q) || univId.includes(q) || email.includes(q);
         });
     }, [departmentMembers, memberSearchQuery]);
+
+    const selectedPublishMembers = useMemo(() => {
+        const idSet = new Set(selectedPublishMemberIds);
+        return departmentMembers.filter((m) => idSet.has(m.id));
+    }, [departmentMembers, selectedPublishMemberIds]);
 
     const handleToggleMemberSelection = (memberId) => {
         setSelectedPublishMemberIds((prev) =>
@@ -3692,12 +3719,12 @@ const DocumentsPage = ({
                         setSelectedShareDepartmentIds([]);
                         setDepartmentSearchQuery('');
                     }}
-                    title={`Share ${shareModalDocument.isFolder ? 'Folder' : 'Document'} to Departments`}
-                    description={`Configure department access and review permissions for "${shareModalDocument.title || shareModalDocument.name}".`}
+                    title={`Share ${shareModalDocument.isFolder ? 'Folder' : 'Document'}`}
+                    description={`Manage departmental distribution and review routing for "${shareModalDocument.title || shareModalDocument.name}".`}
                     icon={Share2}
-                    size="md"
+                    size="xl"
                     secondaryAction={{
-                        label: 'Done',
+                        label: 'Close',
                         onClick: () => {
                             setShareModalDocument(null);
                             setSelectedShareDepartmentIds([]);
@@ -3705,7 +3732,7 @@ const DocumentsPage = ({
                         },
                     }}
                 >
-                    <div className="flex flex-col gap-5">
+                    <div className="flex flex-col gap-4">
                         {/* FOLDER CASCADING SHARE BANNER */}
                         {shareModalDocument.isFolder && (
                             <div className="p-3.5 rounded-xl border border-accent/20 bg-accent/5 flex items-start gap-3">
@@ -3715,69 +3742,100 @@ const DocumentsPage = ({
                                 <div className="flex flex-col gap-0.5 text-xs">
                                     <span className="font-semibold text-text">Recursive Folder Cascade</span>
                                     <span className="text-text-muted leading-relaxed">
-                                        Sharing this folder will automatically share all nested files and subfolders to the selected departments with <strong className="text-text">Pending Approval</strong> status.
+                                        Sharing this folder automatically cascades to all nested files and subfolders for selected departments under <strong className="text-text">Pending Approval</strong>.
                                     </span>
                                 </div>
                             </div>
                         )}
 
-                        {/* 1. SELECT TARGET DEPARTMENTS (MULTI-SELECT) */}
-                        <div className="p-4 rounded-xl border border-surface-border bg-surface-hover flex flex-col gap-3">
-                            <div className="flex items-center justify-between gap-2">
-                                <span className="text-xs font-semibold text-text">
-                                    Target Departments ({selectedShareDepartmentIds.length} of {availableDepartmentsToShare.length} selected)
-                                </span>
-                                {availableDepartmentsToShare.length > 0 && (
-                                    <div className="flex items-center gap-2">
-                                        <button
-                                            type="button"
-                                            onClick={handleSelectAllDepartments}
-                                            className="text-xs text-accent hover:underline font-medium cursor-pointer"
-                                        >
-                                            {selectedShareDepartmentIds.length === filteredAvailableDepartments.length && filteredAvailableDepartments.length > 0
-                                                ? 'Deselect All'
-                                                : 'Select All'}
-                                        </button>
-                                        {selectedShareDepartmentIds.length > 0 && (
+                        {/* 2-COLUMN LAYOUT: LEFT = PICKER / DISPATCH, RIGHT = ACTIVE SHARES */}
+                        <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-stretch">
+                            {/* LEFT COLUMN: DEPARTMENT PICKER */}
+                            <div className="md:col-span-7 flex flex-col gap-3.5 p-4 rounded-xl border border-surface-border bg-surface-hover/30">
+                                <div className="flex items-center justify-between gap-2">
+                                    <div>
+                                        <h4 className="text-xs font-bold text-text uppercase tracking-wider">
+                                            Target Departments
+                                        </h4>
+                                        <p className="text-[11px] text-text-muted">
+                                            Select departments to route for review
+                                        </p>
+                                    </div>
+                                    {availableDepartmentsToShare.length > 0 && (
+                                        <div className="flex items-center gap-2">
                                             <button
                                                 type="button"
-                                                onClick={() => setSelectedShareDepartmentIds([])}
-                                                className="text-xs text-text-muted hover:text-text cursor-pointer"
+                                                onClick={handleSelectAllDepartments}
+                                                className="text-xs text-accent hover:underline font-medium cursor-pointer"
                                             >
-                                                Clear
+                                                {selectedShareDepartmentIds.length === filteredAvailableDepartments.length && filteredAvailableDepartments.length > 0
+                                                    ? 'Deselect All'
+                                                    : 'Select All'}
                                             </button>
-                                        )}
-                                    </div>
-                                )}
-                            </div>
-
-                            {availableDepartmentsToShare.length === 0 ? (
-                                <div className="p-3 rounded-lg border border-surface-border bg-surface text-center text-xs text-text-muted">
-                                    All available departments already have access to this {shareModalDocument.isFolder ? 'folder' : 'document'}.
-                                </div>
-                            ) : (
-                                <>
-                                    {availableDepartmentsToShare.length > 4 && (
-                                        <div className="relative">
-                                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-text-muted" />
-                                            <input
-                                                type="text"
-                                                value={departmentSearchQuery}
-                                                onChange={(e) => setDepartmentSearchQuery(e.target.value)}
-                                                placeholder="Filter departments..."
-                                                className="w-full pl-8.5 pr-3 py-1.5 text-xs bg-surface border border-surface-border rounded-lg text-text focus:outline-none focus:border-accent"
-                                            />
+                                            {selectedShareDepartmentIds.length > 0 && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setSelectedShareDepartmentIds([])}
+                                                    className="text-xs text-text-muted hover:text-text cursor-pointer"
+                                                >
+                                                    Clear ({selectedShareDepartmentIds.length})
+                                                </button>
+                                            )}
                                         </div>
                                     )}
+                                </div>
 
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto pr-1">
-                                        {filteredAvailableDepartments.map((dept) => {
+                                {/* SEARCH FILTER */}
+                                <div className="relative">
+                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-text-muted" />
+                                    <input
+                                        type="text"
+                                        value={departmentSearchQuery}
+                                        onChange={(e) => setDepartmentSearchQuery(e.target.value)}
+                                        placeholder="Search departments by name or code..."
+                                        className="w-full pl-8.5 pr-8 py-2 text-xs bg-surface border border-surface-border rounded-lg text-text focus:outline-none focus:border-accent transition-colors"
+                                    />
+                                    {departmentSearchQuery && (
+                                        <button
+                                            type="button"
+                                            onClick={() => setDepartmentSearchQuery('')}
+                                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-muted hover:text-text p-0.5 cursor-pointer"
+                                        >
+                                            <X className="h-3.5 w-3.5" />
+                                        </button>
+                                    )}
+                                </div>
+
+                                {/* AVAILABLE DEPARTMENTS LIST */}
+                                <div className="flex-1 overflow-y-auto max-h-[290px] pr-1 space-y-1.5 min-h-[180px]">
+                                    {availableDepartmentsToShare.length === 0 ? (
+                                        <div className="h-full min-h-[180px] flex flex-col items-center justify-center p-6 text-center rounded-lg border border-dashed border-surface-border bg-surface/50 text-xs text-text-muted gap-2">
+                                            <Building2 className="h-6 w-6 text-text-muted/50" />
+                                            <span className="font-semibold text-text">No Departments Available</span>
+                                            <span className="text-[11px] max-w-xs leading-relaxed">
+                                                All eligible departments already have access to this {shareModalDocument.isFolder ? 'folder' : 'document'}.
+                                            </span>
+                                        </div>
+                                    ) : filteredAvailableDepartments.length === 0 ? (
+                                        <div className="h-full min-h-[180px] flex flex-col items-center justify-center p-6 text-center rounded-lg border border-dashed border-surface-border bg-surface/50 text-xs text-text-muted gap-1.5">
+                                            <Search className="h-5 w-5 text-text-muted/50" />
+                                            <span>No departments match &quot;{departmentSearchQuery}&quot;</span>
+                                            <button
+                                                type="button"
+                                                onClick={() => setDepartmentSearchQuery('')}
+                                                className="text-accent text-[11px] hover:underline mt-1 cursor-pointer"
+                                            >
+                                                Clear filter
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        filteredAvailableDepartments.map((dept) => {
                                             const isSelected = selectedShareDepartmentIds.includes(dept.id);
                                             return (
                                                 <div
                                                     key={dept.id}
                                                     onClick={() => handleToggleDepartmentSelection(dept.id)}
-                                                    className={`p-2.5 rounded-lg border transition-all cursor-pointer flex items-center justify-between gap-2 ${
+                                                    className={`p-2.5 rounded-lg border transition-all cursor-pointer flex items-center justify-between gap-3 ${
                                                         isSelected
                                                             ? 'border-accent bg-accent/10 shadow-xs'
                                                             : 'border-surface-border bg-surface hover:border-surface-border-strong hover:bg-surface-hover'
@@ -3798,106 +3856,136 @@ const DocumentsPage = ({
                                                                 {dept.name}
                                                             </span>
                                                             <span className="text-[10px] text-text-muted">
-                                                                {dept.code}
+                                                                Code: {dept.code || 'DEPT'}
                                                             </span>
                                                         </div>
                                                     </div>
-                                                    <Badge variant="neutral" size="xs" label={dept.code} />
+                                                    <Badge
+                                                        variant={isSelected ? 'accent' : 'neutral'}
+                                                        size="xs"
+                                                        label={dept.code || 'DEPT'}
+                                                    />
                                                 </div>
                                             );
-                                        })}
-                                    </div>
+                                        })
+                                    )}
+                                </div>
 
-                                    <div className="flex items-center justify-between pt-1 gap-2">
-                                        <span className="text-[11px] text-text-muted">
-                                            Routes to Department Officers for approval before director review.
-                                        </span>
-                                        <Button
-                                            variant="primary"
-                                            size="sm"
-                                            leadingIcon={Share2}
-                                            isLoading={isSharingDepartment}
-                                            isDisabled={selectedShareDepartmentIds.length === 0 || isSharingDepartment}
-                                            onClick={handleShareSubmit}
-                                            className="shrink-0"
-                                        >
-                                            {selectedShareDepartmentIds.length > 1
-                                                ? `Share to ${selectedShareDepartmentIds.length} Departments`
-                                                : selectedShareDepartmentIds.length === 1
-                                                ? 'Share to 1 Department'
-                                                : 'Share'}
-                                        </Button>
-                                    </div>
-                                </>
-                            )}
-                        </div>
-
-                        {/* 2. ACTIVE SHARES LIST */}
-                        <div className="flex flex-col gap-2">
-                            <div className="flex items-center justify-between">
-                                <span className="text-xs font-semibold text-text">
-                                    Current Department Shares ({activeSharesForModalDoc.length})
-                                </span>
+                                {/* DISPATCH FOOTER */}
+                                <div className="pt-2 border-t border-surface-border flex items-center justify-between gap-3 mt-auto">
+                                    <span className="text-[11px] text-text-muted">
+                                        {selectedShareDepartmentIds.length} of {availableDepartmentsToShare.length} selected
+                                    </span>
+                                    <Button
+                                        variant="primary"
+                                        size="sm"
+                                        leadingIcon={Share2}
+                                        isLoading={isSharingDepartment}
+                                        isDisabled={selectedShareDepartmentIds.length === 0 || isSharingDepartment}
+                                        onClick={handleShareSubmit}
+                                    >
+                                        {selectedShareDepartmentIds.length > 1
+                                            ? `Share to ${selectedShareDepartmentIds.length} Departments`
+                                            : selectedShareDepartmentIds.length === 1
+                                            ? 'Share to 1 Department'
+                                            : 'Select Departments'}
+                                    </Button>
+                                </div>
                             </div>
 
-                            {activeSharesForModalDoc.length === 0 ? (
-                                <div className="p-4 rounded-xl border border-surface-border bg-surface text-center text-xs text-text-muted">
-                                    This {shareModalDocument.isFolder ? 'folder' : 'document'} is currently unshared (status: —). Only Administrators and Coordinators have access.
+                            {/* RIGHT COLUMN: ACTIVE SHARES LIST */}
+                            <div className="md:col-span-5 flex flex-col gap-3.5 p-4 rounded-xl border border-surface-border bg-surface">
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <h4 className="text-xs font-bold text-text uppercase tracking-wider">
+                                            Active Shares
+                                        </h4>
+                                        <p className="text-[11px] text-text-muted">
+                                            Currently granted access
+                                        </p>
+                                    </div>
+                                    <Badge
+                                        variant={activeSharesForModalDoc.length > 0 ? 'accent' : 'neutral'}
+                                        size="xs"
+                                        label={`${activeSharesForModalDoc.length} Shared`}
+                                    />
                                 </div>
-                            ) : (
-                                <div className="flex flex-col gap-2 max-h-60 overflow-y-auto pr-1">
-                                    {activeSharesForModalDoc.map((share) => {
-                                        const dept = departments.find(
-                                            (d) => d.id === (share.department?.id ?? share.departmentId)
-                                        );
-                                        const badgeVariant =
-                                            share.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED
-                                                ? 'success'
-                                                : share.status === constants.DOCUMENT_SHARES_STATUS.APPROVED
-                                                ? 'success'
-                                                : share.status === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL
-                                                ? 'warning'
-                                                : 'neutral';
 
-                                        const shareKey = share.id || (share.department?.id ?? share.departmentId);
-                                        const isUnsharing = unsharingShareId === share.id || unsharingShareId === (share.department?.id ?? share.departmentId);
+                                <div className="flex-1 overflow-y-auto max-h-[360px] pr-1 space-y-2 min-h-[180px]">
+                                    {activeSharesForModalDoc.length === 0 ? (
+                                        <div className="h-full min-h-[180px] flex flex-col items-center justify-center p-6 text-center rounded-lg border border-dashed border-surface-border bg-surface-hover/30 text-xs text-text-muted gap-2">
+                                            <Share2 className="h-6 w-6 text-text-muted/40" />
+                                            <span className="font-semibold text-text">Not Shared Externally</span>
+                                            <span className="text-[11px] leading-relaxed max-w-xs">
+                                                This {shareModalDocument.isFolder ? 'folder' : 'document'} is currently internal to your department. Use the picker on the left to share with other units.
+                                            </span>
+                                        </div>
+                                    ) : (
+                                        activeSharesForModalDoc.map((share) => {
+                                            const dept = departments.find(
+                                                (d) => d.id === (share.department?.id ?? share.departmentId)
+                                            );
+                                            const badgeVariant =
+                                                share.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED
+                                                    ? 'success'
+                                                    : share.status === constants.DOCUMENT_SHARES_STATUS.APPROVED
+                                                    ? 'success'
+                                                    : share.status === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL
+                                                    ? 'warning'
+                                                    : 'neutral';
 
-                                        return (
-                                            <div
-                                                key={shareKey}
-                                                className="p-3 rounded-xl border border-surface-border bg-surface flex items-center justify-between gap-3"
-                                            >
-                                                <div className="flex flex-col gap-1 min-w-0 flex-1">
-                                                    <div className="flex items-center gap-2 flex-wrap">
-                                                        <span className="font-semibold text-xs text-text truncate">
-                                                            {dept?.name || 'Department'}
-                                                        </span>
-                                                        <Badge variant={badgeVariant} label={share.status} />
-                                                        {shareModalDocument.isFolder && (
-                                                            <Badge variant="neutral" size="xs" label="Cascading" />
-                                                        )}
-                                                    </div>
-                                                    <span className="text-[11px] text-text-muted">
-                                                        Shared {formatDateTime(share.createdAt)}
-                                                    </span>
-                                                </div>
+                                            const shareKey = share.id || (share.department?.id ?? share.departmentId);
+                                            const isUnsharing = unsharingShareId === share.id || unsharingShareId === (share.department?.id ?? share.departmentId);
 
-                                                <Button
-                                                    variant="destructive"
-                                                    size="xs"
-                                                    leadingIcon={Trash2}
-                                                    isLoading={isUnsharing}
-                                                    isDisabled={Boolean(unsharingShareId)}
-                                                    onClick={() => handleUnshareClick(share, dept?.name)}
-                                                    className="shrink-0"
+                                            return (
+                                                <div
+                                                    key={shareKey}
+                                                    className="p-3 rounded-lg border border-surface-border bg-surface-hover/50 hover:bg-surface-hover transition-colors flex items-start justify-between gap-2.5"
                                                 >
-                                                    Unshare
-                                                </Button>
-                                            </div>
-                                        );
-                                    })}
+                                                    <div className="flex flex-col gap-1 min-w-0 flex-1">
+                                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                                            <span className="font-semibold text-xs text-text truncate">
+                                                                {dept?.name || 'Department'}
+                                                            </span>
+                                                            {dept?.code && (
+                                                                <span className="text-[10px] text-text-muted font-mono">
+                                                                    ({dept.code})
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                                            <Badge variant={badgeVariant} size="xs" label={share.status} />
+                                                            {shareModalDocument.isFolder && (
+                                                                <Badge variant="neutral" size="xs" label="Cascading" />
+                                                            )}
+                                                        </div>
+                                                        <span className="text-[10px] text-text-muted pt-0.5">
+                                                            Shared {formatDateTime(share.createdAt)}
+                                                        </span>
+                                                    </div>
+
+                                                    <Button
+                                                        variant="destructive"
+                                                        size="xs"
+                                                        leadingIcon={Trash2}
+                                                        isLoading={isUnsharing}
+                                                        isDisabled={Boolean(unsharingShareId)}
+                                                        onClick={() => handleUnshareClick(share, dept?.name)}
+                                                        className="shrink-0"
+                                                    >
+                                                        Revoke
+                                                    </Button>
+                                                </div>
+                                            );
+                                        })
+                                    )}
                                 </div>
-                            )}
+
+                                <div className="pt-2 border-t border-surface-border text-[11px] text-text-muted flex items-center gap-1.5">
+                                    <Clock className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+                                    <span>Routes to Department Officers for approval before director review.</span>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </Modal>
@@ -3912,10 +4000,10 @@ const DocumentsPage = ({
                         setSelectedPublishMemberIds([]);
                         setMemberSearchQuery('');
                     }}
-                    title={`Publish ${publishModalDocument.isFolder ? 'Folder' : 'Document'} to Department Members`}
-                    description={`Configure faculty member visibility within ${userDepartment}. You can publish to all department members or choose specific members.`}
+                    title={`Publish ${publishModalDocument.isFolder ? 'Folder' : 'Document'} to Faculty`}
+                    description={`Configure faculty member distribution within ${userDepartment}.`}
                     icon={Send}
-                    size="md"
+                    size="xl"
                     secondaryAction={{
                         label: 'Cancel',
                         onClick: () => {
@@ -3925,7 +4013,7 @@ const DocumentsPage = ({
                         },
                     }}
                 >
-                    <div className="flex flex-col gap-5">
+                    <div className="flex flex-col gap-4">
                         {/* RECURSIVE FOLDER CASCADE BANNER */}
                         {publishModalDocument.isFolder && (
                             <div className="p-3.5 rounded-xl border border-accent/20 bg-accent/5 flex items-start gap-3">
@@ -3935,192 +4023,355 @@ const DocumentsPage = ({
                                 <div className="flex flex-col gap-0.5 text-xs">
                                     <span className="font-semibold text-text">Recursive Folder Cascade</span>
                                     <span className="text-text-muted leading-relaxed">
-                                        Publishing this folder will automatically publish all nested files and subfolders to the selected members with <strong className="text-text">Published</strong> status.
+                                        Publishing this folder automatically cascades to all nested files and subfolders for selected members with <strong className="text-text">Published</strong> status.
                                     </span>
                                 </div>
                             </div>
                         )}
 
-                        {/* AUDIENCE SELECTOR: ALL MEMBERS vs SPECIFIC MEMBERS */}
-                        <div className="flex flex-col gap-2">
-                            <span className="text-xs font-semibold text-text">
-                                Publication Scope
-                            </span>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                <div
-                                    onClick={() => setPublishMode('all')}
-                                    className={`p-3 rounded-xl border transition-all cursor-pointer flex items-start gap-3 ${
-                                        publishMode === 'all'
-                                            ? 'border-accent bg-accent/10 shadow-xs'
-                                            : 'border-surface-border bg-surface hover:border-surface-border-strong hover:bg-surface-hover'
-                                    }`}
-                                >
-                                    <div className="p-2 rounded-lg bg-surface border border-surface-border text-accent shrink-0">
-                                        <Users className="h-4 w-4" />
-                                    </div>
-                                    <div className="flex flex-col gap-0.5 min-w-0">
-                                        <span className="text-xs font-bold text-text">All Department Members</span>
-                                        <span className="text-[11px] text-text-muted leading-tight">
-                                            Every member in {userDepartment} can view and download.
-                                        </span>
-                                    </div>
+                        {/* 2-COLUMN LAYOUT: LEFT = SCOPE & MEMBER PICKER, RIGHT = DISTRIBUTION AUDIENCE */}
+                        <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-stretch">
+                            {/* LEFT COLUMN: PUBLICATION SCOPE & MEMBER PICKER */}
+                            <div className="md:col-span-7 flex flex-col gap-3.5 p-4 rounded-xl border border-surface-border bg-surface-hover/30">
+                                <div className="flex flex-col gap-1">
+                                    <h4 className="text-xs font-bold text-text uppercase tracking-wider">
+                                        Publication Scope
+                                    </h4>
+                                    <p className="text-[11px] text-text-muted">
+                                        Choose who can view this {publishModalDocument.isFolder ? 'folder' : 'document'}
+                                    </p>
                                 </div>
 
-                                <div
-                                    onClick={() => setPublishMode('specific')}
-                                    className={`p-3 rounded-xl border transition-all cursor-pointer flex items-start gap-3 ${
-                                        publishMode === 'specific'
-                                            ? 'border-accent bg-accent/10 shadow-xs'
-                                            : 'border-surface-border bg-surface hover:border-surface-border-strong hover:bg-surface-hover'
-                                    }`}
-                                >
-                                    <div className="p-2 rounded-lg bg-surface border border-surface-border text-accent shrink-0">
-                                        <UserCheck className="h-4 w-4" />
-                                    </div>
-                                    <div className="flex flex-col gap-0.5 min-w-0">
-                                        <span className="text-xs font-bold text-text">Select Specific Members</span>
-                                        <span className="text-[11px] text-text-muted leading-tight">
-                                            Only designated department members receive access.
-                                        </span>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* SPECIFIC MEMBER PICKER */}
-                        {publishMode === 'specific' && (
-                            <div className="p-4 rounded-xl border border-surface-border bg-surface-hover flex flex-col gap-3">
-                                <div className="flex items-center justify-between gap-2">
-                                    <span className="text-xs font-semibold text-text">
-                                        Department Members ({selectedPublishMemberIds.length} of {departmentMembers.length} selected)
-                                    </span>
-                                    {departmentMembers.length > 0 && (
-                                        <div className="flex items-center gap-2">
-                                            <button
-                                                type="button"
-                                                onClick={handleSelectAllMembers}
-                                                className="text-xs text-accent hover:underline font-medium cursor-pointer"
-                                            >
-                                                {selectedPublishMemberIds.length === filteredDepartmentMembers.length && filteredDepartmentMembers.length > 0
-                                                    ? 'Deselect All'
-                                                    : 'Select All'}
-                                            </button>
-                                            {selectedPublishMemberIds.length > 0 && (
-                                                <button
-                                                    type="button"
-                                                    onClick={() => setSelectedPublishMemberIds([])}
-                                                    className="text-xs text-text-muted hover:text-text cursor-pointer"
-                                                >
-                                                    Clear
-                                                </button>
-                                            )}
+                                {/* SCOPE SELECTION CARDS */}
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                                    <div
+                                        onClick={() => setPublishMode('all')}
+                                        className={`p-3 rounded-xl border transition-all cursor-pointer flex items-start gap-3 ${
+                                            publishMode === 'all'
+                                                ? 'border-accent bg-accent/10 shadow-xs'
+                                                : 'border-surface-border bg-surface hover:border-surface-border-strong hover:bg-surface-hover'
+                                        }`}
+                                    >
+                                        <div className="p-2 rounded-lg bg-surface border border-surface-border text-accent shrink-0">
+                                            <Users className="h-4 w-4" />
                                         </div>
-                                    )}
+                                        <div className="flex flex-col gap-0.5 min-w-0">
+                                            <span className="text-xs font-bold text-text">All Members</span>
+                                            <span className="text-[11px] text-text-muted leading-tight">
+                                                All {departmentMembers.length} faculty in {userDepartment}.
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    <div
+                                        onClick={() => setPublishMode('specific')}
+                                        className={`p-3 rounded-xl border transition-all cursor-pointer flex items-start gap-3 ${
+                                            publishMode === 'specific'
+                                                ? 'border-accent bg-accent/10 shadow-xs'
+                                                : 'border-surface-border bg-surface hover:border-surface-border-strong hover:bg-surface-hover'
+                                        }`}
+                                    >
+                                        <div className="p-2 rounded-lg bg-surface border border-surface-border text-accent shrink-0">
+                                            <UserCheck className="h-4 w-4" />
+                                        </div>
+                                        <div className="flex flex-col gap-0.5 min-w-0">
+                                            <span className="text-xs font-bold text-text">Designated</span>
+                                            <span className="text-[11px] text-text-muted leading-tight">
+                                                Publish to specific faculty only.
+                                            </span>
+                                        </div>
+                                    </div>
                                 </div>
 
-                                {departmentMembers.length === 0 ? (
-                                    <div className="p-3 rounded-lg border border-surface-border bg-surface text-center text-xs text-text-muted">
-                                        No other active members found in {userDepartment}.
-                                    </div>
-                                ) : (
-                                    <>
-                                        <div className="relative">
-                                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-text-muted" />
-                                            <input
-                                                type="text"
-                                                value={memberSearchQuery}
-                                                onChange={(e) => setMemberSearchQuery(e.target.value)}
-                                                placeholder="Search members by name, ID, or email..."
-                                                className="w-full pl-8.5 pr-3 py-1.5 text-xs bg-surface border border-surface-border rounded-lg text-text focus:outline-none focus:border-accent"
-                                            />
-                                        </div>
-
-                                        <div className="flex flex-col gap-1.5 max-h-56 overflow-y-auto pr-1">
-                                            {filteredDepartmentMembers.map((member) => {
-                                                const isSelected = selectedPublishMemberIds.includes(member.id);
-                                                const avatarSrc = resolveUserAvatar(member, currentUser);
-                                                const memberFullName = `${member.firstName || ''} ${member.lastName || ''}`.trim() || 'Faculty Member';
-
-                                                return (
-                                                    <div
-                                                        key={member.id}
-                                                        onClick={() => handleToggleMemberSelection(member.id)}
-                                                        className={`p-2.5 rounded-lg border transition-all cursor-pointer flex items-center justify-between gap-3 ${
-                                                            isSelected
-                                                                ? 'border-accent bg-accent/10 shadow-xs'
-                                                                : 'border-surface-border bg-surface hover:border-surface-border-strong hover:bg-surface-hover'
-                                                        }`}
+                                {/* SPECIFIC MEMBER PICKER PANEL */}
+                                {publishMode === 'specific' ? (
+                                    <div className="flex flex-col gap-2.5 pt-1">
+                                        <div className="flex items-center justify-between gap-2">
+                                            <span className="text-xs font-semibold text-text">
+                                                Faculty Members ({selectedPublishMemberIds.length} of {departmentMembers.length} selected)
+                                            </span>
+                                            {departmentMembers.length > 0 && (
+                                                <div className="flex items-center gap-2">
+                                                    <button
+                                                        type="button"
+                                                        onClick={handleSelectAllMembers}
+                                                        className="text-xs text-accent hover:underline font-medium cursor-pointer"
                                                     >
-                                                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                                                            <div
-                                                                className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${
-                                                                    isSelected
-                                                                        ? 'bg-accent border-accent text-accent-foreground'
-                                                                        : 'border-surface-border bg-surface'
-                                                                }`}
-                                                            >
-                                                                {isSelected && <Check className="h-3 w-3 stroke-[3]" />}
-                                                            </div>
-
-                                                            <Avatar
-                                                                src={avatarSrc}
-                                                                alt={memberFullName}
-                                                                size="sm"
-                                                                className="shrink-0"
-                                                            />
-
-                                                            <div className="flex flex-col min-w-0">
-                                                                <span className="text-xs font-semibold text-text truncate">
-                                                                    {memberFullName}
-                                                                </span>
-                                                                <span className="text-[10px] text-text-muted truncate">
-                                                                    {member.universityId || member.email}
-                                                                </span>
-                                                            </div>
-                                                        </div>
-
-                                                        <Badge
-                                                            variant="neutral"
-                                                            size="xs"
-                                                            label={member.role}
-                                                            className="shrink-0"
-                                                        />
-                                                    </div>
-                                                );
-                                            })}
-                                            {filteredDepartmentMembers.length === 0 && (
-                                                <div className="p-3 text-center text-xs text-text-muted">
-                                                    No members match &quot;{memberSearchQuery}&quot;.
+                                                        {selectedPublishMemberIds.length === filteredDepartmentMembers.length && filteredDepartmentMembers.length > 0
+                                                            ? 'Deselect All'
+                                                            : 'Select All'}
+                                                    </button>
+                                                    {selectedPublishMemberIds.length > 0 && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setSelectedPublishMemberIds([])}
+                                                            className="text-xs text-text-muted hover:text-text cursor-pointer"
+                                                        >
+                                                            Clear
+                                                        </button>
+                                                    )}
                                                 </div>
                                             )}
                                         </div>
-                                    </>
-                                )}
-                            </div>
-                        )}
 
-                        {/* SUBMIT BUTTON */}
-                        <div className="flex items-center justify-between pt-1 gap-2 border-t border-surface-border">
-                            <span className="text-[11px] text-text-muted">
-                                Officers and Director retain persistent management access.
-                            </span>
-                            <Button
-                                variant="primary"
-                                size="sm"
-                                leadingIcon={Send}
-                                isLoading={isPublishingMembers}
-                                isDisabled={isPublishingMembers || (publishMode === 'specific' && selectedPublishMemberIds.length === 0)}
-                                onClick={handlePublishSubmit}
-                                className="shrink-0"
-                            >
-                                {publishMode === 'all'
-                                    ? 'Publish to All Members'
-                                    : selectedPublishMemberIds.length > 1
-                                    ? `Publish to ${selectedPublishMemberIds.length} Members`
-                                    : selectedPublishMemberIds.length === 1
-                                    ? 'Publish to 1 Member'
-                                    : 'Select Members'}
-                            </Button>
+                                        {departmentMembers.length === 0 ? (
+                                            <div className="p-4 rounded-lg border border-surface-border bg-surface text-center text-xs text-text-muted">
+                                                No faculty members found in {userDepartment}.
+                                            </div>
+                                        ) : (
+                                            <>
+                                                <div className="relative">
+                                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-text-muted" />
+                                                    <input
+                                                        type="text"
+                                                        value={memberSearchQuery}
+                                                        onChange={(e) => setMemberSearchQuery(e.target.value)}
+                                                        placeholder="Search members by name, ID, or email..."
+                                                        className="w-full pl-8.5 pr-8 py-2 text-xs bg-surface border border-surface-border rounded-lg text-text focus:outline-none focus:border-accent transition-colors"
+                                                    />
+                                                    {memberSearchQuery && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setMemberSearchQuery('')}
+                                                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-muted hover:text-text p-0.5 cursor-pointer"
+                                                        >
+                                                            <X className="h-3.5 w-3.5" />
+                                                        </button>
+                                                    )}
+                                                </div>
+
+                                                <div className="flex flex-col gap-1.5 max-h-[190px] overflow-y-auto pr-1">
+                                                    {filteredDepartmentMembers.map((member) => {
+                                                        const isSelected = selectedPublishMemberIds.includes(member.id);
+                                                        const avatarSrc = resolveUserAvatar(member, currentUser);
+                                                        const memberFullName = `${member.firstName || ''} ${member.lastName || ''}`.trim() || 'Faculty Member';
+
+                                                        return (
+                                                            <div
+                                                                key={member.id}
+                                                                onClick={() => handleToggleMemberSelection(member.id)}
+                                                                className={`p-2 rounded-lg border transition-all cursor-pointer flex items-center justify-between gap-2.5 ${
+                                                                    isSelected
+                                                                        ? 'border-accent bg-accent/10 shadow-xs'
+                                                                        : 'border-surface-border bg-surface hover:border-surface-border-strong hover:bg-surface-hover'
+                                                                }`}
+                                                            >
+                                                                <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                                                                    <div
+                                                                        className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${
+                                                                            isSelected
+                                                                                ? 'bg-accent border-accent text-accent-foreground'
+                                                                                : 'border-surface-border bg-surface'
+                                                                        }`}
+                                                                    >
+                                                                        {isSelected && <Check className="h-3 w-3 stroke-[3]" />}
+                                                                    </div>
+
+                                                                    <Avatar
+                                                                        src={avatarSrc}
+                                                                        alt={memberFullName}
+                                                                        size="sm"
+                                                                        className="shrink-0"
+                                                                    />
+
+                                                                    <div className="flex flex-col min-w-0">
+                                                                        <span className="text-xs font-semibold text-text truncate">
+                                                                            {memberFullName}
+                                                                        </span>
+                                                                        <span className="text-[10px] text-text-muted truncate">
+                                                                            {member.universityId || member.email}
+                                                                        </span>
+                                                                    </div>
+                                                                </div>
+
+                                                                <Badge
+                                                                    variant={isSelected ? 'accent' : 'neutral'}
+                                                                    size="xs"
+                                                                    label={member.role}
+                                                                    className="shrink-0"
+                                                                />
+                                                            </div>
+                                                        );
+                                                    })}
+                                                    {filteredDepartmentMembers.length === 0 && (
+                                                        <div className="p-3 text-center text-xs text-text-muted">
+                                                            No members match &quot;{memberSearchQuery}&quot;.
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </>
+                                        )}
+                                    </div>
+                                ) : (
+                                    <div className="p-4 rounded-xl border border-accent/20 bg-accent/5 flex items-start gap-3 my-auto">
+                                        <div className="p-2 rounded-lg bg-accent/10 text-accent shrink-0">
+                                            <Users className="h-4 w-4" />
+                                        </div>
+                                        <div className="flex flex-col gap-1 text-xs">
+                                            <span className="font-semibold text-text">Broadcast Distribution Mode</span>
+                                            <span className="text-text-muted leading-relaxed">
+                                                All active faculty members in {userDepartment} will be granted immediate access. Any future members assigned to this department will automatically inherit access.
+                                            </span>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* ACTION FOOTER */}
+                                <div className="pt-2 border-t border-surface-border flex items-center justify-between gap-3 mt-auto">
+                                    <span className="text-[11px] text-text-muted">
+                                        {publishMode === 'all'
+                                            ? `All ${departmentMembers.length} members`
+                                            : `${selectedPublishMemberIds.length} members selected`}
+                                    </span>
+                                    <Button
+                                        variant="primary"
+                                        size="sm"
+                                        leadingIcon={Send}
+                                        isLoading={isPublishingMembers}
+                                        isDisabled={isPublishingMembers || (publishMode === 'specific' && selectedPublishMemberIds.length === 0)}
+                                        onClick={handlePublishSubmit}
+                                    >
+                                        {publishMode === 'all'
+                                            ? 'Publish to All Members'
+                                            : selectedPublishMemberIds.length > 1
+                                            ? `Publish to ${selectedPublishMemberIds.length} Members`
+                                            : selectedPublishMemberIds.length === 1
+                                            ? 'Publish to 1 Member'
+                                            : 'Select Members'}
+                                    </Button>
+                                </div>
+                            </div>
+
+                            {/* RIGHT COLUMN: DISTRIBUTION AUDIENCE OVERVIEW */}
+                            <div className="md:col-span-5 flex flex-col gap-3.5 p-4 rounded-xl border border-surface-border bg-surface">
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <h4 className="text-xs font-bold text-text uppercase tracking-wider">
+                                            Distribution Audience
+                                        </h4>
+                                        <p className="text-[11px] text-text-muted">
+                                            Recipient overview
+                                        </p>
+                                    </div>
+                                    <Badge
+                                        variant="neutral"
+                                        size="xs"
+                                        label={userDepartment}
+                                    />
+                                </div>
+
+                                <div className="flex-1 overflow-y-auto max-h-[360px] pr-1 space-y-2 min-h-[180px]">
+                                    {publishMode === 'all' ? (
+                                        <>
+                                            <div className="p-3 rounded-lg border border-accent/20 bg-accent/5 flex items-center justify-between gap-2">
+                                                <div className="flex items-center gap-2 min-w-0">
+                                                    <Globe className="h-4 w-4 text-accent shrink-0" />
+                                                    <div className="flex flex-col min-w-0">
+                                                        <span className="text-xs font-semibold text-text">Entire Department</span>
+                                                        <span className="text-[10px] text-text-muted">
+                                                            {departmentMembers.length} faculty recipient{departmentMembers.length === 1 ? '' : 's'}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                                <Badge variant="success" size="xs" label="Broadcasting" />
+                                            </div>
+
+                                            <div className="space-y-1.5 pt-1">
+                                                {departmentMembers.map((member) => {
+                                                    const avatarSrc = resolveUserAvatar(member, currentUser);
+                                                    const memberFullName = `${member.firstName || ''} ${member.lastName || ''}`.trim() || 'Faculty Member';
+                                                    return (
+                                                        <div
+                                                            key={member.id}
+                                                            className="p-2 rounded-lg border border-surface-border bg-surface-hover/40 flex items-center justify-between gap-2"
+                                                        >
+                                                            <div className="flex items-center gap-2 min-w-0">
+                                                                <Avatar src={avatarSrc} alt={memberFullName} size="xs" className="shrink-0" />
+                                                                <div className="flex flex-col min-w-0">
+                                                                    <span className="text-xs font-medium text-text truncate">
+                                                                        {memberFullName}
+                                                                    </span>
+                                                                    <span className="text-[10px] text-text-muted truncate">
+                                                                        {member.universityId || member.email}
+                                                                    </span>
+                                                                </div>
+                                                            </div>
+                                                            <Badge variant="neutral" size="xs" label="Included" />
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <div className="p-3 rounded-lg border border-surface-border bg-surface-hover/30 flex items-center justify-between gap-2">
+                                                <div className="flex items-center gap-2 min-w-0">
+                                                    <UserCheck className="h-4 w-4 text-accent shrink-0" />
+                                                    <div className="flex flex-col min-w-0">
+                                                        <span className="text-xs font-semibold text-text">Designated Recipients</span>
+                                                        <span className="text-[10px] text-text-muted">
+                                                            {selectedPublishMembers.length} member{selectedPublishMembers.length === 1 ? '' : 's'} chosen
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                                <Badge
+                                                    variant={selectedPublishMembers.length > 0 ? 'accent' : 'neutral'}
+                                                    size="xs"
+                                                    label={`${selectedPublishMembers.length} Selected`}
+                                                />
+                                            </div>
+
+                                            {selectedPublishMembers.length === 0 ? (
+                                                <div className="h-44 flex flex-col items-center justify-center p-6 text-center rounded-lg border border-dashed border-surface-border bg-surface-hover/30 text-xs text-text-muted gap-2">
+                                                    <UserCheck className="h-6 w-6 text-text-muted/40" />
+                                                    <span className="font-semibold text-text">No Recipients Chosen</span>
+                                                    <span className="text-[11px] leading-relaxed max-w-xs">
+                                                        Select faculty members from the left panel to populate this distribution list.
+                                                    </span>
+                                                </div>
+                                            ) : (
+                                                <div className="space-y-1.5 pt-1">
+                                                    {selectedPublishMembers.map((member) => {
+                                                        const avatarSrc = resolveUserAvatar(member, currentUser);
+                                                        const memberFullName = `${member.firstName || ''} ${member.lastName || ''}`.trim() || 'Faculty Member';
+                                                        return (
+                                                            <div
+                                                                key={member.id}
+                                                                className="p-2 rounded-lg border border-surface-border bg-surface-hover/50 flex items-center justify-between gap-2"
+                                                            >
+                                                                <div className="flex items-center gap-2 min-w-0">
+                                                                    <Avatar src={avatarSrc} alt={memberFullName} size="xs" className="shrink-0" />
+                                                                    <div className="flex flex-col min-w-0">
+                                                                        <span className="text-xs font-medium text-text truncate">
+                                                                            {memberFullName}
+                                                                        </span>
+                                                                        <span className="text-[10px] text-text-muted truncate">
+                                                                            {member.universityId || member.email}
+                                                                        </span>
+                                                                    </div>
+                                                                </div>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleToggleMemberSelection(member.id)}
+                                                                    className="p-1 rounded text-text-muted hover:text-error hover:bg-error/10 transition-colors cursor-pointer"
+                                                                    title="Remove from distribution list"
+                                                                >
+                                                                    <X className="h-3.5 w-3.5" />
+                                                                </button>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            )}
+                                        </>
+                                    )}
+                                </div>
+
+                                <div className="pt-2 border-t border-surface-border text-[11px] text-text-muted flex items-center gap-1.5">
+                                    <Globe className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+                                    <span>Published items appear directly in faculty member dashboards.</span>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </Modal>

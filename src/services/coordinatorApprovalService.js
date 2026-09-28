@@ -37,63 +37,91 @@ function formatCoordinatorActionLabel(action, data = {}) {
     if (act === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_REOPEN) {
         return 'Reopen Document Request';
     }
+
+    const resolveUserIdentifier = (p) => {
+        let identifier = p.universityId || p.name || p.email;
+        if (!identifier && (p.userId || p.id)) {
+            const u = useUserStore.getState().users?.find((x) => String(x.id) === String(p.userId || p.id));
+            if (u) identifier = `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.universityId || u.email;
+        }
+        return identifier;
+    };
+
+    const resolveDeptIdentifier = (p) => {
+        let identifier = p.code || p.name;
+        if (!identifier && (p.departmentId || p.id)) {
+            const d = useDepartmentStore.getState().departments?.find((x) => String(x.id) === String(p.departmentId || p.id));
+            if (d) identifier = d.code || d.name;
+        }
+        return identifier;
+    };
+
+    const resolveDocIdentifier = (p) => {
+        let identifier = p.title || p.name;
+        if (!identifier && (p.documentId || p.id)) {
+            const doc = useDocumentStore.getState().documents?.find((x) => String(x.id) === String(p.documentId || p.id));
+            if (doc) identifier = doc.name || doc.title;
+        }
+        return identifier;
+    };
+
     if (act === constants.COORDINATOR_REQUESTS_ACTION.USER_CREATE) {
-        const identifier = payload.universityId || payload.email || 'New User';
+        const identifier = resolveUserIdentifier(payload) || 'New User';
         return `Create User (${identifier})`;
     }
     if (act === constants.COORDINATOR_REQUESTS_ACTION.USER_UPDATE) {
-        const identifier = payload.universityId || payload.name || payload.email || 'User';
+        const identifier = resolveUserIdentifier(payload) || 'User';
         return `Update User (${identifier})`;
     }
     if (act === constants.COORDINATOR_REQUESTS_ACTION.USER_SUSPEND) {
-        const identifier = payload.universityId || payload.name || payload.email || 'User';
+        const identifier = resolveUserIdentifier(payload) || 'User';
         return `Suspend User (${identifier})`;
     }
     if (act === constants.COORDINATOR_REQUESTS_ACTION.USER_DELETE) {
-        const identifier = payload.universityId || payload.name || payload.email || 'User';
+        const identifier = resolveUserIdentifier(payload) || 'User';
         return `Delete User (${identifier})`;
     }
     if (act === constants.COORDINATOR_REQUESTS_ACTION.DEPARTMENT_CREATE) {
-        const identifier = payload.code || payload.name || 'New Department';
+        const identifier = resolveDeptIdentifier(payload) || 'New Department';
         return `Create Department (${identifier})`;
     }
     if (act === constants.COORDINATOR_REQUESTS_ACTION.DEPARTMENT_UPDATE) {
-        const identifier = payload.code || payload.name || 'Department';
+        const identifier = resolveDeptIdentifier(payload) || 'Department';
         return `Update Department (${identifier})`;
     }
     if (act === constants.COORDINATOR_REQUESTS_ACTION.DEPARTMENT_DELETE) {
-        const identifier = payload.code || payload.name || 'Department';
+        const identifier = resolveDeptIdentifier(payload) || 'Department';
         return `Delete Department (${identifier})`;
     }
     if (act === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_UPLOAD) {
-        const identifier = payload.title || payload.name || 'Document';
+        const identifier = resolveDocIdentifier(payload) || 'Document';
         return `Upload Document (${identifier})`;
     }
     if (act === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_UPDATE) {
-        const identifier = payload.title || payload.name || 'Document';
+        const identifier = resolveDocIdentifier(payload) || 'Document';
         return `Update Document (${identifier})`;
     }
     if (act === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_DELETE) {
-        const identifier = payload.title || payload.name || 'Document';
+        const identifier = resolveDocIdentifier(payload) || 'Document';
         return `Delete Document (${identifier})`;
     }
     if (act === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_SHARE) {
-        const identifier = payload.title || payload.name || 'Document';
+        const identifier = resolveDocIdentifier(payload) || 'Document';
         return `Share Document (${identifier})`;
     }
     if (act === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_UNSHARE) {
-        const identifier = payload.title || payload.name || 'Document';
+        const identifier = resolveDocIdentifier(payload) || 'Document';
         return `Unshare Document (${identifier})`;
     }
     if (act === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_ARCHIVE) {
-        const identifier = payload.title || payload.name || 'Document';
+        const identifier = resolveDocIdentifier(payload) || 'Document';
         return `Archive Document (${identifier})`;
     }
     if (act === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_UNARCHIVE) {
-        const identifier = payload.title || payload.name || 'Document';
+        const identifier = resolveDocIdentifier(payload) || 'Document';
         return `Unarchive Document (${identifier})`;
     }
-    return act.replace(/_/g, ' ') || 'Coordinator Request';
+    return act ? act.replace(/_/g, ' ') : 'Coordinator Request';
 }
 
 
@@ -141,6 +169,45 @@ const coordinatorApprovalService = {
                 : coordinatorRequest.requesterId ?? coordinatorRequest.requester) || adminUser.id;
 
         const action = coordinatorRequest.action;
+
+        // CONCURRENT UPDATE-PENDING GUARD FOR DELETION (A5)
+        const isDeleteAction = [
+            constants.COORDINATOR_REQUESTS_ACTION.USER_DELETE,
+            constants.COORDINATOR_REQUESTS_ACTION.DEPARTMENT_DELETE,
+            constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_DELETE,
+        ].includes(action);
+
+        if (isDeleteAction) {
+            const store = useCoordinatorStore.getState();
+            const pendingRequests = (store.coordinatorRequests || []).filter(
+                (r) => r.id !== coordinatorRequest.id && r.status === constants.COORDINATOR_REQUESTS_STATUS.PENDING
+            );
+
+            const targetUserId = payloadData.userId ?? payloadData.id;
+            const targetDeptId = payloadData.departmentId ?? payloadData.id;
+            const targetDocId = payloadData.documentId ?? payloadData.id;
+
+            const hasConflictingPending = pendingRequests.some((r) => {
+                const rData = parsePayloadData(r.data);
+                if (action === constants.COORDINATOR_REQUESTS_ACTION.USER_DELETE && targetUserId) {
+                    const rUserId = rData.userId ?? rData.id;
+                    return String(rUserId) === String(targetUserId);
+                }
+                if (action === constants.COORDINATOR_REQUESTS_ACTION.DEPARTMENT_DELETE && targetDeptId) {
+                    const rDeptId = rData.departmentId ?? rData.id;
+                    return String(rDeptId) === String(targetDeptId);
+                }
+                if (action === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_DELETE && targetDocId) {
+                    const rDocId = rData.documentId ?? rData.id;
+                    return String(rDocId) === String(targetDocId);
+                }
+                return false;
+            });
+
+            if (hasConflictingPending) {
+                throw new Error('Cannot approve deletion: a pending request exists for this target.');
+            }
+        }
 
         switch (action) {
             case constants.COORDINATOR_REQUESTS_ACTION.USER_CREATE: {

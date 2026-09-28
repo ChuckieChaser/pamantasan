@@ -689,7 +689,14 @@ const AppContent = () => {
             return;
         }
 
-        if (!isCoordinatorReq && ['approve', 'unapprove', 'reject', 'publish', 'unpublish', 'stash', 'unstash', 'unshare'].includes(actionKey)) {
+        const isDocRequest = Boolean(
+            targetItem?.subject ||
+            targetItem?.requestNumber ||
+            item?.subject ||
+            selectedItem?.subject
+        );
+
+        if (!isCoordinatorReq && !isDocRequest && ['approve', 'unapprove', 'reject', 'publish', 'unpublish', 'stash', 'unstash', 'unshare'].includes(actionKey)) {
             const targetDoc = item || selectedItem;
             const allShares = useDocumentStore.getState().documentShares || [];
             let shareRecord = targetDoc?.share;
@@ -1017,11 +1024,11 @@ const AppContent = () => {
                 }
                 return;
             }
-            if (item?.subject) {
-                const isClosed = item.status === constants.DOCUMENT_REQUESTS_STATUS.RESOLVED || item.status === constants.DOCUMENT_REQUESTS_STATUS.REJECTED;
-                const isOwner = currentUser && String(item.requesterId) === String(currentUser.id);
+            if (item?.subject || targetItem?.subject) {
+                const reqItem = item?.subject ? item : targetItem;
+                const isClosed = reqItem.status === constants.DOCUMENT_REQUESTS_STATUS.RESOLVED || reqItem.status === constants.DOCUMENT_REQUESTS_STATUS.REJECTED;
                 const isAdmin = constants.isAdminRole(currentUser?.role);
-                if (isClosed && (!isAdmin || isOwner)) {
+                if (isClosed && !isAdmin) {
                     showToast({
                         type: 'error',
                         title: 'Action Prohibited',
@@ -1076,14 +1083,15 @@ const AppContent = () => {
         }
 
         if (actionKey === 'reject') {
-            if (item?.subject) {
+            const reqItem = item?.subject ? item : (selectedItem?.subject ? selectedItem : targetItem);
+            if (reqItem?.subject) {
                 if (location.pathname !== '/requests') {
                     navigate('/requests');
                     setTimeout(() => {
-                        window.dispatchEvent(new CustomEvent('pamantasan:reject-document-request', { detail: item }));
+                        window.dispatchEvent(new CustomEvent('pamantasan:reject-document-request', { detail: reqItem }));
                     }, 100);
                 } else {
-                    window.dispatchEvent(new CustomEvent('pamantasan:reject-document-request', { detail: item }));
+                    window.dispatchEvent(new CustomEvent('pamantasan:reject-document-request', { detail: reqItem }));
                 }
                 return;
             }
@@ -1097,25 +1105,35 @@ const AppContent = () => {
         }
 
         if (actionKey === 'resolve') {
-            if (item?.subject) {
+            const reqItem = item?.subject ? item : (selectedItem?.subject ? selectedItem : targetItem);
+            if (reqItem?.subject) {
                 if (location.pathname !== '/requests') {
                     navigate('/requests');
                     setTimeout(() => {
-                        window.dispatchEvent(new CustomEvent('pamantasan:resolve-document-request', { detail: item }));
+                        window.dispatchEvent(new CustomEvent('pamantasan:resolve-document-request', { detail: reqItem }));
                     }, 100);
                 } else {
-                    window.dispatchEvent(new CustomEvent('pamantasan:resolve-document-request', { detail: item }));
+                    window.dispatchEvent(new CustomEvent('pamantasan:resolve-document-request', { detail: reqItem }));
                 }
                 return;
             }
         }
 
         if (actionKey === 'reopen') {
+            if (isDocRequest || targetItem?.subject || item?.subject) {
+                showToast({
+                    type: 'warning',
+                    title: 'Action Prohibited',
+                    description: 'Closed and resolved document requests cannot be reopened for compliance and auditing.',
+                });
+                return;
+            }
             showToast({
                 type: 'information',
                 title: 'Request Reopened',
                 description: 'Governance request reopened for re-evaluation.',
             });
+            return;
         }
     };
 

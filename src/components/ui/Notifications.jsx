@@ -520,7 +520,7 @@ const Notifications = ({
     };
 
     // ON CLICK ON NOTIFICATION: NAVIGATE TO TARGET AND FOCUS/SELECT RECORD (OR SHOW TOAST IF DELETED)
-    const handleItemClick = (item) => {
+    const handleItemClick = async (item) => {
         // 1. Mark as read
         if (!item.isRead) {
             handleMarkAsRead(item.notificationIds);
@@ -544,7 +544,14 @@ const Notifications = ({
         const targetClean = cleanId(item.targetId);
 
         if (entityType === 'DOCUMENTS') {
-            const doc = documents.find(
+            let activeDocs = useDocumentStore.getState().documents || [];
+            try {
+                const refreshed = await useDocumentStore.getState().fetchDocuments();
+                if (Array.isArray(refreshed)) {
+                    activeDocs = refreshed;
+                }
+            } catch (e) {}
+            const doc = activeDocs.find(
                 (d) => cleanId(d.id) === targetClean || cleanId(d.uuid) === targetClean
             );
             if (!doc) {
@@ -565,7 +572,14 @@ const Notifications = ({
                 navigate('/documents');
             }
         } else if (entityType === 'DEPARTMENTS') {
-            const dept = departments.find(
+            let activeDepts = useDepartmentStore.getState().departments || [];
+            try {
+                const refreshed = await useDepartmentStore.getState().fetchDepartments();
+                if (Array.isArray(refreshed)) {
+                    activeDepts = refreshed;
+                }
+            } catch (e) {}
+            const dept = activeDepts.find(
                 (d) => cleanId(d.id) === targetClean || cleanId(d.uuid) === targetClean
             );
             if (!dept) {
@@ -581,7 +595,14 @@ const Notifications = ({
             onSelectRecord?.(dept);
             navigate('/departments');
         } else if (entityType === 'USERS') {
-            const user = users.find(
+            let activeUsers = useUserStore.getState().users || [];
+            try {
+                const refreshed = await useUserStore.getState().fetchUsers();
+                if (Array.isArray(refreshed)) {
+                    activeUsers = refreshed;
+                }
+            } catch (e) {}
+            const user = activeUsers.find(
                 (u) => cleanId(u.id) === targetClean || cleanId(u.uuid) === targetClean
             );
             if (!user) {
@@ -597,7 +618,14 @@ const Notifications = ({
             onSelectRecord?.(user);
             navigate('/users');
         } else if (entityType === 'COORDINATOR REQUESTS') {
-            const req = coordinatorRequests.find(
+            let activeReqs = useCoordinatorStore.getState().coordinatorRequests || [];
+            try {
+                const refreshed = await useCoordinatorStore.getState().fetchCoordinatorRequests();
+                if (Array.isArray(refreshed)) {
+                    activeReqs = refreshed;
+                }
+            } catch (e) {}
+            const req = activeReqs.find(
                 (r) => cleanId(r.id) === targetClean || cleanId(r.uuid) === targetClean
             );
             if (!req) {
@@ -613,7 +641,14 @@ const Notifications = ({
             onSelectRecord?.(req);
             navigate('/coordinator');
         } else if (entityType === 'DOCUMENT REQUESTS') {
-            const req = documentRequests.find(
+            let activeReqs = useDocumentStore.getState().documentRequests || [];
+            try {
+                const refreshed = await useDocumentStore.getState().fetchDocumentRequests();
+                if (Array.isArray(refreshed)) {
+                    activeReqs = refreshed;
+                }
+            } catch (e) {}
+            const req = activeReqs.find(
                 (r) => cleanId(r.id) === targetClean || cleanId(r.uuid) === targetClean
             );
             if (!req) {

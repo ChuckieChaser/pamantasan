@@ -3,6 +3,7 @@ import { constants, isStaffRole, isAdminRole, isCoordinatorRole, isDirectorRole,
 import { useAuditStore } from '../stores/useAuditStore';
 import { useNotificationStore } from '../stores/useNotificationStore';
 import { useUserStore } from '../stores/useUserStore';
+import { useDepartmentStore } from '../stores/useDepartmentStore';
 import { useAuthStore } from '../stores/useAuthStore';
 import { userService } from './userService';
 import { realtimeSyncService } from './realtimeSyncService';
@@ -20,8 +21,8 @@ const isMajorAction = (entityType, action) => {
     const act = String(action || '').toUpperCase();
     const ent = String(entityType || '').toUpperCase();
 
-    if (ent.includes('DOCUMENT_REQUEST')) {
-        return ['CREATED', 'RESOLVED', 'REJECTED', 'ATTACHED', 'UPDATED'].includes(act);
+    if (ent.includes('DOCUMENT_REQUEST') || ent.includes('MESSAGE') || ent.includes('ATTACHMENT')) {
+        return ['CREATED', 'RESOLVED', 'REJECTED', 'ATTACHED', 'UPDATED', 'COMMENTED'].includes(act);
     }
     if (ent.includes('COORDINATOR_REQUEST')) {
         return ['CREATED', 'UPDATED', 'DELETED', 'PENDING_APPROVAL', 'APPROVED', 'REJECTED'].includes(act);
@@ -211,6 +212,9 @@ const systemEventService = {
 
         const mapToCrudAction = (act) => {
             const a = String(act || '').toUpperCase().trim();
+            if (Object.values(constants.NOTIFICATIONS_ACTION).includes(a)) {
+                return a;
+            }
             if (
                 a.includes('DELETE') ||
                 a.includes('REMOVE') ||
@@ -241,6 +245,7 @@ const systemEventService = {
                 return e;
             }
             if (e.includes('COORDINATOR')) return constants.AUDIT_LOGS_ENTITY_TYPE.COORDINATOR_REQUEST;
+            if (e.includes('MESSAGE')) return constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_REQUEST_MESSAGE;
             if (e.includes('ATTACHMENT')) return constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_REQUEST_ATTACHMENT;
             if (e.includes('REQUEST')) return constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_REQUEST;
             if (e.includes('SHARE')) return constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_SHARE;
@@ -257,7 +262,7 @@ const systemEventService = {
                 return e;
             }
             if (e.includes('COORDINATOR')) return constants.NOTIFICATIONS_ENTITY_TYPE.COORDINATOR_REQUEST;
-            if (e.includes('REQUEST')) return constants.NOTIFICATIONS_ENTITY_TYPE.DOCUMENT_REQUEST;
+            if (e.includes('REQUEST') || e.includes('MESSAGE') || e.includes('ATTACHMENT')) return constants.NOTIFICATIONS_ENTITY_TYPE.DOCUMENT_REQUEST;
             if (e.includes('USER')) return constants.NOTIFICATIONS_ENTITY_TYPE.USER;
             if (e.includes('DEPT') || e.includes('DEPARTMENT')) return constants.NOTIFICATIONS_ENTITY_TYPE.DEPARTMENT;
             if (e.includes('DOC')) return constants.NOTIFICATIONS_ENTITY_TYPE.DOCUMENT;
@@ -491,10 +496,14 @@ const systemEventService = {
 
         const docTitle = document.name || document.title || 'Institutional Document';
         const departmentId = user.departmentId || document.departmentId || null;
+        const deptObj = useDepartmentStore.getState().departments?.find((d) => String(d.id) === String(departmentId));
+        const departmentName = deptObj?.name || user.departmentName || document.departmentName || null;
+        const actorName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.name || user.displayName || user.email || 'User';
 
         try {
             const auditPayload = {
                 actorId: userId,
+                actor: user,
                 entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT,
                 entityId: docId,
                 action: 'READ',
@@ -502,11 +511,20 @@ const systemEventService = {
                     old: null,
                     new: {
                         title: docTitle,
-                        departmentId: departmentId,
+                        documentName: docTitle,
+                        departmentName: departmentName,
+                        _departmentId: departmentId,
                         role: user.role || constants.USERS_ROLE.MEMBER,
                         version: version || document.currentVersion || 1,
                         timestamp: new Date().toISOString(),
                     },
+                    actorId: userId,
+                    actorName: actorName,
+                    actorRole: user.role || constants.USERS_ROLE.MEMBER,
+                    actorEmail: user.email || '',
+                    actorDepartment: departmentName,
+                    _actorDepartmentId: departmentId,
+                    targetName: docTitle,
                 }),
                 createdAt: new Date().toISOString(),
             };
