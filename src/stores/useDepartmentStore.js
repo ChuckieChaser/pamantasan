@@ -237,6 +237,9 @@ const useDepartmentStore = create((set, get) => ({
 
             get().fetchDepartments().catch(() => {});
 
+            const resolvedActor = actor || useAuthStore.getState().currentUser;
+            const resolvedActorId = resolvedActor?.id || null;
+
             const previousData = {};
             const newData = {};
             if (existingDepartment) {
