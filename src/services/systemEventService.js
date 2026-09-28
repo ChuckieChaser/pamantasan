@@ -209,6 +209,32 @@ const systemEventService = {
             return 'UPDATED';
         };
 
+        const mapToCrudAction = (act) => {
+            const a = String(act || '').toUpperCase().trim();
+            if (
+                a.includes('DELETE') ||
+                a.includes('REMOVE') ||
+                a.includes('PURGE') ||
+                a.includes('ARCHIVE') ||
+                a.includes('UNSHARE') ||
+                a.includes('REVOKE')
+            ) {
+                return 'DELETED';
+            }
+            if (a.includes('READ') || a.includes('VIEW')) {
+                return 'READ';
+            }
+            if (
+                a.includes('CREATE') ||
+                a.includes('UPLOAD') ||
+                a.includes('ATTACH') ||
+                a === 'NEW'
+            ) {
+                return 'CREATED';
+            }
+            return 'UPDATED';
+        };
+
         const resolveAuditEntityType = (ent) => {
             const e = String(ent || '').toUpperCase().replace(/\s+/g, '_').trim();
             if (Object.values(constants.AUDIT_LOGS_ENTITY_TYPE).includes(e)) {
@@ -239,6 +265,7 @@ const systemEventService = {
         };
 
         const canonicalAction = normalizeAction(action);
+        const crudAction = mapToCrudAction(action);
         const auditEntityType = resolveAuditEntityType(entityType);
         const notifEntityType = resolveNotificationEntityType(entityType);
 
@@ -299,7 +326,7 @@ const systemEventService = {
                 const preference = await resolveUserSettingNotification(recipientId);
 
                 // IMPORTANT => no read notifications
-                if (preference === constants.USER_SETTINGS_NOTIFICATION.IMPORTANT && canonicalAction === 'READ') {
+                if (preference === constants.USER_SETTINGS_NOTIFICATION.IMPORTANT && crudAction === 'READ') {
                     return null;
                 }
 
@@ -308,7 +335,7 @@ const systemEventService = {
                     actorId: resolvedActorId,
                     entityType: notifEntityType,
                     entityId: String(entityId),
-                    action: canonicalAction,
+                    action: crudAction,
                     isRead: false,
                     isEmailed: false,
                     createdAt: new Date().toISOString(),
@@ -316,12 +343,11 @@ const systemEventService = {
 
                 const inserted = await useNotificationStore.getState().insertNotification(notifPayload);
 
-                // ALL => notifications and email sent
-                // SYSTEM => only notifications (no email)
-                // IMPORTANT => email only on major non-read events
+                // Suppress email dispatch for READ actions (align with CRUD: Created, Updated, Deleted)
                 const shouldSendEmail =
-                    preference === constants.USER_SETTINGS_NOTIFICATION.ALL ||
-                    (preference === constants.USER_SETTINGS_NOTIFICATION.IMPORTANT && resolvedIsMajor && canonicalAction !== 'READ');
+                    crudAction !== 'READ' &&
+                    (preference === constants.USER_SETTINGS_NOTIFICATION.ALL ||
+                        (preference === constants.USER_SETTINGS_NOTIFICATION.IMPORTANT && resolvedIsMajor));
 
                 if (shouldSendEmail) {
                     const parsedData = typeof data === 'object' ? data : {};
@@ -351,8 +377,22 @@ const systemEventService = {
                             parsedData.name ||
                             (parsedData.title && parsedData.title !== `${action.replace(/_/g, ' ')}: ${auditEntityType}` ? parsedData.title : '') ||
                             '';
-                        const title = parsedData.title || parsedData.subject || `${action.replace(/_/g, ' ')}: ${auditEntityType}`;
-                        const message = parsedData.description || parsedData.message || parsedData.reason || `Event ${action} on ${auditEntityType}`;
+                        let title = parsedData.title || parsedData.subject || `${crudAction}: ${auditEntityType}`;
+                        let message = parsedData.description || parsedData.message || parsedData.reason || `Event ${crudAction} on ${auditEntityType}`;
+
+                        if (crudAction === 'DELETED') {
+                            title = title
+                                .replace(/\bDomain Removed\b/gi, 'Department Deleted')
+                                .replace(/\bDepartment Removed\b/gi, 'Department Deleted')
+                                .replace(/\bRemoved\b/gi, 'Deleted');
+                            message = message
+                                .replace(/\bdomain removed\b/gi, 'department deleted')
+                                .replace(/\bdepartment removed\b/gi, 'department deleted')
+                                .replace(/\bwas removed\b/gi, 'was deleted')
+                                .replace(/\bremoved\b/gi, 'deleted');
+                        } else if (crudAction === 'CREATED') {
+                            title = title.replace(/\bUploaded\b/gi, 'Created').replace(/\bAttached\b/gi, 'Created');
+                        }
 
                         const defaultBaseUrl = 'https://pamantasan-records-210fe.web.app';
                         let actionUrl = parsedData.actionUrl;

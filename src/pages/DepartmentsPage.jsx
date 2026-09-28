@@ -372,7 +372,7 @@ const DepartmentsPage = ({
             }
             showToast({
                 type: 'success',
-                title: 'Department Removed',
+                title: 'Department Deleted',
                 description: `Department ${deletingDepartment.code} has been deleted.`,
             });
             handleCloseModals();

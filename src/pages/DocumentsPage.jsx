@@ -1196,7 +1196,7 @@ const DocumentsPage = ({
                     showToast({
                         type: 'warning',
                         title: item.isFolder ? 'Folder Rejected' : 'Document Rejected',
-                        description: `Rejected "${docTitle}" and removed from department view.`,
+                        description: `Rejected "${docTitle}" and deleted from department view.`,
                     });
                     if (selectedDocument?.id === item.id) {
                         setSelectedDocument(null);
@@ -1254,8 +1254,8 @@ const DocumentsPage = ({
                     }
                     showToast({
                         type: 'success',
-                        title: 'Share Removed',
-                        description: `Removed department share for "${docTitle}".`,
+                        title: 'Share Deleted',
+                        description: `Deleted department share for "${docTitle}".`,
                     });
                 }
             } catch (err) {
@@ -1642,7 +1642,7 @@ const DocumentsPage = ({
             showToast({
                 type: 'success',
                 title: deletingItem.isFolder ? 'Folder Deleted' : 'Document Deleted',
-                description: `"${deletingItem.title || deletingItem.name}" removed from repository.`,
+                description: `"${deletingItem.title || deletingItem.name}" deleted from repository.`,
             });
             setDeletingItem(null);
         } catch (error) {
@@ -2745,15 +2745,15 @@ const DocumentsPage = ({
                 await unshareDocumentRecursive(shareModalDocument.id, deptId);
                 showToast({
                     type: 'success',
-                    title: 'Share Removed',
-                    description: `Removed "${docTitle}" and all nested contents from ${departmentName || 'department'}.`,
+                    title: 'Share Deleted',
+                    description: `Deleted "${docTitle}" and all nested contents from ${departmentName || 'department'}.`,
                 });
             } else if (shareId) {
                 await unshareDocument(shareId);
                 showToast({
                     type: 'success',
-                    title: 'Share Removed',
-                    description: `Removed share for ${departmentName || 'department'}.`,
+                    title: 'Share Deleted',
+                    description: `Deleted share for ${departmentName || 'department'}.`,
                 });
             }
         } catch (err) {

@@ -323,6 +323,7 @@ const useUserStore = create((set, get) => ({
     },
 
     deleteUser: async (id) => {
+        const userToDelete = get().users.find((u) => String(u.id) === String(id));
         set({ isLoading: true, error: null });
 
         try {
@@ -338,11 +339,22 @@ const useUserStore = create((set, get) => ({
                     error: null,
                 }));
 
+                const userName = userToDelete
+                    ? `${userToDelete.firstName || ''} ${userToDelete.lastName || ''}`.trim() || userToDelete.universityId
+                    : id;
+
                 systemEventService.recordSystemEvent({
                     entityType: constants.AUDIT_LOGS_ENTITY_TYPE.USER,
                     entityId: id,
                     action: constants.AUDIT_LOGS_ACTION.DELETED,
-                    data: { id },
+                    data: {
+                        id,
+                        universityId: userToDelete?.universityId,
+                        email: userToDelete?.email,
+                        name: userName,
+                        title: `User Deleted: ${userName}`,
+                        description: `User account for "${userName}" was deleted from the system.`,
+                    },
                     targetRoles: ['ADMINISTRATOR'],
                     isMajor: true,
                 }).catch(() => {});

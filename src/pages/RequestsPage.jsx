@@ -955,7 +955,7 @@ const RequestsPage = ({
             showToast({
                 type: 'success',
                 title: 'Request Deleted',
-                description: 'Document request has been removed.',
+                description: 'Document request has been deleted.',
             });
             if (activeSelectedRequest?.id === deletingRequestItem.id) {
                 setSelectedRequestItem(null);
@@ -1354,7 +1354,7 @@ const RequestsPage = ({
                                                                             showToast({
                                                                                 type: 'success',
                                                                                 title: 'Request Rejected',
-                                                                                description: 'Attachment request rejected and removed.',
+                                                                                description: 'Attachment request rejected and deleted.',
                                                                             });
                                                                         } catch (err) {
                                                                             showToast({

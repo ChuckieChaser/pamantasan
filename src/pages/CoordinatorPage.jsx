@@ -413,7 +413,7 @@ const CoordinatorPage = ({
             showToast({
                 type: 'success',
                 title: 'Request Deleted',
-                description: 'Coordinator request removed from queue.',
+                description: 'Coordinator request deleted from queue.',
             });
             if (activeSelectedRequest?.id === deletingRequestItem.id) {
                 setSelectedRequestItem(null);

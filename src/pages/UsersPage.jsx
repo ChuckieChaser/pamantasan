@@ -724,7 +724,7 @@ const UsersPage = ({
             showToast({
                 type: 'success',
                 title: 'User Deleted',
-                description: `User ${deletingUser.universityId} has been removed.`,
+                description: `User ${deletingUser.universityId} has been deleted.`,
             });
             handleCloseModals();
         } catch (error) {

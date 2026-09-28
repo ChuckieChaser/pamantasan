@@ -367,7 +367,7 @@ const ArchivesPage = ({
             showToast({
                 type: 'success',
                 title: deletingItem.isFolder ? 'Folder Deleted' : 'Document Deleted',
-                description: `"${deletingItem.title || deletingItem.name}" has been permanently removed.`,
+                description: `"${deletingItem.title || deletingItem.name}" has been permanently deleted.`,
             });
             if (selectedDocument?.id === deletingItem.id) {
                 setSelectedDocument(null);

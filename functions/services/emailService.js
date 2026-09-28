@@ -316,13 +316,29 @@ async function sendNotificationEmail({
     const fromAddress = getSenderAddress();
     const cleanEmail = (toEmail || '').toLowerCase().trim();
     const cleanEntity = (entityType || 'UPDATE').toString().replace(/_/g, ' ').toUpperCase().trim();
-    const cleanTarget = (targetName || '').toString().trim();
+    const cleanTitle = (title || '')
+        .toString()
+        .replace(/\bDomain Removed\b/gi, 'Department Deleted')
+        .replace(/\bDepartment Removed\b/gi, 'Department Deleted')
+        .replace(/\bRemoved\b/gi, 'Deleted')
+        .trim();
+    const cleanMessage = (message || '')
+        .toString()
+        .replace(/\bdomain removed\b/gi, 'department deleted')
+        .replace(/\bdepartment removed\b/gi, 'department deleted')
+        .replace(/\bwas removed\b/gi, 'was deleted')
+        .replace(/\bremoved\b/gi, 'deleted')
+        .trim();
+    const cleanTarget = (targetName || '')
+        .toString()
+        .replace(/\bRemoved\b/gi, 'Deleted')
+        .trim();
 
     // 1-HOUR CONGESTION WINDOW: All edits on the same target within 1 hour share the same thread ID
     const hourBucket = Math.floor(Date.now() / (60 * 60 * 1000));
     const entityKey = (entityType && entityId)
         ? `${cleanEntity}:${entityId}`
-        : (cleanTarget || title || 'system-event');
+        : (cleanTarget || cleanTitle || 'system-event');
 
     const threadHash = crypto
         .createHash('md5')
@@ -334,10 +350,10 @@ async function sendNotificationEmail({
 
     const messageId = `<plp-notif-${threadHash}-${Date.now()}@plpasig.edu.ph>`;
 
-    // Base subject: consistent for the entity
-    const baseSubject = cleanTarget
-        ? `[PLP Records] ${cleanEntity}: ${cleanTarget}`
-        : `[PLP Records] ${title}`;
+    // Base subject: consistent and aligned with canonical CRUD action
+    const baseSubject = cleanTitle
+        ? `[PLP Records] ${cleanTitle}`
+        : (cleanTarget ? `[PLP Records] ${cleanEntity}: ${cleanTarget}` : `[PLP Records] System Notification`);
 
     const isReply = Boolean(existingThread?.rootMessageId);
     // RFC 5322 & Gmail threading REQUIRE the "Re: " prefix on replies to collapse into the conversation
@@ -373,7 +389,7 @@ async function sendNotificationEmail({
     <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>${title}</title>
+        <title>${cleanTitle}</title>
         <style>
             body { margin: 0; padding: 0; background-color: #f4f4f5; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; }
             .email-wrapper { width: 100%; background-color: #f4f4f5; padding: 40px 16px; }
@@ -411,8 +427,8 @@ async function sendNotificationEmail({
 
                     <div class="notification-card">
                         ${actorName ? `<div class="actor-badge">Action by ${actorName}</div>` : ''}
-                        <div class="notification-title">${title}</div>
-                        <p class="notification-message">${message}</p>
+                        <div class="notification-title">${cleanTitle}</div>
+                        <p class="notification-message">${cleanMessage}</p>
                     </div>
 
                     <!-- ACTION BUTTON & WEBSITE LINK -->

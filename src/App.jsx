@@ -743,7 +743,7 @@ const AppContent = () => {
                     showToast({
                         type: 'warning',
                         title: targetDoc?.isFolder ? 'Folder Rejected' : 'Document Rejected',
-                        description: `Rejected "${docTitle}" and removed from department view.`,
+                        description: `Rejected "${docTitle}" and deleted from department view.`,
                     });
                     setSelectedItem(null);
                 } else if (actionKey === 'publish') {
@@ -823,17 +823,17 @@ const AppContent = () => {
                         await store.unshareDocumentRecursive(targetDoc.id, deptId);
                         showToast({
                             type: 'success',
-                            title: 'Share Removed',
-                            description: `Removed folder "${docTitle}" and all nested contents from department.`,
+                            title: 'Share Deleted',
+                            description: `Deleted folder "${docTitle}" and all nested contents from department.`,
                         });
                     } else {
                         await store.unshareDocument(shareId);
                         showToast({
                             type: 'success',
-                            title: 'Share Removed',
+                            title: 'Share Deleted',
                             description: isUserShare
-                                ? `Removed user share for "${docTitle}".`
-                                : `Removed department share for "${docTitle}".`,
+                                ? `Deleted user share for "${docTitle}".`
+                                : `Deleted department share for "${docTitle}".`,
                         });
                     }
                 }
