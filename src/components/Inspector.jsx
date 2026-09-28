@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
     AlertCircle,
+    AlertTriangle,
     Building2,
     Calendar,
     Check,
@@ -14,6 +15,7 @@ import {
     Edit3,
     Eye,
     EyeOff,
+    FileCheck,
     FileText,
     FileType,
     Folder,
@@ -38,6 +40,7 @@ import {
     Tag,
     Trash2,
     Upload,
+    UploadCloud,
     User,
     UserCheck,
     Users,
@@ -118,6 +121,7 @@ const STATUS_BADGE_VARIANT = {
     [constants.DOCUMENT_SHARES_STATUS.PUBLISHED]: 'success',
     [constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL]: 'warning',
     [constants.DOCUMENT_SHARES_STATUS.STASHED]: 'neutral',
+    [constants.DOCUMENT_SHARES_STATUS.REJECTED]: 'error',
     [constants.USERS_STATUS.VERIFIED]: 'success',
     [constants.USERS_STATUS.PENDING_PASSWORD]: 'warning',
     [constants.USERS_STATUS.PENDING_SSO]: 'information',
@@ -225,6 +229,17 @@ const Inspector = ({
     // DIRECTORY TREE STATES
     const [expandedFolderIds, setExpandedFolderIds] = useState(() => new Set());
     const [selectedTreeItemId, setSelectedTreeItemId] = useState(null);
+
+    // STATES: QUICK ACTION CONFIRMATION & REJECTION MODALS
+    const [inspectorConfirmAction, setInspectorConfirmAction] = useState(null);
+    const [inspectorRejectModal, setInspectorRejectModal] = useState(null);
+    const [inspectorRejectReason, setInspectorRejectReason] = useState('');
+
+    // STATES: RESHARE MODAL (NEW VERSION OR OVERWRITE)
+    const [reshareModal, setReshareModal] = useState(null);
+    const [reshareFile, setReshareFile] = useState(null);
+    const [reshareChangeSummary, setReshareChangeSummary] = useState('');
+    const [isSubmittingReshare, setIsSubmittingReshare] = useState(false);
 
     // HOOKS
     const { showToast } = useToast();
@@ -1097,6 +1112,96 @@ const Inspector = ({
             });
         } finally {
             setIsSubmittingCoordinatorReject(false);
+        }
+    };
+
+    const handleConfirmInspectorAction = async () => {
+        if (!inspectorConfirmAction) return;
+        const { actionKey, targetItem } = inspectorConfirmAction;
+        try {
+            await handleActionClick(actionKey, targetItem);
+            setInspectorConfirmAction(null);
+        } catch (err) {
+            console.error(`Failed inspector action ${actionKey}:`, err);
+        }
+    };
+
+    const handleConfirmInspectorRejection = async () => {
+        if (!inspectorRejectModal) return;
+        const reason = inspectorRejectReason.trim();
+        if (!reason) {
+            showToast({
+                type: 'warning',
+                title: 'Rejection Reason Required',
+                description: 'Please provide a reason for rejecting this document.',
+            });
+            return;
+        }
+        try {
+            await handleActionClick('reject', {
+                ...(inspectorRejectModal.targetItem || item),
+                rejectionReason: reason,
+            });
+            setInspectorRejectModal(null);
+            setInspectorRejectReason('');
+        } catch (err) {
+            console.error('Failed inspector rejection:', err);
+        }
+    };
+
+    const handleConfirmReshare = async () => {
+        if (!reshareModal || !reshareFile) {
+            showToast({
+                type: 'warning',
+                title: 'File Required',
+                description: 'Please select a replacement file to upload.',
+            });
+            return;
+        }
+        setIsSubmittingReshare(true);
+        try {
+            const uploaderId = activeUser?.id;
+            if (reshareModal.mode === 'new_version') {
+                await useDocumentStore.getState().reshareNewVersion(
+                    reshareModal.docId,
+                    reshareModal.shareItem.id,
+                    reshareFile,
+                    uploaderId,
+                    reshareChangeSummary.trim() || 'Revision addressing rejection feedback'
+                );
+                showToast({
+                    type: 'success',
+                    title: 'Document Reshared as New Version',
+                    description: `Created revision for ${reshareModal.targetDeptName} and reset status to Pending Approval.`,
+                });
+            } else {
+                await useDocumentStore.getState().overwriteVersionFileAndReshare(
+                    reshareModal.docId,
+                    reshareModal.shareItem.id,
+                    reshareFile,
+                    uploaderId
+                );
+                showToast({
+                    type: 'success',
+                    title: 'Document Overwritten & Reshared',
+                    description: `Replaced current version file for ${reshareModal.targetDeptName} and reset status to Pending Approval.`,
+                });
+            }
+            if (activeUser) {
+                useDocumentStore.getState().syncAllDocumentShares(activeUser, allDepartments).catch(() => {});
+            }
+            setReshareModal(null);
+            setReshareFile(null);
+            setReshareChangeSummary('');
+        } catch (err) {
+            console.error('Failed to reshare document:', err);
+            showToast({
+                type: 'error',
+                title: 'Reshare Failed',
+                description: err?.message || 'Could not complete reshare operation.',
+            });
+        } finally {
+            setIsSubmittingReshare(false);
         }
     };
 
@@ -2327,6 +2432,75 @@ const Inspector = ({
                                                         label={shareItem.status}
                                                     />
                                                 </div>
+
+                                                {/* REJECTION FEEDBACK CALLOUT & ADMIN RESHARE ACTIONS */}
+                                                {(() => {
+                                                    const isShareRejected = shareItem.status === constants.DOCUMENT_SHARES_STATUS.REJECTED;
+                                                    if (!isShareRejected) return null;
+
+                                                    const latestVer = documentVersions[0];
+                                                    const rejectionReason = shareItem.rejectionReason || latestVer?.rejectionReason || 'No rejection reason specified.';
+                                                    const rejecter = allUsers.find((u) => u.id === latestVer?.rejecterId);
+                                                    const rejecterName = rejecter ? `${rejecter.firstName || ''} ${rejecter.lastName || ''}`.trim() : null;
+
+                                                    return (
+                                                        <div className="p-3 rounded-lg border border-error/30 bg-error/10 flex flex-col gap-2.5">
+                                                            <div className="flex items-start gap-2">
+                                                                <AlertTriangle className="h-4 w-4 text-error shrink-0 mt-0.5" />
+                                                                <div className="flex flex-col gap-0.5 min-w-0">
+                                                                    <span className="text-xs font-semibold text-error">
+                                                                        Share Rejected by Department Reviewer {rejecterName ? `(${rejecterName})` : ''}
+                                                                    </span>
+                                                                    <p className="text-xs text-text leading-relaxed">
+                                                                        &ldquo;{rejectionReason}&rdquo;
+                                                                    </p>
+                                                                </div>
+                                                            </div>
+
+                                                            {/* ADMIN RESHARE ACTIONS */}
+                                                            {isAdmin && (
+                                                                <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-error/20">
+                                                                    <Button
+                                                                        variant="primary"
+                                                                        size="xs"
+                                                                        leadingIcon={UploadCloud}
+                                                                        onClick={() => {
+                                                                            setReshareModal({
+                                                                                mode: 'new_version',
+                                                                                shareItem,
+                                                                                docId: item.id,
+                                                                                targetDeptName: shareDepartment?.name ?? 'Department',
+                                                                            });
+                                                                            setReshareFile(null);
+                                                                            setReshareChangeSummary('Revision addressing rejection feedback');
+                                                                        }}
+                                                                        className="truncate text-[11px]"
+                                                                    >
+                                                                        Reshare (New Version)
+                                                                    </Button>
+                                                                    <Button
+                                                                        variant="secondary"
+                                                                        size="xs"
+                                                                        leadingIcon={FileCheck}
+                                                                        onClick={() => {
+                                                                            setReshareModal({
+                                                                                mode: 'overwrite',
+                                                                                shareItem,
+                                                                                docId: item.id,
+                                                                                targetDeptName: shareDepartment?.name ?? 'Department',
+                                                                            });
+                                                                            setReshareFile(null);
+                                                                            setReshareChangeSummary('');
+                                                                        }}
+                                                                        className="truncate text-[11px]"
+                                                                    >
+                                                                        Overwrite File & Reshare
+                                                                    </Button>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })()}
 
                                                 {/* VISUAL WORKFLOW TRACKING PIPELINE (4 NODES) */}
                                                 {(() => {
@@ -3930,9 +4104,35 @@ const Inspector = ({
                         );
                     }
 
-                    // 2. OFFICER ROLE: Approve/Unapprove + Reject
+                    // 2. OFFICER ROLE: Approve/Unapprove + Reject + Unreject
                     if (isOfficer) {
                         const isPending = item.status === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL;
+                        const isRejected = item.status === constants.DOCUMENT_SHARES_STATUS.REJECTED;
+
+                        if (isRejected) {
+                            return (
+                                <div className="w-full">
+                                    <Button
+                                        variant="secondary"
+                                        leadingIcon={RotateCcw}
+                                        isLoading={activeActionLoading === 'unreject'}
+                                        isDisabled={Boolean(activeActionLoading)}
+                                        onClick={() => setInspectorConfirmAction({
+                                            actionKey: 'unreject',
+                                            targetItem: item,
+                                            title: `Unreject ${item.isFolder ? 'Folder' : 'Document'}`,
+                                            message: `Are you sure you want to unreject "${item.name || item.title || 'this document'}" and return it to pending approval?`,
+                                            primaryLabel: 'Unreject',
+                                            variant: 'primary',
+                                        })}
+                                        className="w-full justify-center truncate px-2"
+                                    >
+                                        Unreject
+                                    </Button>
+                                </div>
+                            );
+                        }
+
                         return (
                             <div className="grid grid-cols-2 gap-2 w-full">
                                 {isPending ? (
@@ -3941,7 +4141,14 @@ const Inspector = ({
                                         leadingIcon={CheckCircle2}
                                         isLoading={activeActionLoading === 'approve'}
                                         isDisabled={Boolean(activeActionLoading)}
-                                        onClick={() => handleActionClick('approve')}
+                                        onClick={() => setInspectorConfirmAction({
+                                            actionKey: 'approve',
+                                            targetItem: item,
+                                            title: `Approve ${item.isFolder ? 'Folder' : 'Document'}`,
+                                            message: `Are you sure you want to approve "${item.name || item.title || 'this document'}" for department director review?`,
+                                            primaryLabel: 'Approve',
+                                            variant: 'primary',
+                                        })}
                                         className="justify-center truncate px-2"
                                     >
                                         Approve
@@ -3952,7 +4159,14 @@ const Inspector = ({
                                         leadingIcon={RotateCcw}
                                         isLoading={activeActionLoading === 'unapprove'}
                                         isDisabled={Boolean(activeActionLoading)}
-                                        onClick={() => handleActionClick('unapprove')}
+                                        onClick={() => setInspectorConfirmAction({
+                                            actionKey: 'unapprove',
+                                            targetItem: item,
+                                            title: `Revoke Approval for ${item.isFolder ? 'Folder' : 'Document'}`,
+                                            message: `Are you sure you want to revert "${item.name || item.title || 'this document'}" to pending approval?`,
+                                            primaryLabel: 'Revoke Approval',
+                                            variant: 'warning',
+                                        })}
                                         className="justify-center truncate px-2"
                                     >
                                         Unapprove
@@ -3963,7 +4177,10 @@ const Inspector = ({
                                     leadingIcon={XCircle}
                                     isLoading={activeActionLoading === 'reject'}
                                     isDisabled={Boolean(activeActionLoading)}
-                                    onClick={() => handleActionClick('reject')}
+                                    onClick={() => {
+                                        setInspectorRejectReason('');
+                                        setInspectorRejectModal({ targetItem: item });
+                                    }}
                                     className="justify-center truncate px-2"
                                 >
                                     Reject
@@ -4007,7 +4224,14 @@ const Inspector = ({
                                         leadingIcon={RotateCcw}
                                         isLoading={activeActionLoading === 'unstash'}
                                         isDisabled={Boolean(activeActionLoading)}
-                                        onClick={() => handleActionClick('unstash')}
+                                        onClick={() => setInspectorConfirmAction({
+                                            actionKey: 'unstash',
+                                            targetItem: item,
+                                            title: `Unstash ${item.isFolder ? 'Folder' : 'Document'}`,
+                                            message: `Are you sure you want to unstash "${item.name || item.title || 'this document'}" and restore it to approved status?`,
+                                            primaryLabel: 'Unstash Item',
+                                            variant: 'primary',
+                                        })}
                                         className="justify-center truncate px-2"
                                     >
                                         Unstash
@@ -4018,7 +4242,14 @@ const Inspector = ({
                                         leadingIcon={Layers}
                                         isLoading={activeActionLoading === 'stash'}
                                         isDisabled={Boolean(activeActionLoading)}
-                                        onClick={() => handleActionClick('stash')}
+                                        onClick={() => setInspectorConfirmAction({
+                                            actionKey: 'stash',
+                                            targetItem: item,
+                                            title: `Stash ${item.isFolder ? 'Folder' : 'Document'}`,
+                                            message: `Are you sure you want to stash "${item.name || item.title || 'this document'}"? It will be held at upper management level.`,
+                                            primaryLabel: 'Stash Item',
+                                            variant: 'secondary',
+                                        })}
                                         className="justify-center truncate px-2"
                                     >
                                         Stash
@@ -4600,6 +4831,152 @@ const Inspector = ({
                     user={viewingFacultyMember}
                     readOnly={viewingFacultyMember.id !== activeUser?.id}
                 />
+            )}
+
+            {/* ACTION CONFIRMATION MODAL */}
+            {Boolean(inspectorConfirmAction) && (
+                <Modal
+                    isOpen={Boolean(inspectorConfirmAction)}
+                    onClose={() => setInspectorConfirmAction(null)}
+                    title={inspectorConfirmAction.title}
+                    description={inspectorConfirmAction.message}
+                    icon={inspectorConfirmAction.actionKey === 'stash' ? Clock : CheckCircle2}
+                    size="sm"
+                    confirmOnClose={false}
+                    primaryAction={{
+                        label: inspectorConfirmAction.primaryLabel,
+                        variant: inspectorConfirmAction.variant || 'primary',
+                        isLoading: activeActionLoading === inspectorConfirmAction.actionKey,
+                        isDisabled: Boolean(activeActionLoading),
+                        onClick: handleConfirmInspectorAction,
+                    }}
+                    secondaryAction={{
+                        label: 'Cancel',
+                        isDisabled: Boolean(activeActionLoading),
+                        onClick: () => setInspectorConfirmAction(null),
+                    }}
+                >
+                    <div className="text-xs text-text-muted leading-relaxed">
+                        Please confirm you wish to perform this action. The status will update immediately across departmental queues.
+                    </div>
+                </Modal>
+            )}
+
+            {/* REJECTION FORM MODAL */}
+            {Boolean(inspectorRejectModal) && (
+                <Modal
+                    isOpen={Boolean(inspectorRejectModal)}
+                    onClose={() => {
+                        setInspectorRejectModal(null);
+                        setInspectorRejectReason('');
+                    }}
+                    title={`Reject ${inspectorRejectModal.targetItem?.isFolder ? 'Folder' : 'Document'}`}
+                    description={`Provide a reason for rejecting "${inspectorRejectModal.targetItem?.name || inspectorRejectModal.targetItem?.title || 'this document'}". The item will remain in the repository as Rejected.`}
+                    icon={AlertTriangle}
+                    size="md"
+                    confirmOnClose={false}
+                    primaryAction={{
+                        label: 'Confirm Rejection',
+                        variant: 'danger',
+                        isLoading: activeActionLoading === 'reject',
+                        isDisabled: Boolean(activeActionLoading) || !inspectorRejectReason.trim(),
+                        onClick: handleConfirmInspectorRejection,
+                    }}
+                    secondaryAction={{
+                        label: 'Cancel',
+                        isDisabled: Boolean(activeActionLoading),
+                        onClick: () => {
+                            setInspectorRejectModal(null);
+                            setInspectorRejectReason('');
+                        },
+                    }}
+                >
+                    <div className="flex flex-col gap-4">
+                        <AreaField
+                            label="Rejection Reason"
+                            required
+                            placeholder="Explain why this document is being rejected so the administrator can take corrective action..."
+                            value={inspectorRejectReason}
+                            onChange={(e) => setInspectorRejectReason(e.target.value)}
+                            rows={4}
+                        />
+                        <p className="text-[11px] text-text-muted">
+                            This reason will be recorded on the version audit log and shown to repository administrators.
+                        </p>
+                    </div>
+                </Modal>
+            )}
+
+            {/* ADMIN RESHARE MODAL (NEW VERSION OR OVERWRITE) */}
+            {Boolean(reshareModal) && (
+                <Modal
+                    isOpen={Boolean(reshareModal)}
+                    onClose={() => {
+                        if (!isSubmittingReshare) {
+                            setReshareModal(null);
+                            setReshareFile(null);
+                            setReshareChangeSummary('');
+                        }
+                    }}
+                    title={reshareModal.mode === 'new_version' ? 'Reshare Document (New Version)' : 'Overwrite File & Reshare'}
+                    description={
+                        reshareModal.mode === 'new_version'
+                            ? `Upload a new revision for ${reshareModal.targetDeptName}. This will create the next version number and reset status to Pending Approval.`
+                            : `Upload a replacement file for ${reshareModal.targetDeptName}. This will overwrite the current version file in-place and reset status to Pending Approval.`
+                    }
+                    icon={reshareModal.mode === 'new_version' ? UploadCloud : FileCheck}
+                    size="md"
+                    confirmOnClose={false}
+                    primaryAction={{
+                        label: isSubmittingReshare ? 'Uploading & Resharing...' : reshareModal.mode === 'new_version' ? 'Upload New Version & Reshare' : 'Overwrite & Reshare',
+                        variant: 'primary',
+                        isLoading: isSubmittingReshare,
+                        isDisabled: isSubmittingReshare || !reshareFile,
+                        onClick: handleConfirmReshare,
+                    }}
+                    secondaryAction={{
+                        label: 'Cancel',
+                        isDisabled: isSubmittingReshare,
+                        onClick: () => {
+                            setReshareModal(null);
+                            setReshareFile(null);
+                            setReshareChangeSummary('');
+                        },
+                    }}
+                >
+                    <div className="flex flex-col gap-4">
+                        <div className="flex flex-col gap-1.5">
+                            <label className="text-xs font-semibold text-text">Replacement File</label>
+                            <input
+                                type="file"
+                                id="reshare-file-input"
+                                onChange={(e) => {
+                                    const file = e.target.files?.[0];
+                                    if (file) setReshareFile(file);
+                                }}
+                                className="block w-full text-xs text-text file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-accent file:text-accent-foreground hover:file:bg-accent/90 cursor-pointer border border-surface-border rounded-lg bg-surface p-2"
+                            />
+                            {reshareFile && (
+                                <div className="text-[11px] text-text-muted">
+                                    Selected: <strong className="text-text">{reshareFile.name}</strong> ({formatBytes(reshareFile.size)})
+                                </div>
+                            )}
+                        </div>
+
+                        {reshareModal.mode === 'new_version' && (
+                            <TextField
+                                label="Change Summary"
+                                placeholder="Describe what changed in this version..."
+                                value={reshareChangeSummary}
+                                onChange={(e) => setReshareChangeSummary(e.target.value)}
+                            />
+                        )}
+
+                        <div className="p-3 rounded-lg border border-accent/20 bg-accent/5 text-xs text-text-muted leading-relaxed">
+                            Submitting will clear the previous rejection reason and place the document back into the Officer&apos;s pending approval queue.
+                        </div>
+                    </div>
+                </Modal>
             )}
         </div>
     );

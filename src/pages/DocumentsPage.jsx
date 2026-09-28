@@ -93,7 +93,8 @@ const buildBreadcrumbsForFolder = (folderId, allDocs, isArchived = false) => {
         curr = (allDocs || []).find((d) => d.id === parentId);
     }
     const rootLabel = isArchived ? 'Archives' : 'Repository Root';
-    return [{ id: 'root', label: rootLabel }, ...chain];
+    const full = [{ id: 'root', label: rootLabel }, ...chain];
+    return full.length <= 2 ? full : full.slice(-2);
 };
 
 const BASE_FILTER_OPTIONS = [
@@ -202,6 +203,12 @@ const DocumentsPage = ({
     const [memberSearchQuery, setMemberSearchQuery] = useState('');
     const [isPublishingMembers, setIsPublishingMembers] = useState(false);
 
+    // STATES: ACTION CONFIRMATION & REJECTION MODALS
+    const [confirmActionModal, setConfirmActionModal] = useState(null);
+    const [rejectionActionModal, setRejectionActionModal] = useState(null);
+    const [rejectionReasonText, setRejectionReasonText] = useState('');
+    const [isSubmittingAction, setIsSubmittingAction] = useState(false);
+
     // HOOKS
     const { showToast, showProcessing } = useToast();
     const documents = useDocumentStore((state) => state.documents);
@@ -224,6 +231,7 @@ const DocumentsPage = ({
     const approveShare = useDocumentStore((state) => state.approveShare);
     const unapproveShare = useDocumentStore((state) => state.unapproveShare);
     const rejectShare = useDocumentStore((state) => state.rejectShare);
+    const unrejectShare = useDocumentStore((state) => state.unrejectShare);
     const publishShare = useDocumentStore((state) => state.publishShare);
     const unpublishShare = useDocumentStore((state) => state.unpublishShare);
     const stashShare = useDocumentStore((state) => state.stashShare);
@@ -372,6 +380,8 @@ const DocumentsPage = ({
                 resolvedStatus = constants.DOCUMENT_SHARES_STATUS.APPROVED;
             } else if (effectiveDeptShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL)) {
                 resolvedStatus = constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL;
+            } else if (effectiveDeptShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.REJECTED)) {
+                resolvedStatus = constants.DOCUMENT_SHARES_STATUS.REJECTED;
             } else {
                 resolvedStatus = effectiveDeptShares[0]?.status ?? '—';
             }
@@ -379,7 +389,7 @@ const DocumentsPage = ({
             const primaryShare = effectiveDeptShares.find((s) => s.status === resolvedStatus) || effectiveDeptShares[0];
 
             // Role-based status gating:
-            // OFFICER: PENDING_APPROVAL, APPROVED, STASHED, PUBLISHED
+            // OFFICER: PENDING_APPROVAL, APPROVED, STASHED, PUBLISHED, REJECTED
             if (isOfficer) {
                 if (
                     [
@@ -387,6 +397,7 @@ const DocumentsPage = ({
                         constants.DOCUMENT_SHARES_STATUS.APPROVED,
                         constants.DOCUMENT_SHARES_STATUS.STASHED,
                         constants.DOCUMENT_SHARES_STATUS.PUBLISHED,
+                        constants.DOCUMENT_SHARES_STATUS.REJECTED,
                     ].includes(resolvedStatus)
                 ) {
                     setAccessibleItem(doc.id, {
@@ -475,8 +486,11 @@ const DocumentsPage = ({
             });
         }
 
-        // 3. Filter documents to accessible ones
+        // 3. Filter documents to accessible ones (Non-administrative roles never see folders)
         const accessibleDocs = documents.filter((doc) => {
+            if (!isStaff && doc.isFolder) {
+                return false;
+            }
             if (doc.isFolder) {
                 return accessibleFolderIdSet.has(doc.id) || accessibleFolderIdSet.has(cleanId(doc.id));
             }
@@ -613,36 +627,34 @@ const DocumentsPage = ({
         return repositoryItems.filter((item) => {
             const matchesArchiveState = !item.isArchived;
             if (!matchesArchiveState) return false;
+            if (!isStaff) {
+                return !item.isFolder;
+            }
             const itemParent = item.parentId ?? 'root';
             if (activeFolderId === 'root') {
                 return !itemParent || itemParent === 'root';
             }
             return cleanId(itemParent) === cleanId(activeFolderId);
         });
-    }, [repositoryItems, activeFolderId]);
+    }, [repositoryItems, activeFolderId, isStaff]);
 
     const activeBreadcrumbsList = useMemo(() => {
-        if (activeFolderId !== 'root') {
-            const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
-            const parentFolder = repositoryItems.find((f) => cleanId(f.id) === cleanId(activeFolderId));
-            if (parentFolder) {
-                return [
-                    INITIAL_BREADCRUMBS[0],
-                    { id: parentFolder.id, label: parentFolder.name || parentFolder.title || 'Folder' },
-                ];
-            }
+        if (!isStaff) {
+            return [{ id: 'root', label: 'Documents' }];
         }
-        return breadcrumbsList;
-    }, [activeFolderId, repositoryItems, breadcrumbsList]);
+        if (activeFolderId !== 'root') {
+            const list = buildBreadcrumbsForFolder(activeFolderId, documents);
+            return list.length <= 2 ? list : list.slice(-2);
+        }
+        return breadcrumbsList.length <= 2 ? breadcrumbsList : breadcrumbsList.slice(-2);
+    }, [activeFolderId, documents, breadcrumbsList, isStaff]);
 
     const currentDirectoryLabel = activeBreadcrumbsList[activeBreadcrumbsList.length - 1]?.label ?? 'current directory';
 
     // HANDLERS
-    const handleBreadcrumbClick = (breadcrumbItem, breadcrumbIndex) => {
+    const handleBreadcrumbClick = (breadcrumbItem) => {
         setCurrentFolderId(breadcrumbItem.id);
-        setBreadcrumbsList((previousBreadcrumbs) =>
-            previousBreadcrumbs.slice(0, breadcrumbIndex + 1),
-        );
+        setBreadcrumbsList(buildBreadcrumbsForFolder(breadcrumbItem.id, documents));
         setSelectedDocument(null);
         onSelectDocument?.(null);
     };
@@ -1117,6 +1129,124 @@ const DocumentsPage = ({
         }
     };
 
+    const handleConfirmAction = async () => {
+        if (!confirmActionModal) return;
+        const { actionKey, item, shareId, deptId, docTitle } = confirmActionModal;
+        setIsSubmittingAction(true);
+        try {
+            if (actionKey === 'approve') {
+                if (item.isFolder && deptId) {
+                    await updateShareStatusRecursive(item.id, deptId, constants.DOCUMENT_SHARES_STATUS.APPROVED);
+                } else {
+                    await approveShare(shareId);
+                }
+                showToast({
+                    type: 'success',
+                    title: item.isFolder ? 'Folder Approved' : 'Document Approved',
+                    description: `Approved "${docTitle}" for department director review.`,
+                });
+            } else if (actionKey === 'unapprove') {
+                if (item.isFolder && deptId) {
+                    await updateShareStatusRecursive(item.id, deptId, constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL);
+                } else {
+                    await unapproveShare(shareId);
+                }
+                showToast({
+                    type: 'information',
+                    title: 'Approval Revoked',
+                    description: `Reverted "${docTitle}" to pending approval.`,
+                });
+            } else if (actionKey === 'stash') {
+                if (item.isFolder && deptId) {
+                    await updateShareStatusRecursive(item.id, deptId, constants.DOCUMENT_SHARES_STATUS.STASHED);
+                } else {
+                    await stashShare(shareId);
+                }
+                showToast({
+                    type: 'information',
+                    title: item.isFolder ? 'Folder Stashed' : 'Document Stashed',
+                    description: `Stashed "${docTitle}" at upper management level.`,
+                });
+            } else if (actionKey === 'unstash') {
+                if (item.isFolder && deptId) {
+                    await updateShareStatusRecursive(item.id, deptId, constants.DOCUMENT_SHARES_STATUS.APPROVED);
+                } else {
+                    await unstashShare(shareId);
+                }
+                showToast({
+                    type: 'success',
+                    title: item.isFolder ? 'Folder Unstashed' : 'Document Unstashed',
+                    description: `Restored "${docTitle}" to approved state.`,
+                });
+            } else if (actionKey === 'unreject') {
+                if (item.isFolder && deptId) {
+                    await updateShareStatusRecursive(item.id, deptId, constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL);
+                } else {
+                    await unrejectShare(shareId);
+                }
+                showToast({
+                    type: 'success',
+                    title: item.isFolder ? 'Folder Restored' : 'Document Restored',
+                    description: `Restored "${docTitle}" to pending approval.`,
+                });
+            }
+            if (currentUser) {
+                syncAllDocumentShares(currentUser, departments).catch(() => {});
+            }
+            setConfirmActionModal(null);
+        } catch (err) {
+            console.error(`Failed to execute ${actionKey}:`, err);
+            showToast({
+                type: 'error',
+                title: 'Action Failed',
+                description: err?.message || `Could not complete ${actionKey}.`,
+            });
+        } finally {
+            setIsSubmittingAction(false);
+        }
+    };
+
+    const handleConfirmRejection = async () => {
+        if (!rejectionActionModal) return;
+        const { item, shareId, deptId, docTitle } = rejectionActionModal;
+        const reason = rejectionReasonText.trim();
+        if (!reason) {
+            showToast({
+                type: 'warning',
+                title: 'Rejection Reason Required',
+                description: 'Please specify a reason for rejecting this document.',
+            });
+            return;
+        }
+        setIsSubmittingAction(true);
+        try {
+            if (item.isFolder && deptId) {
+                await updateShareStatusRecursive(item.id, deptId, constants.DOCUMENT_SHARES_STATUS.REJECTED);
+            } else {
+                await rejectShare(shareId, reason, currentUser?.id);
+            }
+            showToast({
+                type: 'warning',
+                title: item.isFolder ? 'Folder Rejected' : 'Document Rejected',
+                description: `Rejected "${docTitle}". The item remains in your repository as Rejected.`,
+            });
+            if (currentUser) {
+                syncAllDocumentShares(currentUser, departments).catch(() => {});
+            }
+            setRejectionActionModal(null);
+            setRejectionReasonText('');
+        } catch (err) {
+            console.error('Failed to reject share:', err);
+            showToast({
+                type: 'error',
+                title: 'Rejection Failed',
+                description: err?.message || 'Could not reject document.',
+            });
+        } finally {
+            setIsSubmittingAction(false);
+        }
+    };
+
     const handleItemAction = async (actionKey, item) => {
         if (!item) {
             return;
@@ -1137,7 +1267,7 @@ const DocumentsPage = ({
             return;
         }
 
-        if (['approve', 'unapprove', 'reject', 'unpublish', 'stash', 'unstash', 'unshare'].includes(actionKey)) {
+        if (['approve', 'unapprove', 'reject', 'unreject', 'unpublish', 'stash', 'unstash', 'unshare'].includes(actionKey)) {
             let shareRecord = item.share;
             if (!shareRecord) {
                 if (actionKey === 'unshare' && (item.departmentId || item.department)) {
@@ -1165,45 +1295,55 @@ const DocumentsPage = ({
 
             const docTitle = item.title || item.name || 'document';
             const deptId = shareRecord?.department?.id ?? shareRecord?.departmentId ?? currentUser?.departmentId;
+
+            if (['approve', 'unapprove', 'stash', 'unstash', 'unreject'].includes(actionKey)) {
+                const titles = {
+                    approve: `Approve ${item.isFolder ? 'Folder' : 'Document'}`,
+                    unapprove: `Revoke Approval for ${item.isFolder ? 'Folder' : 'Document'}`,
+                    stash: `Stash ${item.isFolder ? 'Folder' : 'Document'}`,
+                    unstash: `Unstash ${item.isFolder ? 'Folder' : 'Document'}`,
+                    unreject: `Unreject ${item.isFolder ? 'Folder' : 'Document'}`,
+                };
+                const messages = {
+                    approve: `Are you sure you want to approve "${docTitle}" for department director review?`,
+                    unapprove: `Are you sure you want to revert "${docTitle}" to pending approval?`,
+                    stash: `Are you sure you want to stash "${docTitle}"? It will be held at upper management level.`,
+                    unstash: `Are you sure you want to unstash "${docTitle}" and restore it to approved status?`,
+                    unreject: `Are you sure you want to unreject "${docTitle}" and return it to pending approval?`,
+                };
+                const primaryLabels = {
+                    approve: 'Approve',
+                    unapprove: 'Revoke Approval',
+                    stash: 'Stash Item',
+                    unstash: 'Unstash Item',
+                    unreject: 'Unreject',
+                };
+                setConfirmActionModal({
+                    actionKey,
+                    item,
+                    shareId,
+                    deptId,
+                    docTitle,
+                    title: titles[actionKey] || 'Confirm Action',
+                    message: messages[actionKey] || `Are you sure you want to proceed with ${actionKey}?`,
+                    primaryLabel: primaryLabels[actionKey] || 'Confirm',
+                });
+                return;
+            }
+
+            if (actionKey === 'reject') {
+                setRejectionReasonText('');
+                setRejectionActionModal({
+                    item,
+                    shareId,
+                    deptId,
+                    docTitle,
+                });
+                return;
+            }
+
             try {
-                if (actionKey === 'approve') {
-                    if (item.isFolder && deptId) {
-                        await updateShareStatusRecursive(item.id, deptId, constants.DOCUMENT_SHARES_STATUS.APPROVED);
-                    } else {
-                        await approveShare(shareId);
-                    }
-                    showToast({
-                        type: 'success',
-                        title: item.isFolder ? 'Folder Approved' : 'Document Approved',
-                        description: `Approved "${docTitle}" for department director review.`,
-                    });
-                } else if (actionKey === 'unapprove') {
-                    if (item.isFolder && deptId) {
-                        await updateShareStatusRecursive(item.id, deptId, constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL);
-                    } else {
-                        await unapproveShare(shareId);
-                    }
-                    showToast({
-                        type: 'information',
-                        title: 'Approval Revoked',
-                        description: `Reverted "${docTitle}" to pending approval.`,
-                    });
-                } else if (actionKey === 'reject') {
-                    if (item.isFolder && deptId) {
-                        await unshareDocumentRecursive(item.id, deptId);
-                    } else {
-                        await rejectShare(shareId);
-                    }
-                    showToast({
-                        type: 'warning',
-                        title: item.isFolder ? 'Folder Rejected' : 'Document Rejected',
-                        description: `Rejected "${docTitle}" and deleted from department view.`,
-                    });
-                    if (selectedDocument?.id === item.id) {
-                        setSelectedDocument(null);
-                        onSelectDocument?.(null);
-                    }
-                } else if (actionKey === 'publish') {
+                if (actionKey === 'publish') {
                     if (item.isFolder && deptId) {
                         await updateShareStatusRecursive(item.id, deptId, constants.DOCUMENT_SHARES_STATUS.PUBLISHED);
                     } else {
@@ -1225,28 +1365,6 @@ const DocumentsPage = ({
                         title: item.isFolder ? 'Folder Unpublished' : 'Document Unpublished',
                         description: `Unpublished "${docTitle}" from department members.`,
                     });
-                } else if (actionKey === 'stash') {
-                    if (item.isFolder && deptId) {
-                        await updateShareStatusRecursive(item.id, deptId, constants.DOCUMENT_SHARES_STATUS.STASHED);
-                    } else {
-                        await stashShare(shareId);
-                    }
-                    showToast({
-                        type: 'information',
-                        title: item.isFolder ? 'Folder Stashed' : 'Document Stashed',
-                        description: `Stashed "${docTitle}" at upper management level.`,
-                    });
-                } else if (actionKey === 'unstash') {
-                    if (item.isFolder && deptId) {
-                        await updateShareStatusRecursive(item.id, deptId, constants.DOCUMENT_SHARES_STATUS.APPROVED);
-                    } else {
-                        await unstashShare(shareId);
-                    }
-                    showToast({
-                        type: 'success',
-                        title: item.isFolder ? 'Folder Unstashed' : 'Document Unstashed',
-                        description: `Restored "${docTitle}" to approved state.`,
-                    });
                 } else if (actionKey === 'unshare') {
                     if (item.isFolder && deptId) {
                         await unshareDocumentRecursive(item.id, deptId);
@@ -1258,6 +1376,9 @@ const DocumentsPage = ({
                         title: 'Share Deleted',
                         description: `Deleted department share for "${docTitle}".`,
                     });
+                }
+                if (currentUser) {
+                    syncAllDocumentShares(currentUser, departments).catch(() => {});
                 }
             } catch (err) {
                 console.error(`Failed to execute ${actionKey}:`, err);
@@ -2718,6 +2839,10 @@ const DocumentsPage = ({
 
             setSelectedShareDepartmentIds([]);
             setDepartmentSearchQuery('');
+            setShareModalDocument(null);
+            if (currentUser) {
+                syncAllDocumentShares(currentUser, departments).catch(() => {});
+            }
         } catch (err) {
             console.error('Failed to share document/folder:', err);
             showToast({
@@ -2859,6 +2984,9 @@ const DocumentsPage = ({
             setPublishModalDocument(null);
             setSelectedPublishMemberIds([]);
             setMemberSearchQuery('');
+            if (currentUser) {
+                syncAllDocumentShares(currentUser, departments).catch(() => {});
+            }
         } catch (err) {
             console.error('Failed to publish document to members:', err);
             showToast({
@@ -4373,6 +4501,86 @@ const DocumentsPage = ({
                                 </div>
                             </div>
                         </div>
+                    </div>
+                </Modal>
+            )}
+
+            {/* ACTION CONFIRMATION MODAL */}
+            {Boolean(confirmActionModal) && (
+                <Modal
+                    isOpen={Boolean(confirmActionModal)}
+                    onClose={() => {
+                        if (!isSubmittingAction) {
+                            setConfirmActionModal(null);
+                        }
+                    }}
+                    title={confirmActionModal.title}
+                    description={confirmActionModal.message}
+                    icon={confirmActionModal.actionKey === 'stash' ? Clock : CheckCircle2}
+                    size="sm"
+                    confirmOnClose={false}
+                    primaryAction={{
+                        label: confirmActionModal.primaryLabel,
+                        variant: confirmActionModal.actionKey === 'unapprove' ? 'warning' : 'primary',
+                        isLoading: isSubmittingAction,
+                        isDisabled: isSubmittingAction,
+                        onClick: handleConfirmAction,
+                    }}
+                    secondaryAction={{
+                        label: 'Cancel',
+                        isDisabled: isSubmittingAction,
+                        onClick: () => setConfirmActionModal(null),
+                    }}
+                >
+                    <div className="text-xs text-text-muted leading-relaxed">
+                        Please confirm you wish to perform this action. The status will update immediately across departmental queues.
+                    </div>
+                </Modal>
+            )}
+
+            {/* REJECTION FORM MODAL */}
+            {Boolean(rejectionActionModal) && (
+                <Modal
+                    isOpen={Boolean(rejectionActionModal)}
+                    onClose={() => {
+                        if (!isSubmittingAction) {
+                            setRejectionActionModal(null);
+                            setRejectionReasonText('');
+                        }
+                    }}
+                    title={`Reject ${rejectionActionModal.item?.isFolder ? 'Folder' : 'Document'}`}
+                    description={`Provide a reason for rejecting "${rejectionActionModal.docTitle}". The item remains in your repository as Rejected.`}
+                    icon={AlertTriangle}
+                    size="md"
+                    confirmOnClose={false}
+                    primaryAction={{
+                        label: 'Confirm Rejection',
+                        variant: 'danger',
+                        isLoading: isSubmittingAction,
+                        isDisabled: isSubmittingAction || !rejectionReasonText.trim(),
+                        onClick: handleConfirmRejection,
+                    }}
+                    secondaryAction={{
+                        label: 'Cancel',
+                        isDisabled: isSubmittingAction,
+                        onClick: () => {
+                            setRejectionActionModal(null);
+                            setRejectionReasonText('');
+                        },
+                    }}
+                >
+                    <div className="flex flex-col gap-4">
+                        <AreaField
+                            label="Rejection Reason"
+                            required
+                            placeholder="Explain why this document is being rejected so the administrator can take corrective action..."
+                            value={rejectionReasonText}
+                            onChange={(e) => setRejectionReasonText(e.target.value)}
+                            rows={4}
+                        />
+                        <p className="text-[11px] text-text-muted">
+                            This reason will be recorded on the version audit log and shown to repository administrators.
+                        </p>
                     </div>
                 </Modal>
             )}

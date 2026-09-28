@@ -255,6 +255,19 @@ const resolveTargetEntityName = (auditLog, { documents = [], departments = [], u
             if (match?.name) return match.name;
             if (match?.title) return match.title;
         }
+
+        // 3b. Fallback cross-store entity matching for UUIDs
+        const cleanId = (raw) => (typeof raw === 'string' ? raw.replace(/-/g, '').toLowerCase() : raw);
+        const idClean = cleanId(id);
+        const docMatch = documents.find((d) => cleanId(d.id) === idClean);
+        if (docMatch?.name || docMatch?.title) return docMatch.name || docMatch.title;
+        const deptMatch = departments.find((d) => cleanId(d.id) === idClean);
+        if (deptMatch?.name) return deptMatch.name;
+        const userMatch = users.find((u) => cleanId(u.id) === idClean);
+        if (userMatch) {
+            const fullName = `${userMatch.firstName ?? ''} ${userMatch.lastName ?? ''}`.trim();
+            if (fullName) return fullName;
+        }
     }
 
     // 4. Clean human title from auditLog if available
@@ -285,22 +298,86 @@ const IGNORED_AUDIT_DIFF_KEYS = new Set([
     'excludeActor',
 ]);
 
-const formatAuditValue = (val) => {
+const formatAuditValue = (val, key = '', lookupContext = {}) => {
     if (val === undefined || val === null || val === '') return '—';
     if (typeof val === 'boolean') return val ? 'TRUE' : 'FALSE';
     if (typeof val === 'object') {
         if (val.name || val.title) return val.name || val.title;
+        if (val.firstName || val.lastName) {
+            return `${val.firstName || ''} ${val.lastName || ''}`.trim() + (val.role ? ` (${val.role})` : '');
+        }
         return JSON.stringify(val);
     }
-    return String(val);
+
+    const valStr = String(val).trim();
+    const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
+    const valClean = cleanId(valStr);
+
+    const { documents = [], departments = [], users = [] } = lookupContext;
+    const lowerKey = String(key || '').toLowerCase();
+
+    // 1. Department match
+    if (lowerKey.includes('dept') || lowerKey.includes('department')) {
+        const foundDept = departments.find(
+            (d) => cleanId(d.id) === valClean || d.code?.toLowerCase() === valStr.toLowerCase() || d.name?.toLowerCase() === valStr.toLowerCase()
+        );
+        if (foundDept) return `${foundDept.name}${foundDept.code ? ` (${foundDept.code})` : ''}`;
+    }
+
+    // 2. Document match
+    if (lowerKey.includes('doc') || lowerKey.includes('document') || lowerKey.includes('file')) {
+        const foundDoc = documents.find((d) => cleanId(d.id) === valClean);
+        if (foundDoc) return foundDoc.name || foundDoc.title || 'Institutional Record';
+    }
+
+    // 3. User / Actor / Reviewer / Rejecter match
+    if (
+        lowerKey.includes('user') ||
+        lowerKey.includes('actor') ||
+        lowerKey.includes('reviewer') ||
+        lowerKey.includes('rejecter') ||
+        lowerKey.includes('recipient') ||
+        lowerKey.includes('uploader') ||
+        lowerKey.includes('creator') ||
+        lowerKey.includes('requester')
+    ) {
+        const foundUser = users.find((u) => cleanId(u.id) === valClean || u.universityId === valStr);
+        if (foundUser) {
+            const name = `${foundUser.firstName || ''} ${foundUser.lastName || ''}`.trim() || foundUser.email;
+            return name + (foundUser.role ? ` (${foundUser.role})` : '');
+        }
+    }
+
+    // 4. General UUID matching fallback
+    const isUuidLike = /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i.test(valStr);
+    if (isUuidLike) {
+        const foundDept = departments.find((d) => cleanId(d.id) === valClean);
+        if (foundDept) return `${foundDept.name}${foundDept.code ? ` (${foundDept.code})` : ''}`;
+
+        const foundDoc = documents.find((d) => cleanId(d.id) === valClean);
+        if (foundDoc) return foundDoc.name || foundDoc.title || 'Institutional Record';
+
+        const foundUser = users.find((u) => cleanId(u.id) === valClean);
+        if (foundUser) {
+            const name = `${foundUser.firstName || ''} ${foundUser.lastName || ''}`.trim() || foundUser.email;
+            return name + (foundUser.role ? ` (${foundUser.role})` : '');
+        }
+    }
+
+    return valStr;
 };
 
 const formatKeyLabel = (key) => {
     if (!key) return '';
-    return key
+    let clean = String(key).replace(/^_+/, '');
+    if (clean.toLowerCase().endsWith('id') && clean.length > 2) {
+        clean = clean.slice(0, -2);
+    }
+    return clean
         .replace(/([A-Z])/g, ' $1')
         .replace(/_/g, ' ')
-        .trim();
+        .trim()
+        .replace(/\b\w/g, (c) => c.toUpperCase());
 };
 
 const extractAuditDiff = (parsedData) => {
@@ -2876,7 +2953,7 @@ const DashboardPage = ({
                                                                     {formatKeyLabel(fieldKey)}:
                                                                 </span>
                                                                 <span className="font-medium text-text-muted text-right line-through truncate max-w-[180px]">
-                                                                    {formatAuditValue(fieldValue)}
+                                                                    {formatAuditValue(fieldValue, fieldKey, { documents, departments, users })}
                                                                 </span>
                                                             </div>
                                                         ))}
@@ -2918,7 +2995,7 @@ const DashboardPage = ({
                                                                     {formatKeyLabel(fieldKey)}:
                                                                 </span>
                                                                 <span className="font-semibold text-accent text-right truncate max-w-[180px]">
-                                                                    {formatAuditValue(fieldValue)}
+                                                                    {formatAuditValue(fieldValue, fieldKey, { documents, departments, users })}
                                                                 </span>
                                                             </div>
                                                         ))}
@@ -2955,9 +3032,9 @@ const DashboardPage = ({
                                                         }
                                                         return (
                                                             <div key={k} className="flex items-center justify-between gap-2 py-0.5 border-b border-surface-border/40 last:border-0">
-                                                                <span className="font-medium text-text-muted capitalize shrink-0">{k.replace(/_/g, ' ')}:</span>
+                                                                <span className="font-medium text-text-muted capitalize shrink-0">{formatKeyLabel(k)}:</span>
                                                                 <span className="font-semibold text-text text-right font-mono truncate max-w-[280px]">
-                                                                    {typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v ?? '—')}
+                                                                    {formatAuditValue(v, k, { documents, departments, users })}
                                                                 </span>
                                                             </div>
                                                         );

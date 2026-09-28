@@ -3,7 +3,7 @@ import { create } from 'zustand';
 
 import { constants } from '../constants';
 import { mutationSchema } from '../schemas';
-import { documentService, departmentService, systemEventService } from '../services';
+import { documentService, departmentService, systemEventService, storageService } from '../services';
 import { useDepartmentStore } from './useDepartmentStore';
 import { useUserStore } from './useUserStore';
 
@@ -1869,52 +1869,352 @@ const useDocumentStore = create((set, get) => ({
         }
     },
 
-    rejectShare: async (shareId) => {
+    rejectShare: async (shareId, rejectionReason = null, rejecterId = null) => {
         try {
             const existing = (get().documentShares || []).find((s) => s.id === shareId);
             const deptId = existing?.department?.id ?? existing?.departmentId;
             const docId = existing?.documentId ?? existing?.document?.id;
             const targetDoc = (get().documents || []).find((d) => d.id === docId);
+            const timestamp = new Date().toISOString();
 
-            const isDeleted = await documentService.deleteDocumentShare(shareId);
-            if (isDeleted) {
-                set((state) => ({
-                    documentShares: state.documentShares.filter((item) => item.id !== shareId),
-                }));
+            // 1. Update the document share to REJECTED (do not delete)
+            await documentService.updateDocumentShare(shareId, {
+                status: constants.DOCUMENT_SHARES_STATUS.REJECTED,
+                updatedAt: timestamp,
+            });
 
-                systemEventService.recordSystemEvent({
-                    entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_SHARE,
-                    entityId: shareId,
-                    action: constants.AUDIT_LOGS_ACTION.REJECTED,
-                    data: {
-                        old: {
-                            id: shareId,
-                            documentName: targetDoc?.name,
-                            departmentName: resolveDepartmentName(deptId),
-                            recipientName: resolveUserName(existing?.recipient?.id ?? existing?.recipientId),
-                            status: existing?.status,
-                            _documentId: docId,
-                            _departmentId: deptId,
-                            _recipientId: existing?.recipient?.id ?? existing?.recipientId,
-                        },
-                        new: null,
-                        title: targetDoc?.name ? `${targetDoc.name} Rejected` : 'Document Share Rejected',
-                        targetName: targetDoc?.name || 'Document Share',
+            // 2. Find and update the latest version for this document
+            let docVersions = (get().documentVersions || []).filter(
+                (v) => (v.document?.id ?? v.documentId) === docId
+            );
+            if (docVersions.length === 0 && docId) {
+                try {
+                    const fetchedVers = await get().fetchDocumentVersions(docId);
+                    if (fetchedVers && fetchedVers.length > 0) {
+                        docVersions = fetchedVers;
+                    }
+                } catch {}
+            }
+            const latestVer = [...docVersions].sort((a, b) => (b.version || 0) - (a.version || 0))[0];
+
+            if (latestVer?.id) {
+                await get().updateDocumentVersion(latestVer.id, {
+                    rejectionReason: rejectionReason || 'Rejected by Officer',
+                    rejecterId: rejecterId || null,
+                    updatedAt: timestamp,
+                });
+            }
+
+            const merged = {
+                ...existing,
+                status: constants.DOCUMENT_SHARES_STATUS.REJECTED,
+                rejectionReason: rejectionReason || 'Rejected by Officer',
+                rejecterId: rejecterId || null,
+                updatedAt: timestamp,
+            };
+
+            set((state) => ({
+                documentShares: state.documentShares.map((item) =>
+                    item.id === shareId ? merged : item
+                ),
+            }));
+
+            systemEventService.recordSystemEvent({
+                entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_SHARE,
+                entityId: shareId,
+                action: constants.AUDIT_LOGS_ACTION.REJECTED,
+                data: {
+                    old: {
+                        id: shareId,
                         documentName: targetDoc?.name,
                         departmentName: resolveDepartmentName(deptId),
                         recipientName: resolveUserName(existing?.recipient?.id ?? existing?.recipientId),
+                        status: existing?.status,
                         _documentId: docId,
                         _departmentId: deptId,
                         _recipientId: existing?.recipient?.id ?? existing?.recipientId,
                     },
-                    targetRoles: ['ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF'],
-                    targetDepartmentId: deptId,
-                    isMajor: true,
-                }).catch(() => {});
-            }
-            return isDeleted;
+                    new: {
+                        id: shareId,
+                        documentName: targetDoc?.name,
+                        departmentName: resolveDepartmentName(deptId),
+                        recipientName: resolveUserName(existing?.recipient?.id ?? existing?.recipientId),
+                        status: constants.DOCUMENT_SHARES_STATUS.REJECTED,
+                        rejectionReason: rejectionReason || 'Rejected by Officer',
+                        _documentId: docId,
+                        _departmentId: deptId,
+                        _recipientId: existing?.recipient?.id ?? existing?.recipientId,
+                    },
+                    title: targetDoc?.name ? `${targetDoc.name} Rejected` : 'Document Share Rejected',
+                    targetName: targetDoc?.name || 'Document Share',
+                    documentName: targetDoc?.name,
+                    departmentName: resolveDepartmentName(deptId),
+                    recipientName: resolveUserName(existing?.recipient?.id ?? existing?.recipientId),
+                    rejectionReason: rejectionReason || 'Rejected by Officer',
+                    _documentId: docId,
+                    _departmentId: deptId,
+                    _recipientId: existing?.recipient?.id ?? existing?.recipientId,
+                },
+                targetRoles: ['ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF', 'OFFICER'],
+                targetDepartmentId: deptId,
+                isMajor: true,
+            }).catch(() => {});
+
+            return merged;
         } catch (error) {
             console.error('Failed to reject document share:', error);
+            throw error;
+        }
+    },
+
+    unrejectShare: async (shareId) => {
+        try {
+            const existing = (get().documentShares || []).find((s) => s.id === shareId);
+            const deptId = existing?.department?.id ?? existing?.departmentId;
+            const docId = existing?.documentId ?? existing?.document?.id;
+            const targetDoc = (get().documents || []).find((d) => d.id === docId);
+            const timestamp = new Date().toISOString();
+
+            // 1. Reset document share status to PENDING_APPROVAL
+            await documentService.updateDocumentShare(shareId, {
+                status: constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL,
+                updatedAt: timestamp,
+            });
+
+            // 2. Clear rejectionReason and rejecterId on latest version
+            let docVersions = (get().documentVersions || []).filter(
+                (v) => (v.document?.id ?? v.documentId) === docId
+            );
+            if (docVersions.length === 0 && docId) {
+                try {
+                    const fetchedVers = await get().fetchDocumentVersions(docId);
+                    if (fetchedVers && fetchedVers.length > 0) {
+                        docVersions = fetchedVers;
+                    }
+                } catch {}
+            }
+            const latestVer = [...docVersions].sort((a, b) => (b.version || 0) - (a.version || 0))[0];
+
+            if (latestVer?.id) {
+                await get().updateDocumentVersion(latestVer.id, {
+                    rejectionReason: null,
+                    rejecterId: null,
+                    updatedAt: timestamp,
+                });
+            }
+
+            const merged = {
+                ...existing,
+                status: constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL,
+                rejectionReason: null,
+                rejecterId: null,
+                updatedAt: timestamp,
+            };
+
+            set((state) => ({
+                documentShares: state.documentShares.map((item) =>
+                    item.id === shareId ? merged : item
+                ),
+            }));
+
+            systemEventService.recordSystemEvent({
+                entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_SHARE,
+                entityId: shareId,
+                action: constants.AUDIT_LOGS_ACTION.UPDATED,
+                data: {
+                    old: {
+                        id: shareId,
+                        status: constants.DOCUMENT_SHARES_STATUS.REJECTED,
+                        documentName: targetDoc?.name,
+                        departmentName: resolveDepartmentName(deptId),
+                    },
+                    new: {
+                        id: shareId,
+                        status: constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL,
+                        documentName: targetDoc?.name,
+                        departmentName: resolveDepartmentName(deptId),
+                    },
+                    title: targetDoc?.name ? `${targetDoc.name} Unrejected` : 'Document Share Unrejected',
+                    targetName: targetDoc?.name || 'Document Share',
+                    documentName: targetDoc?.name,
+                    departmentName: resolveDepartmentName(deptId),
+                },
+                targetRoles: ['ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF', 'OFFICER'],
+                targetDepartmentId: deptId,
+                isMajor: true,
+            }).catch(() => {});
+
+            return merged;
+        } catch (error) {
+            console.error('Failed to unreject document share:', error);
+            throw error;
+        }
+    },
+
+    reshareNewVersion: async (documentId, shareId, file, uploaderId, changeSummary = 'Revision addressing rejection feedback') => {
+        try {
+            const docId = documentId;
+            const existing = (get().documentShares || []).find((s) => s.id === shareId);
+            const deptId = existing?.department?.id ?? existing?.departmentId;
+            const targetDoc = (get().documents || []).find((d) => d.id === docId);
+
+            let docVersions = (get().documentVersions || []).filter(
+                (v) => (v.document?.id ?? v.documentId) === docId
+            );
+            if (docVersions.length === 0 && docId) {
+                try {
+                    const fetchedVers = await get().fetchDocumentVersions(docId);
+                    if (fetchedVers && fetchedVers.length > 0) docVersions = fetchedVers;
+                } catch {}
+            }
+            const latestVer = [...docVersions].sort((a, b) => (b.version || 0) - (a.version || 0))[0];
+            const nextVersionNumber = (latestVer?.version || 1) + 1;
+            const timestamp = new Date().toISOString();
+
+            // 1. Upload to storage with next version number
+            const storageResult = await storageService.uploadDocument(
+                docId,
+                file,
+                nextVersionNumber,
+                file.name
+            );
+
+            // 2. Insert new version record (clearing rejection)
+            const newVersion = await get().insertDocumentVersion({
+                documentId: docId,
+                uploaderId: uploaderId,
+                version: nextVersionNumber,
+                path: storageResult.path,
+                sizeBytes: storageResult.sizeBytes,
+                mimeType: storageResult.mimeType || file.type || latestVer?.mimeType || 'application/pdf',
+                classification: latestVer?.classification || constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED,
+                changeSummary: changeSummary,
+                rejectionReason: null,
+                rejecterId: null,
+                checksum: storageResult.checksum || null,
+            });
+
+            // 3. Reset share to PENDING_APPROVAL
+            await documentService.updateDocumentShare(shareId, {
+                status: constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL,
+                updatedAt: timestamp,
+            });
+
+            // 4. Update parent document updatedAt
+            await get().updateDocument(docId, {
+                updatedAt: timestamp,
+            });
+
+            // 5. Update local store
+            set((state) => ({
+                documentShares: state.documentShares.map((item) =>
+                    item.id === shareId
+                        ? { ...item, status: constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL, rejectionReason: null, updatedAt: timestamp }
+                        : item
+                ),
+            }));
+
+            systemEventService.recordSystemEvent({
+                entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_SHARE,
+                entityId: shareId,
+                action: constants.AUDIT_LOGS_ACTION.SHARED,
+                data: {
+                    title: `Reshared ${targetDoc?.name || 'Document'} (v${nextVersionNumber}.0)`,
+                    documentName: targetDoc?.name,
+                    departmentName: resolveDepartmentName(deptId),
+                    version: nextVersionNumber,
+                },
+                targetRoles: ['ADMINISTRATOR', 'COORDINATOR', 'OFFICER'],
+                targetDepartmentId: deptId,
+                isMajor: true,
+            }).catch(() => {});
+
+            return newVersion;
+        } catch (error) {
+            console.error('Failed to reshare new version:', error);
+            throw error;
+        }
+    },
+
+    overwriteVersionFileAndReshare: async (documentId, shareId, file, uploaderId) => {
+        try {
+            const docId = documentId;
+            const existing = (get().documentShares || []).find((s) => s.id === shareId);
+            const deptId = existing?.department?.id ?? existing?.departmentId;
+            const targetDoc = (get().documents || []).find((d) => d.id === docId);
+
+            let docVersions = (get().documentVersions || []).filter(
+                (v) => (v.document?.id ?? v.documentId) === docId
+            );
+            if (docVersions.length === 0 && docId) {
+                try {
+                    const fetchedVers = await get().fetchDocumentVersions(docId);
+                    if (fetchedVers && fetchedVers.length > 0) docVersions = fetchedVers;
+                } catch {}
+            }
+            const latestVer = [...docVersions].sort((a, b) => (b.version || 0) - (a.version || 0))[0];
+            const currentVersionNumber = latestVer?.version || 1;
+            const timestamp = new Date().toISOString();
+
+            // 1. Upload replacement to storage with current version number
+            const storageResult = await storageService.uploadDocument(
+                docId,
+                file,
+                currentVersionNumber,
+                file.name
+            );
+
+            // 2. Update current version in-place without bumping version number
+            if (latestVer?.id) {
+                await get().updateDocumentVersion(latestVer.id, {
+                    path: storageResult.path,
+                    sizeBytes: storageResult.sizeBytes,
+                    mimeType: storageResult.mimeType || file.type || latestVer.mimeType,
+                    checksum: storageResult.checksum || null,
+                    rejectionReason: null,
+                    rejecterId: null,
+                    updatedAt: timestamp,
+                });
+            }
+
+            // 3. Reset share to PENDING_APPROVAL
+            await documentService.updateDocumentShare(shareId, {
+                status: constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL,
+                updatedAt: timestamp,
+            });
+
+            // 4. Update parent document updatedAt
+            await get().updateDocument(docId, {
+                updatedAt: timestamp,
+            });
+
+            // 5. Update local store
+            set((state) => ({
+                documentShares: state.documentShares.map((item) =>
+                    item.id === shareId
+                        ? { ...item, status: constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL, rejectionReason: null, updatedAt: timestamp }
+                        : item
+                ),
+            }));
+
+            systemEventService.recordSystemEvent({
+                entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_SHARE,
+                entityId: shareId,
+                action: constants.AUDIT_LOGS_ACTION.SHARED,
+                data: {
+                    title: `Overwrote and Reshared ${targetDoc?.name || 'Document'} (v${currentVersionNumber}.0)`,
+                    documentName: targetDoc?.name,
+                    departmentName: resolveDepartmentName(deptId),
+                    version: currentVersionNumber,
+                },
+                targetRoles: ['ADMINISTRATOR', 'COORDINATOR', 'OFFICER'],
+                targetDepartmentId: deptId,
+                isMajor: true,
+            }).catch(() => {});
+
+            return latestVer;
+        } catch (error) {
+            console.error('Failed to overwrite version file and reshare:', error);
             throw error;
         }
     },

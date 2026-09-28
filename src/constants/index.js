@@ -95,6 +95,7 @@ const DOCUMENT_SHARES_STATUS = Object.freeze({
     APPROVED: 'APPROVED',
     PUBLISHED: 'PUBLISHED',
     STASHED: 'STASHED',
+    REJECTED: 'REJECTED',
 });
 
 const DOCUMENT_REQUESTS_STATUS = Object.freeze({

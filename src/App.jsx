@@ -303,13 +303,13 @@ const AppContent = () => {
                 title: 'Manage Documents',
                 icon: Files,
             },
-            {
+            ...(constants.isStaffRole(currentUser?.role) ? [{
                 key: 'archives',
                 value: 'archives',
                 label: 'Archives',
                 title: 'Archived Documents',
                 icon: Archive,
-            },
+            }] : []),
             {
                 key: 'requests',
                 value: 'requests',
@@ -318,7 +318,7 @@ const AppContent = () => {
                 icon: FilePlus,
             },
         ];
-    }, []);
+    }, [currentUser?.role]);
 
     const adminNavigationItems = useMemo(() => {
         if (!isAdmin && !isCoordinator) {
@@ -696,7 +696,7 @@ const AppContent = () => {
             selectedItem?.subject
         );
 
-        if (!isCoordinatorReq && !isDocRequest && ['approve', 'unapprove', 'reject', 'publish', 'unpublish', 'stash', 'unstash', 'unshare'].includes(actionKey)) {
+        if (!isCoordinatorReq && !isDocRequest && ['approve', 'unapprove', 'reject', 'unreject', 'publish', 'unpublish', 'stash', 'unstash', 'unshare'].includes(actionKey)) {
             const targetDoc = item || selectedItem;
             const allShares = useDocumentStore.getState().documentShares || [];
             let shareRecord = targetDoc?.share;
@@ -754,17 +754,28 @@ const AppContent = () => {
                         description: `Reverted "${docTitle}" to pending approval.`,
                     });
                 } else if (actionKey === 'reject') {
+                    const reason = item?.rejectionReason || 'Document does not meet requirements';
                     if (targetDoc?.isFolder && deptId) {
-                        await store.unshareDocumentRecursive(targetDoc.id, deptId);
+                        await store.updateShareStatusRecursive(targetDoc.id, deptId, constants.DOCUMENT_SHARES_STATUS.REJECTED);
                     } else {
-                        await store.rejectShare(shareId);
+                        await store.rejectShare(shareId, reason, currentUser?.id);
                     }
                     showToast({
                         type: 'warning',
                         title: targetDoc?.isFolder ? 'Folder Rejected' : 'Document Rejected',
-                        description: `Rejected "${docTitle}" and deleted from department view.`,
+                        description: `Rejected "${docTitle}". The item remains in your repository as Rejected.`,
                     });
-                    setSelectedItem(null);
+                } else if (actionKey === 'unreject') {
+                    if (targetDoc?.isFolder && deptId) {
+                        await store.updateShareStatusRecursive(targetDoc.id, deptId, constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL);
+                    } else {
+                        await store.unrejectShare(shareId);
+                    }
+                    showToast({
+                        type: 'success',
+                        title: targetDoc?.isFolder ? 'Folder Restored' : 'Document Restored',
+                        description: `Restored "${docTitle}" to pending approval.`,
+                    });
                 } else if (actionKey === 'publish') {
                     store.setPublishModalDocument(targetDoc);
                     return;
@@ -855,6 +866,9 @@ const AppContent = () => {
                                 : `Deleted department share for "${docTitle}".`,
                         });
                     }
+                }
+                if (currentUser) {
+                    store.syncAllDocumentShares(currentUser, departments).catch(() => {});
                 }
             } catch (err) {
                 console.error(`Failed to execute ${actionKey}:`, err);
@@ -1325,11 +1339,15 @@ const AppContent = () => {
                 <Route
                     path="/archives"
                     element={
-                        <ArchivesPage
-                            currentUser={currentUser}
-                            selectedItem={selectedItem}
-                            onSelectDocument={handleSelectActivity}
-                        />
+                        constants.isStaffRole(currentUser?.role) ? (
+                            <ArchivesPage
+                                currentUser={currentUser}
+                                selectedItem={selectedItem}
+                                onSelectDocument={handleSelectActivity}
+                            />
+                        ) : (
+                            <Navigate to="/documents" replace />
+                        )
                     }
                 />
                 <Route
