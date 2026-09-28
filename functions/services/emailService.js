@@ -1,6 +1,7 @@
 // --- IMPORTS ---
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const nodemailer = require('nodemailer');
 
 // --- ENVIRONMENT FALLBACK ---
@@ -85,10 +86,31 @@ function getSenderAddress() {
 /**
  * Sends a 6-digit OTP code for password reset.
  * Matches Pamantasan system design tokens: Fraunces serif, Inter sans, emerald-600 accents, zinc surfaces.
+ * Congests OTP resends into a single thread within a 24-hour session window.
  */
 async function sendOtpEmail(toEmail, otpCode) {
     const fromAddress = getSenderAddress();
-    const subject = `[PLP Records] Password Reset Verification Code: ${otpCode}`;
+    const cleanEmail = (toEmail || '').toLowerCase().trim();
+
+    // 24-HOUR CONGESTION WINDOW: All OTP resends within the same 24 hours share the identical thread ID
+    const dayBucket = Math.floor(Date.now() / (24 * 60 * 60 * 1000));
+    const threadHash = crypto
+        .createHash('md5')
+        .update(`${cleanEmail}-otp-${dayBucket}`)
+        .digest('hex');
+
+    const threadId = `<plp-otp-${threadHash}@plpasig.edu.ph>`;
+    const messageId = `<plp-otp-${threadHash}-${Date.now()}@plpasig.edu.ph>`;
+
+    // Stable Subject: Kept identical so email clients group resends into the same conversation
+    const subject = `[PLP Records] Password Reset Verification Code`;
+
+    const sentTimeStr = new Date().toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+        timeZone: 'Asia/Manila',
+    });
 
     const html = `
     <!DOCTYPE html>
@@ -147,7 +169,7 @@ async function sendOtpEmail(toEmail, otpCode) {
                     <div class="otp-container">
                         <div class="otp-title">Verification Code</div>
                         <div class="otp-number">${otpCode}</div>
-                        <div class="otp-pill">⏱ Valid for 10 minutes</div>
+                        <div class="otp-pill">⏱ Valid for 10 minutes • Sent ${sentTimeStr} PHT</div>
                     </div>
 
                     <!-- SECURITY WARNING BOX -->
@@ -178,8 +200,8 @@ async function sendOtpEmail(toEmail, otpCode) {
 
     const transport = getTransporter();
     if (!transport) {
-        console.log(`[SIMULATED EMAIL] To: ${toEmail} | Code: ${otpCode}`);
-        return { simulated: true, code: otpCode };
+        console.log(`[SIMULATED EMAIL] To: ${toEmail} | Code: ${otpCode} | ThreadId: ${threadId}`);
+        return { simulated: true, code: otpCode, threadId };
     }
 
     return await transport.sendMail({
@@ -187,16 +209,56 @@ async function sendOtpEmail(toEmail, otpCode) {
         to: toEmail,
         subject: subject,
         html: html,
+        messageId: messageId,
+        inReplyTo: threadId,
+        references: [threadId],
+        headers: {
+            'Thread-Topic': subject,
+            'X-Entity-Ref-ID': threadHash,
+        },
     });
 }
 
 /**
  * Sends an extensible system notification alert (for document modifications, coordinator requests, etc.)
  * Matches Pamantasan system design tokens: Fraunces serif, Inter sans, emerald-600 accents, zinc surfaces.
+ * Congests updates for the same entity within a 1-hour window into a single email thread.
  */
-async function sendNotificationEmail({ toEmail, recipientName, actorName, title, message, actionUrl, actionLabel }) {
+async function sendNotificationEmail({
+    toEmail,
+    recipientName,
+    actorName,
+    title,
+    message,
+    actionUrl,
+    actionLabel,
+    entityType,
+    entityId,
+    targetName,
+}) {
     const fromAddress = getSenderAddress();
-    const subject = `[PLP Records] ${title}`;
+    const cleanEmail = (toEmail || '').toLowerCase().trim();
+    const cleanEntity = (entityType || 'UPDATE').toString().replace(/_/g, ' ').toUpperCase().trim();
+    const cleanTarget = (targetName || '').toString().trim();
+
+    // 1-HOUR CONGESTION WINDOW: All edits on the same target within 1 hour share the same thread ID
+    const hourBucket = Math.floor(Date.now() / (60 * 60 * 1000));
+    const entityKey = (entityType && entityId)
+        ? `${cleanEntity}:${entityId}`
+        : (cleanTarget || title || 'system-event');
+
+    const threadHash = crypto
+        .createHash('md5')
+        .update(`${cleanEmail}-${entityKey.toLowerCase()}-${hourBucket}`)
+        .digest('hex');
+
+    const threadId = `<plp-notif-${threadHash}@plpasig.edu.ph>`;
+    const messageId = `<plp-notif-${threadHash}-${Date.now()}@plpasig.edu.ph>`;
+
+    // Stable Subject: Kept consistent for the entity so email clients group messages into 1 thread
+    const subject = cleanTarget
+        ? `[PLP Records] ${cleanEntity}: ${cleanTarget}`
+        : `[PLP Records] ${title}`;
 
     const html = `
     <!DOCTYPE html>
@@ -267,8 +329,8 @@ async function sendNotificationEmail({ toEmail, recipientName, actorName, title,
 
     const transport = getTransporter();
     if (!transport) {
-        console.log(`[SIMULATED NOTIFICATION] To: ${toEmail} | Title: ${title}`);
-        return { simulated: true, title };
+        console.log(`[SIMULATED NOTIFICATION] To: ${toEmail} | Subject: ${subject} | ThreadId: ${threadId}`);
+        return { simulated: true, title, subject, threadId };
     }
 
     return await transport.sendMail({
@@ -276,6 +338,13 @@ async function sendNotificationEmail({ toEmail, recipientName, actorName, title,
         to: toEmail,
         subject: subject,
         html: html,
+        messageId: messageId,
+        inReplyTo: threadId,
+        references: [threadId],
+        headers: {
+            'Thread-Topic': subject,
+            'X-Entity-Ref-ID': threadHash,
+        },
     });
 }
 

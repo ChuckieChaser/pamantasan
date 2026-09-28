@@ -1,5 +1,5 @@
 // --- IMPORTS ---
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
     FileText,
@@ -260,6 +260,39 @@ const resolveTargetEntityName = (auditLog, { documents = [], departments = [], u
 };
 
 
+// --- HOOK: MEASURE CONTAINER WIDTH & RESOLVE RESPONSIVE TIER ---
+const useContainerTier = ({ full = 800, half = 600, quarter = 440 } = {}) => {
+    const ref = useRef(null);
+    const [tier, setTier] = useState('full');
+    const [width, setWidth] = useState(null);
+
+    useEffect(() => {
+        if (!ref.current) return;
+        const observer = new ResizeObserver((entries) => {
+            for (const entry of entries) {
+                if (entry.contentRect) {
+                    const w = entry.contentRect.width;
+                    setWidth(w);
+                    if (w < quarter) {
+                        setTier('mobile');
+                    } else if (w < half) {
+                        setTier('quarter');
+                    } else if (w < full) {
+                        setTier('half');
+                    } else {
+                        setTier('full');
+                    }
+                }
+            }
+        });
+        observer.observe(ref.current);
+        return () => observer.disconnect();
+    }, [full, half, quarter]);
+
+    return [ref, tier, width];
+};
+
+
 // --- COMPONENTS ---
 const DashboardPage = ({
     currentUser = null,
@@ -304,6 +337,13 @@ const DashboardPage = ({
     const [analyticsSortBy, setAnalyticsSortBy] = useState('READS'); // 'READS' | 'RECENT'
     const [analysisSearch, setAnalysisSearch] = useState('');
     const [pendingRequestType, setPendingRequestType] = useState('DOCUMENT'); // 'DOCUMENT' | 'COORDINATOR'
+    const [pendingSearch, setPendingSearch] = useState('');
+
+    // RESPONSIVE CONTAINER TIERS FOR CARDS (CONTAINER-QUERY BEHAVIOR LIKE BROWSER)
+    const [bannerRef, bannerTier] = useContainerTier({ full: 960, half: 520, quarter: 520 });
+    const [pendingCardRef, pendingTier] = useContainerTier({ full: 620, half: 480, quarter: 360 });
+    const [analysisCardRef, analysisTier] = useContainerTier({ full: 620, half: 480, quarter: 360 });
+    const [auditCardRef, auditTier, auditWidth] = useContainerTier({ full: 860, half: 660, quarter: 460 });
 
     // DERIVED VALUES
     const { currentUser: authUser } = useAuth();
@@ -730,12 +770,23 @@ const DashboardPage = ({
 
         const activeList = pendingRequestType === 'COORDINATOR' ? pendingCoordRequests : openDocRequests;
 
+        const filteredList = pendingSearch.trim()
+            ? activeList.filter((item) => {
+                const query = pendingSearch.toLowerCase().trim();
+                return (
+                    (item.name || '').toLowerCase().includes(query) ||
+                    (item.subject || '').toLowerCase().includes(query) ||
+                    (item.badge || '').toLowerCase().includes(query)
+                );
+            })
+            : activeList;
+
         return {
-            pendingActionItems: activeList.slice(0, 10),
+            pendingActionItems: filteredList.slice(0, 10),
             pendingDocCount: openDocRequests.length,
             pendingCoordCount: pendingCoordRequests.length,
         };
-    }, [requests, visibleCoordinatorRequests, users, pendingRequestType]);
+    }, [requests, visibleCoordinatorRequests, users, pendingRequestType, pendingSearch]);
 
     // AUDIT FILTER OPTIONS (COMBOFIELD)
     const auditFilterOptions = useMemo(() => {
@@ -977,70 +1028,112 @@ const DashboardPage = ({
     // RENDER
     return (
         <div className={`flex flex-col gap-3.5 sm:gap-4.5 w-full ${className ?? ''}`} {...props}>
-            {/* 1. EXECUTIVE WELCOME COMMAND HERO */}
-            <div className="relative overflow-hidden rounded-2xl border border-surface-border bg-surface p-4 sm:p-5 shadow-xs">
-                <div className="relative flex flex-col md:flex-row md:items-center justify-between gap-4">
-                    {/* LEFT CONTENT */}
-                    <div className="flex flex-col gap-1.5 max-w-2xl">
-                        {/* INSTITUTIONAL STATUS CHIP */}
-                        <div className="flex items-center gap-2 flex-wrap">
-                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-accent-background border border-accent-border text-accent tracking-wide uppercase">
-                                <span className="relative flex h-1.5 w-1.5">
-                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-75" />
-                                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-accent" />
+            {/* 1. EXECUTIVE WELCOME COMMAND HERO (ADAPTIVE RESPONSIVE BANNER) */}
+            <div ref={bannerRef} className="relative overflow-hidden rounded-2xl border border-surface-border bg-surface p-4 sm:p-5 shadow-xs">
+                {(() => {
+                    const isFull = bannerTier === 'full';
+                    const isMobile = bannerTier === 'mobile';
+
+                    const leftContentNode = (
+                        <div className="flex flex-col gap-1.5 flex-1 min-w-0 w-full">
+                            {/* INSTITUTIONAL STATUS CHIP */}
+                            <div className="flex items-center gap-2 flex-wrap">
+                                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-accent-background border border-accent-border text-accent tracking-wide uppercase">
+                                    <span className="relative flex h-1.5 w-1.5">
+                                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-75" />
+                                        <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-accent" />
+                                    </span>
+                                    Pamantasan Central Records
                                 </span>
-                                Pamantasan Central Records
-                            </span>
 
-                            <span className="text-xs font-medium text-text-muted flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-surface-hover/70 border border-surface-border">
-                                <Shield className="h-3 w-3 text-accent" />
-                                <span>{userUnitName}</span>
-                            </span>
+                                <span className="text-xs font-medium text-text-muted flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-surface-hover/70 border border-surface-border">
+                                    <Shield className="h-3 w-3 text-accent" />
+                                    <span>{userUnitName}</span>
+                                </span>
 
-                            <span className="text-xs text-text-muted hidden sm:inline">
-                                AY 2026–2027
-                            </span>
+                                <span className="text-xs text-text-muted hidden sm:inline">
+                                    AY 2026–2027
+                                </span>
+                            </div>
+
+                            {/* HEADLINE GREETING */}
+                            <h1 className="text-xl sm:text-2xl font-bold font-serif text-text tracking-tight mt-0.5">
+                                {greeting}, {activeUser?.firstName ?? 'Faculty Member'}!
+                            </h1>
+
+                            <p className="text-xs sm:text-sm text-text-muted leading-relaxed">
+                                Welcome to the institutional records repository. Browse charters, review clearances, inspect real-time departmental readership, and monitor authenticated compliance logs.
+                            </p>
                         </div>
+                    );
 
-                        {/* HEADLINE GREETING */}
-                        <h1 className="text-xl sm:text-2xl font-bold font-serif text-text tracking-tight mt-0.5">
-                            {greeting}, {activeUser?.firstName ?? 'Faculty Member'}!
-                        </h1>
+                    const actionButtonsNode = (
+                        <div className={`flex items-center gap-2.5 ${
+                            isFull
+                                ? 'shrink-0 w-auto'
+                                : (isMobile ? 'flex-col w-full' : 'w-full')
+                        }`}>
+                            {!isStaff ? (
+                                <Button
+                                    variant="secondary"
+                                    leadingIcon={Plus}
+                                    label="Request Clearance"
+                                    onClick={() => (onRequestDocument ? onRequestDocument() : onNavigate?.('requests'))}
+                                    className={`${
+                                        isFull
+                                            ? 'w-auto justify-center'
+                                            : (isMobile ? 'w-full justify-center' : 'flex-1 justify-center')
+                                    }`}
+                                />
+                            ) : (
+                                <Button
+                                    variant="secondary"
+                                    leadingIcon={FileUp}
+                                    label="Upload Document"
+                                    onClick={() => (onUploadDocument ? onUploadDocument() : onNavigate?.('documents'))}
+                                    className={`${
+                                        isFull
+                                            ? 'w-auto justify-center'
+                                            : (isMobile ? 'w-full justify-center' : 'flex-1 justify-center')
+                                    }`}
+                                />
+                            )}
 
-                        <p className="text-xs sm:text-sm text-text-muted leading-relaxed max-w-xl">
-                            Welcome to the institutional records repository. Browse charters, review clearances, inspect real-time departmental readership, and monitor authenticated compliance logs.
-                        </p>
-                    </div>
-
-                    {/* RIGHT ACTION BUTTONS (RESPONSIVE TOUCH TARGETS) */}
-                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full md:w-auto shrink-0">
-                        {!isStaff ? (
                             <Button
-                                variant="secondary"
-                                leadingIcon={Plus}
-                                label="Request Clearance"
-                                onClick={() => (onRequestDocument ? onRequestDocument() : onNavigate?.('requests'))}
-                                className="w-full sm:w-auto justify-center"
+                                variant="primary"
+                                leadingIcon={Folder}
+                                label="Browse Repository"
+                                onClick={() => onNavigate?.('documents')}
+                                className={`${
+                                    isFull
+                                        ? 'w-auto justify-center'
+                                        : (isMobile ? 'w-full justify-center' : 'flex-1 justify-center')
+                                } shadow-xs hover:shadow-md transition-shadow`}
                             />
-                        ) : (
-                            <Button
-                                variant="secondary"
-                                leadingIcon={FileUp}
-                                label="Upload Document"
-                                onClick={() => (onUploadDocument ? onUploadDocument() : onNavigate?.('documents'))}
-                                className="w-full sm:w-auto justify-center"
-                            />
-                        )}
+                        </div>
+                    );
 
-                        <Button
-                            variant="primary"
-                            leadingIcon={Folder}
-                            label="Browse Repository"
-                            onClick={() => onNavigate?.('documents')}
-                            className="w-full sm:w-auto justify-center shadow-xs hover:shadow-md transition-shadow"
-                        />
-                    </div>
-                </div>
+                    // FULL WINDOW: Side-by-side with generous breathing space
+                    if (isFull) {
+                        return (
+                            <div className="relative flex items-center justify-between gap-4 w-full">
+                                {leftContentNode}
+                                {actionButtonsNode}
+                            </div>
+                        );
+                    }
+
+                    // HALF WINDOW: Actions immediately go down below the text and take the remaining space
+                    // MOBILE VIEW: The other button goes down (stacked vertically)
+                    return (
+                        <div className="relative flex flex-col gap-3.5 w-full">
+                            {leftContentNode}
+                            <div className="w-full pt-1.5 border-t border-surface-border/50">
+                                {actionButtonsNode}
+                            </div>
+                        </div>
+                    );
+                })()}
             </div>
 
             {/* 2. BENTO-GRID KPI METRIC CARDS (ADAPTIVE: 1 COL MOBILE/QUARTER, 2 COLS HALF-WINDOW, 3 COLS FULL DESKTOP) */}
@@ -1151,61 +1244,124 @@ const DashboardPage = ({
             {/* 3. TWO-COLUMN ROW: PENDING REQUESTS + DOCUMENT ANALYSIS */}
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-3.5 sm:gap-4.5">
                 {/* LEFT COLUMN: PENDING REQUESTS */}
-                <div className="p-4 sm:p-5 rounded-2xl bg-surface border border-surface-border flex flex-col gap-3.5 shadow-xs">
-                    <div className="flex items-center justify-between border-b border-surface-border pb-3">
-                        <div className="flex items-center gap-2.5">
-                            <div className="p-2 rounded-lg bg-warning-background text-warning">
-                                <Inbox className="h-4 w-4" />
+                <div ref={pendingCardRef} className="p-4 sm:p-5 rounded-2xl bg-surface border border-surface-border flex flex-col gap-3.5 shadow-xs">
+                    {/* PENDING HEADER & CONTROLS (RESPONSIVE TIERS) */}
+                    {(() => {
+                        const headerNode = (
+                            <div className="flex items-center gap-2.5 shrink-0 min-w-0">
+                                <div className="p-2 rounded-lg bg-warning-background text-warning shrink-0">
+                                    <Inbox className="h-4 w-4" />
+                                </div>
+                                <h2 className="text-base font-bold text-text truncate">
+                                    Pending Requests
+                                </h2>
                             </div>
-                            <h2 className="text-base font-bold text-text">
-                                Pending Requests
-                            </h2>
-                        </div>
+                        );
 
-                        {/* SEGMENTED CONTROL: DOCUMENT / COORDINATOR */}
-                        <div className="flex items-center bg-surface-hover/70 p-0.5 rounded-lg border border-surface-border shrink-0">
-                            <button
-                                type="button"
-                                onClick={() => setPendingRequestType('DOCUMENT')}
-                                className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer flex items-center gap-1.5 ${
-                                    pendingRequestType === 'DOCUMENT'
-                                        ? 'bg-accent text-text-inverted font-semibold shadow-2xs'
-                                        : 'text-text-muted hover:text-text'
-                                }`}
-                            >
-                                <span>Document</span>
-                                {pendingDocCount > 0 && (
-                                    <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-semibold ${
+                        const searchNode = (
+                            <SearchField
+                                placeholder="Search requests..."
+                                value={pendingSearch}
+                                onChange={(e) => setPendingSearch(e.target.value)}
+                                onClear={() => setPendingSearch('')}
+                                size="sm"
+                            />
+                        );
+
+                        const toggleNode = (
+                            <div className={`flex items-center bg-surface-hover/70 p-0.5 rounded-lg border border-surface-border shrink-0 ${
+                                pendingTier === 'mobile' ? 'w-full grid grid-cols-2' : ''
+                            }`}>
+                                <button
+                                    type="button"
+                                    onClick={() => setPendingRequestType('DOCUMENT')}
+                                    className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer flex items-center justify-center gap-1.5 ${
                                         pendingRequestType === 'DOCUMENT'
-                                            ? 'bg-text-inverted/20 text-text-inverted'
-                                            : 'bg-surface-border text-text-muted'
-                                    }`}>
-                                        {pendingDocCount}
-                                    </span>
-                                )}
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => setPendingRequestType('COORDINATOR')}
-                                className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer flex items-center gap-1.5 ${
-                                    pendingRequestType === 'COORDINATOR'
-                                        ? 'bg-accent text-text-inverted font-semibold shadow-2xs'
-                                        : 'text-text-muted hover:text-text'
-                                }`}
-                            >
-                                <span>Coordinator</span>
-                                {pendingCoordCount > 0 && (
-                                    <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-semibold ${
+                                            ? 'bg-accent text-text-inverted font-semibold shadow-2xs'
+                                            : 'text-text-muted hover:text-text'
+                                    }`}
+                                >
+                                    <span>Document</span>
+                                    {pendingDocCount > 0 && (
+                                        <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-semibold ${
+                                            pendingRequestType === 'DOCUMENT'
+                                                ? 'bg-text-inverted/20 text-text-inverted'
+                                                : 'bg-surface-border text-text-muted'
+                                        }`}>
+                                            {pendingDocCount}
+                                        </span>
+                                    )}
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setPendingRequestType('COORDINATOR')}
+                                    className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer flex items-center justify-center gap-1.5 ${
                                         pendingRequestType === 'COORDINATOR'
-                                            ? 'bg-text-inverted/20 text-text-inverted'
-                                            : 'bg-surface-border text-text-muted'
-                                    }`}>
-                                        {pendingCoordCount}
-                                    </span>
-                                )}
-                            </button>
-                        </div>
-                    </div>
+                                            ? 'bg-accent text-text-inverted font-semibold shadow-2xs'
+                                            : 'text-text-muted hover:text-text'
+                                    }`}
+                                >
+                                    <span>Coordinator</span>
+                                    {pendingCoordCount > 0 && (
+                                        <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-semibold ${
+                                            pendingRequestType === 'COORDINATOR'
+                                                ? 'bg-text-inverted/20 text-text-inverted'
+                                                : 'bg-surface-border text-text-muted'
+                                        }`}>
+                                            {pendingCoordCount}
+                                        </span>
+                                    )}
+                                </button>
+                            </div>
+                        );
+
+                        if (pendingTier === 'full') {
+                            return (
+                                <div className="flex items-center justify-between gap-3 border-b border-surface-border pb-3">
+                                    {headerNode}
+                                    <div className="flex items-center gap-2 shrink-0 ml-auto">
+                                        <div className="w-40 sm:w-48 shrink-0">{searchNode}</div>
+                                        {toggleNode}
+                                    </div>
+                                </div>
+                            );
+                        }
+
+                        if (pendingTier === 'half') {
+                            return (
+                                <div className="flex items-center gap-2.5 border-b border-surface-border pb-3 w-full">
+                                    {headerNode}
+                                    <div className="flex-1 min-w-[120px]">{searchNode}</div>
+                                    {toggleNode}
+                                </div>
+                            );
+                        }
+
+                        if (pendingTier === 'quarter') {
+                            return (
+                                <div className="flex flex-col gap-2.5 border-b border-surface-border pb-3 w-full">
+                                    <div className="w-full flex items-center justify-between">
+                                        {headerNode}
+                                    </div>
+                                    <div className="flex items-center gap-2 w-full">
+                                        <div className="flex-1 min-w-0">{searchNode}</div>
+                                        {toggleNode}
+                                    </div>
+                                </div>
+                            );
+                        }
+
+                        // Mobile tier
+                        return (
+                            <div className="flex flex-col gap-2 border-b border-surface-border pb-3 w-full">
+                                <div className="w-full flex items-center">
+                                    {headerNode}
+                                </div>
+                                <div className="w-full">{searchNode}</div>
+                                <div className="w-full">{toggleNode}</div>
+                            </div>
+                        );
+                    })()}
 
                     {/* MATCHING FIXED HEIGHT WITH SCROLL */}
                     <div className="h-[380px] sm:h-[420px] overflow-y-auto pr-1 flex flex-col gap-2">
@@ -1215,12 +1371,16 @@ const DashboardPage = ({
                                     <CheckCircle2 className="h-5 w-5" />
                                 </div>
                                 <span className="text-xs sm:text-sm font-bold text-text">
-                                    {pendingRequestType === 'COORDINATOR' ? 'No Coordinator Requests' : 'No Document Requests'}
+                                    {pendingSearch
+                                        ? 'No Matching Requests'
+                                        : (pendingRequestType === 'COORDINATOR' ? 'No Coordinator Requests' : 'No Document Requests')}
                                 </span>
                                 <span className="text-xs text-text-muted max-w-xs">
-                                    {pendingRequestType === 'COORDINATOR'
-                                        ? 'No elevated coordinator approvals or departmental reviews awaiting clearance.'
-                                        : 'All student and faculty clearance inquiries are currently resolved.'}
+                                    {pendingSearch
+                                        ? `No pending requests matching "${pendingSearch}".`
+                                        : (pendingRequestType === 'COORDINATOR'
+                                            ? 'No elevated coordinator approvals or departmental reviews awaiting clearance.'
+                                            : 'All student and faculty clearance inquiries are currently resolved.')}
                                 </span>
                             </div>
                         ) : (
@@ -1276,35 +1436,38 @@ const DashboardPage = ({
                 </div>
 
                 {/* RIGHT COLUMN: DOCUMENT ANALYSIS (LOCKED TO GRID, MAX 3 CARDS VISIBLE BEFORE SCROLL) */}
-                <div className="p-4 sm:p-5 rounded-2xl bg-surface border border-surface-border flex flex-col gap-3.5 shadow-xs">
-                    {/* HUB HEADER & CONTROLS */}
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-surface-border pb-3">
-                        <div className="flex items-center gap-2.5 min-w-0">
-                            <div className="p-2 rounded-lg bg-accent-background text-accent shrink-0">
-                                <TrendingUp className="h-4 w-4" />
+                <div ref={analysisCardRef} className="p-4 sm:p-5 rounded-2xl bg-surface border border-surface-border flex flex-col gap-3.5 shadow-xs">
+                    {/* HUB HEADER & CONTROLS (RESPONSIVE TIERS) */}
+                    {(() => {
+                        const headerNode = (
+                            <div className="flex items-center gap-2.5 min-w-0 shrink-0">
+                                <div className="p-2 rounded-lg bg-accent-background text-accent shrink-0">
+                                    <TrendingUp className="h-4 w-4" />
+                                </div>
+                                <h2 className="text-base font-bold font-serif text-text truncate">
+                                    Document Analysis
+                                </h2>
                             </div>
-                            <h2 className="text-base font-bold font-serif text-text truncate">
-                                Document Analysis
-                            </h2>
-                        </div>
+                        );
 
-                        {/* SEARCH & SORT SELECTOR */}
-                        <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap shrink-0 self-stretch sm:self-auto">
-                            <div className="w-full sm:w-40 md:w-48 shrink-0">
-                                <SearchField
-                                    placeholder="Search analysis..."
-                                    value={analysisSearch}
-                                    onChange={(e) => setAnalysisSearch(e.target.value)}
-                                    onClear={() => setAnalysisSearch('')}
-                                    size="sm"
-                                />
-                            </div>
+                        const searchNode = (
+                            <SearchField
+                                placeholder="Search analysis..."
+                                value={analysisSearch}
+                                onChange={(e) => setAnalysisSearch(e.target.value)}
+                                onClear={() => setAnalysisSearch('')}
+                                size="sm"
+                            />
+                        );
 
-                            <div className="flex items-center bg-surface-hover/70 p-0.5 rounded-lg border border-surface-border shrink-0">
+                        const toggleNode = (
+                            <div className={`flex items-center bg-surface-hover/70 p-0.5 rounded-lg border border-surface-border shrink-0 ${
+                                analysisTier === 'mobile' ? 'w-full grid grid-cols-2' : ''
+                            }`}>
                                 <button
                                     type="button"
                                     onClick={() => setAnalyticsSortBy('READS')}
-                                    className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer ${
+                                    className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer text-center ${
                                         analyticsSortBy === 'READS'
                                             ? 'bg-accent text-text-inverted font-semibold shadow-2xs'
                                             : 'text-text-muted hover:text-text'
@@ -1315,7 +1478,7 @@ const DashboardPage = ({
                                 <button
                                     type="button"
                                     onClick={() => setAnalyticsSortBy('RECENT')}
-                                    className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer ${
+                                    className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer text-center ${
                                         analyticsSortBy === 'RECENT'
                                             ? 'bg-accent text-text-inverted font-semibold shadow-2xs'
                                             : 'text-text-muted hover:text-text'
@@ -1324,8 +1487,55 @@ const DashboardPage = ({
                                     Recent Reads
                                 </button>
                             </div>
-                        </div>
-                    </div>
+                        );
+
+                        if (analysisTier === 'full') {
+                            return (
+                                <div className="flex items-center justify-between gap-3 border-b border-surface-border pb-3">
+                                    {headerNode}
+                                    <div className="flex items-center gap-2 shrink-0 ml-auto">
+                                        <div className="w-40 sm:w-48 shrink-0">{searchNode}</div>
+                                        {toggleNode}
+                                    </div>
+                                </div>
+                            );
+                        }
+
+                        if (analysisTier === 'half') {
+                            return (
+                                <div className="flex items-center gap-2.5 border-b border-surface-border pb-3 w-full">
+                                    {headerNode}
+                                    <div className="flex-1 min-w-[120px]">{searchNode}</div>
+                                    {toggleNode}
+                                </div>
+                            );
+                        }
+
+                        if (analysisTier === 'quarter') {
+                            return (
+                                <div className="flex flex-col gap-2.5 border-b border-surface-border pb-3 w-full">
+                                    <div className="w-full flex items-center justify-between">
+                                        {headerNode}
+                                    </div>
+                                    <div className="flex items-center gap-2 w-full">
+                                        <div className="flex-1 min-w-0">{searchNode}</div>
+                                        {toggleNode}
+                                    </div>
+                                </div>
+                            );
+                        }
+
+                        // Mobile tier
+                        return (
+                            <div className="flex flex-col gap-2 border-b border-surface-border pb-3 w-full">
+                                <div className="w-full flex items-center">
+                                    {headerNode}
+                                </div>
+                                <div className="w-full">{searchNode}</div>
+                                <div className="w-full">{toggleNode}</div>
+                            </div>
+                        );
+                    })()}
 
                     {/* MATCHING FIXED HEIGHT WITH SCROLL (SHOWS MAX 3 GRID CARDS BEFORE SCROLLING) */}
                     <div className="h-[380px] sm:h-[420px] overflow-y-auto pr-1">
@@ -1443,71 +1653,128 @@ const DashboardPage = ({
             </div>
 
             {/* 4. AUDIT LOGS (FULL WIDTH) */}
-            <div className="p-4 sm:p-5 rounded-2xl bg-surface border border-surface-border flex flex-col gap-3.5 shadow-xs">
-                {/* AUDIT HEADER & CONTROLS */}
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-surface-border pb-3">
-                    <div className="flex items-center gap-2.5">
-                        <div className="p-2 rounded-lg bg-accent-background text-accent">
-                            <Activity className="h-4 w-4" />
+            <div ref={auditCardRef} className="p-4 sm:p-5 rounded-2xl bg-surface border border-surface-border flex flex-col gap-3.5 shadow-xs">
+                {/* AUDIT HEADER & CONTROLS (RESPONSIVE TIERS) */}
+                {(() => {
+                    const headerNode = (
+                        <div className="flex items-center gap-2.5 shrink-0 min-w-0">
+                            <div className="p-2 rounded-lg bg-accent-background text-accent shrink-0">
+                                <Activity className="h-4 w-4" />
+                            </div>
+                            <h2 className="text-base font-bold text-text truncate">
+                                Audit Logs
+                            </h2>
                         </div>
-                        <h2 className="text-base font-bold text-text">
-                            Audit Logs
-                        </h2>
-                    </div>
+                    );
 
-                    {/* CONTROLS: SEARCH, SORT BEFORE FILTER (FLEXIBLE WRAP FOR ALL SCREEN WIDTHS) */}
-                    <div className="flex items-center gap-2 flex-wrap w-full md:w-auto">
-                        {/* 1. SEARCH FIELD */}
-                        <div className="w-full sm:flex-1 sm:min-w-[160px] md:w-56 shrink-0">
-                            <SearchField
-                                placeholder="Search audit trail..."
-                                value={auditSearch}
-                                onChange={(e) => {
-                                    setAuditSearch(e.target.value);
-                                    setAuditPage(1);
-                                }}
-                                onClear={() => {
-                                    setAuditSearch('');
-                                    setAuditPage(1);
-                                }}
-                                size="sm"
-                            />
-                        </div>
+                    const searchNode = (
+                        <SearchField
+                            placeholder="Search audit trail..."
+                            value={auditSearch}
+                            onChange={(e) => {
+                                setAuditSearch(e.target.value);
+                                setAuditPage(1);
+                            }}
+                            onClear={() => {
+                                setAuditSearch('');
+                                setAuditPage(1);
+                            }}
+                            size="sm"
+                        />
+                    );
 
-                        {/* 2. SORT SELECTFIELD */}
-                        <div className="w-full sm:w-auto sm:min-w-[140px] shrink-0">
-                            <SelectField
-                                value={auditSort}
-                                options={AUDIT_SORT_OPTIONS}
-                                onChange={(newSort) => {
-                                    setAuditSort(newSort);
-                                    setAuditPage(1);
-                                }}
-                                leadingIcon={Clock}
-                                placeholder="Sort by..."
-                                dropdownAlign="right"
-                                size="sm"
-                            />
-                        </div>
+                    const sortNode = (
+                        <SelectField
+                            value={auditSort}
+                            options={AUDIT_SORT_OPTIONS}
+                            onChange={(newSort) => {
+                                setAuditSort(newSort);
+                                setAuditPage(1);
+                            }}
+                            leadingIcon={Clock}
+                            placeholder="Sort by..."
+                            dropdownAlign="right"
+                            size="sm"
+                        />
+                    );
 
-                        {/* 3. FILTER COMBOFIELD */}
-                        <div className="w-full sm:w-auto sm:min-w-[160px] shrink-0">
-                            <ComboField
-                                options={auditFilterOptions}
-                                value={auditFilters}
-                                onChange={(newFilters) => {
-                                    setAuditFilters(newFilters);
-                                    setAuditPage(1);
-                                }}
-                                isMultiple={true}
-                                leadingIcon={Filter}
-                                placeholder="Filter activities..."
-                                dropdownAlign="right"
-                                size="sm"
-                            />
+                    const filterNode = (
+                        <ComboField
+                            options={auditFilterOptions}
+                            value={auditFilters}
+                            onChange={(newFilters) => {
+                                setAuditFilters(newFilters);
+                                setAuditPage(1);
+                            }}
+                            isMultiple={true}
+                            leadingIcon={Filter}
+                            placeholder="Filter activities..."
+                            dropdownAlign="right"
+                            size="sm"
+                        />
+                    );
+
+                    if (auditTier === 'full') {
+                        return (
+                            <div className="flex items-center justify-between gap-3 border-b border-surface-border pb-3">
+                                {headerNode}
+                                <div className="flex items-center gap-2 shrink-0 ml-auto">
+                                    <div className="w-48 sm:w-56 shrink-0">{searchNode}</div>
+                                    <div className="w-36 sm:w-40 shrink-0">{sortNode}</div>
+                                    <div className="w-40 sm:w-44 shrink-0">{filterNode}</div>
+                                </div>
+                            </div>
+                        );
+                    }
+
+                    if (auditTier === 'half') {
+                        return (
+                            <div className="flex items-center gap-2.5 border-b border-surface-border pb-3 w-full">
+                                {headerNode}
+                                <div className="flex-1 min-w-[130px]">{searchNode}</div>
+                                <div className="w-36 shrink-0">{sortNode}</div>
+                                <div className="w-40 shrink-0">{filterNode}</div>
+                            </div>
+                        );
+                    }
+
+                    if (auditTier === 'quarter') {
+                        return (
+                            <div className="flex flex-col gap-2.5 border-b border-surface-border pb-3 w-full">
+                                <div className="w-full flex items-center justify-between">
+                                    {headerNode}
+                                </div>
+                                {auditWidth !== null && auditWidth >= 560 ? (
+                                    <div className="flex items-center gap-2 w-full">
+                                        <div className="flex-1 min-w-[120px]">{searchNode}</div>
+                                        <div className="w-36 shrink-0">{sortNode}</div>
+                                        <div className="w-40 shrink-0">{filterNode}</div>
+                                    </div>
+                                ) : (
+                                    <>
+                                        <div className="w-full">{searchNode}</div>
+                                        <div className="flex items-center gap-2 w-full">
+                                            <div className="flex-1 min-w-0">{sortNode}</div>
+                                            <div className="flex-1 min-w-0">{filterNode}</div>
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                        );
+                    }
+
+                    // Mobile tier
+                    return (
+                        <div className="flex flex-col gap-2 border-b border-surface-border pb-3 w-full">
+                            <div className="w-full flex items-center">
+                                {headerNode}
+                            </div>
+                            <div className="w-full">{searchNode}</div>
+                            <div className="w-full">{sortNode}</div>
+                            <div className="w-full">{filterNode}</div>
                         </div>
-                    </div>
-                </div>
+                    );
+                })()}
 
                 {/* AUDIT LOG ITEMS (FIXED HEIGHT WITH SCROLL) */}
                 <div className="h-[380px] sm:h-[420px] overflow-y-auto pr-1 flex flex-col gap-2">

@@ -8,7 +8,18 @@ const { sendNotificationEmail } = require('../services/emailService');
  */
 async function handleDispatchSystemNotification(data) {
     const payload = data?.data || data || {};
-    const { toEmail, recipientName, actorName, title, message, actionUrl, actionLabel } = payload;
+    const {
+        toEmail,
+        recipientName,
+        actorName,
+        title,
+        message,
+        actionUrl,
+        actionLabel,
+        entityType,
+        entityId,
+        targetName,
+    } = payload;
 
     const cleanEmail = (toEmail || '').toString().trim().toLowerCase();
     if (!cleanEmail) {
@@ -28,6 +39,9 @@ async function handleDispatchSystemNotification(data) {
             message,
             actionUrl,
             actionLabel,
+            entityType,
+            entityId,
+            targetName,
         });
 
         return {

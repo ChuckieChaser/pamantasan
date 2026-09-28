@@ -321,8 +321,15 @@ const systemEventService = {
                         const recipientName = recipientUser
                             ? `${recipientUser.firstName || ''} ${recipientUser.lastName || ''}`.trim() || recipientUser.name || 'User'
                             : 'User';
-                        const title = parsedData.title || parsedData.subject || `${action.replace(/_/g, ' ')}: ${entityType}`;
-                        const message = parsedData.description || parsedData.message || parsedData.reason || `Event ${action} on ${entityType}`;
+                        const targetName =
+                            parsedData.targetName ||
+                            parsedData.documentName ||
+                            parsedData.fileName ||
+                            parsedData.name ||
+                            (parsedData.title && parsedData.title !== `${action.replace(/_/g, ' ')}: ${canonicalEntityType}` ? parsedData.title : '') ||
+                            '';
+                        const title = parsedData.title || parsedData.subject || `${action.replace(/_/g, ' ')}: ${canonicalEntityType}`;
+                        const message = parsedData.description || parsedData.message || parsedData.reason || `Event ${action} on ${canonicalEntityType}`;
 
                         useNotificationStore.getState().dispatchNotificationEmail({
                             toEmail,
@@ -330,9 +337,10 @@ const systemEventService = {
                             recipientName,
                             actorId: resolvedActorId,
                             actorName,
-                            entityType,
-                            entityId,
-                            action,
+                            entityType: canonicalEntityType,
+                            entityId: String(entityId),
+                            targetName,
+                            action: canonicalAction,
                             title,
                             message,
                             description: message,
@@ -388,7 +396,7 @@ const systemEventService = {
         try {
             const auditPayload = {
                 actorId: userId,
-                entityType: 'DOCUMENTS',
+                entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT,
                 entityId: docId,
                 action: 'READ',
                 data: JSON.stringify({
