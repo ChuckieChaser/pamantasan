@@ -503,6 +503,22 @@ const Notifications = ({
         setVisibleLimit((prev) => prev + INITIAL_NOTIFICATION_LIMIT);
     };
 
+    const formatEntitySingular = (entityType) => {
+        switch (entityType) {
+            case 'DEPARTMENTS':
+                return 'Department';
+            case 'USERS':
+                return 'User';
+            case 'COORDINATOR REQUESTS':
+                return 'Coordinator Request';
+            case 'DOCUMENT REQUESTS':
+                return 'Document Request';
+            case 'DOCUMENTS':
+            default:
+                return 'Document';
+        }
+    };
+
     // ON CLICK ON NOTIFICATION: NAVIGATE TO TARGET AND FOCUS/SELECT RECORD (OR SHOW TOAST IF DELETED)
     const handleItemClick = (item) => {
         // 1. Mark as read
@@ -510,34 +526,40 @@ const Notifications = ({
             handleMarkAsRead(item.notificationIds);
         }
 
+        const entitySingular = formatEntitySingular(item.entityType);
+
         // 2. If the action is DELETED, simply give a toast and do not navigate
         if (item.action === 'DELETED') {
             showToast({
-                title: `${item.entityType} Deleted`,
+                title: `${entitySingular} Deleted`,
                 description: `The requested ${item.targetName || 'record'} has been deleted and is no longer accessible.`,
                 variant: 'neutral',
             });
             return;
         }
 
-        // 3. Otherwise navigate to the affected target and select/focus it
-        onClose?.();
-
+        // 3. Check if target entity actually exists in active state before navigating
         const entityType = item.entityType;
         const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : String(id || ''));
         const targetClean = cleanId(item.targetId);
-
-        let targetRecord = null;
 
         if (entityType === 'DOCUMENTS') {
             const doc = documents.find(
                 (d) => cleanId(d.id) === targetClean || cleanId(d.uuid) === targetClean
             );
-            targetRecord = doc || { id: item.targetId, name: item.targetName, title: item.targetName };
-            useDocumentStore.getState().setSelectedDocument?.(targetRecord);
-            onSelectRecord?.(targetRecord);
+            if (!doc) {
+                showToast({
+                    title: `${entitySingular} Deleted`,
+                    description: `"${item.targetName || 'This document'}" has been deleted and is no longer accessible.`,
+                    variant: 'neutral',
+                });
+                return;
+            }
+            onClose?.();
+            useDocumentStore.getState().setSelectedDocument?.(doc);
+            onSelectRecord?.(doc);
 
-            if (doc?.isArchived) {
+            if (doc.isArchived) {
                 navigate('/archives');
             } else {
                 navigate('/documents');
@@ -546,33 +568,65 @@ const Notifications = ({
             const dept = departments.find(
                 (d) => cleanId(d.id) === targetClean || cleanId(d.uuid) === targetClean
             );
-            targetRecord = dept || { id: item.targetId, name: item.targetName, title: item.targetName };
-            useDepartmentStore.getState().setSelectedDepartment?.(targetRecord);
-            onSelectRecord?.(targetRecord);
+            if (!dept) {
+                showToast({
+                    title: `${entitySingular} Deleted`,
+                    description: `"${item.targetName || 'This department'}" has been deleted and is no longer accessible.`,
+                    variant: 'neutral',
+                });
+                return;
+            }
+            onClose?.();
+            useDepartmentStore.getState().setSelectedDepartment?.(dept);
+            onSelectRecord?.(dept);
             navigate('/departments');
         } else if (entityType === 'USERS') {
             const user = users.find(
                 (u) => cleanId(u.id) === targetClean || cleanId(u.uuid) === targetClean
             );
-            targetRecord = user || { id: item.targetId, name: item.targetName, title: item.targetName };
-            useUserStore.getState().setSelectedUser?.(targetRecord);
-            onSelectRecord?.(targetRecord);
+            if (!user) {
+                showToast({
+                    title: `${entitySingular} Deleted`,
+                    description: `"${item.targetName || 'This user'}" has been deleted and is no longer accessible.`,
+                    variant: 'neutral',
+                });
+                return;
+            }
+            onClose?.();
+            useUserStore.getState().setSelectedUser?.(user);
+            onSelectRecord?.(user);
             navigate('/users');
         } else if (entityType === 'COORDINATOR REQUESTS') {
             const req = coordinatorRequests.find(
                 (r) => cleanId(r.id) === targetClean || cleanId(r.uuid) === targetClean
             );
-            targetRecord = req || { id: item.targetId, subject: item.targetName, action: item.action };
-            useCoordinatorStore.getState().setSelectedCoordinatorRequest?.(targetRecord);
-            onSelectRecord?.(targetRecord);
+            if (!req) {
+                showToast({
+                    title: `${entitySingular} Deleted`,
+                    description: `"${item.targetName || 'This coordinator request'}" has been deleted or is no longer accessible.`,
+                    variant: 'neutral',
+                });
+                return;
+            }
+            onClose?.();
+            useCoordinatorStore.getState().setSelectedCoordinatorRequest?.(req);
+            onSelectRecord?.(req);
             navigate('/coordinator');
         } else if (entityType === 'DOCUMENT REQUESTS') {
             const req = documentRequests.find(
                 (r) => cleanId(r.id) === targetClean || cleanId(r.uuid) === targetClean
             );
-            targetRecord = req || { id: item.targetId, subject: item.targetName };
-            useDocumentStore.getState().setSelectedDocumentRequest?.(targetRecord);
-            onSelectRecord?.(targetRecord);
+            if (!req) {
+                showToast({
+                    title: `${entitySingular} Deleted`,
+                    description: `"${item.targetName || 'This document request'}" has been deleted or is no longer accessible.`,
+                    variant: 'neutral',
+                });
+                return;
+            }
+            onClose?.();
+            useDocumentStore.getState().setSelectedDocumentRequest?.(req);
+            onSelectRecord?.(req);
             navigate('/requests');
         }
     };

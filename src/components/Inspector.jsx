@@ -3091,84 +3091,161 @@ const Inspector = ({
                     </div>
                 )}
 
-                {activeTab === 'payload' && isCoordinatorRequest && item.data && (
-                    <div className="flex flex-col gap-4">
-                        <div className="p-4 rounded-lg border border-surface-border bg-surface-hover flex flex-col gap-2">
-                            <div className="flex items-center justify-between gap-2">
-                                <span className="text-xs font-semibold text-text">
-                                    {getActionLabel(item.action)}
-                                </span>
-                                <span className="px-2 py-1 rounded text-xs font-bold bg-accent-background border border-accent-border text-accent">
-                                    {item.action}
-                                </span>
-                            </div>
-                            <p className="text-xs text-text-muted leading-relaxed">
-                                {getActionDescription(item.action)}
-                            </p>
-                        </div>
+                {activeTab === 'payload' && isCoordinatorRequest && (() => {
+                    const rawPayload = item.data;
+                    const parsedPayload = typeof rawPayload === 'object' && rawPayload !== null
+                        ? rawPayload
+                        : (() => {
+                              try {
+                                  return JSON.parse(rawPayload);
+                              } catch {
+                                  return rawPayload ? { raw: rawPayload } : {};
+                              }
+                          })();
 
-                        <div className="flex flex-col gap-3">
-                            <span className={SECTION_TITLE_STYLE}>Payload Changes (Old vs New)</span>
+                    const act = String(item.action || '').toUpperCase();
+                    const crudAction = (() => {
+                        if (act.includes('CREATE') || act.includes('UPLOAD') || act.includes('ADD') || act.includes('REGISTER')) return 'CREATE';
+                        if (act.includes('READ') || act.includes('VIEW') || act.includes('ACCESS') || act.includes('DOWNLOAD')) return 'READ';
+                        if (act.includes('DELETE') || act.includes('REMOVE') || act.includes('PURGE')) return 'DELETE';
+                        return 'UPDATE';
+                    })();
 
-                            <div className="grid grid-cols-1 gap-3">
-                                <div className="flex flex-col gap-2 p-3 rounded-lg border border-surface-border bg-surface">
-                                    <div className="flex items-center justify-between pb-2 border-b border-surface-border">
-                                        <span className="text-xs font-bold text-text-muted uppercase tracking-wider">
-                                            Current State (Database)
-                                        </span>
-                                        <span className="text-xs text-text-muted">
-                                            {item.data.old ? 'Existing Record' : 'None (New Entry)'}
-                                        </span>
-                                    </div>
+                    let oldState = parsedPayload.old ?? null;
+                    let newState = parsedPayload.new ?? null;
 
-                                    {item.data.old ? (
-                                        <div className="flex flex-col divide-y divide-surface-border text-xs">
-                                            {Object.entries(item.data.old).map(([fieldKey, fieldValue]) => (
-                                                <div key={fieldKey} className={PROPERTY_ROW_STYLE}>
-                                                    <span className="text-text-muted font-medium capitalize">
-                                                        {fieldKey.replace(/_/g, ' ')}:
-                                                    </span>
-                                                    <span className="font-medium text-text-muted text-right line-through">
-                                                        {String(fieldValue)}
-                                                    </span>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    ) : (
-                                        <div className="py-2 text-center text-xs text-text-muted italic">
-                                            No previous database record (Provisioning new entry)
-                                        </div>
-                                    )}
+                    // Fallback for oldState if missing in UPDATE or DELETE
+                    if (!oldState && (crudAction === 'UPDATE' || crudAction === 'DELETE')) {
+                        if (act.startsWith('USER_') || parsedPayload.userId) {
+                            const targetId = parsedPayload.userId || parsedPayload.id || item.entityId;
+                            const u = allUsers.find((x) => String(x.id) === String(targetId) || String(x.universityId) === String(parsedPayload.universityId));
+                            if (u) {
+                                oldState = {
+                                    universityId: u.universityId,
+                                    name: `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.name,
+                                    email: u.email,
+                                    role: u.role,
+                                    status: u.status,
+                                };
+                            }
+                        } else if (act.startsWith('DEPARTMENT_') || parsedPayload.departmentId) {
+                            const targetId = parsedPayload.departmentId || parsedPayload.id || item.entityId;
+                            const d = allDepartments.find((x) => String(x.id) === String(targetId) || (parsedPayload.code && x.code === parsedPayload.code));
+                            if (d) {
+                                oldState = {
+                                    code: d.code,
+                                    name: d.name,
+                                };
+                            }
+                        } else if (act.startsWith('DOCUMENT_') || parsedPayload.documentId) {
+                            const targetId = parsedPayload.documentId || parsedPayload.id || item.entityId;
+                            const doc = allDocuments.find((x) => String(x.id) === String(targetId));
+                            if (doc) {
+                                oldState = {
+                                    title: doc.title || doc.name,
+                                    classification: doc.classification,
+                                };
+                            }
+                        }
+                    }
+
+                    // Fallback for newState if missing
+                    if (!newState) {
+                        if (crudAction === 'DELETE') {
+                            newState = { status: 'DELETED' };
+                        } else if (crudAction === 'CREATE' || crudAction === 'UPDATE') {
+                            const cleaned = Object.fromEntries(
+                                Object.entries(parsedPayload).filter(([k]) => !['old', 'new', 'userId', 'departmentId', 'documentId', 'requesterId', 'reviewerId'].includes(k))
+                            );
+                            newState = Object.keys(cleaned).length > 0 ? cleaned : parsedPayload;
+                        }
+                    }
+
+                    return (
+                        <div className="flex flex-col gap-4">
+                            <div className="p-4 rounded-lg border border-surface-border bg-surface-hover flex flex-col gap-2">
+                                <div className="flex items-center justify-between gap-2">
+                                    <span className="text-xs font-semibold text-text">
+                                        {getActionLabel(item.action)}
+                                    </span>
+                                    <span className="px-2 py-1 rounded text-xs font-bold bg-accent-background border border-accent-border text-accent">
+                                        {item.action}
+                                    </span>
                                 </div>
+                                <p className="text-xs text-text-muted leading-relaxed">
+                                    {getActionDescription(item.action)}
+                                </p>
+                            </div>
 
-                                <div className="flex flex-col gap-2 p-3 rounded-lg border border-accent-border bg-accent-background">
-                                    <div className="flex items-center justify-between pb-2 border-b border-accent-border">
-                                        <span className="text-xs font-bold text-accent uppercase tracking-wider">
-                                            Proposed State (Coordinator Input)
-                                        </span>
-                                        <span className="px-2 py-1 rounded text-xs font-semibold bg-accent-background text-accent border border-accent-border">
-                                            Pending Authorization
-                                        </span>
+                            <div className="flex flex-col gap-3">
+                                <span className={SECTION_TITLE_STYLE}>Payload Changes (Old vs New)</span>
+
+                                <div className="grid grid-cols-1 gap-3">
+                                    {/* CARD 1: CURRENT STATE (DATABASE) */}
+                                    <div className="flex flex-col gap-2 p-3 rounded-lg border border-surface-border bg-surface">
+                                        <div className="flex items-center justify-between pb-2 border-b border-surface-border">
+                                            <span className="text-xs font-bold text-text-muted uppercase tracking-wider">
+                                                Current State (Database)
+                                            </span>
+                                            <span className="text-xs text-text-muted">
+                                                {crudAction === 'CREATE'
+                                                    ? 'None (New Entry)'
+                                                    : crudAction === 'READ'
+                                                    ? 'None (Read Event)'
+                                                    : oldState && Object.keys(oldState).length > 0
+                                                    ? 'Existing Record'
+                                                    : 'None'}
+                                            </span>
+                                        </div>
+
+                                        {crudAction === 'CREATE' ? (
+                                            <div className="py-2 text-center text-xs text-text-muted italic">
+                                                No previous database record (Provisioning new entry)
+                                            </div>
+                                        ) : crudAction === 'READ' ? (
+                                            <div className="py-2 text-center text-xs text-text-muted italic">
+                                                Read-only access event — no previous state modified.
+                                            </div>
+                                        ) : oldState && Object.keys(oldState).length > 0 ? (
+                                            <div className="flex flex-col divide-y divide-surface-border text-xs">
+                                                {Object.entries(oldState).map(([fieldKey, fieldValue]) => (
+                                                    <div key={fieldKey} className={PROPERTY_ROW_STYLE}>
+                                                        <span className="text-text-muted font-medium capitalize">
+                                                            {fieldKey.replace(/_/g, ' ')}:
+                                                        </span>
+                                                        <span className="font-medium text-text-muted text-right line-through">
+                                                            {typeof fieldValue === 'object' && fieldValue !== null
+                                                                ? JSON.stringify(fieldValue)
+                                                                : String(fieldValue ?? '—')}
+                                                        </span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <div className="py-2 text-center text-xs text-text-muted italic">
+                                                No previous database record
+                                            </div>
+                                        )}
                                     </div>
 
-                                    {item.data.new ? (
-                                        <div className="flex flex-col divide-y divide-accent-border text-xs">
-                                            {Object.entries(item.data.new).map(([fieldKey, fieldValue]) => (
-                                                <div key={fieldKey} className={PROPERTY_ROW_STYLE}>
-                                                    <span className="text-text-muted font-medium capitalize">
-                                                        {fieldKey.replace(/_/g, ' ')}:
-                                                    </span>
-                                                    <span className="font-semibold text-accent text-right">
-                                                        {String(fieldValue)}
-                                                    </span>
-                                                </div>
-                                            ))}
+                                    {/* CARD 2: PROPOSED STATE (COORDINATOR INPUT) */}
+                                    <div className="flex flex-col gap-2 p-3 rounded-lg border border-accent-border bg-accent-background">
+                                        <div className="flex items-center justify-between pb-2 border-b border-accent-border">
+                                            <span className="text-xs font-bold text-accent uppercase tracking-wider">
+                                                Proposed State (Coordinator Input)
+                                            </span>
+                                            <span className="px-2 py-1 rounded text-xs font-semibold bg-accent-background text-accent border border-accent-border">
+                                                {item.status === 'APPROVED' ? 'Approved' : item.status === 'REJECTED' ? 'Rejected' : 'Pending Authorization'}
+                                            </span>
                                         </div>
-                                    ) : (
-                                        <div className="flex flex-col divide-y divide-accent-border text-xs">
-                                            {Object.entries(item.data)
-                                                .filter(([key]) => key !== 'old' && key !== 'new')
-                                                .map(([fieldKey, fieldValue]) => (
+
+                                        {crudAction === 'READ' ? (
+                                            <div className="py-2 text-center text-xs text-accent italic">
+                                                Official university document accessed.
+                                            </div>
+                                        ) : newState && Object.keys(newState).length > 0 ? (
+                                            <div className="flex flex-col divide-y divide-accent-border text-xs">
+                                                {Object.entries(newState).map(([fieldKey, fieldValue]) => (
                                                     <div key={fieldKey} className={PROPERTY_ROW_STYLE}>
                                                         <span className="text-text-muted font-medium capitalize">
                                                             {fieldKey.replace(/_/g, ' ')}:
@@ -3176,42 +3253,47 @@ const Inspector = ({
                                                         <span className="font-semibold text-accent text-right">
                                                             {typeof fieldValue === 'object' && fieldValue !== null
                                                                 ? JSON.stringify(fieldValue)
-                                                                : String(fieldValue)}
+                                                                : String(fieldValue ?? '—')}
                                                         </span>
                                                     </div>
                                                 ))}
-                                        </div>
-                                    )}
+                                            </div>
+                                        ) : (
+                                            <div className="py-2 text-center text-xs text-text-muted italic">
+                                                No proposed modifications
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
                             </div>
-                        </div>
 
-                        {item.status === constants.COORDINATOR_REQUESTS_STATUS.PENDING && (
-                            <div className="p-3 rounded-lg bg-surface-hover border border-surface-border text-xs text-text-muted flex items-start gap-2">
-                                <Clock className="h-4 w-4 text-accent shrink-0 mt-1" />
-                                <span>
-                                    <strong>Pending Administrator Authorization</strong> — Once approved by an administrator, these changes will be committed to the database.
-                                </span>
-                            </div>
-                        )}
-                        {item.status === constants.COORDINATOR_REQUESTS_STATUS.APPROVED && (
-                            <div className="p-3 rounded-lg bg-accent-background border border-accent-border text-xs text-accent flex items-start gap-2">
-                                <CheckCircle2 className="h-4 w-4 text-accent shrink-0 mt-1" />
-                                <span>
-                                    <strong>Authorized & Executed</strong> — Changes have been carried over and successfully committed to university records.
-                                </span>
-                            </div>
-                        )}
-                        {item.status === constants.COORDINATOR_REQUESTS_STATUS.REJECTED && (
-                            <div className="p-3 rounded-lg bg-error-background border border-error-border text-xs text-error flex items-start gap-2">
-                                <AlertCircle className="h-4 w-4 text-error shrink-0 mt-1" />
-                                <span>
-                                    <strong>Rejected</strong> — {item.rejectionReason || 'Request declined by administrator.'}
-                                </span>
-                            </div>
-                        )}
-                    </div>
-                )}
+                            {item.status === constants.COORDINATOR_REQUESTS_STATUS.PENDING && (
+                                <div className="p-3 rounded-lg bg-surface-hover border border-surface-border text-xs text-text-muted flex items-start gap-2">
+                                    <Clock className="h-4 w-4 text-accent shrink-0 mt-1" />
+                                    <span>
+                                        <strong>Pending Administrator Authorization</strong> — Once approved by an administrator, these changes will be committed to the database.
+                                    </span>
+                                </div>
+                            )}
+                            {item.status === constants.COORDINATOR_REQUESTS_STATUS.APPROVED && (
+                                <div className="p-3 rounded-lg bg-accent-background border border-accent-border text-xs text-accent flex items-start gap-2">
+                                    <CheckCircle2 className="h-4 w-4 text-accent shrink-0 mt-1" />
+                                    <span>
+                                        <strong>Authorized & Executed</strong> — Changes have been carried over and successfully committed to university records.
+                                    </span>
+                                </div>
+                            )}
+                            {item.status === constants.COORDINATOR_REQUESTS_STATUS.REJECTED && (
+                                <div className="p-3 rounded-lg bg-error-background border border-error-border text-xs text-error flex items-start gap-2">
+                                    <AlertCircle className="h-4 w-4 text-error shrink-0 mt-1" />
+                                    <span>
+                                        <strong>Rejected</strong> — {item.rejectionReason || 'Request declined by administrator.'}
+                                    </span>
+                                </div>
+                            )}
+                        </div>
+                    );
+                })()}
 
                 {activeTab === 'messages' && isDocumentRequest && (
                     <div className="flex flex-col h-full gap-3">

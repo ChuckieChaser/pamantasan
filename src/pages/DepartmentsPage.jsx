@@ -164,6 +164,11 @@ const DepartmentsPage = ({
                 const deptPayload = {
                     code: formCode.trim().toUpperCase(),
                     name: formName.trim(),
+                    old: null,
+                    new: {
+                        code: formCode.trim().toUpperCase(),
+                        name: formName.trim(),
+                    },
                 };
 
                 const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
@@ -341,6 +346,13 @@ const DepartmentsPage = ({
                     departmentId: deletingDepartment.id,
                     code: deletingDepartment.code,
                     name: deletingDepartment.name,
+                    old: {
+                        code: deletingDepartment.code,
+                        name: deletingDepartment.name,
+                    },
+                    new: {
+                        status: 'DELETED',
+                    },
                 };
 
                 const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
@@ -392,7 +404,7 @@ const DepartmentsPage = ({
         const targetId = selectedItem?.id ?? selectedDepartment?.id;
         if (!targetId) return null;
         const matched = departments.find((d) => d?.id === targetId);
-        if (!matched) return selectedItem ?? selectedDepartment;
+        if (!matched) return null;
         return {
             ...selectedDepartment,
             ...matched,
@@ -402,6 +414,18 @@ const DepartmentsPage = ({
             updatedAt: matched.updatedAt,
         };
     }, [departments, selectedDepartment, selectedItem]);
+
+    // Safety cleanup: Ensure deleted department is cleared from store selection
+    useEffect(() => {
+        if (
+            selectedDepartment?.id &&
+            departments.length > 0 &&
+            !departments.some((d) => d?.id === selectedDepartment.id)
+        ) {
+            setSelectedDepartment(null);
+            onSelectDepartment?.(null);
+        }
+    }, [departments, selectedDepartment?.id, setSelectedDepartment, onSelectDepartment]);
 
     const formattedDepartmentData = useMemo(() => {
         return departments.filter(Boolean).map((department) => {

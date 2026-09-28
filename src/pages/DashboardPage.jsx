@@ -2105,79 +2105,130 @@ const DashboardPage = ({
                                 </div>
                             ) : (() => {
                                 const { diffs, staticFields } = extractAuditDiff(viewingAuditLog.parsedData);
-                                const hasDiffs = diffs.length > 0;
-                                const hasStatic = staticFields.length > 0;
+                                const parsed = viewingAuditLog.parsedData || {};
+
+                                let oldState = (parsed.old || parsed.previous || parsed.before) ?? null;
+                                let newState = (parsed.new || parsed.after || parsed.current) ?? null;
+
+                                if (!oldState && (crudAction === 'UPDATE' || crudAction === 'DELETE')) {
+                                    if (diffs.length > 0) {
+                                        oldState = Object.fromEntries(diffs.map((d) => [d.key, d.oldValue]));
+                                        newState = Object.fromEntries(diffs.map((d) => [d.key, d.newValue]));
+                                    } else if (crudAction === 'DELETE') {
+                                        oldState = Object.fromEntries(
+                                            Object.entries(parsed).filter(([k]) => !IGNORED_AUDIT_DIFF_KEYS.has(k) && !['title', 'description', 'actorId', 'actorName', 'actorRole', 'actorEmail', 'actorDepartment', 'actorDepartmentId'].includes(k))
+                                        );
+                                    }
+                                }
+
+                                if (!newState) {
+                                    if (crudAction === 'DELETE') {
+                                        newState = { status: 'DELETED' };
+                                    } else if (crudAction === 'CREATE') {
+                                        newState = Object.fromEntries(
+                                            Object.entries(parsed).filter(([k]) => !IGNORED_AUDIT_DIFF_KEYS.has(k) && !['title', 'description', 'actorId', 'actorName', 'actorRole', 'actorEmail', 'actorDepartment', 'actorDepartmentId'].includes(k))
+                                        );
+                                    }
+                                }
 
                                 return (
-                                    <div className="p-3.5 rounded-xl bg-surface border border-surface-border text-xs text-text flex flex-col gap-3 max-h-72 overflow-y-auto shadow-2xs">
-                                        {/* AFFECTED / MODIFIED PROPERTIES ONLY */}
-                                        {hasDiffs && (
-                                            <div className="flex flex-col gap-2">
-                                                <div className="flex items-center justify-between pb-1 border-b border-surface-border">
-                                                    <span className="text-[11px] font-bold text-text flex items-center gap-1.5 uppercase tracking-wider">
-                                                        <Activity className="h-3.5 w-3.5 text-accent" />
-                                                        Affected Changes ({diffs.length})
+                                    <div className="flex flex-col gap-3">
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                            {/* CARD 1: CURRENT STATE (DATABASE) */}
+                                            <div className="flex flex-col gap-2 p-3 rounded-xl border border-surface-border bg-surface">
+                                                <div className="flex items-center justify-between pb-2 border-b border-surface-border">
+                                                    <span className="text-xs font-bold text-text-muted uppercase tracking-wider">
+                                                        Current State (Database)
                                                     </span>
-                                                    <span className="text-[10px] text-text-muted">Showing only changed values</span>
+                                                    <span className="text-xs text-text-muted">
+                                                        {crudAction === 'CREATE'
+                                                            ? 'None (New Entry)'
+                                                            : crudAction === 'READ'
+                                                            ? 'None (Read Event)'
+                                                            : oldState && Object.keys(oldState).length > 0
+                                                            ? 'Existing Record'
+                                                            : 'None'}
+                                                    </span>
                                                 </div>
 
-                                                <div className="flex flex-col gap-2">
-                                                    {diffs.map((diff) => (
-                                                        <div
-                                                            key={diff.key}
-                                                            className="p-3 rounded-xl bg-surface-hover/50 border border-surface-border flex flex-col gap-2 shadow-2xs"
-                                                        >
-                                                            <div className="flex items-center justify-between">
-                                                                <span className="text-[11px] font-bold uppercase tracking-wider text-text flex items-center gap-1.5">
-                                                                    <span className="h-1.5 w-1.5 rounded-full bg-accent" />
-                                                                    {formatKeyLabel(diff.key)}
+                                                {crudAction === 'CREATE' ? (
+                                                    <div className="py-4 text-center text-xs text-text-muted italic">
+                                                        No previous database record (Provisioning new entry)
+                                                    </div>
+                                                ) : crudAction === 'READ' ? (
+                                                    <div className="py-4 text-center text-xs text-text-muted italic">
+                                                        Read-only access event — no previous state modified.
+                                                    </div>
+                                                ) : oldState && Object.keys(oldState).length > 0 ? (
+                                                    <div className="flex flex-col divide-y divide-surface-border text-xs max-h-56 overflow-y-auto">
+                                                        {Object.entries(oldState).map(([fieldKey, fieldValue]) => (
+                                                            <div key={fieldKey} className="flex items-center justify-between py-1.5 gap-2">
+                                                                <span className="text-text-muted font-medium capitalize shrink-0">
+                                                                    {formatKeyLabel(fieldKey)}:
                                                                 </span>
-                                                                <span className="text-[10px] font-semibold text-amber-600 dark:text-amber-400 px-2 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/20">
-                                                                    Modified
+                                                                <span className="font-medium text-text-muted text-right line-through truncate max-w-[180px]">
+                                                                    {formatAuditValue(fieldValue)}
                                                                 </span>
                                                             </div>
-
-                                                            <div className="flex items-center gap-2 sm:gap-3 flex-wrap sm:flex-nowrap">
-                                                                {/* Old Value */}
-                                                                <div className="flex-1 min-w-[120px] p-2.5 rounded-lg bg-red-500/5 dark:bg-red-950/20 border border-red-500/20 flex flex-col gap-0.5">
-                                                                    <span className="text-[10px] font-semibold text-red-600 dark:text-red-400 uppercase tracking-wider">
-                                                                        Previous Value
-                                                                    </span>
-                                                                    <span className="text-xs font-mono font-medium text-text break-all line-through decoration-red-500/40">
-                                                                        {formatAuditValue(diff.oldValue)}
-                                                                    </span>
-                                                                </div>
-
-                                                                {/* Transition Arrow */}
-                                                                <div className="shrink-0 p-1.5 rounded-full bg-surface-hover text-text-muted border border-surface-border flex items-center justify-center">
-                                                                    <ArrowRight className="h-3.5 w-3.5 text-accent" />
-                                                                </div>
-
-                                                                {/* New Value */}
-                                                                <div className="flex-1 min-w-[120px] p-2.5 rounded-lg bg-emerald-500/5 dark:bg-emerald-950/20 border border-emerald-500/20 flex flex-col gap-0.5">
-                                                                    <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">
-                                                                        Resulting Value
-                                                                    </span>
-                                                                    <span className="text-xs font-mono font-bold text-text break-all">
-                                                                        {formatAuditValue(diff.newValue)}
-                                                                    </span>
-                                                                </div>
-                                                            </div>
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        {/* EVENT CONTEXT / ATTRIBUTES (NON-DIFF SUPPLEMENTARY ATTRIBUTES) */}
-                                        {hasStatic && (
-                                            <div className="flex flex-col gap-1.5">
-                                                {hasDiffs && (
-                                                    <span className="text-[10px] font-bold text-text-muted uppercase tracking-wider pt-1">
-                                                        Record Attributes
-                                                    </span>
+                                                        ))}
+                                                    </div>
+                                                ) : (
+                                                    <div className="py-4 text-center text-xs text-text-muted italic">
+                                                        No previous database record
+                                                    </div>
                                                 )}
-                                                <div className="flex flex-col gap-1.5">
+                                            </div>
+
+                                            {/* CARD 2: RESULTING / APPLIED STATE (DATABASE) */}
+                                            <div className="flex flex-col gap-2 p-3 rounded-xl border border-accent-border bg-accent-background/30">
+                                                <div className="flex items-center justify-between pb-2 border-b border-accent-border">
+                                                    <span className="text-xs font-bold text-accent uppercase tracking-wider">
+                                                        {crudAction === 'READ' ? 'Access Information' : 'Applied State (Database)'}
+                                                    </span>
+                                                    <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-accent text-text-inverted">
+                                                        {crudAction === 'CREATE'
+                                                            ? 'New Record'
+                                                            : crudAction === 'READ'
+                                                            ? 'Accessed'
+                                                            : crudAction === 'DELETE'
+                                                            ? 'Purged'
+                                                            : 'Committed'}
+                                                    </span>
+                                                </div>
+
+                                                {crudAction === 'READ' ? (
+                                                    <div className="py-3 px-2 text-center text-xs text-accent italic flex flex-col gap-1 items-center">
+                                                        <Eye className="h-4 w-4 text-accent" />
+                                                        <span>Special Document Event: Official university document was securely viewed and accessed. No state mutations applied.</span>
+                                                    </div>
+                                                ) : newState && Object.keys(newState).length > 0 ? (
+                                                    <div className="flex flex-col divide-y divide-accent-border/60 text-xs max-h-56 overflow-y-auto">
+                                                        {Object.entries(newState).map(([fieldKey, fieldValue]) => (
+                                                            <div key={fieldKey} className="flex items-center justify-between py-1.5 gap-2">
+                                                                <span className="text-text-muted font-medium capitalize shrink-0">
+                                                                    {formatKeyLabel(fieldKey)}:
+                                                                </span>
+                                                                <span className="font-semibold text-accent text-right truncate max-w-[180px]">
+                                                                    {formatAuditValue(fieldValue)}
+                                                                </span>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                ) : (
+                                                    <div className="py-4 text-center text-xs text-text-muted italic">
+                                                        No state modifications recorded
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        {/* EVENT CONTEXT / ATTRIBUTES (SUPPLEMENTARY) */}
+                                        {staticFields.length > 0 && (
+                                            <div className="p-3 rounded-xl border border-surface-border bg-surface-hover/40 flex flex-col gap-1.5 text-xs">
+                                                <span className="text-[10px] font-bold text-text-muted uppercase tracking-wider">
+                                                    Record Metadata
+                                                </span>
+                                                <div className="flex flex-col gap-1">
                                                     {staticFields.map(([k, v]) => {
                                                         if (k === 'attachments' && Array.isArray(v)) {
                                                             return (
@@ -2194,7 +2245,7 @@ const DashboardPage = ({
                                                             );
                                                         }
                                                         return (
-                                                            <div key={k} className="flex items-center justify-between gap-2 py-1 border-b border-surface-border/50 last:border-0">
+                                                            <div key={k} className="flex items-center justify-between gap-2 py-0.5 border-b border-surface-border/40 last:border-0">
                                                                 <span className="font-medium text-text-muted capitalize shrink-0">{k.replace(/_/g, ' ')}:</span>
                                                                 <span className="font-semibold text-text text-right font-mono truncate max-w-[280px]">
                                                                     {typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v ?? '—')}
@@ -2203,12 +2254,6 @@ const DashboardPage = ({
                                                         );
                                                     })}
                                                 </div>
-                                            </div>
-                                        )}
-
-                                        {!hasDiffs && !hasStatic && (
-                                            <div className="text-xs text-text-muted py-3 text-center">
-                                                No structured metadata or changed properties recorded with this event.
                                             </div>
                                         )}
                                     </div>

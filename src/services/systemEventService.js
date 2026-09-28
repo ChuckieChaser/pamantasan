@@ -24,7 +24,7 @@ const isMajorAction = (entityType, action) => {
         return ['CREATED', 'RESOLVED', 'REJECTED', 'ATTACHED', 'UPDATED'].includes(act);
     }
     if (ent.includes('COORDINATOR_REQUEST')) {
-        return ['PENDING_APPROVAL', 'APPROVED', 'REJECTED'].includes(act);
+        return ['CREATED', 'UPDATED', 'DELETED', 'PENDING_APPROVAL', 'APPROVED', 'REJECTED'].includes(act);
     }
     if (ent.includes('DOCUMENT_SHARE')) {
         return ['SHARED', 'PUBLISHED', 'APPROVED'].includes(act);
@@ -403,7 +403,9 @@ const systemEventService = {
                                 actionUrl = `${defaultBaseUrl}/departments`;
                             } else if (notifEntityType === 'USERS') {
                                 actionUrl = `${defaultBaseUrl}/users`;
-                            } else if (notifEntityType === 'COORDINATOR REQUESTS' || notifEntityType === 'DOCUMENT REQUESTS') {
+                            } else if (notifEntityType === 'COORDINATOR REQUESTS' || notifEntityType === 'COORDINATOR_REQUEST') {
+                                actionUrl = `${defaultBaseUrl}/coordinator`;
+                            } else if (notifEntityType === 'DOCUMENT REQUESTS' || notifEntityType === 'DOCUMENT_REQUEST') {
                                 actionUrl = `${defaultBaseUrl}/requests`;
                             } else {
                                 actionUrl = defaultBaseUrl;

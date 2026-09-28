@@ -592,7 +592,7 @@ const DocumentsPage = ({
         const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
         const targetClean = cleanId(targetId);
         const matched = repositoryItems.find((item) => cleanId(item.id) === targetClean);
-        return matched ?? selectedItem ?? selectedDocument;
+        return matched ?? null;
     }, [selectedItem, selectedDocument, repositoryItems]);
 
     const activeFolderId = useMemo(() => {

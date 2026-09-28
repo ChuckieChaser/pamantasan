@@ -244,7 +244,7 @@ const CoordinatorPage = ({
                 _targetTab: selectedItem?._targetTab ?? selectedRequestItem?._targetTab ?? 'information',
             };
         }
-        return isAdmin ? (selectedItem ?? selectedRequestItem) : null;
+        return null;
     }, [selectedItem, selectedRequestItem, formattedCoordinatorData, isAdmin]);
 
     // HANDLERS
@@ -327,7 +327,7 @@ const CoordinatorPage = ({
             await coordinatorApprovalService.rejectCoordinatorRequest({
                 ...rejectingCoordinatorRequest,
                 rejectionReason: rejectionReason.trim() || undefined,
-            });
+            }, activeUser);
 
             await fetchCoordinatorRequests();
 
@@ -409,7 +409,7 @@ const CoordinatorPage = ({
 
         setIsDeletingRequest(true);
         try {
-            await deleteCoordinatorRequest(deletingRequestItem.id);
+            await deleteCoordinatorRequest(deletingRequestItem.id, activeUser);
             showToast({
                 type: 'success',
                 title: 'Request Deleted',

@@ -262,7 +262,7 @@ const UsersPage = ({
                 )
             );
 
-            if (actionKey === 'suspend' && isSelfUser && rawUser.status !== constants.USERS_STATUS.SUSPENDED) {
+            if (actionKey === 'suspend' && isSelfUser && String(rawUser.status).toUpperCase() !== constants.USERS_STATUS.SUSPENDED) {
                 showToast({
                     type: 'error',
                     title: 'Action Prohibited',
@@ -271,7 +271,7 @@ const UsersPage = ({
                 return;
             }
 
-            setSuspendingUser(rawUser);
+            setSuspendingUser({ ...rawUser, _isUnsuspending: actionKey === 'unsuspend' });
             return;
         }
 
@@ -373,6 +373,7 @@ const UsersPage = ({
                 return;
             }
 
+            const activeActor = currentUser || useAuthStore.getState().currentUser;
             const minTimer = new Promise((resolve) => setTimeout(resolve, 500));
             const [newUser] = await Promise.all([
                 insertUser({
@@ -386,7 +387,7 @@ const UsersPage = ({
                     role: formRole,
                     status: constants.USERS_STATUS.PENDING_PASSWORD,
                     avatarPath: uploadedAvatarPath,
-                }),
+                }, activeActor),
                 minTimer,
             ]);
 
@@ -545,6 +546,7 @@ const UsersPage = ({
                 return;
             }
 
+            const activeActor = currentUser || useAuthStore.getState().currentUser;
             const minTimer = new Promise((resolve) => setTimeout(resolve, 500));
             const [updated] = await Promise.all([
                 updateUser(editingUser.id, {
@@ -555,7 +557,7 @@ const UsersPage = ({
                     departmentId: finalDepartmentId,
                     role: formRole,
                     avatarPath: uploadedAvatarPath,
-                }),
+                }, activeActor),
                 minTimer,
             ]);
 
@@ -601,10 +603,17 @@ const UsersPage = ({
             )
         );
 
+        const isCurrentlySuspended = Boolean(
+            suspendingUser._isUnsuspending ||
+            String(suspendingUser.status || '').toUpperCase() === constants.USERS_STATUS.SUSPENDED
+        );
+
         let newStatus;
-        if (suspendingUser.status === constants.USERS_STATUS.SUSPENDED) {
+        if (isCurrentlySuspended) {
             const restored = useUserStore.getState().getPreviousStatus(suspendingUser.id);
-            newStatus = restored || constants.USERS_STATUS.PENDING_PASSWORD;
+            newStatus = (restored && String(restored).toUpperCase() !== constants.USERS_STATUS.SUSPENDED)
+                ? restored
+                : constants.USERS_STATUS.VERIFIED;
         } else {
             newStatus = constants.USERS_STATUS.SUSPENDED;
         }
@@ -623,12 +632,17 @@ const UsersPage = ({
                 userId: suspendingUser.id,
                 universityId: suspendingUser.universityId,
                 name: `${suspendingUser.firstName} ${suspendingUser.lastName}`.trim(),
-                status: newStatus,
+                old: {
+                    status: suspendingUser.status,
+                },
+                new: {
+                    status: newStatus,
+                },
             };
 
             const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
             await coordinatorApprovalService.submitCoordinatorRequest({
-                action: constants.COORDINATOR_REQUESTS_ACTION.USER_SUSPEND,
+                action: constants.COORDINATOR_REQUESTS_ACTION.USER_UPDATE,
                 requesterId,
                 data: userPayload,
             });
@@ -646,9 +660,10 @@ const UsersPage = ({
         setIsSuspendingLoading(true);
 
         try {
+            const activeActor = currentUser || useAuthStore.getState().currentUser;
             const minTimer = new Promise((resolve) => setTimeout(resolve, 500));
             const [updated] = await Promise.all([
-                updateUser(suspendingUser.id, { status: newStatus }),
+                updateUser(suspendingUser.id, { status: newStatus }, activeActor),
                 minTimer,
             ]);
 
@@ -689,6 +704,17 @@ const UsersPage = ({
                 userId: deletingUser.id,
                 universityId: deletingUser.universityId,
                 name: `${deletingUser.firstName} ${deletingUser.lastName}`.trim(),
+                old: {
+                    universityId: deletingUser.universityId,
+                    name: `${deletingUser.firstName} ${deletingUser.lastName}`.trim(),
+                    email: deletingUser.email,
+                    role: deletingUser.role,
+                    department: deletingUser.department,
+                    status: deletingUser.status,
+                },
+                new: {
+                    status: 'DELETED',
+                },
             };
 
             const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
@@ -710,9 +736,10 @@ const UsersPage = ({
 
         setIsDeletingUserLoading(true);
         try {
+            const activeActor = currentUser || useAuthStore.getState().currentUser;
             const minTimer = new Promise((resolve) => setTimeout(resolve, 500));
             await Promise.all([
-                deleteUser(deletingUser.id),
+                deleteUser(deletingUser.id, activeActor),
                 minTimer,
             ]);
 
@@ -834,8 +861,20 @@ const UsersPage = ({
         const targetId = selectedItem?.id ?? selectedUser?.id;
         if (!targetId) return null;
         const matched = formattedUserData.find((u) => u.id === targetId);
-        return matched ?? selectedItem ?? selectedUser;
+        return matched ?? null;
     }, [selectedItem, selectedUser, formattedUserData]);
+
+    // Safety cleanup: Ensure deleted user is cleared from store selection
+    useEffect(() => {
+        if (
+            selectedUser?.id &&
+            users.length > 0 &&
+            !users.some((u) => u?.id === selectedUser.id)
+        ) {
+            setSelectedUser(null);
+            onSelectUser?.(null);
+        }
+    }, [users, selectedUser?.id, setSelectedUser, onSelectUser]);
 
     // RENDER
     return (
@@ -1196,44 +1235,47 @@ const UsersPage = ({
                         (suspendingUser.universityId && currentUser.universityId === suspendingUser.universityId)
                     )
                 );
-                const isSuspending = suspendingUser.status !== constants.USERS_STATUS.SUSPENDED;
-                const isBlocked = isSelf && isSuspending;
+                const isCurrentlySuspended = Boolean(
+                    suspendingUser._isUnsuspending ||
+                    String(suspendingUser.status || '').toUpperCase() === constants.USERS_STATUS.SUSPENDED
+                );
+                const isBlocked = isSelf && !isCurrentlySuspended;
 
                 return (
                     <Modal
                         isOpen={Boolean(suspendingUser)}
                         onClose={handleCloseModals}
                         title={
-                            suspendingUser.status === constants.USERS_STATUS.SUSPENDED
+                            isCurrentlySuspended
                                 ? 'Unsuspend User Account'
                                 : 'Suspend User Account'
                         }
                         description={
-                            suspendingUser.status === constants.USERS_STATUS.SUSPENDED
-                                ? `Are you sure you want to unsuspend ${suspendingUser.firstName} ${suspendingUser.lastName} (${suspendingUser.universityId})? The user will be restored to ${useUserStore.getState().getPreviousStatus(suspendingUser.id) || 'PENDING PASSWORD'}.`
+                            isCurrentlySuspended
+                                ? `Are you sure you want to unsuspend ${suspendingUser.firstName} ${suspendingUser.lastName} (${suspendingUser.universityId})? The user will be restored to ${useUserStore.getState().getPreviousStatus(suspendingUser.id) || 'VERIFIED'}.`
                                 : `Are you sure you want to suspend ${suspendingUser.firstName} ${suspendingUser.lastName} (${suspendingUser.universityId})? The user will be immediately logged out and prohibited from institutional authentication.`
                         }
-                        icon={suspendingUser.status === constants.USERS_STATUS.SUSPENDED ? UserCheck : UserX}
+                        icon={isCurrentlySuspended ? UserCheck : UserX}
                         callout={
                             isBlocked
                                 ? 'Safety Guard: You cannot suspend your own account. Only another system administrator can suspend this account.'
-                                : suspendingUser.status === constants.USERS_STATUS.SUSPENDED
+                                : isCurrentlySuspended
                                 ? 'The user will regain institutional access and credentials upon confirmation.'
                                 : 'The user will be immediately logged out and prohibited from institutional authentication.'
                         }
-                        calloutVariant={isBlocked ? 'destructive' : (suspendingUser.status === constants.USERS_STATUS.SUSPENDED ? 'accent' : 'destructive')}
+                        calloutVariant={isBlocked ? 'destructive' : (isCurrentlySuspended ? 'accent' : 'destructive')}
                         onConfirm={handleToggleSuspendUser}
                         confirmLabel={
                             isSuspendingLoading
                                 ? 'Updating Status...'
                                 : isBlocked
                                 ? 'Self-Suspension Prohibited'
-                                : suspendingUser.status === constants.USERS_STATUS.SUSPENDED
+                                : isCurrentlySuspended
                                 ? 'Unsuspend User'
                                 : 'Suspend User'
                         }
                         cancelLabel="Cancel"
-                        variant={suspendingUser.status === constants.USERS_STATUS.SUSPENDED ? 'primary' : 'destructive'}
+                        variant={isCurrentlySuspended ? 'primary' : 'destructive'}
                         isConfirmLoading={isSuspendingLoading}
                         isConfirmDisabled={isSuspendingLoading || isBlocked}
                     />

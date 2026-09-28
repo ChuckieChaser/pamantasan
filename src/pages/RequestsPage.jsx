@@ -489,7 +489,7 @@ const RequestsPage = ({
                 _targetTab: selectedItem?._targetTab ?? selectedRequestItem?._targetTab ?? 'information',
             };
         }
-        return selectedItem ?? selectedRequestItem;
+        return null;
     }, [selectedItem, selectedRequestItem, formattedDocumentData]);
 
     // HANDLERS
@@ -1349,7 +1349,7 @@ const RequestsPage = ({
                                                                     leadingIcon={XCircle}
                                                                     onClick={async () => {
                                                                         try {
-                                                                            await coordinatorApprovalService.rejectCoordinatorRequest(pendingReq);
+                                                                            await coordinatorApprovalService.rejectCoordinatorRequest(pendingReq, currentUser);
                                                                             await fetchCoordinatorRequests();
                                                                             showToast({
                                                                                 type: 'success',
