@@ -783,8 +783,8 @@ const useDocumentStore = create((set, get) => ({
     syncAllDocumentShares: async (currentUser, departments = []) => {
         if (!currentUser) return [];
 
-        // Throttle rapid repeated syncs (3 second window)
-        if (Date.now() - lastSyncSharesTimestamp < 3000) {
+        // Throttle rapid repeated syncs (20 second window)
+        if (Date.now() - lastSyncSharesTimestamp < 20000) {
             return get().documentShares || [];
         }
 

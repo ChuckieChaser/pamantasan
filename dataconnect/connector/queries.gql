@@ -693,8 +693,15 @@ query FetchNotifications(
 
 
 # --- AUDIT LOG QUERIES ---
-query FetchAuditLogs @auth(level: PUBLIC) {
-    auditLogs(orderBy: [{ createdAt: DESC }]) {
+query FetchAuditLogs(
+    $limit: Int = 10000
+    $offset: Int
+) @auth(level: PUBLIC) {
+    auditLogs(
+        limit: $limit
+        offset: $offset
+        orderBy: [{ createdAt: DESC }]
+    ) {
         id
         actor {
             id

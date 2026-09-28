@@ -184,11 +184,12 @@ const DepartmentsPage = ({
             }
 
             const minTimer = new Promise((resolve) => setTimeout(resolve, 500));
+            const activeActor = currentUser || useAuthStore.getState().currentUser;
             const [newDept] = await Promise.all([
                 insertDepartment({
                     code: formCode.trim().toUpperCase(),
                     name: formName.trim(),
-                }, currentUser),
+                }, activeActor),
                 minTimer,
             ]);
 
@@ -273,11 +274,12 @@ const DepartmentsPage = ({
             }
 
             const minTimer = new Promise((resolve) => setTimeout(resolve, 500));
+            const activeActor = currentUser || useAuthStore.getState().currentUser;
             const [updated] = await Promise.all([
                 updateDepartment(editingDepartment.id, {
                     code: formCode.trim().toUpperCase(),
                     name: formName.trim(),
-                }, currentUser),
+                }, activeActor),
                 minTimer,
             ]);
 
@@ -359,8 +361,9 @@ const DepartmentsPage = ({
             }
 
             const minTimer = new Promise((resolve) => setTimeout(resolve, 500));
+            const activeActor = currentUser || useAuthStore.getState().currentUser;
             await Promise.all([
-                deleteDepartment(deletingDepartment.id, currentUser),
+                deleteDepartment(deletingDepartment.id, activeActor),
                 minTimer,
             ]);
             if (selectedDepartment?.id === deletingDepartment.id) {

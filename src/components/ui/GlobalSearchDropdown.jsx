@@ -7,7 +7,6 @@ import {
     Users as UsersIcon,
     User as UserIcon,
     Inbox,
-    Sparkles,
     SearchX,
     ArrowUpRight,
     Lock,
@@ -17,10 +16,11 @@ import {
 } from 'lucide-react';
 import { Badge } from '../Badge';
 import { Container } from '../Container';
+import { SegmentSelection } from '../Selections';
 import { constants } from '../../constants';
 
 // --- CONFIGURATIONS ---
-const BASE_STYLE = 'absolute left-0 top-full mt-2 z-[100] w-[calc(100vw-2rem)] sm:w-96 md:w-[32rem] max-w-[90vw]';
+const BASE_STYLE = 'absolute left-0 top-full mt-2 z-[100] w-[calc(100vw-2rem)] sm:w-96 md:w-[32rem] max-w-[95vw]';
 
 const getClassificationIcon = (classification) => {
     switch (classification) {
@@ -62,6 +62,8 @@ const GlobalSearchDropdown = ({
     departments = [],
     users = [],
     requests = [],
+    coordinatorRequests = [],
+    documentRequests = [],
     className,
     ...props
 }) => {
@@ -73,16 +75,22 @@ const GlobalSearchDropdown = ({
     // DERIVED SEARCH RESULTS
     const searchResults = useMemo(() => {
         if (!cleanQuery) {
-            return { documents: [], departments: [], users: [], requests: [], total: 0 };
+            return {
+                documents: [],
+                departments: [],
+                users: [],
+                coordinatorRequests: [],
+                documentRequests: [],
+                total: 0,
+            };
         }
 
-        // 1. Filter Documents
+        // 1. Filter Documents & Folders
         const matchedDocs = (documents || [])
             .filter((doc) => {
                 const nameMatch = doc.name?.toLowerCase().includes(cleanQuery);
                 const commentMatch = doc.comment?.toLowerCase().includes(cleanQuery);
 
-                // Check associated versions for summary or text matches
                 const versions = (documentVersions || []).filter(
                     (v) => (v.document?.id ?? v.documentId) === doc.id
                 );
@@ -108,6 +116,7 @@ const GlobalSearchDropdown = ({
                     isArchived: Boolean(doc.isArchived),
                     classification: latestVersion?.classification || constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED,
                     version: latestVersion ? `v${latestVersion.version}.0` : 'v1.0',
+                    comment: doc.comment || null,
                     summary: latestVersion?.summary || doc.comment || null,
                     raw: doc,
                 };
@@ -150,34 +159,66 @@ const GlobalSearchDropdown = ({
                 raw: u,
             }));
 
-        // 4. Filter Requests
-        const matchedRequests = (requests || [])
+        // 4. Filter Coordinator Requests
+        const effectiveCoordRequests = (coordinatorRequests && coordinatorRequests.length > 0)
+            ? coordinatorRequests
+            : (requests || []);
+
+        const matchedCoordRequests = effectiveCoordRequests
             .filter((r) => {
                 const actionMatch = r.action?.toLowerCase().includes(cleanQuery);
                 const subjectMatch = r.subject?.toLowerCase().includes(cleanQuery);
-                const requesterMatch = r.requesterName?.toLowerCase().includes(cleanQuery);
+                const requesterName = r.requesterName || `${r.requester?.firstName || ''} ${r.requester?.lastName || ''}`;
+                const requesterMatch = requesterName.toLowerCase().includes(cleanQuery);
                 return actionMatch || subjectMatch || requesterMatch;
             })
-            .slice(0, 3)
+            .slice(0, 4)
             .map((r) => ({
                 id: r.id,
-                type: 'request',
-                title: r.subject || (r.action ? String(r.action).replace(/_/g, ' ') : 'Request'),
+                type: 'coordinator_request',
+                title: r.subject || (r.action ? String(r.action).replace(/_/g, ' ') : 'Coordinator Request'),
                 status: r.status,
-                requester: r.requesterName || 'Member',
+                requester: r.requesterName || `${r.requester?.firstName || ''} ${r.requester?.lastName || ''}`.trim() || 'Coordinator',
                 raw: r,
             }));
 
-        const total = matchedDocs.length + matchedDepts.length + matchedUsers.length + matchedRequests.length;
+        // 5. Filter Document Requests
+        const effectiveDocRequests = documentRequests || [];
+        const matchedDocRequests = effectiveDocRequests
+            .filter((r) => {
+                const titleMatch = r.title?.toLowerCase().includes(cleanQuery);
+                const purposeMatch = r.purpose?.toLowerCase().includes(cleanQuery);
+                const requesterName = `${r.requester?.firstName || ''} ${r.requester?.lastName || ''}`;
+                const requesterMatch = requesterName.toLowerCase().includes(cleanQuery);
+                return titleMatch || purposeMatch || requesterMatch;
+            })
+            .slice(0, 4)
+            .map((r) => ({
+                id: r.id,
+                type: 'document_request',
+                title: r.title || 'Document Request',
+                status: r.status,
+                purpose: r.purpose || null,
+                requester: `${r.requester?.firstName || ''} ${r.requester?.lastName || ''}`.trim() || 'Member',
+                raw: r,
+            }));
+
+        const total =
+            matchedDocs.length +
+            matchedDepts.length +
+            matchedUsers.length +
+            matchedCoordRequests.length +
+            matchedDocRequests.length;
 
         return {
             documents: matchedDocs,
             departments: matchedDepts,
             users: matchedUsers,
-            requests: matchedRequests,
+            coordinatorRequests: matchedCoordRequests,
+            documentRequests: matchedDocRequests,
             total,
         };
-    }, [documents, documentVersions, departments, users, requests, cleanQuery]);
+    }, [documents, documentVersions, departments, users, requests, coordinatorRequests, documentRequests, cleanQuery]);
 
     // GUARD: Render nothing if closed or query is empty
     if (!isOpen || !cleanQuery) {
@@ -191,101 +232,51 @@ const GlobalSearchDropdown = ({
 
     const composedClassName = `${BASE_STYLE} ${className ?? ''}`.trim();
 
+    // 6 REQUESTED FILTER OPTIONS WITH NUMBERS
+    const filterOptions = [
+        { value: 'all', label: `All (${searchResults.total})` },
+        { value: 'departments', label: `Departments (${searchResults.departments.length})` },
+        { value: 'users', label: `Users (${searchResults.users.length})` },
+        { value: 'documents', label: `Documents (${searchResults.documents.length})` },
+        { value: 'coordinator requests', label: `Coordinator Requests (${searchResults.coordinatorRequests.length})` },
+        { value: 'document requests', label: `Document Requests (${searchResults.documentRequests.length})` },
+    ];
+
     const showAll = activeFilter === 'all';
-    const showDocs = showAll || activeFilter === 'documents';
     const showDepts = showAll || activeFilter === 'departments';
     const showUsers = showAll || activeFilter === 'users';
-    const showReqs = showAll || activeFilter === 'requests';
+    const showDocs = showAll || activeFilter === 'documents';
+    const showCoordReqs = showAll || activeFilter === 'coordinator requests';
+    const showDocReqs = showAll || activeFilter === 'document requests';
 
     return (
         <div className={composedClassName} {...props}>
             <Container
                 variant="card"
-                className="p-0 gap-0 bg-surface border-surface-border shadow-2xl overflow-hidden rounded-xl animate-toast-in"
+                className="p-2 gap-2 bg-surface border border-surface-border rounded-lg overflow-hidden animate-toast-in shadow-[0_12px_40px_rgba(0,0,0,0.18)] dark:shadow-[0_20px_50px_rgba(0,0,0,0.75)] ring-1 ring-black/5 dark:ring-white/10"
             >
-                {/* 1. FILTER TABS BAR */}
-                <div className="flex items-center gap-1 p-2 bg-surface-hover/60 border-b border-surface-border text-xs overflow-x-auto">
-                    <button
-                        type="button"
-                        onClick={() => setActiveFilter('all')}
-                        className={`px-2.5 py-1 rounded-md font-medium transition-colors cursor-pointer shrink-0 ${
-                            activeFilter === 'all'
-                                ? 'bg-accent text-text-inverted'
-                                : 'text-text-muted hover:text-text hover:bg-surface'
-                        }`}
-                    >
-                        All ({searchResults.total})
-                    </button>
-                    {searchResults.documents.length > 0 && (
-                        <button
-                            type="button"
-                            onClick={() => setActiveFilter('documents')}
-                            className={`px-2.5 py-1 rounded-md font-medium transition-colors cursor-pointer shrink-0 flex items-center gap-1.5 ${
-                                activeFilter === 'documents'
-                                    ? 'bg-accent text-text-inverted'
-                                    : 'text-text-muted hover:text-text hover:bg-surface'
-                            }`}
-                        >
-                            <FileText className="h-3 w-3" />
-                            <span>Documents ({searchResults.documents.length})</span>
-                        </button>
-                    )}
-                    {searchResults.departments.length > 0 && (
-                        <button
-                            type="button"
-                            onClick={() => setActiveFilter('departments')}
-                            className={`px-2.5 py-1 rounded-md font-medium transition-colors cursor-pointer shrink-0 flex items-center gap-1.5 ${
-                                activeFilter === 'departments'
-                                    ? 'bg-accent text-text-inverted'
-                                    : 'text-text-muted hover:text-text hover:bg-surface'
-                            }`}
-                        >
-                            <Building2 className="h-3 w-3" />
-                            <span>Departments ({searchResults.departments.length})</span>
-                        </button>
-                    )}
-                    {searchResults.users.length > 0 && (
-                        <button
-                            type="button"
-                            onClick={() => setActiveFilter('users')}
-                            className={`px-2.5 py-1 rounded-md font-medium transition-colors cursor-pointer shrink-0 flex items-center gap-1.5 ${
-                                activeFilter === 'users'
-                                    ? 'bg-accent text-text-inverted'
-                                    : 'text-text-muted hover:text-text hover:bg-surface'
-                            }`}
-                        >
-                            <UsersIcon className="h-3 w-3" />
-                            <span>Users ({searchResults.users.length})</span>
-                        </button>
-                    )}
-                    {searchResults.requests.length > 0 && (
-                        <button
-                            type="button"
-                            onClick={() => setActiveFilter('requests')}
-                            className={`px-2.5 py-1 rounded-md font-medium transition-colors cursor-pointer shrink-0 flex items-center gap-1.5 ${
-                                activeFilter === 'requests'
-                                    ? 'bg-accent text-text-inverted'
-                                    : 'text-text-muted hover:text-text hover:bg-surface'
-                            }`}
-                        >
-                            <Inbox className="h-3 w-3" />
-                            <span>Requests ({searchResults.requests.length})</span>
-                        </button>
-                    )}
+                {/* 1. ACTUAL SEGMENTED CONTROL IN SCROLLABLE BAR */}
+                <div className="overflow-x-auto scrollbar-none pb-1 pt-0.5">
+                    <SegmentSelection
+                        value={activeFilter}
+                        options={filterOptions}
+                        onChange={setActiveFilter}
+                        className="w-max"
+                    />
                 </div>
 
                 {/* 2. RESULTS BODY */}
-                <div className="max-h-96 overflow-y-auto divide-y divide-surface-border">
+                <div className="max-h-96 overflow-y-auto flex flex-col gap-1 p-0.5">
                     {/* EMPTY STATE */}
                     {searchResults.total === 0 && (
-                        <div className="p-8 flex flex-col items-center justify-center text-center gap-2">
+                        <div className="p-8 flex flex-col items-center justify-center text-center gap-2 rounded-lg border border-dashed border-surface-border">
                             <div className="p-3 rounded-full bg-surface-hover text-text-muted">
                                 <SearchX className="h-6 w-6" />
                             </div>
                             <span className="font-semibold text-sm text-text">
                                 No records found for &quot;{query}&quot;
                             </span>
-                            <span className="text-xs text-text-muted max-w-xs">
+                            <span className="text-xs text-text-muted max-w-xs leading-relaxed">
                                 Try searching by document name, summary keywords, department code, or personnel name.
                             </span>
                         </div>
@@ -293,22 +284,27 @@ const GlobalSearchDropdown = ({
 
                     {/* SECTION: DOCUMENTS */}
                     {showDocs && searchResults.documents.length > 0 && (
-                        <div className="py-2">
-                            <div className="px-3 py-1 text-[11px] font-bold text-text-muted uppercase tracking-wider flex items-center gap-1.5">
-                                <FileText className="h-3.5 w-3.5 text-accent" />
-                                <span>Documents & Repository</span>
+                        <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-2 px-2.5 py-1 text-[11px] font-bold text-text-muted uppercase tracking-wider">
+                                <FileText className="h-3.5 w-3.5 text-accent shrink-0" />
+                                <span className="shrink-0">Documents</span>
+                                <div className="h-px bg-surface-border flex-1" />
                             </div>
                             {searchResults.documents.map((doc) => {
                                 const DocIcon = doc.isFolder ? Folder : FileText;
                                 const ClassIcon = getClassificationIcon(doc.classification);
+                                const subtitle = doc.isFolder
+                                    ? (doc.comment ? doc.comment : 'No comment')
+                                    : doc.summary;
+
                                 return (
                                     <div
                                         key={`doc-${doc.id}`}
                                         onClick={() => handleItemClick(doc)}
-                                        className="px-3 py-2 hover:bg-surface-hover transition-colors cursor-pointer flex items-start justify-between gap-3 group"
+                                        className="p-2.5 rounded-lg bg-surface border border-surface-border hover:border-accent/40 hover:bg-surface-hover transition-all cursor-pointer flex items-center justify-between gap-3 group shadow-2xs"
                                     >
                                         <div className="flex items-start gap-2.5 min-w-0 flex-1">
-                                            <div className="p-1.5 rounded-md bg-surface-hover group-hover:bg-accent/15 group-hover:text-accent transition-colors text-text-muted shrink-0 mt-0.5">
+                                            <div className="p-2 rounded-lg bg-surface-hover group-hover:bg-accent/15 group-hover:text-accent transition-colors text-text-muted shrink-0 mt-0.5">
                                                 <DocIcon className="h-4 w-4" />
                                             </div>
                                             <div className="flex flex-col min-w-0 flex-1 gap-0.5">
@@ -320,9 +316,9 @@ const GlobalSearchDropdown = ({
                                                         <Badge variant="neutral" size="xs" label="Archived" />
                                                     )}
                                                 </div>
-                                                {doc.summary && (
+                                                {subtitle && (
                                                     <p className="text-[11px] text-text-muted line-clamp-1 leading-snug">
-                                                        {doc.summary}
+                                                        {subtitle}
                                                     </p>
                                                 )}
                                             </div>
@@ -333,7 +329,7 @@ const GlobalSearchDropdown = ({
                                                     variant={getClassificationBadgeVariant(doc.classification)}
                                                     size="xs"
                                                     label={doc.classification}
-                                                    icon={ClassIcon}
+                                                    leadingIcon={ClassIcon}
                                                 />
                                             )}
                                             <ArrowUpRight className="h-3.5 w-3.5 text-text-muted group-hover:text-accent group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-all" />
@@ -346,19 +342,20 @@ const GlobalSearchDropdown = ({
 
                     {/* SECTION: DEPARTMENTS */}
                     {showDepts && searchResults.departments.length > 0 && (
-                        <div className="py-2">
-                            <div className="px-3 py-1 text-[11px] font-bold text-text-muted uppercase tracking-wider flex items-center gap-1.5">
-                                <Building2 className="h-3.5 w-3.5 text-accent" />
-                                <span>Departments</span>
+                        <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-2 px-2.5 py-1 text-[11px] font-bold text-text-muted uppercase tracking-wider">
+                                <Building2 className="h-3.5 w-3.5 text-accent shrink-0" />
+                                <span className="shrink-0">Departments</span>
+                                <div className="h-px bg-surface-border flex-1" />
                             </div>
                             {searchResults.departments.map((dept) => (
                                 <div
                                     key={`dept-${dept.id}`}
                                     onClick={() => handleItemClick(dept)}
-                                    className="px-3 py-2 hover:bg-surface-hover transition-colors cursor-pointer flex items-center justify-between gap-3 group"
+                                    className="p-2.5 rounded-lg bg-surface border border-surface-border hover:border-accent/40 hover:bg-surface-hover transition-all cursor-pointer flex items-center justify-between gap-3 group shadow-2xs"
                                 >
                                     <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                                        <div className="p-1.5 rounded-md bg-surface-hover group-hover:bg-accent/15 group-hover:text-accent transition-colors text-text-muted shrink-0">
+                                        <div className="p-2 rounded-lg bg-surface-hover group-hover:bg-accent/15 group-hover:text-accent transition-colors text-text-muted shrink-0">
                                             <Building2 className="h-4 w-4" />
                                         </div>
                                         <span className="text-xs font-semibold text-text truncate group-hover:text-accent transition-colors">
@@ -376,19 +373,20 @@ const GlobalSearchDropdown = ({
 
                     {/* SECTION: USERS */}
                     {showUsers && searchResults.users.length > 0 && (
-                        <div className="py-2">
-                            <div className="px-3 py-1 text-[11px] font-bold text-text-muted uppercase tracking-wider flex items-center gap-1.5">
-                                <UsersIcon className="h-3.5 w-3.5 text-accent" />
-                                <span>Users & Personnel</span>
+                        <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-2 px-2.5 py-1 text-[11px] font-bold text-text-muted uppercase tracking-wider">
+                                <UsersIcon className="h-3.5 w-3.5 text-accent shrink-0" />
+                                <span className="shrink-0">Users</span>
+                                <div className="h-px bg-surface-border flex-1" />
                             </div>
                             {searchResults.users.map((u) => (
                                 <div
                                     key={`user-${u.id}`}
                                     onClick={() => handleItemClick(u)}
-                                    className="px-3 py-2 hover:bg-surface-hover transition-colors cursor-pointer flex items-center justify-between gap-3 group"
+                                    className="p-2.5 rounded-lg bg-surface border border-surface-border hover:border-accent/40 hover:bg-surface-hover transition-all cursor-pointer flex items-center justify-between gap-3 group shadow-2xs"
                                 >
                                     <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                                        <div className="p-1.5 rounded-md bg-surface-hover group-hover:bg-accent/15 group-hover:text-accent transition-colors text-text-muted shrink-0">
+                                        <div className="p-2 rounded-lg bg-surface-hover group-hover:bg-accent/15 group-hover:text-accent transition-colors text-text-muted shrink-0">
                                             <UserIcon className="h-4 w-4" />
                                         </div>
                                         <div className="flex flex-col min-w-0 flex-1">
@@ -413,22 +411,23 @@ const GlobalSearchDropdown = ({
                         </div>
                     )}
 
-                    {/* SECTION: REQUESTS */}
-                    {showReqs && searchResults.requests.length > 0 && (
-                        <div className="py-2">
-                            <div className="px-3 py-1 text-[11px] font-bold text-text-muted uppercase tracking-wider flex items-center gap-1.5">
-                                <Inbox className="h-3.5 w-3.5 text-accent" />
-                                <span>Governance Requests</span>
+                    {/* SECTION: COORDINATOR REQUESTS */}
+                    {showCoordReqs && searchResults.coordinatorRequests.length > 0 && (
+                        <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-2 px-2.5 py-1 text-[11px] font-bold text-text-muted uppercase tracking-wider">
+                                <Shield className="h-3.5 w-3.5 text-accent shrink-0" />
+                                <span className="shrink-0">Coordinator Requests</span>
+                                <div className="h-px bg-surface-border flex-1" />
                             </div>
-                            {searchResults.requests.map((req) => (
+                            {searchResults.coordinatorRequests.map((req) => (
                                 <div
-                                    key={`req-${req.id}`}
+                                    key={`coord-req-${req.id}`}
                                     onClick={() => handleItemClick(req)}
-                                    className="px-3 py-2 hover:bg-surface-hover transition-colors cursor-pointer flex items-center justify-between gap-3 group"
+                                    className="p-2.5 rounded-lg bg-surface border border-surface-border hover:border-accent/40 hover:bg-surface-hover transition-all cursor-pointer flex items-center justify-between gap-3 group shadow-2xs"
                                 >
                                     <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                                        <div className="p-1.5 rounded-md bg-surface-hover group-hover:bg-accent/15 group-hover:text-accent transition-colors text-text-muted shrink-0">
-                                            <Inbox className="h-4 w-4" />
+                                        <div className="p-2 rounded-lg bg-surface-hover group-hover:bg-accent/15 group-hover:text-accent transition-colors text-text-muted shrink-0">
+                                            <Shield className="h-4 w-4" />
                                         </div>
                                         <div className="flex flex-col min-w-0 flex-1">
                                             <span className="text-xs font-semibold text-text truncate group-hover:text-accent transition-colors">
@@ -441,9 +440,49 @@ const GlobalSearchDropdown = ({
                                     </div>
                                     <div className="flex items-center gap-2 shrink-0">
                                         <Badge
-                                            variant={req.status === 'APPROVED' ? 'success' : 'warning'}
+                                            variant={req.status === 'APPROVED' ? 'success' : req.status === 'REJECTED' ? 'error' : 'warning'}
                                             size="xs"
-                                            label={req.status}
+                                            label={req.status || 'Pending'}
+                                        />
+                                        <ArrowUpRight className="h-3.5 w-3.5 text-text-muted group-hover:text-accent transition-all" />
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+
+                    {/* SECTION: DOCUMENT REQUESTS */}
+                    {showDocReqs && searchResults.documentRequests.length > 0 && (
+                        <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-2 px-2.5 py-1 text-[11px] font-bold text-text-muted uppercase tracking-wider">
+                                <Inbox className="h-3.5 w-3.5 text-accent shrink-0" />
+                                <span className="shrink-0">Document Requests</span>
+                                <div className="h-px bg-surface-border flex-1" />
+                            </div>
+                            {searchResults.documentRequests.map((req) => (
+                                <div
+                                    key={`doc-req-${req.id}`}
+                                    onClick={() => handleItemClick(req)}
+                                    className="p-2.5 rounded-lg bg-surface border border-surface-border hover:border-accent/40 hover:bg-surface-hover transition-all cursor-pointer flex items-center justify-between gap-3 group shadow-2xs"
+                                >
+                                    <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                                        <div className="p-2 rounded-lg bg-surface-hover group-hover:bg-accent/15 group-hover:text-accent transition-colors text-text-muted shrink-0">
+                                            <Inbox className="h-4 w-4" />
+                                        </div>
+                                        <div className="flex flex-col min-w-0 flex-1">
+                                            <span className="text-xs font-semibold text-text truncate group-hover:text-accent transition-colors">
+                                                {req.title}
+                                            </span>
+                                            <span className="text-[10px] text-text-muted truncate">
+                                                Requester: {req.requester} {req.purpose ? `• ${req.purpose}` : ''}
+                                            </span>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center gap-2 shrink-0">
+                                        <Badge
+                                            variant={req.status === 'APPROVED' || req.status === 'RESOLVED' ? 'success' : req.status === 'REJECTED' ? 'error' : 'warning'}
+                                            size="xs"
+                                            label={req.status || 'Pending'}
                                         />
                                         <ArrowUpRight className="h-3.5 w-3.5 text-text-muted group-hover:text-accent transition-all" />
                                     </div>
@@ -452,19 +491,11 @@ const GlobalSearchDropdown = ({
                         </div>
                     )}
                 </div>
-
-                {/* 3. FOOTER TIPS */}
-                <div className="px-3 py-2 bg-surface-hover/30 border-t border-surface-border flex items-center justify-between text-[10px] text-text-muted">
-                    <span className="flex items-center gap-1">
-                        <Sparkles className="h-3 w-3 text-accent" />
-                        <span>Institutional Global Search</span>
-                    </span>
-                    <span>Press Esc or click outside to dismiss</span>
-                </div>
             </Container>
         </div>
     );
 };
 
+// --- EXPORTS ---
 export { GlobalSearchDropdown };
 export default GlobalSearchDropdown;

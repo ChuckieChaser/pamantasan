@@ -5,9 +5,18 @@ import { dataConnectService } from './dataConnectService';
 // --- SERVICES ---
 const auditService = {
     // CORE
-    fetchAuditLogs: async () => {
+    fetchAuditLogs: async (variables = null) => {
         try {
-            const data = await dataConnectService.executeQuery('FetchAuditLogs');
+            let data = null;
+            if (variables && Object.keys(variables).length > 0) {
+                try {
+                    data = await dataConnectService.executeQuery('FetchAuditLogs', variables);
+                } catch {
+                    data = await dataConnectService.executeQuery('FetchAuditLogs');
+                }
+            } else {
+                data = await dataConnectService.executeQuery('FetchAuditLogs');
+            }
             const auditLogs = data?.auditLogs ?? [];
 
             return auditLogs
@@ -40,10 +49,23 @@ const auditService = {
             console.warn('Failed to insert audit log to Firebase Data Connect, creating local fallback record:', error);
         }
 
+        const parsedData = payload.data ? (typeof payload.data === 'object' ? payload.data : (() => {
+            try { return JSON.parse(payload.data); } catch { return {}; }
+        })()) : {};
+
+        const resolvedActor = payload.actor || (parsedData.actorName || parsedData.actorRole ? {
+            id: payload.actorId || parsedData.actorId,
+            firstName: parsedData.actorName?.split(' ')[0] || '',
+            lastName: parsedData.actorName?.split(' ').slice(1).join(' ') || '',
+            name: parsedData.actorName,
+            role: parsedData.actorRole,
+            email: parsedData.actorEmail,
+        } : (payload.actorId ? { id: payload.actorId } : null));
+
         return {
             id: raw?.id ?? `audit-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-            actorId: payload.actorId ?? null,
-            actor: payload.actor || (payload.actorId ? { id: payload.actorId } : null),
+            actorId: payload.actorId ?? parsedData.actorId ?? null,
+            actor: resolvedActor,
             entityType: payload.entityType,
             entityId: payload.entityId,
             action: payload.action,
@@ -60,9 +82,28 @@ function formatLiveAuditLog(rawAuditLog) {
         return null;
     }
 
+    const parsedData = rawAuditLog.data ? (typeof rawAuditLog.data === 'object' ? rawAuditLog.data : (() => {
+        try { return JSON.parse(rawAuditLog.data); } catch { return {}; }
+    })()) : {};
+
+    const resolvedActor = (rawAuditLog.actor && typeof rawAuditLog.actor === 'object')
+        ? {
+            ...rawAuditLog.actor,
+            role: rawAuditLog.actor.role || parsedData.actorRole || null,
+        }
+        : (parsedData.actorName || parsedData.actorRole ? {
+            id: parsedData.actorId,
+            firstName: parsedData.actorName?.split(' ')[0] || '',
+            lastName: parsedData.actorName?.split(' ').slice(1).join(' ') || '',
+            name: parsedData.actorName,
+            role: parsedData.actorRole,
+            email: parsedData.actorEmail,
+        } : null);
+
     return {
         id: rawAuditLog.id,
-        actor: rawAuditLog.actor,
+        actorId: rawAuditLog.actor?.id || parsedData.actorId || null,
+        actor: resolvedActor,
         entityType: rawAuditLog.entityType,
         entityId: rawAuditLog.entityId,
         action: rawAuditLog.action,

@@ -22,6 +22,7 @@ const TopBar = ({
     isDetailPanelOpen = false,
     onToggleDetailPanel,
     isNotificationActive = false,
+    hasUnreadNotifications = false,
     onToggleNotifications,
     notificationTriggerRef,
     notificationContent = null,
@@ -99,9 +100,17 @@ const TopBar = ({
                     <ToggleSelection
                         isPressed={isNotificationActive}
                         icon={Bell}
+                        className={hasUnreadNotifications && !isNotificationActive ? 'animate-pulse text-accent' : ''}
                         onChange={handleToggleNotifications}
                         title="Notifications"
                     />
+
+                    {hasUnreadNotifications && !isNotificationActive && (
+                        <span className="absolute top-1 right-1 flex h-2 w-2 pointer-events-none">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-75" />
+                            <span className="relative inline-flex rounded-full h-2 w-2 bg-accent" />
+                        </span>
+                    )}
 
                     {notificationContent}
                 </div>

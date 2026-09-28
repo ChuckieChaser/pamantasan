@@ -3,8 +3,8 @@ import { constants } from '../constants';
 
 const CHANNEL_NAME = 'pamantasan_realtime_sync';
 const STORAGE_KEY = 'pamantasan_sync_event';
-const POLLING_INTERVAL_MS = 15000;
-const MIN_REFETCH_INTERVAL_MS = 2500;
+const POLLING_INTERVAL_MS = 45000;
+const MIN_REFETCH_INTERVAL_MS = 10000;
 
 let broadcastChannel = null;
 if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {

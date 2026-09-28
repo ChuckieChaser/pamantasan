@@ -1,5 +1,6 @@
 // --- IMPORTS ---
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
     FileText,
     Clock,
@@ -27,6 +28,7 @@ import {
     Lock,
     Zap,
     Check,
+    Copy,
 } from 'lucide-react';
 import {
     Avatar,
@@ -34,6 +36,7 @@ import {
     Button,
     ComboField,
     Container,
+    Modal,
     ReadershipChart,
     SearchField,
     SelectField,
@@ -56,7 +59,7 @@ import { constants, isStaffRole } from '../constants';
 
 
 // --- CONFIGURATIONS ---
-const PAGE_SIZE = 50;
+const DEFAULT_AUDIT_PAGE_SIZE = 15;
 
 const AUDIT_SORT_OPTIONS = [
     { value: 'date-desc', label: 'Recently Added' },
@@ -113,30 +116,30 @@ const toCanonicalEntity = (rawEntity = '') => {
     if (ent.includes('DEPARTMENT')) {
         return {
             key: 'DEPARTMENTS',
-            label: 'Departments',
+            label: 'Department',
             style: 'bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/20',
         };
     }
     if (ent.includes('USER')) {
         return {
             key: 'USERS',
-            label: 'Users',
+            label: 'User',
             style: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/20',
         };
     }
     return {
         key: 'DOCUMENTS',
-        label: 'Documents',
+        label: 'Document',
         style: 'bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-500/20',
     };
 };
 
 const CLASSIFICATION_STYLES = {
-    PUBLIC: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/20',
-    RESTRICTED: 'bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/20',
-    CONFIDENTIAL: 'bg-rose-500/10 text-rose-700 dark:text-rose-400 border-rose-500/20',
-    PRIVATE: 'bg-zinc-500/10 text-zinc-700 dark:text-zinc-400 border-zinc-500/20',
-    UNCLASSIFIED: 'bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-500/20',
+    PUBLIC: 'bg-accent-background text-accent border-accent-border',
+    CONFIDENTIAL: 'bg-warning-background text-warning border-warning-border',
+    RESTRICTED: 'bg-error-background text-error border-error-border',
+    PRIVATE: 'bg-information-background text-information border-information-border',
+    UNCLASSIFIED: 'bg-surface-hover text-text-muted border-surface-border',
 };
 
 const CLASSIFICATION_LABELS = {
@@ -166,6 +169,96 @@ const parseLogData = (data) => {
     }
 };
 
+const toCrudVerb = (canonicalAction = '') => {
+    const act = String(canonicalAction || '').toUpperCase().trim();
+    if (act.includes('CREATE') || act.includes('UPLOAD') || act.includes('ADD') || act.includes('REGISTER')) return 'CREATE';
+    if (act.includes('READ') || act.includes('VIEW') || act.includes('ACCESS') || act.includes('DOWNLOAD')) return 'READ';
+    if (act.includes('UPDATE') || act.includes('EDIT') || act.includes('MODIFY')) return 'UPDATE';
+    if (act.includes('DELETE') || act.includes('REMOVE') || act.includes('REVOKE') || act.includes('PURGE')) return 'DELETE';
+    return act || 'READ';
+};
+
+const isRmoUser = (user, safeDepts = []) => {
+    if (!user) return false;
+    if (isStaffRole(user.role)) return true;
+
+    const deptId = user.departmentId || user.department?.id;
+    if (deptId && Array.isArray(safeDepts)) {
+        const d = safeDepts.find((item) => String(item.id) === String(deptId));
+        if (d) {
+            const name = String(d.name || '').toLowerCase();
+            const code = String(d.code || '').toLowerCase();
+            if (name.includes('records management') || code === 'rmo') return true;
+        }
+    }
+
+    const deptName = String(user.department || user.departmentName || '').toLowerCase();
+    if (deptName.includes('records management') || deptName === 'rmo') return true;
+
+    return false;
+};
+
+const resolveTargetEntityName = (auditLog, { documents = [], departments = [], users = [], requests = [], coordinatorRequests = [] } = {}) => {
+    if (!auditLog) return '—';
+    const parsed = auditLog.parsedData || {};
+    const ent = String(auditLog.entityType || '').toUpperCase();
+    const id = auditLog.entityId;
+
+    // 1. Direct explicit name fields in payload
+    if (parsed.name && typeof parsed.name === 'string' && parsed.name.trim()) return parsed.name.trim();
+    if (parsed.title && typeof parsed.title === 'string' && parsed.title.trim()) return parsed.title.trim();
+    if (parsed.subject && typeof parsed.subject === 'string' && parsed.subject.trim()) return parsed.subject.trim();
+    if (parsed.documentName && typeof parsed.documentName === 'string' && parsed.documentName.trim()) return parsed.documentName.trim();
+    if (parsed.userName && typeof parsed.userName === 'string' && parsed.userName.trim()) return parsed.userName.trim();
+    if (parsed.departmentName && typeof parsed.departmentName === 'string' && parsed.departmentName.trim()) return parsed.departmentName.trim();
+
+    // 2. Nested new/old changes
+    if (parsed.new && typeof parsed.new === 'object') {
+        const n = parsed.new.name || parsed.new.title || parsed.new.subject || parsed.new.code;
+        if (n && typeof n === 'string' && n.trim()) return n.trim();
+    }
+    if (parsed.old && typeof parsed.old === 'object') {
+        const o = parsed.old.name || parsed.old.title || parsed.old.subject || parsed.old.code;
+        if (o && typeof o === 'string' && o.trim()) return o.trim();
+    }
+
+    // 3. Search store based on entityType
+    if (id) {
+        if (ent.includes('DOCUMENT_REQUEST')) {
+            const match = requests.find((r) => r.id === id);
+            if (match?.subject) return match.subject;
+        } else if (ent.includes('COORDINATOR')) {
+            const match = coordinatorRequests.find((c) => c.id === id);
+            if (match?.subject) return match.subject;
+            if (match?.action) return match.action.replace(/_/g, ' ');
+        } else if (ent.includes('DEPARTMENT')) {
+            const match = departments.find((d) => d.id === id);
+            if (match?.name) return match.name;
+            if (match?.code) return match.code;
+        } else if (ent.includes('USER')) {
+            const match = users.find((u) => u.id === id);
+            if (match) {
+                const fullName = `${match.firstName ?? ''} ${match.lastName ?? ''}`.trim();
+                if (fullName) return fullName;
+                if (match.name) return match.name;
+                if (match.email) return match.email;
+            }
+        } else if (ent.includes('DOCUMENT')) {
+            const match = documents.find((d) => d.id === id);
+            if (match?.name) return match.name;
+            if (match?.title) return match.title;
+        }
+    }
+
+    // 4. Clean human title from auditLog if available
+    if (auditLog.title && !auditLog.title.includes(' on ')) {
+        const cleaned = auditLog.title.replace(/^"/, '').replace(/"$/, '').trim();
+        if (cleaned) return cleaned;
+    }
+
+    return auditLog.entityBadge?.label || 'Institutional Record';
+};
+
 
 // --- COMPONENTS ---
 const DashboardPage = ({
@@ -185,8 +278,10 @@ const DashboardPage = ({
     const auditLogs = useAuditStore((state) => state.auditLogs);
     const users = useUserStore((state) => state.users);
     const documentShares = useDocumentStore((state) => state.documentShares);
+    const documentVersions = useDocumentStore((state) => state.documentVersions ?? state.versions ?? []);
 
     const fetchDocuments = useDocumentStore((state) => state.fetchDocuments);
+    const fetchAllDocumentVersions = useDocumentStore((state) => state.fetchAllDocumentVersions);
     const fetchDocumentRequests = useDocumentStore((state) => state.fetchDocumentRequests);
     const fetchDepartments = useDepartmentStore((state) => state.fetchDepartments);
     const fetchUsers = useUserStore((state) => state.fetchUsers);
@@ -194,11 +289,18 @@ const DashboardPage = ({
     const fetchAuditLogs = useAuditStore((state) => state.fetchAuditLogs);
     const syncAllDocumentShares = useDocumentStore((state) => state.syncAllDocumentShares);
 
+    // NAVIGATION
+    const navigate = useNavigate();
+
     // LOCAL STATE FOR LIVE AUDIT TRAIL & ANALYTICS VIEW
     const [auditFilters, setAuditFilters] = useState([]);
     const [auditSearch, setAuditSearch] = useState('');
     const [auditSort, setAuditSort] = useState('date-desc');
     const [auditPage, setAuditPage] = useState(1);
+    const [auditPageSize, setAuditPageSize] = useState(DEFAULT_AUDIT_PAGE_SIZE);
+    const [viewingAuditLog, setViewingAuditLog] = useState(null);
+    const [showRawJson, setShowRawJson] = useState(false);
+    const [hasCopiedJson, setHasCopiedJson] = useState(false);
     const [analyticsSortBy, setAnalyticsSortBy] = useState('READS'); // 'READS' | 'RECENT'
     const [analysisSearch, setAnalysisSearch] = useState('');
     const [pendingRequestType, setPendingRequestType] = useState('DOCUMENT'); // 'DOCUMENT' | 'COORDINATOR'
@@ -212,31 +314,24 @@ const DashboardPage = ({
     const activeUserId = activeUser?.id;
     const greeting = useMemo(() => getTimeOfDayGreeting(), []);
 
-    // FETCH DATA
+    // FETCH DATA (ONLY FETCH UNINITIALIZED STORES TO PREVENT NETWORK THRASHING & LAG)
     useEffect(() => {
-        fetchDocuments().catch(() => {});
-        fetchDocumentRequests().catch(() => {});
-        fetchDepartments().catch(() => {});
-        fetchUsers().catch(() => {});
-        fetchCoordinatorRequests().catch(() => {});
-        fetchAuditLogs().catch(() => {});
+        if (!documents || documents.length === 0) fetchDocuments().catch(() => {});
+        if (!documentVersions || documentVersions.length === 0) fetchAllDocumentVersions().catch(() => {});
+        if (!requests || requests.length === 0) fetchDocumentRequests().catch(() => {});
+        if (!departments || departments.length === 0) fetchDepartments().catch(() => {});
+        if (!users || users.length === 0) fetchUsers().catch(() => {});
+        if (!coordinatorRequests || coordinatorRequests.length === 0) fetchCoordinatorRequests().catch(() => {});
+        if (!auditLogs || auditLogs.length === 0) fetchAuditLogs().catch(() => {});
     }, [
         fetchDocuments,
+        fetchAllDocumentVersions,
         fetchDocumentRequests,
         fetchDepartments,
         fetchUsers,
         fetchCoordinatorRequests,
         fetchAuditLogs,
     ]);
-
-    // SYNC SHARES
-    useEffect(() => {
-        if (!activeUser) return;
-        const timer = setTimeout(() => {
-            syncAllDocumentShares(activeUser, departments).catch(() => {});
-        }, 120);
-        return () => clearTimeout(timer);
-    }, [activeUser?.id, activeUser?.departmentId, activeUser?.role, departments?.length, syncAllDocumentShares]);
 
     // Resolve user's unit
     const userUnitName = useMemo(() => {
@@ -336,7 +431,7 @@ const DashboardPage = ({
         const readMap = new Map();
         safeLogs.forEach((log) => {
             const act = String(log?.action || '').toUpperCase();
-            if (!['READ', 'VIEW', 'VIEWED'].includes(act)) return;
+            if (!['READ', 'VIEW', 'VIEWED', 'DOWNLOAD', 'DOWNLOADED', 'ACCESS', 'ACCESSED'].includes(act)) return;
 
             const docId = log?.entityId || log?.document?.id;
             if (!docId) return;
@@ -389,17 +484,53 @@ const DashboardPage = ({
 
         const analyticsList = eligibleFiles.map((doc) => {
             const docLogs = readMap.get(doc.id) || readMap.get(cleanId(doc.id)) || [];
-            docLogs.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
 
-            const slots = compute7DaySlots(docLogs);
-            const allTimeSlots = computeAllTimeSlots(docLogs);
-            const weekReads = slots.reduce((acc, s) => acc + s.count, 0);
-            const totalReads = docLogs.length;
+            // Filter docLogs to ONLY non-Records Management Office faculty reads
+            const nonRmoLogs = docLogs.filter((log) => {
+                const actorId = log?.actor?.id || log?.actorId;
+                let actorUser = safeUsers.find((u) => String(u.id) === String(actorId)) || log?.actor;
+                if (!actorUser && typeof log?.data === 'string') {
+                    try {
+                        const parsed = JSON.parse(log.data);
+                        actorUser = { id: actorId, role: parsed.role, departmentId: parsed.departmentId };
+                    } catch {}
+                }
+                return !isRmoUser(actorUser, safeDepts);
+            });
 
-            const weekUniqueActors = new Set();
-            slots.forEach((s) => s.uniqueActors?.forEach((actorId) => weekUniqueActors.add(actorId)));
-            const weekUniqueReaders = weekUniqueActors.size;
-            const totalUniqueReaders = new Set(docLogs.map((l) => l?.actor?.id ?? l?.actorId).filter(Boolean)).size;
+            // Count readership once per user only ("only 1 of this should work, count readership up once per user only")
+            const userFirstReadMap = new Map();
+            nonRmoLogs.forEach((log) => {
+                const actorId = String(log?.actor?.id || log?.actorId || '');
+                if (!actorId) return;
+                const logTime = log.createdAt ? new Date(log.createdAt).getTime() : 0;
+                if (!userFirstReadMap.has(actorId)) {
+                    userFirstReadMap.set(actorId, log);
+                } else {
+                    const existingLog = userFirstReadMap.get(actorId);
+                    const existingTime = existingLog.createdAt ? new Date(existingLog.createdAt).getTime() : 0;
+                    if (logTime < existingTime) {
+                        userFirstReadMap.set(actorId, log);
+                    }
+                }
+            });
+
+            const uniqueUserReadLogs = Array.from(userFirstReadMap.values());
+            uniqueUserReadLogs.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+
+            const totalReads = uniqueUserReadLogs.length;
+            const totalUniqueReaders = totalReads;
+
+            const now = new Date();
+            const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+            const weekUniqueUserLogs = uniqueUserReadLogs.filter(
+                (l) => l.createdAt && new Date(l.createdAt) >= sevenDaysAgo
+            );
+            const weekReads = weekUniqueUserLogs.length;
+            const weekUniqueReaders = weekReads;
+
+            const slots = compute7DaySlots(uniqueUserReadLogs);
+            const allTimeSlots = computeAllTimeSlots(uniqueUserReadLogs);
 
             let parentFolderName = null;
             let currParentId = doc.parentId ?? doc.parent?.id ?? doc.parentFolderId;
@@ -426,8 +557,8 @@ const DashboardPage = ({
             }
 
             const deptCounts = {};
-            docLogs.forEach((l) => {
-                const actorUser = safeUsers.find((u) => u.id === (l?.actor?.id ?? l?.actorId));
+            uniqueUserReadLogs.forEach((l) => {
+                const actorUser = safeUsers.find((u) => String(u.id) === String(l?.actor?.id ?? l?.actorId));
                 let deptId = actorUser?.departmentId;
                 if (!deptId && typeof l?.data === 'string') {
                     try {
@@ -450,14 +581,19 @@ const DashboardPage = ({
                 }
             });
 
-            const lastLog = docLogs[0];
+            const lastLog = uniqueUserReadLogs[0];
             const lastReadAt = lastLog?.createdAt ? new Date(lastLog.createdAt) : null;
 
-            const latestVer = Array.isArray(doc.versions) && doc.versions.length > 0
-                ? doc.versions[0]
-                : (doc.latestVersion ?? null);
+            const versionsForDoc = (documentVersions || []).filter(
+                (v) => cleanId(v.document?.id ?? v.documentId) === cleanId(doc.id)
+            );
+            const latestVer = versionsForDoc.length > 0
+                ? [...versionsForDoc].sort((a, b) => (b.version ?? 0) - (a.version ?? 0))[0]
+                : (Array.isArray(doc.versions) && doc.versions.length > 0
+                    ? doc.versions[0]
+                    : (doc.latestVersion ?? null));
             const rawClassification = String(
-                doc.classification || latestVer?.classification || constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED
+                latestVer?.classification || doc.classification || constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED
             ).toUpperCase();
             const classification = CLASSIFICATION_STYLES[rawClassification] ? rawClassification : 'UNCLASSIFIED';
             const classificationLabel = CLASSIFICATION_LABELS[classification] || 'Unclassified';
@@ -482,7 +618,12 @@ const DashboardPage = ({
                 allTimeSlots,
                 topDeptName,
                 lastReadAt,
-                documentItem: doc,
+                documentItem: {
+                    ...doc,
+                    classification,
+                    latestVersion: latestVer,
+                    versions: versionsForDoc,
+                },
             };
         });
 
@@ -508,7 +649,7 @@ const DashboardPage = ({
         }
 
         return searchFiltered.slice(0, 8);
-    }, [documents, documentShares, auditLogs, users, departments, analyticsSortBy, analysisSearch]);
+    }, [documents, documentVersions, documentShares, auditLogs, users, departments, analyticsSortBy, analysisSearch]);
 
     // PENDING ACTION ITEMS (SEGMENTED: DOCUMENT vs COORDINATOR)
     const { pendingActionItems, pendingDocCount, pendingCoordCount } = useMemo(() => {
@@ -629,7 +770,13 @@ const DashboardPage = ({
     }, [departments]);
 
     // FILTERED & PAGINATED AUDIT LOGS
-    const { paginatedAuditLogs, totalAuditPages, totalAuditCount } = useMemo(() => {
+    const {
+        paginatedAuditLogs,
+        totalAuditPages,
+        totalAuditCount,
+        auditStartIndex = 0,
+        auditSafePage = 1,
+    } = useMemo(() => {
         const safeAuditLogs = Array.isArray(auditLogs) ? auditLogs : [];
         const safeUsers = Array.isArray(users) ? users : [];
         const safeDepts = Array.isArray(departments) ? departments : [];
@@ -643,6 +790,21 @@ const DashboardPage = ({
             if (filterValue.startsWith('entity:')) selectedEntities.push(filterValue.replace('entity:', ''));
             if (filterValue.startsWith('action:')) selectedActions.push(filterValue.replace('action:', ''));
             if (filterValue.startsWith('dept:')) selectedDepts.push(filterValue.replace('dept:', ''));
+        });
+
+        // Build O(1) lookup maps for instant resolution of actors and departments
+        const userById = new Map();
+        const userByUnivId = new Map();
+        const userByEmail = new Map();
+        safeUsers.forEach((u) => {
+            if (u?.id) userById.set(String(u.id), u);
+            if (u?.universityId) userByUnivId.set(String(u.universityId), u);
+            if (u?.email) userByEmail.set(String(u.email).toLowerCase(), u);
+        });
+
+        const deptById = new Map();
+        safeDepts.forEach((d) => {
+            if (d?.id) deptById.set(String(d.id), d);
         });
 
         const filtered = safeAuditLogs.filter((log) => {
@@ -661,10 +823,11 @@ const DashboardPage = ({
 
             // 3. DEPARTMENT FILTERING
             if (selectedDepts.length > 0) {
-                const actorId = typeof log?.actor === 'object' ? log.actor?.id : (log?.actorId ?? log?.actor);
-                const actor = safeUsers.find((item) => item?.id === actorId);
+                const rawActor = log?.actor && typeof log.actor === 'object' ? log.actor : null;
+                const actorId = rawActor?.id || log?.actorId || (typeof log?.actor === 'string' ? log.actor : null);
+                const actor = actorId ? userById.get(String(actorId)) : null;
                 const parsedData = parseLogData(log?.data);
-                const logDeptId = actor?.departmentId || log?.departmentId || parsedData?.departmentId;
+                const logDeptId = actor?.departmentId || log?.departmentId || parsedData?.departmentId || parsedData?.actorDepartmentId;
                 if (!logDeptId || !selectedDepts.includes(logDeptId)) {
                     return false;
                 }
@@ -674,15 +837,54 @@ const DashboardPage = ({
         });
 
         const formatted = filtered.map((log) => {
-            const actorId = typeof log?.actor === 'object' ? log.actor?.id : (log?.actorId ?? log?.actor);
-            const actor = safeUsers.find((item) => item?.id === actorId) || (typeof log?.actor === 'object' ? log.actor : null);
-            const actorName = actor ? `${actor.firstName ?? ''} ${actor.lastName ?? ''}`.trim() || actor.name || 'Records Office' : 'Institutional System';
-            const actorRole = actor?.role ?? (typeof log?.actor === 'object' ? log.actor?.role : null) ?? constants.USERS_ROLE.MEMBER;
-            const actorDepartment = safeDepts.find((item) => item?.id === actor?.departmentId)?.name ?? 'Records Management Office';
+            const parsedData = parseLogData(log?.data);
+            const rawActor = log?.actor && typeof log.actor === 'object' ? log.actor : null;
+
+            const actorId =
+                rawActor?.id ||
+                log?.actorId ||
+                (typeof log?.actor === 'string' ? log.actor : null) ||
+                parsedData?.actorId ||
+                parsedData?.actor?.id ||
+                null;
+
+            const actorFromUsers = actorId
+                ? (userById.get(String(actorId)) || userByUnivId.get(String(actorId)) || (parsedData?.actorEmail ? userByEmail.get(String(parsedData.actorEmail).toLowerCase()) : null))
+                : (parsedData?.actorEmail ? userByEmail.get(String(parsedData.actorEmail).toLowerCase()) : null);
+
+            const activeUserMatch = (activeUser?.id && actorId === activeUser.id) ||
+                (activeUser?.email && (parsedData?.actorEmail === activeUser.email || rawActor?.email === activeUser.email))
+                ? activeUser
+                : null;
+
+            const actor = actorFromUsers || activeUserMatch || rawActor || parsedData?.actor || null;
+
+            const rawName = actor ? `${actor.firstName ?? ''} ${actor.lastName ?? ''}`.trim() || actor.name : null;
+            const actorName =
+                rawName ||
+                parsedData?.actorName ||
+                parsedData?.userName ||
+                (rawActor ? `${rawActor.firstName ?? ''} ${rawActor.lastName ?? ''}`.trim() || rawActor.name : null) ||
+                (actor?.email ? actor.email.split('@')[0] : null) ||
+                'Institutional System';
+
+            const actorRole =
+                actor?.role ||
+                parsedData?.actorRole ||
+                parsedData?.role ||
+                rawActor?.role ||
+                activeUserMatch?.role ||
+                (actorName !== 'Institutional System' ? constants.USERS_ROLE.ADMINISTRATOR : constants.USERS_ROLE.MEMBER);
+
+            const deptMatch = deptById.get(String(actor?.departmentId || parsedData?.actorDepartmentId));
+            const actorDepartment =
+                deptMatch?.name ||
+                actor?.department ||
+                parsedData?.actorDepartment ||
+                'Records Management Office';
             const canonicalAction = toCanonicalAction(log?.action);
             const canonicalEntity = toCanonicalEntity(log?.entityType);
 
-            const parsedData = parseLogData(log?.data);
             const subjectOrTitle = parsedData.title || parsedData.subject || parsedData.name || null;
 
             let humanDescription = '';
@@ -750,36 +952,26 @@ const DashboardPage = ({
         });
 
         const totalCount = searchFiltered.length;
-        const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+        const totalPages = Math.max(1, Math.ceil(totalCount / auditPageSize));
         const safePage = Math.min(Math.max(1, auditPage), totalPages);
-        const startIndex = (safePage - 1) * PAGE_SIZE;
-        const pageSlice = searchFiltered.slice(startIndex, startIndex + PAGE_SIZE);
+        const startIndex = (safePage - 1) * auditPageSize;
+        const pageSlice = searchFiltered.slice(startIndex, startIndex + auditPageSize);
 
         return {
             paginatedAuditLogs: pageSlice,
             totalAuditPages: totalPages,
             totalAuditCount: totalCount,
+            auditSafePage: safePage,
+            auditStartIndex: startIndex,
         };
-    }, [auditLogs, users, departments, auditFilters, auditSearch, auditSort, auditPage]);
+    }, [auditLogs, users, departments, auditFilters, auditSearch, auditSort, auditPage, auditPageSize]);
 
-    // HANDLERS
+    // HANDLERS (AUDIT TRAIL SELECTION OPENS COMPLIANCE PAYLOAD MODAL, DECOUPLED FROM INSPECTOR)
     const handleActivityClick = (activity) => {
         if (!activity) return;
-        if (activity.entityType?.includes('DOCUMENT') && !activity.entityType?.includes('REQUEST')) {
-            const matchedDoc = documents.find((d) => d.id === activity.entityId);
-            if (matchedDoc) {
-                onSelectActivity?.({ ...matchedDoc, _targetTab: 'information' });
-                return;
-            }
-        }
-        if (activity.entityType?.includes('DOCUMENT_REQUEST')) {
-            const matchedReq = requests.find((r) => r.id === activity.entityId);
-            if (matchedReq) {
-                onSelectActivity?.({ ...matchedReq, _targetTab: 'messages' });
-                return;
-            }
-        }
-        onSelectActivity?.(activity);
+        setViewingAuditLog(activity);
+        setShowRawJson(false);
+        setHasCopiedJson(false);
     };
 
     // RENDER
@@ -787,7 +979,7 @@ const DashboardPage = ({
         <div className={`flex flex-col gap-3.5 sm:gap-4.5 w-full ${className ?? ''}`} {...props}>
             {/* 1. EXECUTIVE WELCOME COMMAND HERO */}
             <div className="relative overflow-hidden rounded-2xl border border-surface-border bg-surface p-4 sm:p-5 shadow-xs">
-                <div className="relative flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                <div className="relative flex flex-col md:flex-row md:items-center justify-between gap-4">
                     {/* LEFT CONTENT */}
                     <div className="flex flex-col gap-1.5 max-w-2xl">
                         {/* INSTITUTIONAL STATUS CHIP */}
@@ -820,8 +1012,8 @@ const DashboardPage = ({
                         </p>
                     </div>
 
-                    {/* RIGHT ACTION BUTTONS (MOBILE OPTIMIZED TOUCH TARGETS) */}
-                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full lg:w-auto shrink-0">
+                    {/* RIGHT ACTION BUTTONS (RESPONSIVE TOUCH TARGETS) */}
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full md:w-auto shrink-0">
                         {!isStaff ? (
                             <Button
                                 variant="secondary"
@@ -851,8 +1043,8 @@ const DashboardPage = ({
                 </div>
             </div>
 
-            {/* 2. BENTO-GRID KPI METRIC CARDS */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+            {/* 2. BENTO-GRID KPI METRIC CARDS (ADAPTIVE: 1 COL MOBILE/QUARTER, 2 COLS HALF-WINDOW, 3 COLS FULL DESKTOP) */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-4">
                 {/* CARD 1: TOTAL DOCUMENTS */}
                 <div
                     onClick={() => onNavigate?.('documents')}
@@ -924,10 +1116,10 @@ const DashboardPage = ({
                     </div>
                 </div>
 
-                {/* CARD 3: CONNECTED UNITS */}
+                {/* CARD 3: CONNECTED UNITS (SPANS 2 COLS IN HALF-WINDOW FOR BALANCED PROPORTIONS) */}
                 <div
                     onClick={() => onNavigate?.('departments')}
-                    className="p-3.5 sm:p-4 rounded-xl bg-surface border border-surface-border hover:border-information/50 hover:shadow-md transition-all duration-200 cursor-pointer flex flex-col justify-between gap-2.5 group"
+                    className="p-3.5 sm:p-4 rounded-xl bg-surface border border-surface-border hover:border-information/50 hover:shadow-md transition-all duration-200 cursor-pointer flex flex-col justify-between gap-2.5 group sm:col-span-2 xl:col-span-1"
                 >
                     <div className="flex items-center justify-between">
                         <span className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">
@@ -957,7 +1149,7 @@ const DashboardPage = ({
             </div>
 
             {/* 3. TWO-COLUMN ROW: PENDING REQUESTS + DOCUMENT ANALYSIS */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5 sm:gap-4.5">
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-3.5 sm:gap-4.5">
                 {/* LEFT COLUMN: PENDING REQUESTS */}
                 <div className="p-4 sm:p-5 rounded-2xl bg-surface border border-surface-border flex flex-col gap-3.5 shadow-xs">
                     <div className="flex items-center justify-between border-b border-surface-border pb-3">
@@ -1156,6 +1348,11 @@ const DashboardPage = ({
                                         key={item.id}
                                         onClick={() => {
                                             if (item.documentItem) {
+                                                if (item.documentItem.isArchived) {
+                                                    navigate('/archives');
+                                                } else {
+                                                    navigate('/documents');
+                                                }
                                                 onSelectActivity?.({ ...item.documentItem, _targetTab: 'information' });
                                             }
                                         }}
@@ -1198,7 +1395,7 @@ const DashboardPage = ({
                                                 <div className="flex items-center justify-between text-xs">
                                                     <span className="font-semibold text-text flex items-center gap-1 text-[11px]">
                                                         <Eye className="h-3 w-3 text-accent" />
-                                                        <span>{item.weekReads} weekly reads</span>
+                                                        <span>Weekly Reads</span>
                                                     </span>
                                                     <span className="text-[10px] text-text-muted font-medium">
                                                         {item.weekUniqueReaders} {item.weekUniqueReaders === 1 ? 'reader' : 'readers'}
@@ -1220,7 +1417,7 @@ const DashboardPage = ({
                                                 <div className="flex items-center justify-between text-xs">
                                                     <span className="font-semibold text-text flex items-center gap-1 text-[11px]">
                                                         <BarChart3 className="h-3 w-3 text-sky-500" />
-                                                        <span>{item.totalReads} All-Time Reads</span>
+                                                        <span>All Time Reads</span>
                                                     </span>
                                                     <span className="text-[10px] text-text-muted font-medium">
                                                         {item.totalUniqueReaders} {item.totalUniqueReaders === 1 ? 'reader' : 'readers'}
@@ -1248,7 +1445,7 @@ const DashboardPage = ({
             {/* 4. AUDIT LOGS (FULL WIDTH) */}
             <div className="p-4 sm:p-5 rounded-2xl bg-surface border border-surface-border flex flex-col gap-3.5 shadow-xs">
                 {/* AUDIT HEADER & CONTROLS */}
-                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-surface-border pb-3">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-surface-border pb-3">
                     <div className="flex items-center gap-2.5">
                         <div className="p-2 rounded-lg bg-accent-background text-accent">
                             <Activity className="h-4 w-4" />
@@ -1258,10 +1455,10 @@ const DashboardPage = ({
                         </h2>
                     </div>
 
-                    {/* CONTROLS: SEARCH, SORT BEFORE FILTER */}
-                    <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+                    {/* CONTROLS: SEARCH, SORT BEFORE FILTER (FLEXIBLE WRAP FOR ALL SCREEN WIDTHS) */}
+                    <div className="flex items-center gap-2 flex-wrap w-full md:w-auto">
                         {/* 1. SEARCH FIELD */}
-                        <div className="w-full sm:w-52 md:w-60 shrink-0">
+                        <div className="w-full sm:flex-1 sm:min-w-[160px] md:w-56 shrink-0">
                             <SearchField
                                 placeholder="Search audit trail..."
                                 value={auditSearch}
@@ -1277,8 +1474,8 @@ const DashboardPage = ({
                             />
                         </div>
 
-                        {/* 2. SORT SELECTFIELD (BEFORE FILTER) */}
-                        <div className="w-full sm:w-44 md:w-48 shrink-0">
+                        {/* 2. SORT SELECTFIELD */}
+                        <div className="w-full sm:w-auto sm:min-w-[140px] shrink-0">
                             <SelectField
                                 value={auditSort}
                                 options={AUDIT_SORT_OPTIONS}
@@ -1294,7 +1491,7 @@ const DashboardPage = ({
                         </div>
 
                         {/* 3. FILTER COMBOFIELD */}
-                        <div className="w-full sm:w-52 md:w-60 shrink-0">
+                        <div className="w-full sm:w-auto sm:min-w-[160px] shrink-0">
                             <ComboField
                                 options={auditFilterOptions}
                                 value={auditFilters}
@@ -1374,24 +1571,32 @@ const DashboardPage = ({
                 </div>
 
                 {/* PAGINATION CONTROLS */}
-                {totalAuditPages > 1 && (
-                    <div className="flex items-center justify-between pt-2.5 border-t border-surface-border text-xs text-text-muted mt-auto">
-                        <span>
-                            Page {auditPage} of {totalAuditPages}
-                        </span>
+                {totalAuditCount > 0 && (
+                    <div className="flex flex-col sm:flex-row items-center justify-between gap-2.5 pt-2.5 border-t border-surface-border text-xs text-text-muted mt-auto">
+                        <div className="flex items-center gap-2">
+                            <span>
+                                Showing <span className="font-semibold text-text">{auditStartIndex + 1}</span>–<span className="font-semibold text-text">{Math.min(auditStartIndex + auditPageSize, totalAuditCount)}</span> of <span className="font-semibold text-text">{totalAuditCount}</span> entries
+                            </span>
+                        </div>
+
                         <div className="flex items-center gap-2">
                             <button
                                 type="button"
-                                disabled={auditPage <= 1}
+                                disabled={auditSafePage <= 1}
                                 onClick={() => setAuditPage((prev) => Math.max(1, prev - 1))}
                                 className="px-2.5 py-1 rounded-md border border-surface-border bg-surface hover:bg-surface-hover disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors flex items-center gap-1 font-medium"
                             >
                                 <ChevronLeft className="h-3.5 w-3.5" />
                                 <span>Previous</span>
                             </button>
+
+                            <span className="px-2 font-mono font-medium text-text">
+                                {auditSafePage} / {totalAuditPages}
+                            </span>
+
                             <button
                                 type="button"
-                                disabled={auditPage >= totalAuditPages}
+                                disabled={auditSafePage >= totalAuditPages}
                                 onClick={() => setAuditPage((prev) => Math.min(totalAuditPages, prev + 1))}
                                 className="px-2.5 py-1 rounded-md border border-surface-border bg-surface hover:bg-surface-hover disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors flex items-center gap-1 font-medium"
                             >
@@ -1402,6 +1607,196 @@ const DashboardPage = ({
                     </div>
                 )}
             </div>
+
+            {/* AUDIT LOG DETAILS MODAL (PAYLOAD & STATE SNAPSHOT INSPECTION, SAFE READ-ONLY) */}
+            {viewingAuditLog && (() => {
+                const crudAction = toCrudVerb(viewingAuditLog.canonicalAction);
+                const entityLabel = (viewingAuditLog.entityBadge?.label || viewingAuditLog.entityType || 'ENTITY').toUpperCase();
+                const modalTitle = `${entityLabel} ${crudAction}`;
+                const targetEntityName = resolveTargetEntityName(viewingAuditLog, {
+                    documents,
+                    departments,
+                    users,
+                    requests,
+                    coordinatorRequests,
+                });
+
+                return (
+                    <Modal
+                        isOpen={Boolean(viewingAuditLog)}
+                        onClose={() => {
+                            setViewingAuditLog(null);
+                            setShowRawJson(false);
+                            setHasCopiedJson(false);
+                        }}
+                        size="lg"
+                        title={modalTitle}
+                        description={`Entry #${viewingAuditLog.id ? viewingAuditLog.id.slice(0, 8) : 'RECORD'} • Recorded on ${viewingAuditLog.timestamp || formatDateTime(viewingAuditLog.createdAt)}`}
+                        icon={Shield}
+                        callout={null}
+                        actions={
+                            <div className="flex items-center justify-end gap-2 w-full">
+                                <Button
+                                    variant="secondary"
+                                    onClick={() => {
+                                        setViewingAuditLog(null);
+                                        setShowRawJson(false);
+                                        setHasCopiedJson(false);
+                                    }}
+                                    label="Close"
+                                    className="w-full sm:w-auto"
+                                />
+                            </div>
+                        }
+                    >
+                        <div className="flex flex-col gap-4 py-2 text-text">
+                            {/* ACTOR & ACTION OVERVIEW CARD */}
+                            <div className="flex flex-col gap-2 p-3.5 bg-surface-hover/70 rounded-xl border border-surface-border text-xs shadow-2xs">
+                                {/* Actor => Name + Role */}
+                                <div className="flex items-center justify-between py-1 border-b border-surface-border/60">
+                                    <span className="font-medium text-text-muted">Actor:</span>
+                                    <div className="flex items-center gap-1.5">
+                                        <Avatar
+                                            src={viewingAuditLog.actorUser ? resolveUserAvatar(viewingAuditLog.actorUser, activeUser) : null}
+                                            alt={viewingAuditLog.user}
+                                            size="small"
+                                            className="h-5 w-5 text-[10px]"
+                                        />
+                                        <span className="font-semibold text-text">{viewingAuditLog.user}</span>
+                                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${ROLE_BADGE_STYLES[viewingAuditLog.role] || 'bg-surface-hover text-text-muted border-surface-border'}`}>
+                                            {viewingAuditLog.role}
+                                        </span>
+                                    </div>
+                                </div>
+
+                                {/* Department => Name of the Department of the actor */}
+                                <div className="flex items-center justify-between py-1 border-b border-surface-border/60">
+                                    <span className="font-medium text-text-muted">Department:</span>
+                                    <span className="font-semibold text-text">{viewingAuditLog.department}</span>
+                                </div>
+
+                                {/* Entity => EntityType badge [ name of the actual target entity rather than an id ] */}
+                                <div className="flex items-center justify-between py-1 border-b border-surface-border/60">
+                                    <span className="font-medium text-text-muted">Entity:</span>
+                                    <div className="flex items-center gap-2 max-w-[70%] justify-end">
+                                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border shrink-0 ${viewingAuditLog.entityBadge?.style || 'bg-surface-hover text-text-muted border-surface-border'}`}>
+                                            {viewingAuditLog.entityBadge?.label || viewingAuditLog.entityType}
+                                        </span>
+                                        <span className="font-semibold text-text truncate text-xs" title={targetEntityName}>
+                                            {targetEntityName}
+                                        </span>
+                                    </div>
+                                </div>
+
+                                {/* Action => CRUD (do not CRUD [ CRUD ]) */}
+                                <div className="flex items-center justify-between py-1">
+                                    <span className="font-medium text-text-muted">Action:</span>
+                                    <span className={`font-bold px-2 py-0.5 rounded border text-[11px] ${ACTION_VERB_STYLES[viewingAuditLog.canonicalAction] || 'bg-surface-hover text-text-muted border-surface-border'}`}>
+                                        {crudAction}
+                                    </span>
+                                </div>
+                            </div>
+
+                        {/* PAYLOAD / STATE DETAILS (COORDINATOR STYLE) */}
+                        <div className="flex flex-col gap-2">
+                            <div className="flex items-center justify-between">
+                                <span className="text-xs font-semibold text-text">Event</span>
+                                <button
+                                    type="button"
+                                    onClick={() => setShowRawJson((prev) => !prev)}
+                                    className="text-[11px] text-accent hover:underline cursor-pointer flex items-center gap-1"
+                                >
+                                    {showRawJson ? 'View Structured' : 'View Raw JSON'}
+                                </button>
+                            </div>
+
+                            {showRawJson ? (
+                                <div className="relative">
+                                    <pre className="p-3 rounded-xl bg-surface border border-surface-border text-[11px] font-mono text-text overflow-x-auto max-h-64 overflow-y-auto shadow-2xs select-text">
+                                        {JSON.stringify(viewingAuditLog.parsedData, null, 2)}
+                                    </pre>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            navigator.clipboard?.writeText(JSON.stringify(viewingAuditLog.parsedData, null, 2));
+                                            setHasCopiedJson(true);
+                                            setTimeout(() => setHasCopiedJson(false), 2000);
+                                        }}
+                                        className="absolute top-2 right-2 px-2 py-1 rounded bg-surface-hover text-text-muted hover:text-text border border-surface-border text-[10px] font-medium flex items-center gap-1 cursor-pointer"
+                                    >
+                                        {hasCopiedJson ? <Check className="h-3 w-3 text-accent" /> : <Copy className="h-3 w-3" />}
+                                        <span>{hasCopiedJson ? 'Copied' : 'Copy'}</span>
+                                    </button>
+                                </div>
+                            ) : (
+                                <div className="p-3.5 rounded-xl bg-surface border border-surface-border text-xs text-text overflow-x-auto flex flex-col gap-2 max-h-64 overflow-y-auto shadow-2xs">
+                                    {viewingAuditLog.parsedData && typeof viewingAuditLog.parsedData === 'object' && Object.keys(viewingAuditLog.parsedData).length > 0 ? (
+                                        Object.entries(viewingAuditLog.parsedData)
+                                            .filter(([k]) => !['actorId', 'actorRole', 'actorEmail', 'actorDepartment', 'actorDepartmentId'].includes(k))
+                                            .map(([k, v]) => {
+                                                if (k === 'old' || k === 'new' || k === 'before' || k === 'after' || k === 'previous' || k === 'current') {
+                                                    const isNew = k === 'new' || k === 'after' || k === 'current';
+                                                    return (
+                                                        <div key={k} className={`p-2.5 rounded-lg border flex flex-col gap-1 ${
+                                                            isNew
+                                                                ? 'bg-accent/5 border-accent/30'
+                                                                : 'bg-surface-hover/50 border-surface-border'
+                                                        }`}>
+                                                            <span className={`text-[11px] font-bold uppercase tracking-wider ${isNew ? 'text-accent' : 'text-text-muted'}`}>
+                                                                {isNew ? 'Resulting / New State' : 'Previous State'}
+                                                            </span>
+                                                            <div className="flex flex-col gap-1 text-xs">
+                                                                {typeof v === 'object' && v !== null ? (
+                                                                    Object.entries(v).map(([propK, propV]) => (
+                                                                        <div key={propK} className="flex items-center justify-between gap-2">
+                                                                            <span className="text-text-muted capitalize">{propK}:</span>
+                                                                            <span className="font-semibold text-text">{String(propV ?? '—')}</span>
+                                                                        </div>
+                                                                    ))
+                                                                ) : (
+                                                                    <span className="font-medium text-text">{String(v ?? '—')}</span>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                }
+
+                                                if (k === 'attachments' && Array.isArray(v)) {
+                                                    return (
+                                                        <div key={k} className="flex items-center justify-between gap-2 py-1 border-b border-surface-border/50">
+                                                            <span className="font-semibold text-text-muted capitalize shrink-0">Attachments:</span>
+                                                            <div className="flex flex-col gap-1 items-end">
+                                                                {v.map((att, idx) => (
+                                                                    <span key={idx} className="text-right text-accent font-medium truncate inline-flex items-center gap-1 px-2 py-0.5 rounded bg-accent/10">
+                                                                        📎 {att.name || att.title || `Document #${idx + 1}`}
+                                                                    </span>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                }
+
+                                                return (
+                                                    <div key={k} className="flex items-center justify-between gap-2 py-1 border-b border-surface-border/50">
+                                                        <span className="font-semibold text-text-muted capitalize shrink-0">{k.replace(/_/g, ' ')}:</span>
+                                                        <span className="font-medium text-text text-right font-mono truncate max-w-[280px]">
+                                                            {typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v ?? '—')}
+                                                        </span>
+                                                    </div>
+                                                );
+                                            })
+                                    ) : (
+                                        <div className="text-xs text-text-muted py-2 text-center">
+                                            No structured metadata payload recorded with this event.
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </Modal>
+                );
+            })()}
         </div>
     );
 };

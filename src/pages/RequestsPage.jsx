@@ -41,7 +41,7 @@ import {
     useAuthStore,
     useCoordinatorStore,
 } from '../stores';
-import { storageService, coordinatorApprovalService } from '../services';
+import { storageService, coordinatorApprovalService, systemEventService } from '../services';
 import { constants } from '../constants';
 
 
@@ -1240,6 +1240,14 @@ const RequestsPage = ({
                                                                                         }
 
                                                                                         await storageService.downloadDocument(path, fileName);
+                                                                                        const docToRecord = matchedDoc || (targetDocId ? { id: targetDocId, name: fileName } : null);
+                                                                                        if (docToRecord && currentUser?.id) {
+                                                                                            systemEventService.recordDocumentRead({
+                                                                                                document: docToRecord,
+                                                                                                user: currentUser,
+                                                                                                version: latestVer?.version,
+                                                                                            }).catch(() => {});
+                                                                                        }
                                                                                     } catch (err) {
                                                                                         showToast({
                                                                                             type: 'error',

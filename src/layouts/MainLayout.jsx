@@ -108,6 +108,7 @@ const MainLayout = ({
     const departments = useDepartmentStore((state) => state.departments);
     const users = useUserStore((state) => state.users);
     const coordinatorRequests = useCoordinatorStore((state) => state.coordinatorRequests);
+    const documentRequests = useDocumentStore((state) => state.documentRequests);
 
     // HOOKS
     const { showToast } = useToast();
@@ -395,7 +396,7 @@ const MainLayout = ({
     const storeUnreadCount = notifications.filter((item) => !item.isRead).length;
     const unreadNotificationsCount = notificationCount > 0 ? notificationCount : storeUnreadCount;
     const hasUnread = hasUnreadNotifications || unreadNotificationsCount > 0;
-    const isNotificationActive = isNotificationPanelOpen || hasUnread;
+    const isNotificationActive = isNotificationPanelOpen;
 
     const shouldRenderSidebar = hasSidebar && showSidebar;
     const shouldRenderTopBar = hasTopBar && showTopBar;
@@ -452,17 +453,21 @@ const MainLayout = ({
                                 departments={departments}
                                 users={users}
                                 requests={coordinatorRequests}
+                                coordinatorRequests={coordinatorRequests}
+                                documentRequests={documentRequests}
                             />
                         }
                         hasDetailPanel={shouldRenderDetailPanel}
                         isDetailPanelOpen={effectiveIsDetailPanelOpen}
                         onToggleDetailPanel={handleToggleDetailPanel}
                         isNotificationActive={isNotificationActive}
+                        hasUnreadNotifications={hasUnread}
                         onToggleNotifications={handleToggleNotificationPanel}
                         notificationTriggerRef={notificationReference}
                         notificationContent={
                             <Notifications
                                 isOpen={isNotificationPanelOpen}
+                                onClose={() => setIsNotificationPanelOpen(false)}
                                 notifications={notifications}
                                 unreadCount={unreadNotificationsCount}
                                 onMarkAsRead={markNotificationAsRead}

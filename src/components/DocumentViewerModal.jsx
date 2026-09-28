@@ -602,6 +602,13 @@ const DocumentViewerModal = ({
 
             const targetPath = storagePath || resolvedDoc?.path || resolvedDoc?.url || resolvedDoc?.downloadUrl;
             await storageService.downloadDocument(targetPath, effectiveDownloadName);
+            if (resolvedDoc && currentUser?.id) {
+                systemEventService.recordDocumentRead({
+                    document: resolvedDoc,
+                    user: currentUser,
+                    version: activeVersion?.version,
+                }).catch(() => {});
+            }
             showToast({
                 type: 'success',
                 title: 'Download Started',

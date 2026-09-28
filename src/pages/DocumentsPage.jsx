@@ -1337,6 +1337,15 @@ const DocumentsPage = ({
                         documents,
                         documentVersions
                     );
+                    const childFiles = (documents || []).filter(
+                        (d) => !d.isFolder && (d.parentId === item.id || d.parentFolderId === item.id)
+                    );
+                    childFiles.forEach((file) => {
+                        systemEventService.recordDocumentRead({
+                            document: file,
+                            user: currentUser,
+                        }).catch(() => {});
+                    });
                 } else {
                     const vers = (documentVersions || []).filter(
                         (v) => (v.document?.id ?? v.documentId) === item.id
@@ -1346,6 +1355,13 @@ const DocumentsPage = ({
                         : null;
                     const path = latestVer?.path || item.path || item.url || item.downloadUrl;
                     await storageService.downloadDocument(path, fileName);
+                    if (currentUser?.id) {
+                        systemEventService.recordDocumentRead({
+                            document: item,
+                            user: currentUser,
+                            version: latestVer?.version,
+                        }).catch(() => {});
+                    }
                 }
             } catch (err) {
                 showToast({

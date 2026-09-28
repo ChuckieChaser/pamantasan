@@ -49,7 +49,7 @@ import {
     useNotificationStore,
     useUserStore,
 } from './stores';
-import { authService, storageService, coordinatorApprovalService, realtimeSyncService } from './services';
+import { authService, storageService, coordinatorApprovalService, realtimeSyncService, systemEventService } from './services';
 import { constants } from './constants';
 
 
@@ -599,6 +599,15 @@ const AppContent = () => {
                         useDocumentStore.getState().documents,
                         useDocumentStore.getState().documentVersions
                     );
+                    const childFiles = (allDocs || []).filter(
+                        (d) => !d.isFolder && (d.parentId === targetDocId || d.parentFolderId === targetDocId)
+                    );
+                    childFiles.forEach((file) => {
+                        systemEventService.recordDocumentRead({
+                            document: file,
+                            user: currentUser,
+                        }).catch(() => {});
+                    });
                 } else {
                     let allVersions = useDocumentStore.getState().documentVersions ?? [];
                     let vers = allVersions.filter(
@@ -640,6 +649,14 @@ const AppContent = () => {
                         rawPath,
                         fileName
                     );
+                    const docToRecord = matchedDoc || (targetDocId ? { id: targetDocId, name: fileName } : (item?.id ? item : null));
+                    if (docToRecord && currentUser?.id) {
+                        systemEventService.recordDocumentRead({
+                            document: docToRecord,
+                            user: currentUser,
+                            version: latestVer?.version,
+                        }).catch(() => {});
+                    }
                 }
             } catch (err) {
                 console.error('Failed to download item:', err);

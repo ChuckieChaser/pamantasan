@@ -124,9 +124,17 @@ const systemEventService = {
             });
         }
 
-        // 3. Exclude actor if requested (default true so actors aren't spammed with their own actions)
-        if (excludeActor && actorId) {
-            recipientSet.delete(String(actorId));
+        // 3. Exclude actor / acting user (always exclude so actors never receive notifications for their own actions)
+        const currentAuthUser = useAuthStore.getState().currentUser;
+        const actorIdsToExclude = new Set();
+        if (actorId) actorIdsToExclude.add(String(actorId).toLowerCase());
+        if (currentAuthUser?.id) actorIdsToExclude.add(String(currentAuthUser.id).toLowerCase());
+        if (currentAuthUser?.uid) actorIdsToExclude.add(String(currentAuthUser.uid).toLowerCase());
+
+        for (const id of Array.from(recipientSet)) {
+            if (actorIdsToExclude.has(String(id).toLowerCase())) {
+                recipientSet.delete(id);
+            }
         }
 
         return Array.from(recipientSet);
@@ -148,24 +156,78 @@ const systemEventService = {
         isMajor = null,
         excludeActor = true,
     }) => {
+        const currentAuthUser = useAuthStore.getState().currentUser || null;
+        const actorObj = (actor && typeof actor === 'object')
+            ? actor
+            : currentAuthUser;
         const resolvedActorId =
             actorId ||
-            (typeof actor === 'object' ? actor?.id : actor) ||
-            useAuthStore.getState().currentUser?.id ||
+            actorObj?.id ||
+            actorObj?.uid ||
+            currentAuthUser?.id ||
+            currentAuthUser?.uid ||
+            (typeof actor === 'string' ? actor : null) ||
             null;
-        const stringifiedData = typeof data === 'string' ? data : JSON.stringify(data);
+        const resolvedActorName = actorObj
+            ? `${actorObj.firstName || ''} ${actorObj.lastName || ''}`.trim() || actorObj.name || actorObj.displayName || null
+            : null;
+        const resolvedActorRole = actorObj?.role || null;
+        const resolvedActorEmail = actorObj?.email || null;
+        const resolvedActorDepartment = actorObj?.department || actorObj?.departmentName || null;
+        const resolvedActorDepartmentId = actorObj?.departmentId || null;
+
+        const baseData = typeof data === 'object' && data !== null
+            ? data
+            : (() => {
+                  try {
+                      return JSON.parse(data);
+                  } catch {
+                      return { raw: data };
+                  }
+              })();
+
+        const enrichedData = {
+            ...baseData,
+            actorId: resolvedActorId,
+            actorName: resolvedActorName,
+            actorRole: resolvedActorRole,
+            actorEmail: resolvedActorEmail,
+            actorDepartment: resolvedActorDepartment,
+            actorDepartmentId: resolvedActorDepartmentId,
+        };
+        const stringifiedData = JSON.stringify(enrichedData);
         const resolvedIsMajor = isMajor !== null ? isMajor : isMajorAction(entityType, action);
+
+        const normalizeAction = (act) => {
+            const a = String(act || '').toUpperCase().trim();
+            if (a.includes('DELETE') || a.includes('REMOVE')) return 'DELETED';
+            if (a.includes('READ') || a.includes('VIEW')) return 'READ';
+            if (a.includes('CREATE') || a.includes('UPLOAD') || a.includes('ATTACH') || a === 'NEW') return 'CREATED';
+            return 'UPDATED';
+        };
+
+        const normalizeEntityType = (ent) => {
+            const e = String(ent || '').toUpperCase().replace(/_/g, ' ').trim();
+            if (e.includes('COORDINATOR')) return 'COORDINATOR REQUESTS';
+            if (e.includes('DOCUMENT REQUEST')) return 'DOCUMENT REQUESTS';
+            if (e.includes('DOCUMENT')) return 'DOCUMENTS';
+            if (e.includes('USER')) return 'USERS';
+            if (e.includes('DEPARTMENT')) return 'DEPARTMENTS';
+            return 'DOCUMENTS';
+        };
+
+        const canonicalAction = normalizeAction(action);
+        const canonicalEntityType = normalizeEntityType(entityType);
 
         // 1. CREATE AUDIT LOG SIMULTANEOUSLY
         let auditLogEntry = null;
         try {
-            const actorObj = typeof actor === 'object' ? actor : (useAuthStore.getState().currentUser || null);
             const auditPayload = {
                 actorId: resolvedActorId,
                 actor: actorObj,
-                entityType: entityType,
+                entityType: canonicalEntityType,
                 entityId: String(entityId),
-                action: action,
+                action: canonicalAction,
                 data: stringifiedData,
                 createdAt: new Date().toISOString(),
             };
@@ -184,24 +246,46 @@ const systemEventService = {
             }
         }
 
-        const recipientIds = systemEventService.resolveRecipientIds({
+        const rawRecipientIds = systemEventService.resolveRecipientIds({
             targetRoles,
             targetDepartmentId,
             targetUserIds,
             actorId: resolvedActorId,
-            excludeActor,
+            excludeActor: true,
             users: allUsers,
         });
+
+        // Strictly guarantee the actor or current user never receives a notification for their own actions
+        const actorIdsToExclude = new Set();
+        if (resolvedActorId) actorIdsToExclude.add(String(resolvedActorId).toLowerCase());
+        if (currentAuthUser?.id) actorIdsToExclude.add(String(currentAuthUser.id).toLowerCase());
+        if (currentAuthUser?.uid) actorIdsToExclude.add(String(currentAuthUser.uid).toLowerCase());
+        if (actorObj?.id) actorIdsToExclude.add(String(actorObj.id).toLowerCase());
+
+        const recipientIds = rawRecipientIds.filter(
+            (id) => !actorIdsToExclude.has(String(id).toLowerCase())
+        );
 
         // 3. DISPATCH NOTIFICATIONS TO ALL AFFECTED PARTIES
         const notificationPromises = recipientIds.map(async (recipientId) => {
             try {
+                // Check recipient notification preference from userSettings:
+                // ALL => notifications and email sent
+                // SYSTEM => only notifications (no email)
+                // IMPORTANT => no read notifications (suppress READ actions)
+                const preference = await resolveUserSettingNotification(recipientId);
+
+                // IMPORTANT => no read notifications
+                if (preference === constants.USER_SETTINGS_NOTIFICATION.IMPORTANT && canonicalAction === 'READ') {
+                    return null;
+                }
+
                 const notifPayload = {
                     recipientId: recipientId,
                     actorId: resolvedActorId,
-                    entityType: entityType,
+                    entityType: canonicalEntityType,
                     entityId: String(entityId),
-                    action: action,
+                    action: canonicalAction,
                     isRead: false,
                     isEmailed: false,
                     createdAt: new Date().toISOString(),
@@ -209,14 +293,12 @@ const systemEventService = {
 
                 const inserted = await useNotificationStore.getState().insertNotification(notifPayload);
 
-                // Check recipient email preference:
-                // ALL => email & system notification
-                // SYSTEM => system only notification
-                // IMPORTANT => email on major events only
-                const preference = await resolveUserSettingNotification(recipientId);
+                // ALL => notifications and email sent
+                // SYSTEM => only notifications (no email)
+                // IMPORTANT => email only on major non-read events
                 const shouldSendEmail =
                     preference === constants.USER_SETTINGS_NOTIFICATION.ALL ||
-                    (preference === constants.USER_SETTINGS_NOTIFICATION.IMPORTANT && resolvedIsMajor);
+                    (preference === constants.USER_SETTINGS_NOTIFICATION.IMPORTANT && resolvedIsMajor && canonicalAction !== 'READ');
 
                 if (shouldSendEmail) {
                     const parsedData = typeof data === 'object' ? data : {};
@@ -306,7 +388,7 @@ const systemEventService = {
         try {
             const auditPayload = {
                 actorId: userId,
-                entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT,
+                entityType: 'DOCUMENTS',
                 entityId: docId,
                 action: 'READ',
                 data: JSON.stringify({
