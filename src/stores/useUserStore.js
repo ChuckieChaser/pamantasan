@@ -280,11 +280,30 @@ const useUserStore = create((set, get) => ({
             if (isSuspended) userAction = constants.AUDIT_LOGS_ACTION.SUSPENDED;
             else if (isUnsuspended) userAction = constants.AUDIT_LOGS_ACTION.UNSUSPENDED;
 
+            // Compute old vs new diff for affected/changed fields only
+            const previousData = {};
+            const newData = {};
+            Object.keys(validatedPayload).forEach((k) => {
+                if (existingUser && existingUser[k] !== undefined && existingUser[k] !== validatedPayload[k]) {
+                    previousData[k] = existingUser[k];
+                    newData[k] = validatedPayload[k];
+                }
+            });
+            if (isSuspended && previousData.status === undefined) {
+                previousData.status = existingUser?.status || 'ACTIVE';
+                newData.status = 'SUSPENDED';
+            } else if (isUnsuspended && previousData.status === undefined) {
+                previousData.status = 'SUSPENDED';
+                newData.status = validatedPayload.status || 'ACTIVE';
+            }
+
             systemEventService.recordSystemEvent({
                 entityType: constants.AUDIT_LOGS_ENTITY_TYPE.USER,
                 entityId: id,
                 action: userAction,
                 data: {
+                    old: previousData,
+                    new: newData,
                     name: `${mergedUser.firstName || ''} ${mergedUser.lastName || ''}`.trim() || mergedUser.email,
                     role: mergedUser.role,
                     status: mergedUser.status,

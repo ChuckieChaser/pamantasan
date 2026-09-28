@@ -206,11 +206,24 @@ const useDocumentStore = create((set, get) => ({
                 error: null,
             }));
 
+            const previousData = {};
+            const newData = {};
+            if (existingDoc) {
+                Object.keys(validatedPayload).forEach((k) => {
+                    if (existingDoc[k] !== undefined && existingDoc[k] !== validatedPayload[k]) {
+                        previousData[k] = existingDoc[k];
+                        newData[k] = validatedPayload[k];
+                    }
+                });
+            }
+
             systemEventService.recordSystemEvent({
                 entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT,
                 entityId: id,
                 action: constants.AUDIT_LOGS_ACTION.UPDATED,
                 data: {
+                    old: previousData,
+                    new: newData,
                     title: updatedDocument.name || existingDoc?.name || 'Document',
                     departmentId: updatedDocument.departmentId || existingDoc?.departmentId,
                 },

@@ -472,6 +472,7 @@ const MainLayout = ({
                                 unreadCount={unreadNotificationsCount}
                                 onMarkAsRead={markNotificationAsRead}
                                 onMarkAllAsRead={() => markAllNotificationsAsRead(currentUser?.id)}
+                                onSelectRecord={onSelectRecord}
                             />
                         }
                     />

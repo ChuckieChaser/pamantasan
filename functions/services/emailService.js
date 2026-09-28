@@ -3,6 +3,56 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const nodemailer = require('nodemailer');
+const { getFirestore } = require('firebase-admin/firestore');
+
+// --- THREAD STATE MANAGEMENT (FOR RFC 5322 EMAIL CONVERSATION GROUPING) ---
+let firestoreInstance = null;
+function getDb() {
+    if (!firestoreInstance) {
+        try {
+            firestoreInstance = getFirestore();
+        } catch {
+            firestoreInstance = null;
+        }
+    }
+    return firestoreInstance;
+}
+
+const memoryThreadStore = new Map();
+
+async function getActiveThread(threadKey) {
+    const db = getDb();
+    if (db) {
+        try {
+            const doc = await db.collection('email_threads').doc(threadKey).get();
+            if (doc.exists) {
+                const data = doc.data();
+                if (data && data.expiresAt && Date.now() < data.expiresAt) {
+                    return data;
+                }
+            }
+        } catch (err) {
+            console.warn('[emailService] Firestore thread lookup warning:', err.message);
+        }
+    }
+    const mem = memoryThreadStore.get(threadKey);
+    if (mem && mem.expiresAt && Date.now() < mem.expiresAt) {
+        return mem;
+    }
+    return null;
+}
+
+async function saveActiveThread(threadKey, data) {
+    memoryThreadStore.set(threadKey, data);
+    const db = getDb();
+    if (db) {
+        try {
+            await db.collection('email_threads').doc(threadKey).set(data, { merge: true });
+        } catch (err) {
+            console.warn('[emailService] Firestore thread persist warning:', err.message);
+        }
+    }
+}
 
 // --- ENVIRONMENT FALLBACK ---
 function loadEnvFallback() {
@@ -99,11 +149,19 @@ async function sendOtpEmail(toEmail, otpCode) {
         .update(`${cleanEmail}-otp-${dayBucket}`)
         .digest('hex');
 
-    const threadId = `<plp-otp-${threadHash}@plpasig.edu.ph>`;
-    const messageId = `<plp-otp-${threadHash}-${Date.now()}@plpasig.edu.ph>`;
+    const threadKey = `otp_${threadHash}`;
+    const existingThread = await getActiveThread(threadKey);
 
-    // Stable Subject: Kept identical so email clients group resends into the same conversation
-    const subject = `[PLP Records] Password Reset Verification Code`;
+    const messageId = `<plp-otp-${threadHash}-${Date.now()}@plpasig.edu.ph>`;
+    const baseSubject = `[PLP Records] Password Reset Verification Code`;
+    const isReply = Boolean(existingThread?.rootMessageId);
+
+    // RFC 5322 & Gmail threading REQUIRE the "Re: " prefix on replies to collapse into the conversation
+    const subject = isReply ? `Re: ${baseSubject}` : baseSubject;
+    const inReplyTo = isReply ? existingThread.lastMessageId : null;
+    const references = isReply
+        ? [existingThread.rootMessageId, existingThread.lastMessageId].filter(Boolean)
+        : null;
 
     const sentTimeStr = new Date().toLocaleTimeString('en-US', {
         hour: 'numeric',
@@ -198,25 +256,44 @@ async function sendOtpEmail(toEmail, otpCode) {
     </html>
     `;
 
-    const transport = getTransporter();
-    if (!transport) {
-        console.log(`[SIMULATED EMAIL] To: ${toEmail} | Code: ${otpCode} | ThreadId: ${threadId}`);
-        return { simulated: true, code: otpCode, threadId };
-    }
-
-    return await transport.sendMail({
+    const mailOptions = {
         from: fromAddress,
         to: toEmail,
         subject: subject,
         html: html,
         messageId: messageId,
-        inReplyTo: threadId,
-        references: [threadId],
         headers: {
-            'Thread-Topic': subject,
+            'Thread-Topic': baseSubject,
             'X-Entity-Ref-ID': threadHash,
         },
+    };
+
+    if (inReplyTo) {
+        mailOptions.inReplyTo = inReplyTo;
+    }
+    if (references && references.length > 0) {
+        mailOptions.references = references;
+    }
+
+    const transport = getTransporter();
+    let result = null;
+    if (!transport) {
+        console.log(`[SIMULATED EMAIL] To: ${toEmail} | Code: ${otpCode} | MsgId: ${messageId}`);
+        result = { simulated: true, code: otpCode, messageId };
+    } else {
+        result = await transport.sendMail(mailOptions);
+    }
+
+    // Persist thread state for next resend
+    await saveActiveThread(threadKey, {
+        rootMessageId: existingThread?.rootMessageId || messageId,
+        lastMessageId: messageId,
+        subject: baseSubject,
+        updatedAt: Date.now(),
+        expiresAt: Date.now() + 24 * 60 * 60 * 1000,
     });
+
+    return result;
 }
 
 /**
@@ -252,13 +329,43 @@ async function sendNotificationEmail({
         .update(`${cleanEmail}-${entityKey.toLowerCase()}-${hourBucket}`)
         .digest('hex');
 
-    const threadId = `<plp-notif-${threadHash}@plpasig.edu.ph>`;
+    const threadKey = `notif_${threadHash}`;
+    const existingThread = await getActiveThread(threadKey);
+
     const messageId = `<plp-notif-${threadHash}-${Date.now()}@plpasig.edu.ph>`;
 
-    // Stable Subject: Kept consistent for the entity so email clients group messages into 1 thread
-    const subject = cleanTarget
+    // Base subject: consistent for the entity
+    const baseSubject = cleanTarget
         ? `[PLP Records] ${cleanEntity}: ${cleanTarget}`
         : `[PLP Records] ${title}`;
+
+    const isReply = Boolean(existingThread?.rootMessageId);
+    // RFC 5322 & Gmail threading REQUIRE the "Re: " prefix on replies to collapse into the conversation
+    const subject = isReply ? `Re: ${existingThread?.subject || baseSubject}` : baseSubject;
+
+    const inReplyTo = isReply ? existingThread.lastMessageId : null;
+    const references = isReply
+        ? [existingThread.rootMessageId, existingThread.lastMessageId].filter(Boolean)
+        : null;
+
+    const defaultBaseUrl = 'https://pamantasan-records-210fe.web.app';
+    let cleanActionUrl = actionUrl;
+    if (!cleanActionUrl || cleanActionUrl.includes('localhost') || cleanActionUrl.includes('127.0.0.1')) {
+        const ent = String(entityType || '').toUpperCase();
+        if (ent.includes('DOC') && !ent.includes('REQUEST')) {
+            cleanActionUrl = `${defaultBaseUrl}/documents`;
+        } else if (ent.includes('DEPT')) {
+            cleanActionUrl = `${defaultBaseUrl}/departments`;
+        } else if (ent.includes('USER')) {
+            cleanActionUrl = `${defaultBaseUrl}/users`;
+        } else if (ent.includes('REQUEST') || ent.includes('COORDINATOR')) {
+            cleanActionUrl = `${defaultBaseUrl}/requests`;
+        } else {
+            cleanActionUrl = defaultBaseUrl;
+        }
+    } else if (cleanActionUrl.startsWith('/')) {
+        cleanActionUrl = `${defaultBaseUrl}${cleanActionUrl}`;
+    }
 
     const html = `
     <!DOCTYPE html>
@@ -282,6 +389,8 @@ async function sendNotificationEmail({
             .notification-message { font-size: 13px; color: #52525b; line-height: 1.6; margin: 0; }
             .button-wrapper { text-align: center; margin: 28px 0 12px 0; }
             .btn { display: inline-block; background-color: #059669; color: #ffffff !important; padding: 12px 28px; font-size: 13px; font-weight: 600; text-decoration: none; border-radius: 8px; letter-spacing: 0.2px; }
+            .link-fallback { font-size: 11px; color: #71717a; text-align: center; margin: 0 0 24px 0; word-break: break-all; }
+            .url-text { color: #059669; text-decoration: underline; }
             .footer { background-color: #fafafa; border-top: 1px solid #e4e4e7; padding: 20px 32px; text-align: center; }
             .footer-brand { font-size: 11px; font-weight: 600; color: #3f3f46; margin-bottom: 4px; }
             .footer-sub { font-size: 11px; color: #71717a; line-height: 1.5; margin: 0; }
@@ -306,11 +415,15 @@ async function sendNotificationEmail({
                         <p class="notification-message">${message}</p>
                     </div>
 
-                    ${actionUrl ? `
+                    <!-- ACTION BUTTON & WEBSITE LINK -->
                     <div class="button-wrapper">
-                        <a href="${actionUrl}" class="btn">${actionLabel || 'View in Pamantasan Records'}</a>
+                        <a href="${cleanActionUrl}" class="btn">${actionLabel || 'View in Pamantasan Records'}</a>
                     </div>
-                    ` : ''}
+
+                    <div class="link-fallback">
+                        If the button above does not work, copy and paste this link into your browser:<br>
+                        <a href="${cleanActionUrl}" class="url-text">${cleanActionUrl}</a>
+                    </div>
                 </div>
 
                 <!-- INSTITUTIONAL FOOTER -->
@@ -327,25 +440,44 @@ async function sendNotificationEmail({
     </html>
     `;
 
-    const transport = getTransporter();
-    if (!transport) {
-        console.log(`[SIMULATED NOTIFICATION] To: ${toEmail} | Subject: ${subject} | ThreadId: ${threadId}`);
-        return { simulated: true, title, subject, threadId };
-    }
-
-    return await transport.sendMail({
+    const mailOptions = {
         from: fromAddress,
         to: toEmail,
         subject: subject,
         html: html,
         messageId: messageId,
-        inReplyTo: threadId,
-        references: [threadId],
         headers: {
-            'Thread-Topic': subject,
+            'Thread-Topic': existingThread?.subject || baseSubject,
             'X-Entity-Ref-ID': threadHash,
         },
+    };
+
+    if (inReplyTo) {
+        mailOptions.inReplyTo = inReplyTo;
+    }
+    if (references && references.length > 0) {
+        mailOptions.references = references;
+    }
+
+    const transport = getTransporter();
+    let result = null;
+    if (!transport) {
+        console.log(`[SIMULATED NOTIFICATION] To: ${toEmail} | Subject: ${subject} | MsgId: ${messageId}`);
+        result = { simulated: true, title, subject, messageId };
+    } else {
+        result = await transport.sendMail(mailOptions);
+    }
+
+    // Persist thread state for next update within the hour
+    await saveActiveThread(threadKey, {
+        rootMessageId: existingThread?.rootMessageId || messageId,
+        lastMessageId: messageId,
+        subject: existingThread?.subject || baseSubject,
+        updatedAt: Date.now(),
+        expiresAt: Date.now() + 60 * 60 * 1000,
     });
+
+    return result;
 }
 
 /**

@@ -259,6 +259,112 @@ const resolveTargetEntityName = (auditLog, { documents = [], departments = [], u
     return auditLog.entityBadge?.label || 'Institutional Record';
 };
 
+const IGNORED_AUDIT_DIFF_KEYS = new Set([
+    'actorId',
+    'actorRole',
+    'actorEmail',
+    'actorName',
+    'actorDepartment',
+    'actorDepartmentId',
+    'actor',
+    'id',
+    'uuid',
+    'updatedAt',
+    'createdAt',
+    'timestamp',
+    'targetRoles',
+    'targetUserIds',
+    'isMajor',
+    'excludeActor',
+]);
+
+const formatAuditValue = (val) => {
+    if (val === undefined || val === null || val === '') return '—';
+    if (typeof val === 'boolean') return val ? 'TRUE' : 'FALSE';
+    if (typeof val === 'object') {
+        if (val.name || val.title) return val.name || val.title;
+        return JSON.stringify(val);
+    }
+    return String(val);
+};
+
+const formatKeyLabel = (key) => {
+    if (!key) return '';
+    return key
+        .replace(/([A-Z])/g, ' $1')
+        .replace(/_/g, ' ')
+        .trim();
+};
+
+const extractAuditDiff = (parsedData) => {
+    if (!parsedData || typeof parsedData !== 'object') {
+        return { diffs: [], staticFields: [] };
+    }
+
+    const oldObj = (parsedData.old || parsedData.previous || parsedData.before) ?? null;
+    const newObj = (parsedData.new || parsedData.current || parsedData.after) ?? null;
+
+    const diffs = [];
+
+    // 1. Explicit old / new pair
+    if (oldObj && typeof oldObj === 'object' && newObj && typeof newObj === 'object') {
+        const allKeys = Array.from(new Set([...Object.keys(oldObj), ...Object.keys(newObj)]));
+        for (const k of allKeys) {
+            if (IGNORED_AUDIT_DIFF_KEYS.has(k)) continue;
+            const oldVal = oldObj[k];
+            const newVal = newObj[k];
+
+            const oldStr = typeof oldVal === 'object' && oldVal !== null ? JSON.stringify(oldVal) : String(oldVal ?? '');
+            const newStr = typeof newVal === 'object' && newVal !== null ? JSON.stringify(newVal) : String(newVal ?? '');
+
+            // Only include affected / modified properties
+            if (oldStr !== newStr) {
+                diffs.push({
+                    key: k,
+                    oldValue: oldVal,
+                    newValue: newVal,
+                });
+            }
+        }
+    }
+
+    // 2. Paired keys (e.g. previousStatus / newStatus, oldRole / newRole)
+    if (diffs.length === 0) {
+        const entries = Object.entries(parsedData);
+        for (const [k, val] of entries) {
+            if (IGNORED_AUDIT_DIFF_KEYS.has(k)) continue;
+            if (k.startsWith('new') || k.startsWith('after') || k.startsWith('current')) {
+                const baseKey = k.replace(/^(new|after|current)_?/, '');
+                const oldCandidates = [
+                    `old${baseKey.charAt(0).toUpperCase()}${baseKey.slice(1)}`,
+                    `previous${baseKey.charAt(0).toUpperCase()}${baseKey.slice(1)}`,
+                    `before${baseKey.charAt(0).toUpperCase()}${baseKey.slice(1)}`,
+                    `old_${baseKey.toLowerCase()}`,
+                    `previous_${baseKey.toLowerCase()}`,
+                ];
+                const matchedOldKey = oldCandidates.find((cand) => parsedData[cand] !== undefined);
+                if (matchedOldKey) {
+                    diffs.push({
+                        key: baseKey || k,
+                        oldValue: parsedData[matchedOldKey],
+                        newValue: val,
+                    });
+                }
+            }
+        }
+    }
+
+    // 3. Static/supplementary attributes (excluding old/new envelopes and diffed keys)
+    const staticFields = Object.entries(parsedData).filter(([k]) => {
+        if (IGNORED_AUDIT_DIFF_KEYS.has(k)) return false;
+        if (['old', 'new', 'before', 'after', 'previous', 'current'].includes(k)) return false;
+        if (diffs.some((d) => d.key === k)) return false;
+        return true;
+    });
+
+    return { diffs, staticFields };
+};
+
 
 // --- HOOK: MEASURE CONTAINER WIDTH & RESOLVE RESPONSIVE TIER ---
 const useContainerTier = ({ full = 800, half = 600, quarter = 440 } = {}) => {
@@ -343,7 +449,7 @@ const DashboardPage = ({
     const [bannerRef, bannerTier] = useContainerTier({ full: 960, half: 520, quarter: 520 });
     const [pendingCardRef, pendingTier] = useContainerTier({ full: 620, half: 480, quarter: 360 });
     const [analysisCardRef, analysisTier] = useContainerTier({ full: 620, half: 480, quarter: 360 });
-    const [auditCardRef, auditTier, auditWidth] = useContainerTier({ full: 860, half: 660, quarter: 460 });
+    const [auditCardRef, auditTier, auditWidth] = useContainerTier({ full: 1040, half: 720, quarter: 500 });
 
     // DERIVED VALUES
     const { currentUser: authUser } = useAuth();
@@ -1679,7 +1785,6 @@ const DashboardPage = ({
                                 setAuditSearch('');
                                 setAuditPage(1);
                             }}
-                            size="sm"
                         />
                     );
 
@@ -1694,7 +1799,6 @@ const DashboardPage = ({
                             leadingIcon={Clock}
                             placeholder="Sort by..."
                             dropdownAlign="right"
-                            size="sm"
                         />
                     );
 
@@ -1710,7 +1814,6 @@ const DashboardPage = ({
                             leadingIcon={Filter}
                             placeholder="Filter activities..."
                             dropdownAlign="right"
-                            size="sm"
                         />
                     );
 
@@ -1718,10 +1821,10 @@ const DashboardPage = ({
                         return (
                             <div className="flex items-center justify-between gap-3 border-b border-surface-border pb-3">
                                 {headerNode}
-                                <div className="flex items-center gap-2 shrink-0 ml-auto">
-                                    <div className="w-48 sm:w-56 shrink-0">{searchNode}</div>
-                                    <div className="w-36 sm:w-40 shrink-0">{sortNode}</div>
-                                    <div className="w-40 sm:w-44 shrink-0">{filterNode}</div>
+                                <div className="flex items-center gap-2.5 shrink-0 ml-auto">
+                                    <div className="w-56 sm:w-64 md:w-72 shrink-0">{searchNode}</div>
+                                    <div className="w-48 sm:w-52 md:w-56 shrink-0">{sortNode}</div>
+                                    <div className="w-52 sm:w-60 md:w-64 shrink-0">{filterNode}</div>
                                 </div>
                             </div>
                         );
@@ -1729,11 +1832,19 @@ const DashboardPage = ({
 
                     if (auditTier === 'half') {
                         return (
-                            <div className="flex items-center gap-2.5 border-b border-surface-border pb-3 w-full">
-                                {headerNode}
-                                <div className="flex-1 min-w-[130px]">{searchNode}</div>
-                                <div className="w-36 shrink-0">{sortNode}</div>
-                                <div className="w-40 shrink-0">{filterNode}</div>
+                            <div className="flex flex-col gap-2.5 border-b border-surface-border pb-3 w-full">
+                                <div className="flex items-center justify-between w-full">
+                                    {headerNode}
+                                    <span className="inline-flex items-center gap-1.5 text-[11px] px-2.5 py-0.5 rounded-full bg-surface-hover/90 text-text-muted font-medium border border-surface-border shrink-0 shadow-2xs">
+                                        <span className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse" />
+                                        <span>{totalAuditCount} {totalAuditCount === 1 ? 'entry' : 'entries'}</span>
+                                    </span>
+                                </div>
+                                <div className="flex items-center gap-2.5 w-full">
+                                    <div className="flex-1 min-w-[180px]">{searchNode}</div>
+                                    <div className="w-48 sm:w-52 shrink-0">{sortNode}</div>
+                                    <div className="w-52 sm:w-60 shrink-0">{filterNode}</div>
+                                </div>
                             </div>
                         );
                     }
@@ -1741,24 +1852,18 @@ const DashboardPage = ({
                     if (auditTier === 'quarter') {
                         return (
                             <div className="flex flex-col gap-2.5 border-b border-surface-border pb-3 w-full">
-                                <div className="w-full flex items-center justify-between">
+                                <div className="flex items-center justify-between w-full">
                                     {headerNode}
+                                    <span className="inline-flex items-center gap-1.5 text-[11px] px-2.5 py-0.5 rounded-full bg-surface-hover/90 text-text-muted font-medium border border-surface-border shrink-0 shadow-2xs">
+                                        <span className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse" />
+                                        <span>{totalAuditCount} {totalAuditCount === 1 ? 'entry' : 'entries'}</span>
+                                    </span>
                                 </div>
-                                {auditWidth !== null && auditWidth >= 560 ? (
-                                    <div className="flex items-center gap-2 w-full">
-                                        <div className="flex-1 min-w-[120px]">{searchNode}</div>
-                                        <div className="w-36 shrink-0">{sortNode}</div>
-                                        <div className="w-40 shrink-0">{filterNode}</div>
-                                    </div>
-                                ) : (
-                                    <>
-                                        <div className="w-full">{searchNode}</div>
-                                        <div className="flex items-center gap-2 w-full">
-                                            <div className="flex-1 min-w-0">{sortNode}</div>
-                                            <div className="flex-1 min-w-0">{filterNode}</div>
-                                        </div>
-                                    </>
-                                )}
+                                <div className="w-full">{searchNode}</div>
+                                <div className="flex items-center gap-2.5 w-full">
+                                    <div className="flex-1 min-w-0">{sortNode}</div>
+                                    <div className="flex-1 min-w-0">{filterNode}</div>
+                                </div>
                             </div>
                         );
                     }
@@ -1766,8 +1871,11 @@ const DashboardPage = ({
                     // Mobile tier
                     return (
                         <div className="flex flex-col gap-2 border-b border-surface-border pb-3 w-full">
-                            <div className="w-full flex items-center">
+                            <div className="w-full flex items-center justify-between">
                                 {headerNode}
+                                <span className="inline-flex items-center gap-1.5 text-[11px] px-2 py-0.5 rounded-full bg-surface-hover/90 text-text-muted font-medium border border-surface-border shrink-0">
+                                    <span>{totalAuditCount}</span>
+                                </span>
                             </div>
                             <div className="w-full">{searchNode}</div>
                             <div className="w-full">{sortNode}</div>
@@ -1995,70 +2103,117 @@ const DashboardPage = ({
                                         <span>{hasCopiedJson ? 'Copied' : 'Copy'}</span>
                                     </button>
                                 </div>
-                            ) : (
-                                <div className="p-3.5 rounded-xl bg-surface border border-surface-border text-xs text-text overflow-x-auto flex flex-col gap-2 max-h-64 overflow-y-auto shadow-2xs">
-                                    {viewingAuditLog.parsedData && typeof viewingAuditLog.parsedData === 'object' && Object.keys(viewingAuditLog.parsedData).length > 0 ? (
-                                        Object.entries(viewingAuditLog.parsedData)
-                                            .filter(([k]) => !['actorId', 'actorRole', 'actorEmail', 'actorDepartment', 'actorDepartmentId'].includes(k))
-                                            .map(([k, v]) => {
-                                                if (k === 'old' || k === 'new' || k === 'before' || k === 'after' || k === 'previous' || k === 'current') {
-                                                    const isNew = k === 'new' || k === 'after' || k === 'current';
-                                                    return (
-                                                        <div key={k} className={`p-2.5 rounded-lg border flex flex-col gap-1 ${
-                                                            isNew
-                                                                ? 'bg-accent/5 border-accent/30'
-                                                                : 'bg-surface-hover/50 border-surface-border'
-                                                        }`}>
-                                                            <span className={`text-[11px] font-bold uppercase tracking-wider ${isNew ? 'text-accent' : 'text-text-muted'}`}>
-                                                                {isNew ? 'Resulting / New State' : 'Previous State'}
-                                                            </span>
-                                                            <div className="flex flex-col gap-1 text-xs">
-                                                                {typeof v === 'object' && v !== null ? (
-                                                                    Object.entries(v).map(([propK, propV]) => (
-                                                                        <div key={propK} className="flex items-center justify-between gap-2">
-                                                                            <span className="text-text-muted capitalize">{propK}:</span>
-                                                                            <span className="font-semibold text-text">{String(propV ?? '—')}</span>
-                                                                        </div>
-                                                                    ))
-                                                                ) : (
-                                                                    <span className="font-medium text-text">{String(v ?? '—')}</span>
-                                                                )}
-                                                            </div>
-                                                        </div>
-                                                    );
-                                                }
+                            ) : (() => {
+                                const { diffs, staticFields } = extractAuditDiff(viewingAuditLog.parsedData);
+                                const hasDiffs = diffs.length > 0;
+                                const hasStatic = staticFields.length > 0;
 
-                                                if (k === 'attachments' && Array.isArray(v)) {
-                                                    return (
-                                                        <div key={k} className="flex items-center justify-between gap-2 py-1 border-b border-surface-border/50">
-                                                            <span className="font-semibold text-text-muted capitalize shrink-0">Attachments:</span>
-                                                            <div className="flex flex-col gap-1 items-end">
-                                                                {v.map((att, idx) => (
-                                                                    <span key={idx} className="text-right text-accent font-medium truncate inline-flex items-center gap-1 px-2 py-0.5 rounded bg-accent/10">
-                                                                        📎 {att.name || att.title || `Document #${idx + 1}`}
+                                return (
+                                    <div className="p-3.5 rounded-xl bg-surface border border-surface-border text-xs text-text flex flex-col gap-3 max-h-72 overflow-y-auto shadow-2xs">
+                                        {/* AFFECTED / MODIFIED PROPERTIES ONLY */}
+                                        {hasDiffs && (
+                                            <div className="flex flex-col gap-2">
+                                                <div className="flex items-center justify-between pb-1 border-b border-surface-border">
+                                                    <span className="text-[11px] font-bold text-text flex items-center gap-1.5 uppercase tracking-wider">
+                                                        <Activity className="h-3.5 w-3.5 text-accent" />
+                                                        Affected Changes ({diffs.length})
+                                                    </span>
+                                                    <span className="text-[10px] text-text-muted">Showing only changed values</span>
+                                                </div>
+
+                                                <div className="flex flex-col gap-2">
+                                                    {diffs.map((diff) => (
+                                                        <div
+                                                            key={diff.key}
+                                                            className="p-3 rounded-xl bg-surface-hover/50 border border-surface-border flex flex-col gap-2 shadow-2xs"
+                                                        >
+                                                            <div className="flex items-center justify-between">
+                                                                <span className="text-[11px] font-bold uppercase tracking-wider text-text flex items-center gap-1.5">
+                                                                    <span className="h-1.5 w-1.5 rounded-full bg-accent" />
+                                                                    {formatKeyLabel(diff.key)}
+                                                                </span>
+                                                                <span className="text-[10px] font-semibold text-amber-600 dark:text-amber-400 px-2 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/20">
+                                                                    Modified
+                                                                </span>
+                                                            </div>
+
+                                                            <div className="flex items-center gap-2 sm:gap-3 flex-wrap sm:flex-nowrap">
+                                                                {/* Old Value */}
+                                                                <div className="flex-1 min-w-[120px] p-2.5 rounded-lg bg-red-500/5 dark:bg-red-950/20 border border-red-500/20 flex flex-col gap-0.5">
+                                                                    <span className="text-[10px] font-semibold text-red-600 dark:text-red-400 uppercase tracking-wider">
+                                                                        Previous Value
                                                                     </span>
-                                                                ))}
+                                                                    <span className="text-xs font-mono font-medium text-text break-all line-through decoration-red-500/40">
+                                                                        {formatAuditValue(diff.oldValue)}
+                                                                    </span>
+                                                                </div>
+
+                                                                {/* Transition Arrow */}
+                                                                <div className="shrink-0 p-1.5 rounded-full bg-surface-hover text-text-muted border border-surface-border flex items-center justify-center">
+                                                                    <ArrowRight className="h-3.5 w-3.5 text-accent" />
+                                                                </div>
+
+                                                                {/* New Value */}
+                                                                <div className="flex-1 min-w-[120px] p-2.5 rounded-lg bg-emerald-500/5 dark:bg-emerald-950/20 border border-emerald-500/20 flex flex-col gap-0.5">
+                                                                    <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">
+                                                                        Resulting Value
+                                                                    </span>
+                                                                    <span className="text-xs font-mono font-bold text-text break-all">
+                                                                        {formatAuditValue(diff.newValue)}
+                                                                    </span>
+                                                                </div>
                                                             </div>
                                                         </div>
-                                                    );
-                                                }
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
 
-                                                return (
-                                                    <div key={k} className="flex items-center justify-between gap-2 py-1 border-b border-surface-border/50">
-                                                        <span className="font-semibold text-text-muted capitalize shrink-0">{k.replace(/_/g, ' ')}:</span>
-                                                        <span className="font-medium text-text text-right font-mono truncate max-w-[280px]">
-                                                            {typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v ?? '—')}
-                                                        </span>
-                                                    </div>
-                                                );
-                                            })
-                                    ) : (
-                                        <div className="text-xs text-text-muted py-2 text-center">
-                                            No structured metadata payload recorded with this event.
-                                        </div>
-                                    )}
-                                </div>
-                            )}
+                                        {/* EVENT CONTEXT / ATTRIBUTES (NON-DIFF SUPPLEMENTARY ATTRIBUTES) */}
+                                        {hasStatic && (
+                                            <div className="flex flex-col gap-1.5">
+                                                {hasDiffs && (
+                                                    <span className="text-[10px] font-bold text-text-muted uppercase tracking-wider pt-1">
+                                                        Record Attributes
+                                                    </span>
+                                                )}
+                                                <div className="flex flex-col gap-1.5">
+                                                    {staticFields.map(([k, v]) => {
+                                                        if (k === 'attachments' && Array.isArray(v)) {
+                                                            return (
+                                                                <div key={k} className="flex items-center justify-between gap-2 py-1 border-b border-surface-border/50">
+                                                                    <span className="font-semibold text-text-muted capitalize shrink-0">Attachments:</span>
+                                                                    <div className="flex flex-col gap-1 items-end">
+                                                                        {v.map((att, idx) => (
+                                                                            <span key={idx} className="text-right text-accent font-medium truncate inline-flex items-center gap-1 px-2 py-0.5 rounded bg-accent/10">
+                                                                                📎 {att.name || att.title || `Document #${idx + 1}`}
+                                                                            </span>
+                                                                        ))}
+                                                                    </div>
+                                                                </div>
+                                                            );
+                                                        }
+                                                        return (
+                                                            <div key={k} className="flex items-center justify-between gap-2 py-1 border-b border-surface-border/50 last:border-0">
+                                                                <span className="font-medium text-text-muted capitalize shrink-0">{k.replace(/_/g, ' ')}:</span>
+                                                                <span className="font-semibold text-text text-right font-mono truncate max-w-[280px]">
+                                                                    {typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v ?? '—')}
+                                                                </span>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {!hasDiffs && !hasStatic && (
+                                            <div className="text-xs text-text-muted py-3 text-center">
+                                                No structured metadata or changed properties recorded with this event.
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })()}
                         </div>
                     </div>
                 </Modal>

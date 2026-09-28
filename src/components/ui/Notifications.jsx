@@ -297,6 +297,7 @@ const Notifications = ({
     unreadCount = 0,
     onMarkAsRead,
     onMarkAllAsRead,
+    onSelectRecord,
     className,
     ...props
 }) => {
@@ -420,10 +421,12 @@ const Notifications = ({
             };
         });
 
-        // Combined and sorted by timestamp descending
-        return [...unreadCongestedList, ...readIndividualList].sort(
-            (a, b) => b.latestTimestamp - a.latestTimestamp
-        );
+        // Combined: Unread always strictly before read items; within each partition, sorted by timestamp descending
+        return [...unreadCongestedList, ...readIndividualList].sort((a, b) => {
+            if (!a.isRead && b.isRead) return -1;
+            if (a.isRead && !b.isRead) return 1;
+            return b.latestTimestamp - a.latestTimestamp;
+        });
     }, [validNotifications, documents, departments, users, coordinatorRequests, documentRequests, auditLogs]);
 
     // 3. COUNTS PER CATEGORY
@@ -500,7 +503,7 @@ const Notifications = ({
         setVisibleLimit((prev) => prev + INITIAL_NOTIFICATION_LIMIT);
     };
 
-    // ON CLICK ON NOTIFICATION: NAVIGATE TO TARGET (OR SHOW TOAST IF DELETED)
+    // ON CLICK ON NOTIFICATION: NAVIGATE TO TARGET AND FOCUS/SELECT RECORD (OR SHOW TOAST IF DELETED)
     const handleItemClick = (item) => {
         // 1. Mark as read
         if (!item.isRead) {
@@ -517,24 +520,59 @@ const Notifications = ({
             return;
         }
 
-        // 3. Otherwise navigate to the affected target
+        // 3. Otherwise navigate to the affected target and select/focus it
         onClose?.();
 
         const entityType = item.entityType;
+        const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : String(id || ''));
+        const targetClean = cleanId(item.targetId);
+
+        let targetRecord = null;
+
         if (entityType === 'DOCUMENTS') {
             const doc = documents.find(
-                (d) => String(d.id) === String(item.targetId) || String(d.uuid) === String(item.targetId)
+                (d) => cleanId(d.id) === targetClean || cleanId(d.uuid) === targetClean
             );
+            targetRecord = doc || { id: item.targetId, name: item.targetName, title: item.targetName };
+            useDocumentStore.getState().setSelectedDocument?.(targetRecord);
+            onSelectRecord?.(targetRecord);
+
             if (doc?.isArchived) {
                 navigate('/archives');
             } else {
                 navigate('/documents');
             }
         } else if (entityType === 'DEPARTMENTS') {
+            const dept = departments.find(
+                (d) => cleanId(d.id) === targetClean || cleanId(d.uuid) === targetClean
+            );
+            targetRecord = dept || { id: item.targetId, name: item.targetName, title: item.targetName };
+            useDepartmentStore.getState().setSelectedDepartment?.(targetRecord);
+            onSelectRecord?.(targetRecord);
             navigate('/departments');
         } else if (entityType === 'USERS') {
+            const user = users.find(
+                (u) => cleanId(u.id) === targetClean || cleanId(u.uuid) === targetClean
+            );
+            targetRecord = user || { id: item.targetId, name: item.targetName, title: item.targetName };
+            useUserStore.getState().setSelectedUser?.(targetRecord);
+            onSelectRecord?.(targetRecord);
             navigate('/users');
-        } else if (entityType === 'COORDINATOR REQUESTS' || entityType === 'DOCUMENT REQUESTS') {
+        } else if (entityType === 'COORDINATOR REQUESTS') {
+            const req = coordinatorRequests.find(
+                (r) => cleanId(r.id) === targetClean || cleanId(r.uuid) === targetClean
+            );
+            targetRecord = req || { id: item.targetId, subject: item.targetName, action: item.action };
+            useCoordinatorStore.getState().setSelectedCoordinatorRequest?.(targetRecord);
+            onSelectRecord?.(targetRecord);
+            navigate('/coordinator');
+        } else if (entityType === 'DOCUMENT REQUESTS') {
+            const req = documentRequests.find(
+                (r) => cleanId(r.id) === targetClean || cleanId(r.uuid) === targetClean
+            );
+            targetRecord = req || { id: item.targetId, subject: item.targetName };
+            useDocumentStore.getState().setSelectedDocumentRequest?.(targetRecord);
+            onSelectRecord?.(targetRecord);
             navigate('/requests');
         }
     };

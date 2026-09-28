@@ -200,24 +200,47 @@ const systemEventService = {
 
         const normalizeAction = (act) => {
             const a = String(act || '').toUpperCase().trim();
+            if (Object.values(constants.AUDIT_LOGS_ACTION).includes(a)) {
+                return a;
+            }
             if (a.includes('DELETE') || a.includes('REMOVE')) return 'DELETED';
             if (a.includes('READ') || a.includes('VIEW')) return 'READ';
             if (a.includes('CREATE') || a.includes('UPLOAD') || a.includes('ATTACH') || a === 'NEW') return 'CREATED';
             return 'UPDATED';
         };
 
-        const normalizeEntityType = (ent) => {
-            const e = String(ent || '').toUpperCase().replace(/_/g, ' ').trim();
-            if (e.includes('COORDINATOR')) return 'COORDINATOR REQUESTS';
-            if (e.includes('DOCUMENT REQUEST')) return 'DOCUMENT REQUESTS';
-            if (e.includes('DOCUMENT')) return 'DOCUMENTS';
-            if (e.includes('USER')) return 'USERS';
-            if (e.includes('DEPARTMENT')) return 'DEPARTMENTS';
-            return 'DOCUMENTS';
+        const resolveAuditEntityType = (ent) => {
+            const e = String(ent || '').toUpperCase().replace(/\s+/g, '_').trim();
+            if (Object.values(constants.AUDIT_LOGS_ENTITY_TYPE).includes(e)) {
+                return e;
+            }
+            if (e.includes('COORDINATOR')) return constants.AUDIT_LOGS_ENTITY_TYPE.COORDINATOR_REQUEST;
+            if (e.includes('ATTACHMENT')) return constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_REQUEST_ATTACHMENT;
+            if (e.includes('REQUEST')) return constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_REQUEST;
+            if (e.includes('SHARE')) return constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_SHARE;
+            if (e.includes('VERSION')) return constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_VERSION;
+            if (e.includes('USER')) return constants.AUDIT_LOGS_ENTITY_TYPE.USER;
+            if (e.includes('DEPT') || e.includes('DEPARTMENT')) return constants.AUDIT_LOGS_ENTITY_TYPE.DEPARTMENT;
+            if (e.includes('DOC')) return constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT;
+            return constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT;
+        };
+
+        const resolveNotificationEntityType = (ent) => {
+            const e = String(ent || '').toUpperCase().replace(/\s+/g, '_').trim();
+            if (Object.values(constants.NOTIFICATIONS_ENTITY_TYPE).includes(e)) {
+                return e;
+            }
+            if (e.includes('COORDINATOR')) return constants.NOTIFICATIONS_ENTITY_TYPE.COORDINATOR_REQUEST;
+            if (e.includes('REQUEST')) return constants.NOTIFICATIONS_ENTITY_TYPE.DOCUMENT_REQUEST;
+            if (e.includes('USER')) return constants.NOTIFICATIONS_ENTITY_TYPE.USER;
+            if (e.includes('DEPT') || e.includes('DEPARTMENT')) return constants.NOTIFICATIONS_ENTITY_TYPE.DEPARTMENT;
+            if (e.includes('DOC')) return constants.NOTIFICATIONS_ENTITY_TYPE.DOCUMENT;
+            return constants.NOTIFICATIONS_ENTITY_TYPE.DOCUMENT;
         };
 
         const canonicalAction = normalizeAction(action);
-        const canonicalEntityType = normalizeEntityType(entityType);
+        const auditEntityType = resolveAuditEntityType(entityType);
+        const notifEntityType = resolveNotificationEntityType(entityType);
 
         // 1. CREATE AUDIT LOG SIMULTANEOUSLY
         let auditLogEntry = null;
@@ -225,7 +248,7 @@ const systemEventService = {
             const auditPayload = {
                 actorId: resolvedActorId,
                 actor: actorObj,
-                entityType: canonicalEntityType,
+                entityType: auditEntityType,
                 entityId: String(entityId),
                 action: canonicalAction,
                 data: stringifiedData,
@@ -283,7 +306,7 @@ const systemEventService = {
                 const notifPayload = {
                     recipientId: recipientId,
                     actorId: resolvedActorId,
-                    entityType: canonicalEntityType,
+                    entityType: notifEntityType,
                     entityId: String(entityId),
                     action: canonicalAction,
                     isRead: false,
@@ -326,10 +349,26 @@ const systemEventService = {
                             parsedData.documentName ||
                             parsedData.fileName ||
                             parsedData.name ||
-                            (parsedData.title && parsedData.title !== `${action.replace(/_/g, ' ')}: ${canonicalEntityType}` ? parsedData.title : '') ||
+                            (parsedData.title && parsedData.title !== `${action.replace(/_/g, ' ')}: ${auditEntityType}` ? parsedData.title : '') ||
                             '';
-                        const title = parsedData.title || parsedData.subject || `${action.replace(/_/g, ' ')}: ${canonicalEntityType}`;
-                        const message = parsedData.description || parsedData.message || parsedData.reason || `Event ${action} on ${canonicalEntityType}`;
+                        const title = parsedData.title || parsedData.subject || `${action.replace(/_/g, ' ')}: ${auditEntityType}`;
+                        const message = parsedData.description || parsedData.message || parsedData.reason || `Event ${action} on ${auditEntityType}`;
+
+                        const defaultBaseUrl = 'https://pamantasan-records-210fe.web.app';
+                        let actionUrl = parsedData.actionUrl;
+                        if (!actionUrl) {
+                            if (notifEntityType === 'DOCUMENTS') {
+                                actionUrl = `${defaultBaseUrl}/documents`;
+                            } else if (notifEntityType === 'DEPARTMENTS') {
+                                actionUrl = `${defaultBaseUrl}/departments`;
+                            } else if (notifEntityType === 'USERS') {
+                                actionUrl = `${defaultBaseUrl}/users`;
+                            } else if (notifEntityType === 'COORDINATOR REQUESTS' || notifEntityType === 'DOCUMENT REQUESTS') {
+                                actionUrl = `${defaultBaseUrl}/requests`;
+                            } else {
+                                actionUrl = defaultBaseUrl;
+                            }
+                        }
 
                         useNotificationStore.getState().dispatchNotificationEmail({
                             toEmail,
@@ -337,13 +376,15 @@ const systemEventService = {
                             recipientName,
                             actorId: resolvedActorId,
                             actorName,
-                            entityType: canonicalEntityType,
+                            entityType: notifEntityType,
                             entityId: String(entityId),
                             targetName,
                             action: canonicalAction,
                             title,
                             message,
                             description: message,
+                            actionUrl,
+                            actionLabel: 'View in Pamantasan Records',
                         }).catch(() => {});
                     }
                 }
@@ -359,7 +400,7 @@ const systemEventService = {
 
         // Realtime cross-browser broadcast
         try {
-            realtimeSyncService.broadcast(entityType, action, { entityId, ...data });
+            realtimeSyncService.broadcast(auditEntityType, canonicalAction, { entityId, ...data });
         } catch {
             /* ignore */
         }

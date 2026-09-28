@@ -237,8 +237,18 @@ const useDepartmentStore = create((set, get) => ({
 
             get().fetchDepartments().catch(() => {});
 
-            const resolvedActor = actor || useAuthStore.getState().currentUser;
-            const resolvedActorId = resolvedActor?.id || null;
+            const previousData = {};
+            const newData = {};
+            if (existingDepartment) {
+                if (payload.name !== undefined && existingDepartment.name !== payload.name) {
+                    previousData.name = existingDepartment.name;
+                    newData.name = payload.name;
+                }
+                if (payload.code !== undefined && existingDepartment.code !== payload.code) {
+                    previousData.code = existingDepartment.code;
+                    newData.code = payload.code;
+                }
+            }
 
             systemEventService.recordSystemEvent({
                 actor: resolvedActor,
@@ -248,6 +258,8 @@ const useDepartmentStore = create((set, get) => ({
                 action: constants.AUDIT_LOGS_ACTION.UPDATED,
                 data: {
                     id,
+                    old: previousData,
+                    new: newData,
                     name: updatedDepartment.name,
                     code: updatedDepartment.code,
                     title: `Department Updated: ${updatedDepartment.name} (${updatedDepartment.code})`,
