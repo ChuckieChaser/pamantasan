@@ -4106,8 +4106,30 @@ const Inspector = ({
 
                     // 2. OFFICER ROLE: Approve/Unapprove + Reject + Unreject
                     if (isOfficer) {
-                        const isPending = item.status === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL;
-                        const isRejected = item.status === constants.DOCUMENT_SHARES_STATUS.REJECTED;
+                        const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
+                        const userDeptClean = cleanId(activeUser?.departmentId ?? activeUser?.department?.id ?? activeUser?.department);
+                        const officerShare = (documentShares || []).find((s) => {
+                            const sDeptId = cleanId(s.department?.id ?? s.departmentId);
+                            return userDeptClean && sDeptId === userDeptClean;
+                        }) || (allDocumentShares || []).find((s) => {
+                            const sDocId = cleanId(s.document?.id ?? s.documentId);
+                            const sDeptId = cleanId(s.department?.id ?? s.departmentId);
+                            return cleanId(item?.id) === sDocId && userDeptClean && sDeptId === userDeptClean;
+                        }) || item.share || (documentShares && documentShares.length > 0 ? documentShares[0] : null);
+
+                        const rawOfficerStatus = officerShare?.status ?? item.status ?? item.share?.status;
+                        const effectiveOfficerStatus = (rawOfficerStatus && rawOfficerStatus !== '—')
+                            ? String(rawOfficerStatus).toUpperCase()
+                            : constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL;
+
+                        const isApproved = effectiveOfficerStatus === constants.DOCUMENT_SHARES_STATUS.APPROVED;
+                        const isRejected = effectiveOfficerStatus === constants.DOCUMENT_SHARES_STATUS.REJECTED;
+
+                        const targetWithShare = {
+                            ...item,
+                            ...(officerShare ? { share: officerShare } : {}),
+                            status: effectiveOfficerStatus,
+                        };
 
                         if (isRejected) {
                             return (
@@ -4119,7 +4141,7 @@ const Inspector = ({
                                         isDisabled={Boolean(activeActionLoading)}
                                         onClick={() => setInspectorConfirmAction({
                                             actionKey: 'unreject',
-                                            targetItem: item,
+                                            targetItem: targetWithShare,
                                             title: `Unreject ${item.isFolder ? 'Folder' : 'Document'}`,
                                             message: `Are you sure you want to unreject "${item.name || item.title || 'this document'}" and return it to pending approval?`,
                                             primaryLabel: 'Unreject',
@@ -4135,25 +4157,7 @@ const Inspector = ({
 
                         return (
                             <div className="grid grid-cols-2 gap-2 w-full">
-                                {isPending ? (
-                                    <Button
-                                        variant="primary"
-                                        leadingIcon={CheckCircle2}
-                                        isLoading={activeActionLoading === 'approve'}
-                                        isDisabled={Boolean(activeActionLoading)}
-                                        onClick={() => setInspectorConfirmAction({
-                                            actionKey: 'approve',
-                                            targetItem: item,
-                                            title: `Approve ${item.isFolder ? 'Folder' : 'Document'}`,
-                                            message: `Are you sure you want to approve "${item.name || item.title || 'this document'}" for department director review?`,
-                                            primaryLabel: 'Approve',
-                                            variant: 'primary',
-                                        })}
-                                        className="justify-center truncate px-2"
-                                    >
-                                        Approve
-                                    </Button>
-                                ) : (
+                                {isApproved ? (
                                     <Button
                                         variant="secondary"
                                         leadingIcon={RotateCcw}
@@ -4161,7 +4165,7 @@ const Inspector = ({
                                         isDisabled={Boolean(activeActionLoading)}
                                         onClick={() => setInspectorConfirmAction({
                                             actionKey: 'unapprove',
-                                            targetItem: item,
+                                            targetItem: targetWithShare,
                                             title: `Revoke Approval for ${item.isFolder ? 'Folder' : 'Document'}`,
                                             message: `Are you sure you want to revert "${item.name || item.title || 'this document'}" to pending approval?`,
                                             primaryLabel: 'Revoke Approval',
@@ -4171,6 +4175,24 @@ const Inspector = ({
                                     >
                                         Unapprove
                                     </Button>
+                                ) : (
+                                    <Button
+                                        variant="primary"
+                                        leadingIcon={CheckCircle2}
+                                        isLoading={activeActionLoading === 'approve'}
+                                        isDisabled={Boolean(activeActionLoading)}
+                                        onClick={() => setInspectorConfirmAction({
+                                            actionKey: 'approve',
+                                            targetItem: targetWithShare,
+                                            title: `Approve ${item.isFolder ? 'Folder' : 'Document'}`,
+                                            message: `Are you sure you want to approve "${item.name || item.title || 'this document'}" for department director review?`,
+                                            primaryLabel: 'Approve',
+                                            variant: 'primary',
+                                        })}
+                                        className="justify-center truncate px-2"
+                                    >
+                                        Approve
+                                    </Button>
                                 )}
                                 <Button
                                     variant="destructive"
@@ -4179,7 +4201,7 @@ const Inspector = ({
                                     isDisabled={Boolean(activeActionLoading)}
                                     onClick={() => {
                                         setInspectorRejectReason('');
-                                        setInspectorRejectModal({ targetItem: item });
+                                        setInspectorRejectModal({ targetItem: targetWithShare });
                                     }}
                                     className="justify-center truncate px-2"
                                 >
@@ -4191,8 +4213,30 @@ const Inspector = ({
 
                     // 3. DIRECTOR ROLE: Publish/Unpublish + Stash/Unstash
                     if (isDirector) {
-                        const isPublished = item.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED;
-                        const isStashed = item.status === constants.DOCUMENT_SHARES_STATUS.STASHED;
+                        const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
+                        const userDeptClean = cleanId(activeUser?.departmentId ?? activeUser?.department?.id ?? activeUser?.department);
+                        const directorShare = (documentShares || []).find((s) => {
+                            const sDeptId = cleanId(s.department?.id ?? s.departmentId);
+                            return userDeptClean && sDeptId === userDeptClean;
+                        }) || (allDocumentShares || []).find((s) => {
+                            const sDocId = cleanId(s.document?.id ?? s.documentId);
+                            const sDeptId = cleanId(s.department?.id ?? s.departmentId);
+                            return cleanId(item?.id) === sDocId && userDeptClean && sDeptId === userDeptClean;
+                        }) || item.share || (documentShares && documentShares.length > 0 ? documentShares[0] : null);
+
+                        const rawDirectorStatus = directorShare?.status ?? item.status ?? item.share?.status;
+                        const effectiveDirectorStatus = (rawDirectorStatus && rawDirectorStatus !== '—')
+                            ? String(rawDirectorStatus).toUpperCase()
+                            : '';
+                        const isPublished = effectiveDirectorStatus === constants.DOCUMENT_SHARES_STATUS.PUBLISHED;
+                        const isStashed = effectiveDirectorStatus === constants.DOCUMENT_SHARES_STATUS.STASHED;
+
+                        const targetWithShare = {
+                            ...item,
+                            ...(directorShare ? { share: directorShare } : {}),
+                            status: effectiveDirectorStatus,
+                        };
+
                         return (
                             <div className="grid grid-cols-2 gap-2 w-full">
                                 {isPublished ? (
@@ -4201,7 +4245,7 @@ const Inspector = ({
                                         leadingIcon={EyeOff}
                                         isLoading={activeActionLoading === 'unpublish'}
                                         isDisabled={Boolean(activeActionLoading)}
-                                        onClick={() => handleActionClick('unpublish')}
+                                        onClick={() => handleActionClick('unpublish', targetWithShare)}
                                         className="justify-center truncate px-2"
                                     >
                                         Unpublish
@@ -4212,7 +4256,7 @@ const Inspector = ({
                                         leadingIcon={Globe}
                                         isLoading={activeActionLoading === 'publish'}
                                         isDisabled={Boolean(activeActionLoading)}
-                                        onClick={() => handleActionClick('publish')}
+                                        onClick={() => handleActionClick('publish', targetWithShare)}
                                         className="justify-center truncate px-2"
                                     >
                                         Publish
@@ -4226,7 +4270,7 @@ const Inspector = ({
                                         isDisabled={Boolean(activeActionLoading)}
                                         onClick={() => setInspectorConfirmAction({
                                             actionKey: 'unstash',
-                                            targetItem: item,
+                                            targetItem: targetWithShare,
                                             title: `Unstash ${item.isFolder ? 'Folder' : 'Document'}`,
                                             message: `Are you sure you want to unstash "${item.name || item.title || 'this document'}" and restore it to approved status?`,
                                             primaryLabel: 'Unstash Item',
@@ -4244,7 +4288,7 @@ const Inspector = ({
                                         isDisabled={Boolean(activeActionLoading)}
                                         onClick={() => setInspectorConfirmAction({
                                             actionKey: 'stash',
-                                            targetItem: item,
+                                            targetItem: targetWithShare,
                                             title: `Stash ${item.isFolder ? 'Folder' : 'Document'}`,
                                             message: `Are you sure you want to stash "${item.name || item.title || 'this document'}"? It will be held at upper management level.`,
                                             primaryLabel: 'Stash Item',
