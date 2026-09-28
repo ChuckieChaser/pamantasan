@@ -1,10 +1,8 @@
 // --- IMPORTS ---
-import {
-    useCoordinatorStore,
-    useUserStore,
-    useDepartmentStore,
-    useDocumentStore,
-} from '../stores';
+import { useCoordinatorStore } from '../stores/useCoordinatorStore';
+import { useUserStore } from '../stores/useUserStore';
+import { useDepartmentStore } from '../stores/useDepartmentStore';
+import { useDocumentStore } from '../stores/useDocumentStore';
 import { authService } from './authService';
 import { systemEventService } from './systemEventService';
 import { constants } from '../constants';
@@ -147,7 +145,7 @@ const coordinatorApprovalService = {
                 await deptStore.insertDepartment({
                     name: (payloadData.name || '').trim(),
                     code: (payloadData.code || '').trim().toUpperCase(),
-                });
+                }, adminUser);
                 break;
             }
 
@@ -156,7 +154,7 @@ const coordinatorApprovalService = {
                 const deptId = payloadData.departmentId ?? payloadData.id;
                 const updates = payloadData.new ?? payloadData;
                 if (!deptId) throw new Error('Target department ID missing from request payload.');
-                await deptStore.updateDepartment(deptId, updates);
+                await deptStore.updateDepartment(deptId, updates, adminUser);
                 break;
             }
 
@@ -164,7 +162,7 @@ const coordinatorApprovalService = {
                 const deptStore = useDepartmentStore.getState();
                 const deptId = payloadData.departmentId ?? payloadData.id;
                 if (!deptId) throw new Error('Target department ID missing from request payload.');
-                await deptStore.deleteDepartment(deptId);
+                await deptStore.deleteDepartment(deptId, adminUser);
                 break;
             }
 

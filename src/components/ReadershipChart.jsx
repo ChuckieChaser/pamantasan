@@ -63,6 +63,53 @@ export const compute7DaySlots = (logs = []) => {
     return slots;
 };
 
+// --- HELPERS: ALL-TIME READERSHIP SLOTS (7 HISTORICAL MONTHS / INTERVALS) ---
+export const computeAllTimeSlots = (logs = []) => {
+    const now = new Date();
+    const slots = [];
+
+    for (let i = 6; i >= 0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        const dayLabel = d.toLocaleDateString([], { month: 'short' }).toUpperCase();
+        const dateStr = d.toLocaleDateString([], { month: 'short', year: 'numeric' });
+        const yearMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+
+        slots.push({
+            index: 6 - i,
+            dayLabel,
+            dateStr,
+            fullDateStr: dateStr,
+            yearMonth,
+            isToday: i === 0,
+            isFuture: false,
+            count: 0,
+            uniqueActors: new Set(),
+        });
+    }
+
+    if (Array.isArray(logs)) {
+        logs.forEach((log) => {
+            if (!log?.createdAt) return;
+            const logDate = new Date(log.createdAt);
+            if (isNaN(logDate.getTime())) return;
+
+            const logYearMonth = `${logDate.getFullYear()}-${String(logDate.getMonth() + 1).padStart(2, '0')}`;
+            const slot = slots.find((s) => s.yearMonth === logYearMonth);
+            if (slot) {
+                slot.count += 1;
+                const actorId = log.actor?.id || log.actorId;
+                if (actorId) slot.uniqueActors.add(actorId);
+            } else if (logDate < new Date(now.getFullYear(), now.getMonth() - 6, 1)) {
+                slots[0].count += 1;
+                const actorId = log.actor?.id || log.actorId;
+                if (actorId) slots[0].uniqueActors.add(actorId);
+            }
+        });
+    }
+
+    return slots;
+};
+
 // Smooth cubic bezier path generator
 const getSmoothLinePath = (points = []) => {
     if (!points || points.length === 0) return '';
@@ -88,6 +135,7 @@ export const ReadershipChart = ({
     compact = false,
     showLabels = true,
     showPeak = false,
+    color = 'var(--color-accent)',
     className = '',
 }) => {
     const slots = useMemo(() => {
@@ -172,7 +220,7 @@ export const ReadershipChart = ({
                         <span className="font-bold text-text">
                             {activeSlot.dayLabel} ({activeSlot.dateStr}):
                         </span>
-                        <span className="text-accent font-semibold">
+                        <span className="font-semibold" style={{ color }}>
                             {activeSlot.count} {activeSlot.count === 1 ? 'read' : 'reads'}
                         </span>
                     </div>
@@ -186,8 +234,8 @@ export const ReadershipChart = ({
                 >
                     <defs>
                         <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor="var(--color-accent)" stopOpacity="0.35" />
-                            <stop offset="100%" stopColor="var(--color-accent)" stopOpacity="0.04" />
+                            <stop offset="0%" stopColor={color} stopOpacity="0.35" />
+                            <stop offset="100%" stopColor={color} stopOpacity="0.04" />
                         </linearGradient>
                     </defs>
 
@@ -243,7 +291,7 @@ export const ReadershipChart = ({
                             y={paddingTop - 2}
                             width={stepX}
                             height={availableHeight + 4}
-                            fill="var(--color-accent)"
+                            fill={color}
                             fillOpacity="0.07"
                             rx="2"
                         />
@@ -256,7 +304,7 @@ export const ReadershipChart = ({
                     <path
                         d={linePathD}
                         fill="none"
-                        stroke="var(--color-accent)"
+                        stroke={color}
                         strokeWidth="2.25"
                         strokeLinecap="round"
                         strokeLinejoin="round"
@@ -273,11 +321,11 @@ export const ReadershipChart = ({
                                     cx={pt.x}
                                     cy={pt.y}
                                     r={isHovered ? 4.5 : isToday ? 4 : 2.75}
-                                    className={`transition-all duration-150 ${
-                                        isToday || isHovered
-                                            ? 'fill-accent stroke-surface'
-                                            : 'fill-surface stroke-accent'
-                                    }`}
+                                    style={{
+                                        fill: isToday || isHovered ? color : 'var(--color-surface)',
+                                        stroke: color,
+                                    }}
+                                    className="transition-all duration-150"
                                     strokeWidth={isToday || isHovered ? '2' : '1.75'}
                                 />
                             </g>

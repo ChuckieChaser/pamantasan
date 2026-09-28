@@ -1,7 +1,6 @@
 // --- IMPORTS ---
 import { useState, useMemo } from 'react';
 import {
-    AlertCircle,
     CheckCircle2,
     Clock,
     Eye,
@@ -231,14 +230,6 @@ const History = ({
                                                     </>
                                                 )}
                                             </div>
-
-                                            {/* REJECTION REASON CALLOUT */}
-                                            {item.rejectionReason && (
-                                                <div className="mt-1.5 px-2.5 py-1 rounded-md bg-error-background/60 border border-error-border/60 text-[11px] text-error flex items-center gap-1.5 max-w-xl">
-                                                    <AlertCircle className="h-3 w-3 shrink-0" />
-                                                    <span className="truncate"><strong>Reason:</strong> {item.rejectionReason}</span>
-                                                </div>
-                                            )}
                                         </div>
                                     </div>
 

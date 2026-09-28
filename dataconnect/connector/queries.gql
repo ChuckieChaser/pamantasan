@@ -694,7 +694,7 @@ query FetchNotifications(
 
 # --- AUDIT LOG QUERIES ---
 query FetchAuditLogs @auth(level: PUBLIC) {
-    auditLogs {
+    auditLogs(orderBy: [{ createdAt: DESC }]) {
         id
         actor {
             id

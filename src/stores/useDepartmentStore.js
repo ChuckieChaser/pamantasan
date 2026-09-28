@@ -2,8 +2,25 @@
 import { create } from 'zustand';
 
 import { mutationSchema } from '../schemas';
-import { departmentService, systemEventService } from '../services';
+import { departmentService } from '../services/departmentService';
+import { systemEventService } from '../services/systemEventService';
+import { useAuditStore } from './useAuditStore';
+import { useNotificationStore } from './useNotificationStore';
+import { useAuthStore } from './useAuthStore';
 import { constants } from '../constants';
+
+
+// --- HELPERS ---
+const generateUuid = () => {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID();
+    }
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+        const r = (Math.random() * 16) | 0;
+        const v = c === 'x' ? r : (r & 0x3) | 0x8;
+        return v.toString(16);
+    });
+};
 
 
 // --- STORE ---
@@ -109,7 +126,7 @@ const useDepartmentStore = create((set, get) => ({
         }
     },
 
-    insertDepartment: async (payload) => {
+    insertDepartment: async (payload, actor = null) => {
         set({ isLoading: true, error: null });
 
         try {
@@ -123,7 +140,7 @@ const useDepartmentStore = create((set, get) => ({
             const result = await departmentService.insertDepartment(validatedPayload);
 
             const newDepartment = {
-                id: result?.id ?? (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `dept-${Date.now()}`),
+                id: result?.id ?? generateUuid(),
                 name: result?.name ?? validatedPayload.name,
                 code: result?.code ?? validatedPayload.code,
                 createdAt: result?.createdAt ?? validatedPayload.createdAt ?? timestamp,
@@ -149,19 +166,29 @@ const useDepartmentStore = create((set, get) => ({
             // Re-fetch with SERVER_ONLY to ensure complete consistency with backend SQL
             get().fetchDepartments().catch(() => {});
 
+            const resolvedActor = actor || useAuthStore.getState().currentUser;
+            const resolvedActorId = resolvedActor?.id || null;
+
             systemEventService.recordSystemEvent({
+                actor: resolvedActor,
+                actorId: resolvedActorId,
                 entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DEPARTMENT,
                 entityId: newDepartment.id,
                 action: constants.AUDIT_LOGS_ACTION.CREATED,
                 data: {
+                    id: newDepartment.id,
                     name: newDepartment.name,
                     code: newDepartment.code,
                     title: `Department Created: ${newDepartment.name} (${newDepartment.code})`,
                     description: `Department "${newDepartment.name}" (${newDepartment.code}) has been created in the institutional directory.`,
                 },
                 targetRoles: ['ADMINISTRATOR', 'COORDINATOR'],
+                targetUserIds: resolvedActorId ? [resolvedActorId] : [],
+                excludeActor: false,
                 isMajor: true,
-            }).catch(() => {});
+            }).catch((err) => {
+                console.warn('[useDepartmentStore] recordSystemEvent warning on insertDepartment:', err);
+            });
 
             return newDepartment;
         } catch (error) {
@@ -172,7 +199,7 @@ const useDepartmentStore = create((set, get) => ({
         }
     },
 
-    updateDepartment: async (id, payload) => {
+    updateDepartment: async (id, payload, actor = null) => {
         set({ isLoading: true, error: null });
 
         try {
@@ -210,19 +237,29 @@ const useDepartmentStore = create((set, get) => ({
 
             get().fetchDepartments().catch(() => {});
 
+            const resolvedActor = actor || useAuthStore.getState().currentUser;
+            const resolvedActorId = resolvedActor?.id || null;
+
             systemEventService.recordSystemEvent({
+                actor: resolvedActor,
+                actorId: resolvedActorId,
                 entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DEPARTMENT,
                 entityId: id,
                 action: constants.AUDIT_LOGS_ACTION.UPDATED,
                 data: {
+                    id,
                     name: updatedDepartment.name,
                     code: updatedDepartment.code,
                     title: `Department Updated: ${updatedDepartment.name} (${updatedDepartment.code})`,
                     description: `Department details for "${updatedDepartment.name}" (${updatedDepartment.code}) were updated.`,
                 },
                 targetRoles: ['ADMINISTRATOR', 'COORDINATOR'],
-                isMajor: false,
-            }).catch(() => {});
+                targetUserIds: resolvedActorId ? [resolvedActorId] : [],
+                excludeActor: false,
+                isMajor: true,
+            }).catch((err) => {
+                console.warn('[useDepartmentStore] recordSystemEvent warning on updateDepartment:', err);
+            });
 
             return updatedDepartment;
         } catch (error) {
@@ -233,7 +270,7 @@ const useDepartmentStore = create((set, get) => ({
         }
     },
 
-    deleteDepartment: async (id) => {
+    deleteDepartment: async (id, actor = null) => {
         const department = get().departments.find((d) => d.id === id);
         try {
             const { useUserStore } = await import('./useUserStore');
@@ -274,7 +311,12 @@ const useDepartmentStore = create((set, get) => ({
                 }));
                 get().fetchDepartments().catch(() => {});
 
+                const resolvedActor = actor || useAuthStore.getState().currentUser;
+                const resolvedActorId = resolvedActor?.id || null;
+
                 systemEventService.recordSystemEvent({
+                    actor: resolvedActor,
+                    actorId: resolvedActorId,
                     entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DEPARTMENT,
                     entityId: id,
                     action: constants.AUDIT_LOGS_ACTION.DELETED,
@@ -286,8 +328,12 @@ const useDepartmentStore = create((set, get) => ({
                         description: `Department "${department?.name || department?.code || id}" was removed from the institution directory.`,
                     },
                     targetRoles: ['ADMINISTRATOR', 'COORDINATOR'],
+                    targetUserIds: resolvedActorId ? [resolvedActorId] : [],
+                    excludeActor: false,
                     isMajor: true,
-                }).catch(() => {});
+                }).catch((err) => {
+                    console.warn('[useDepartmentStore] recordSystemEvent warning on deleteDepartment:', err);
+                });
             } else {
                 set({ isLoading: false });
             }

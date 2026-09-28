@@ -37,6 +37,6 @@ export { DocumentViewerModal } from './DocumentViewerModal';
 export { DocumentScannerModal } from './DocumentScannerModal';
 export { MobileScanModal } from './MobileScanModal';
 
-export { ReadershipChart, compute7DaySlots } from './ReadershipChart';
+export { ReadershipChart, compute7DaySlots, computeAllTimeSlots } from './ReadershipChart';
 export { Account, GlobalSearchDropdown, Notifications, Settings, Sidebar, TopBar } from './ui';
 export { formatUniversityId, renderIcon, formatDateTime, getMimeTypeFromFilename, formatMimeTypeLabel, getExtensionFromMimeType, fileToBase64 } from './common';

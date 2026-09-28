@@ -750,7 +750,7 @@ const DocumentViewerModal = ({
 
     // RENDER
     return (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 md:p-6 animate-toast-in select-none">
+        <div className="fixed inset-0 z-[50000] bg-black/75 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 md:p-6 animate-toast-in select-none">
             <div
                 className={`bg-surface border border-surface-border rounded-xl shadow-2xl flex flex-col w-full max-w-6xl h-[92vh] max-h-[950px] overflow-hidden ${className}`.trim()}
                 {...props}

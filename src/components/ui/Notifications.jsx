@@ -3,7 +3,7 @@ import { Bell } from 'lucide-react';
 import { Container } from '../Container';
 
 // --- CONFIGURATIONS ---
-const BASE_STYLE = 'absolute right-0 top-full mt-2 z-50 w-80 sm:w-96';
+const BASE_STYLE = 'absolute right-0 top-full mt-2 z-[100] w-80 sm:w-96';
 
 // --- COMPONENTS ---
 const Notifications = ({
@@ -102,6 +102,10 @@ const Notifications = ({
                             } else if (entityType.includes('USER')) {
                                 if (actionType === 'SUSPENDED') title = 'User account suspended';
                                 else if (actionType === 'UNSUSPENDED') title = 'User account reactivated';
+                            } else if (entityType.includes('DEPARTMENT')) {
+                                if (actionType === 'CREATED') title = 'New department created';
+                                else if (actionType === 'UPDATED') title = 'Department details updated';
+                                else if (actionType === 'DELETED') title = 'Department removed from directory';
                             }
 
                             const actorName = notification.actor

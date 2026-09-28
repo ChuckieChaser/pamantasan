@@ -36,7 +36,7 @@ const isMajorAction = (entityType, action) => {
         return ['CREATED', 'SUSPENDED', 'UNSUSPENDED'].includes(act);
     }
     if (ent.includes('DEPARTMENT')) {
-        return ['CREATED', 'DELETED'].includes(act);
+        return ['CREATED', 'UPDATED', 'DELETED'].includes(act);
     }
     return false;
 };
@@ -69,8 +69,9 @@ const systemEventService = {
         targetUserIds = [],
         actorId = null,
         excludeActor = true,
+        users = null,
     }) => {
-        const allUsers = useUserStore.getState().users || [];
+        const allUsers = users || useUserStore.getState().users || [];
         const recipientSet = new Set();
 
         // 1. Add direct target user IDs
@@ -158,8 +159,10 @@ const systemEventService = {
         // 1. CREATE AUDIT LOG SIMULTANEOUSLY
         let auditLogEntry = null;
         try {
+            const actorObj = typeof actor === 'object' ? actor : (useAuthStore.getState().currentUser || null);
             const auditPayload = {
                 actorId: resolvedActorId,
+                actor: actorObj,
                 entityType: entityType,
                 entityId: String(entityId),
                 action: action,
@@ -172,12 +175,22 @@ const systemEventService = {
         }
 
         // 2. RESOLVE RECIPIENTS FOR NOTIFICATION
+        let allUsers = useUserStore.getState().users || [];
+        if (allUsers.length === 0 && Array.isArray(targetRoles) && targetRoles.length > 0) {
+            try {
+                allUsers = (await useUserStore.getState().fetchUsers()) || [];
+            } catch {
+                /* ignore */
+            }
+        }
+
         const recipientIds = systemEventService.resolveRecipientIds({
             targetRoles,
             targetDepartmentId,
             targetUserIds,
             actorId: resolvedActorId,
             excludeActor,
+            users: allUsers,
         });
 
         // 3. DISPATCH NOTIFICATIONS TO ALL AFFECTED PARTIES

@@ -177,7 +177,7 @@ const TextField = ({
                         )}
 
                         {isInteractiveDropdown && isSuffixOpen && (
-                            <div className="absolute right-0 top-full mt-1.5 z-50 min-w-36 max-h-48 overflow-y-auto bg-surface border border-surface-border rounded-lg shadow-xl py-1 flex flex-col gap-0.5 animate-fade-in">
+                            <div className="absolute right-0 top-full mt-1.5 z-[100] min-w-36 max-h-48 overflow-y-auto bg-surface border border-surface-border rounded-lg shadow-xl py-1 flex flex-col gap-0.5 animate-fade-in">
                                 {effectiveSuffixOptions.map((opt) => {
                                     const optVal = typeof opt === 'object' ? opt.value : opt;
                                     const optLabel = typeof opt === 'object' ? (opt.label ?? opt.value) : opt;

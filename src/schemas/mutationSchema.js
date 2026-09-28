@@ -243,6 +243,7 @@ const UpdateNotificationSchema = z.object({
 // --- AUDIT LOG SCHEMAS ---
 const InsertAuditLogSchema = z.object({
     actorId: z.string().nullable().optional(),
+    actor: z.any().optional(),
     entityType: common.AuditLogsEntityTypeSchema,
     entityId: z.string(),
     action: common.AuditLogsActionSchema,

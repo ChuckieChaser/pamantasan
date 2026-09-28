@@ -213,33 +213,26 @@ const Inspector = ({
     const isDirector = constants.isDirectorRole(activeUser?.role);
     const isMember = constants.isMemberRole(activeUser?.role);
 
-    if (item?.id !== previousItemId) {
-        setPreviousItemId(item?.id);
-        const explicitTab = targetTab || item?._targetTab;
-        if (explicitTab) {
-            const resolvedTab = normalizeTab(explicitTab);
-            const target = isMember && resolvedTab === 'share' ? 'information' : resolvedTab;
-            setActiveTab(target);
-            onTabChange?.(target);
-        }
-        setChatInputText('');
-        setStagedAttachments([]);
-        setIsAttachModalOpen(false);
-        setIsEditDepartmentModalOpen(false);
-        setIsEditUserModalOpen(false);
-        setViewingFacultyMember(null);
-        setExpandedFolderIds(new Set());
-        setSelectedTreeItemId(null);
-    }
-
     useEffect(() => {
-        const nextTab = targetTab || item?._targetTab;
-        if (nextTab) {
-            const resolvedTab = normalizeTab(nextTab);
-            const target = isMember && resolvedTab === 'share' ? 'information' : resolvedTab;
-            queueMicrotask(() => setActiveTab(target));
+        if (item?.id !== previousItemId) {
+            setPreviousItemId(item?.id);
+            const explicitTab = targetTab || item?._targetTab;
+            if (explicitTab) {
+                const resolvedTab = normalizeTab(explicitTab);
+                const target = isMember && resolvedTab === 'share' ? 'information' : resolvedTab;
+                setActiveTab(target);
+                onTabChange?.(target);
+            }
+            setChatInputText('');
+            setStagedAttachments([]);
+            setIsAttachModalOpen(false);
+            setIsEditDepartmentModalOpen(false);
+            setIsEditUserModalOpen(false);
+            setViewingFacultyMember(null);
+            setExpandedFolderIds(new Set());
+            setSelectedTreeItemId(null);
         }
-    }, [targetTab, item?.id, item?._targetTab, isMember]);
+    }, [item?.id, previousItemId, targetTab, item?._targetTab, isMember, onTabChange]);
 
     const allDocuments = useDocumentStore((state) => state.documents);
     const allDocumentVersions = useDocumentStore((state) => state.documentVersions ?? state.versions ?? []);
@@ -465,10 +458,12 @@ const Inspector = ({
         if (isDocumentRequest) {
             const matchedRequest = (allDocumentRequests || []).find((r) => String(r.id) === String(item?.id));
             const effectiveStatus = matchedRequest?.status ?? item?.status;
+            const effectiveRejection = item?.rejectionReason ?? matchedRequest?.rejectionReason ?? matchedRequest?.rejection_reason ?? null;
             return {
                 ...item,
                 ...(matchedRequest || {}),
                 status: effectiveStatus,
+                rejectionReason: effectiveRejection,
                 updatedAt: matchedRequest?.updatedAt ?? item?.updatedAt,
             };
         }
@@ -730,7 +725,9 @@ const Inspector = ({
             return [];
         }
 
-        return allAuditLogs.filter((log) => log.actor?.id === item.id || log.actorId === item.id);
+        return allAuditLogs
+            .filter((log) => log.actor?.id === item.id || log.actorId === item.id)
+            .sort((a, b) => new Date(b?.createdAt || 0) - new Date(a?.createdAt || 0));
     }, [item, isUser, allAuditLogs]);
 
     const departmentFaculty = useMemo(() => {
@@ -771,6 +768,33 @@ const Inspector = ({
 
         return [];
     }, [item, isDocumentRequest, allRequestMessages]);
+
+    const effectiveRejectionReason = useMemo(() => {
+        const directReason = activeItem?.rejectionReason || item?.rejectionReason;
+        if (directReason) return directReason;
+
+        if (isDocumentRequest) {
+            const rejectionMsg = [...requestMessages]
+                .reverse()
+                .find((m) => m.message && (
+                    m.message.startsWith('Rejection Note:') ||
+                    m.message.includes('<!-- rejection_reason:') ||
+                    m.message.toLowerCase().includes('rejection reason:')
+                ));
+            if (rejectionMsg) {
+                const text = rejectionMsg.message;
+                if (text.startsWith('Rejection Note:')) {
+                    return text.replace(/^Rejection Note:\s*/, '').trim();
+                }
+                const tagMatch = text.match(/<!-- rejection_reason:(.*?) -->/);
+                if (tagMatch) {
+                    return tagMatch[1].trim();
+                }
+                return text;
+            }
+        }
+        return null;
+    }, [activeItem?.rejectionReason, item?.rejectionReason, isDocumentRequest, requestMessages]);
 
     const pendingAttachRequests = useMemo(() => {
         if (!item || !isDocumentRequest) return [];
@@ -1070,7 +1094,7 @@ const Inspector = ({
                 useDepartmentStore.getState().updateDepartment(activeItem.id, {
                     code: deptFormCode.trim().toUpperCase(),
                     name: deptFormName.trim(),
-                }),
+                }, activeUser),
                 minTimer,
             ]);
 
@@ -1660,7 +1684,7 @@ const Inspector = ({
                                 </div>
                             )}
 
-                        {isCoordinatorRequest && item.rejectionReason && (
+                        {(isCoordinatorRequest || isDocumentRequest) && effectiveRejectionReason && (
                             <div className="flex flex-col gap-2">
                                 <span className="text-xs font-semibold uppercase tracking-wider text-error select-none">
                                     Rejection Reason
@@ -1669,7 +1693,7 @@ const Inspector = ({
                                     <div className="flex items-center gap-2 font-bold mb-1">
                                         <AlertCircle className="h-4 w-4" /> Rejection Reason
                                     </div>
-                                    {item.rejectionReason}
+                                    {effectiveRejectionReason}
                                 </div>
                             </div>
                         )}
@@ -3095,6 +3119,14 @@ const Inspector = ({
                                         </div>
                                     )}
                                 </div>
+                                {effectiveRejectionReason && (
+                                    <div className={`${ERROR_CALLOUT_STYLE} mt-2`}>
+                                        <div className="flex items-center gap-2 font-bold mb-1">
+                                            <AlertCircle className="h-4 w-4" /> Rejection Reason
+                                        </div>
+                                        {effectiveRejectionReason}
+                                    </div>
+                                )}
                             </div>
 
                             {/* SCROLLABLE MESSAGE STREAM */}

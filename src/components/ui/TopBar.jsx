@@ -4,7 +4,7 @@ import { SearchField } from '../Fields';
 import { ToggleSelection } from '../Selections';
 
 // --- CONFIGURATIONS ---
-const BASE_STYLE = 'h-12 sm:h-14 px-2.5 sm:px-4 bg-background/90 backdrop-blur-md sticky top-0 z-20 flex items-center justify-between gap-2 shrink-0 border-b border-surface-border/60 transition-all';
+const BASE_STYLE = 'h-12 sm:h-14 px-2.5 sm:px-4 bg-background/90 backdrop-blur-md sticky top-0 z-40 flex items-center justify-between gap-2 shrink-0 border-b border-surface-border/60 transition-all';
 
 // --- COMPONENTS ---
 const TopBar = ({

@@ -2,7 +2,7 @@
 import { create } from 'zustand';
 
 import { mutationSchema } from '../schemas';
-import { auditService } from '../services';
+import { auditService } from '../services/auditService';
 
 
 // --- STORE ---
@@ -11,16 +11,32 @@ const useAuditStore = create((set) => ({
     auditLogs: [],
     isLoading: false,
     error: null,
-
+    
     // CORE
     fetchAuditLogs: async () => {
         set({ isLoading: true, error: null });
 
         try {
             const auditLogs = await auditService.fetchAuditLogs();
-            set({ auditLogs: auditLogs, isLoading: false, error: null });
+            const sortedLogs = [...auditLogs].sort(
+                (a, b) => new Date(b?.createdAt || 0) - new Date(a?.createdAt || 0)
+            );
 
-            return auditLogs;
+            set((state) => {
+                const serverIdSet = new Set(sortedLogs.map((l) => l.id));
+                const localOnlyLogs = (state.auditLogs || []).filter(
+                    (l) => l && l.id && !serverIdSet.has(l.id)
+                );
+                return {
+                    auditLogs: [...sortedLogs, ...localOnlyLogs].sort(
+                        (a, b) => new Date(b?.createdAt || 0) - new Date(a?.createdAt || 0)
+                    ),
+                    isLoading: false,
+                    error: null,
+                };
+            });
+
+            return sortedLogs;
         } catch (error) {
             const message = error?.message ?? 'Failed to fetch audit logs.';
             set({ isLoading: false, error: message });
@@ -37,7 +53,9 @@ const useAuditStore = create((set) => ({
             const newAuditLog = await auditService.insertAuditLog(validatedPayload);
 
             set((state) => ({
-                auditLogs: [newAuditLog, ...state.auditLogs],
+                auditLogs: [newAuditLog, ...state.auditLogs].sort(
+                    (a, b) => new Date(b?.createdAt || 0) - new Date(a?.createdAt || 0)
+                ),
                 isLoading: false,
                 error: null,
             }));

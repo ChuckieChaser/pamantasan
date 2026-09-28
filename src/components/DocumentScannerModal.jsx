@@ -393,7 +393,7 @@ export const DocumentScannerModal = ({
     if (!isOpen || !file) return null;
 
     return (
-        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex flex-col select-none animate-toast-in">
+        <div className="fixed inset-0 z-[50000] bg-black/85 backdrop-blur-md flex flex-col select-none animate-toast-in">
             {/* TOP BAR */}
             <div className="flex items-center justify-between px-6 py-3.5 bg-neutral-900/90 border-b border-neutral-800 text-white shrink-0">
                 <div className="flex items-center gap-2.5">

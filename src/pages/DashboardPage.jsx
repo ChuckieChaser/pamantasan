@@ -9,7 +9,6 @@ import {
     CheckCircle2,
     Inbox,
     Eye,
-    EyeOff,
     TrendingUp,
     BarChart3,
     ChevronLeft,
@@ -17,8 +16,6 @@ import {
     Filter,
     Folder,
     FolderTree,
-    LayoutGrid,
-    List,
     Shield,
     Users,
     ArrowUpRight,
@@ -35,10 +32,13 @@ import {
     Avatar,
     Badge,
     Button,
+    ComboField,
     Container,
     ReadershipChart,
+    SearchField,
     SelectField,
     compute7DaySlots,
+    computeAllTimeSlots,
     resolveUserAvatar,
     formatDateTime,
 } from '../components';
@@ -58,12 +58,11 @@ import { constants, isStaffRole } from '../constants';
 // --- CONFIGURATIONS ---
 const PAGE_SIZE = 50;
 
-const AUDIT_CATEGORY_OPTIONS = [
-    { value: 'ALL', label: 'All Activities' },
-    { value: 'DOCUMENTS', label: 'Documents' },
-    { value: 'REQUESTS', label: 'Clearance Requests' },
-    { value: 'GOVERNANCE', label: 'Governance & Shares' },
-    { value: 'USERS', label: 'Users & Units' },
+const AUDIT_SORT_OPTIONS = [
+    { value: 'date-desc', label: 'Recently Added' },
+    { value: 'date-asc', label: 'Oldest Added' },
+    { value: 'name-asc', label: 'Actor Name (A-Z)' },
+    { value: 'name-desc', label: 'Actor Name (Z-A)' },
 ];
 
 const ROLE_BADGE_STYLES = {
@@ -75,24 +74,77 @@ const ROLE_BADGE_STYLES = {
 };
 
 const ACTION_VERB_STYLES = {
-    UPLOADED: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/20',
-    CREATED: 'bg-indigo-500/10 text-indigo-700 dark:text-indigo-400 border-indigo-500/20',
+    CREATED: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/20',
+    READ: 'bg-accent-background text-accent border-accent-border',
     UPDATED: 'bg-sky-500/10 text-sky-700 dark:text-sky-400 border-sky-500/20',
-    ARCHIVED: 'bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/20',
-    UNARCHIVED: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/20',
     DELETED: 'bg-rose-500/10 text-rose-700 dark:text-rose-400 border-rose-500/20',
-    RESOLVED: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/20',
-    REJECTED: 'bg-rose-500/10 text-rose-700 dark:text-rose-400 border-rose-500/20',
-    SHARED: 'bg-purple-500/10 text-purple-700 dark:text-purple-400 border-purple-500/20',
-    PUBLISHED: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/20',
-    COMMENTED: 'bg-cyan-500/10 text-cyan-700 dark:text-cyan-400 border-cyan-500/20',
+};
+
+const toCanonicalAction = (rawAction = '') => {
+    const act = String(rawAction || '').toUpperCase().trim();
+    if (['UPLOAD', 'UPLOADED', 'CREATE', 'CREATED', 'ADD', 'ADDED', 'REGISTER', 'REGISTERED'].includes(act)) {
+        return 'CREATED';
+    }
+    if (['READ', 'VIEW', 'VIEWED', 'ACCESS', 'ACCESSED', 'DOWNLOAD', 'DOWNLOADED'].includes(act)) {
+        return 'READ';
+    }
+    if (['DELETE', 'DELETED', 'REMOVE', 'REMOVED', 'REVOKE', 'REVOKED', 'REJECT', 'REJECTED', 'PURGE', 'PURGED'].includes(act)) {
+        return 'DELETED';
+    }
+    return 'UPDATED';
+};
+
+const toCanonicalEntity = (rawEntity = '') => {
+    const ent = String(rawEntity || '').toUpperCase().trim();
+    if (ent.includes('DOCUMENT_REQUEST')) {
+        return {
+            key: 'DOCUMENT_REQUEST',
+            label: 'Document Request',
+            style: 'bg-purple-500/10 text-purple-700 dark:text-purple-400 border-purple-500/20',
+        };
+    }
+    if (ent.includes('COORDINATOR')) {
+        return {
+            key: 'COORDINATOR_REQUEST',
+            label: 'Coordinator Request',
+            style: 'bg-rose-500/10 text-rose-700 dark:text-rose-400 border-rose-500/20',
+        };
+    }
+    if (ent.includes('DEPARTMENT')) {
+        return {
+            key: 'DEPARTMENTS',
+            label: 'Departments',
+            style: 'bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/20',
+        };
+    }
+    if (ent.includes('USER')) {
+        return {
+            key: 'USERS',
+            label: 'Users',
+            style: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/20',
+        };
+    }
+    return {
+        key: 'DOCUMENTS',
+        label: 'Documents',
+        style: 'bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-500/20',
+    };
 };
 
 const CLASSIFICATION_STYLES = {
     PUBLIC: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/20',
     RESTRICTED: 'bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/20',
     CONFIDENTIAL: 'bg-rose-500/10 text-rose-700 dark:text-rose-400 border-rose-500/20',
-    UNCLASSIFIED: 'bg-zinc-500/10 text-zinc-700 dark:text-zinc-400 border-zinc-500/20',
+    PRIVATE: 'bg-zinc-500/10 text-zinc-700 dark:text-zinc-400 border-zinc-500/20',
+    UNCLASSIFIED: 'bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-500/20',
+};
+
+const CLASSIFICATION_LABELS = {
+    PUBLIC: 'Public',
+    RESTRICTED: 'Restricted',
+    CONFIDENTIAL: 'Confidential',
+    PRIVATE: 'Private',
+    UNCLASSIFIED: 'Unclassified',
 };
 
 
@@ -143,11 +195,13 @@ const DashboardPage = ({
     const syncAllDocumentShares = useDocumentStore((state) => state.syncAllDocumentShares);
 
     // LOCAL STATE FOR LIVE AUDIT TRAIL & ANALYTICS VIEW
-    const [auditCategory, setAuditCategory] = useState('ALL');
+    const [auditFilters, setAuditFilters] = useState([]);
+    const [auditSearch, setAuditSearch] = useState('');
+    const [auditSort, setAuditSort] = useState('date-desc');
     const [auditPage, setAuditPage] = useState(1);
     const [analyticsSortBy, setAnalyticsSortBy] = useState('READS'); // 'READS' | 'RECENT'
-    const [analyticsViewMode, setAnalyticsViewMode] = useState('LIST'); // 'LIST' | 'GRID'
-    const [suppressReadAudits, setSuppressReadAudits] = useState(false);
+    const [analysisSearch, setAnalysisSearch] = useState('');
+    const [pendingRequestType, setPendingRequestType] = useState('DOCUMENT'); // 'DOCUMENT' | 'COORDINATOR'
 
     // DERIVED VALUES
     const { currentUser: authUser } = useAuth();
@@ -338,6 +392,7 @@ const DashboardPage = ({
             docLogs.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
 
             const slots = compute7DaySlots(docLogs);
+            const allTimeSlots = computeAllTimeSlots(docLogs);
             const weekReads = slots.reduce((acc, s) => acc + s.count, 0);
             const totalReads = docLogs.length;
 
@@ -398,40 +453,65 @@ const DashboardPage = ({
             const lastLog = docLogs[0];
             const lastReadAt = lastLog?.createdAt ? new Date(lastLog.createdAt) : null;
 
+            const latestVer = Array.isArray(doc.versions) && doc.versions.length > 0
+                ? doc.versions[0]
+                : (doc.latestVersion ?? null);
+            const rawClassification = String(
+                doc.classification || latestVer?.classification || constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED
+            ).toUpperCase();
+            const classification = CLASSIFICATION_STYLES[rawClassification] ? rawClassification : 'UNCLASSIFIED';
+            const classificationLabel = CLASSIFICATION_LABELS[classification] || 'Unclassified';
+
+            const deptObj = safeDepts.find((d) => d.id === doc.departmentId);
+            const departmentName = deptObj?.name || null;
+
             return {
                 id: doc.id,
                 title: doc.name || doc.title || 'Institutional Record',
                 extension: doc.name ? doc.name.split('.').pop() : 'pdf',
                 parentFolderName,
                 departmentId: doc.departmentId,
-                departmentName: safeDepts.find((d) => d.id === doc.departmentId)?.name || 'Central Repository',
-                classification: doc.classification || 'PUBLIC',
+                departmentName,
+                classification,
+                classificationLabel,
                 weekReads,
                 totalReads,
                 weekUniqueReaders,
                 totalUniqueReaders,
                 slots,
+                allTimeSlots,
                 topDeptName,
                 lastReadAt,
                 documentItem: doc,
             };
         });
 
+        // Filter by analysisSearch query
+        const q = analysisSearch.trim().toLowerCase();
+        const searchFiltered = q
+            ? analyticsList.filter((item) =>
+                  item.title.toLowerCase().includes(q) ||
+                  (item.departmentName && item.departmentName.toLowerCase().includes(q)) ||
+                  (item.parentFolderName && item.parentFolderName.toLowerCase().includes(q)) ||
+                  item.classificationLabel.toLowerCase().includes(q)
+              )
+            : analyticsList;
+
         if (analyticsSortBy === 'READS') {
-            analyticsList.sort((a, b) => b.weekReads - a.weekReads || b.totalReads - a.totalReads || b.weekUniqueReaders - a.weekUniqueReaders);
+            searchFiltered.sort((a, b) => b.weekReads - a.weekReads || b.totalReads - a.totalReads || b.weekUniqueReaders - a.weekUniqueReaders);
         } else {
-            analyticsList.sort((a, b) => {
+            searchFiltered.sort((a, b) => {
                 const timeA = a.lastReadAt ? a.lastReadAt.getTime() : 0;
                 const timeB = b.lastReadAt ? b.lastReadAt.getTime() : 0;
                 return timeB - timeA || b.weekReads - a.weekReads;
             });
         }
 
-        return analyticsList.slice(0, 8);
-    }, [documents, documentShares, auditLogs, users, departments, analyticsSortBy]);
+        return searchFiltered.slice(0, 8);
+    }, [documents, documentShares, auditLogs, users, departments, analyticsSortBy, analysisSearch]);
 
-    // PENDING ACTION ITEMS
-    const pendingActionItems = useMemo(() => {
+    // PENDING ACTION ITEMS (SEGMENTED: DOCUMENT vs COORDINATOR)
+    const { pendingActionItems, pendingDocCount, pendingCoordCount } = useMemo(() => {
         const safeRequests = Array.isArray(requests) ? requests : [];
         const safeCoordinatorReqs = visibleCoordinatorRequests;
         const safeUsers = Array.isArray(users) ? users : [];
@@ -448,16 +528,21 @@ const DashboardPage = ({
                         : (typeof item?.requester === 'string' ? item.requester : 'Document Requester'));
 
                 const dateObj = item?.createdAt ? new Date(item.createdAt) : null;
-                const formattedDate = dateObj && !isNaN(dateObj.getTime())
-                    ? dateObj.toLocaleDateString([], { month: 'short', day: 'numeric' })
+                const formattedTime = dateObj && !isNaN(dateObj.getTime())
+                    ? (dateObj.toDateString() === new Date().toDateString()
+                        ? dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                        : dateObj.toLocaleDateString([], { month: 'short', day: 'numeric' }))
                     : 'Open';
 
                 return {
                     id: item?.id,
-                    title: item?.subject || 'Document Request',
-                    subtitle: requesterName || 'Document Requester',
+                    name: requesterName,
+                    subject: item?.subject || 'Document Request',
+                    requesterUser,
                     badge: 'Document Request',
-                    date: formattedDate,
+                    badgeStyle: 'bg-purple-500/10 text-purple-700 dark:text-purple-400 border-purple-500/20',
+                    time: formattedTime,
+                    createdAt: item?.createdAt,
                     item,
                     type: 'document_request',
                 };
@@ -474,24 +559,74 @@ const DashboardPage = ({
                         ? `${item.requester?.firstName ?? ''} ${item.requester?.lastName ?? ''}`.trim() || item.requester?.name
                         : (typeof item?.requester === 'string' ? item.requester : 'Department Coordinator'));
 
+                const parsedData = parseLogData(item?.data);
+                const actionName = item?.action ? item.action.replace(/_/g, ' ') : 'Coordinator Request';
+                const subject = parsedData?.title || parsedData?.name || actionName;
+
                 const dateObj = item?.createdAt ? new Date(item.createdAt) : null;
-                const formattedDate = dateObj && !isNaN(dateObj.getTime())
-                    ? dateObj.toLocaleDateString([], { month: 'short', day: 'numeric' })
+                const formattedTime = dateObj && !isNaN(dateObj.getTime())
+                    ? (dateObj.toDateString() === new Date().toDateString()
+                        ? dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                        : dateObj.toLocaleDateString([], { month: 'short', day: 'numeric' }))
                     : 'Pending';
 
                 return {
                     id: item?.id,
-                    title: item?.action ? item.action.replace(/_/g, ' ') : 'Coordinator Request',
-                    subtitle: requesterName || 'Records Coordinator',
-                    badge: 'Coordinator Clearance',
-                    date: formattedDate,
+                    name: requesterName,
+                    subject,
+                    requesterUser,
+                    badge: 'Coordinator Request',
+                    badgeStyle: 'bg-rose-500/10 text-rose-700 dark:text-rose-400 border-rose-500/20',
+                    time: formattedTime,
+                    createdAt: item?.createdAt,
                     item,
                     type: 'coordinator_request',
                 };
             });
 
-        return [...openDocRequests, ...pendingCoordRequests].slice(0, 6);
-    }, [requests, visibleCoordinatorRequests, users]);
+        openDocRequests.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+        pendingCoordRequests.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+
+        const activeList = pendingRequestType === 'COORDINATOR' ? pendingCoordRequests : openDocRequests;
+
+        return {
+            pendingActionItems: activeList.slice(0, 10),
+            pendingDocCount: openDocRequests.length,
+            pendingCoordCount: pendingCoordRequests.length,
+        };
+    }, [requests, visibleCoordinatorRequests, users, pendingRequestType]);
+
+    // AUDIT FILTER OPTIONS (COMBOFIELD)
+    const auditFilterOptions = useMemo(() => {
+        const options = [
+            // Entity
+            { value: 'entity:DOCUMENTS', label: 'Documents', category: 'Entity' },
+            { value: 'entity:DEPARTMENTS', label: 'Departments', category: 'Entity' },
+            { value: 'entity:USERS', label: 'Users', category: 'Entity' },
+            { value: 'entity:DOCUMENT_REQUEST', label: 'Document Request', category: 'Entity' },
+            { value: 'entity:COORDINATOR_REQUEST', label: 'Coordinator Request', category: 'Entity' },
+
+            // Action
+            { value: 'action:CREATED', label: 'Create', category: 'Action' },
+            { value: 'action:READ', label: 'Read', category: 'Action' },
+            { value: 'action:UPDATED', label: 'Update', category: 'Action' },
+            { value: 'action:DELETED', label: 'Delete', category: 'Action' },
+        ];
+
+        // Departments
+        const safeDepts = Array.isArray(departments) ? departments : [];
+        safeDepts.forEach((dept) => {
+            if (dept?.id && dept?.name) {
+                options.push({
+                    value: `dept:${dept.id}`,
+                    label: dept.name,
+                    category: 'Departments',
+                });
+            }
+        });
+
+        return options;
+    }, [departments]);
 
     // FILTERED & PAGINATED AUDIT LOGS
     const { paginatedAuditLogs, totalAuditPages, totalAuditCount } = useMemo(() => {
@@ -499,28 +634,53 @@ const DashboardPage = ({
         const safeUsers = Array.isArray(users) ? users : [];
         const safeDepts = Array.isArray(departments) ? departments : [];
 
+        // Parse active filter selections
+        const selectedEntities = [];
+        const selectedActions = [];
+        const selectedDepts = [];
+
+        (auditFilters || []).forEach((filterValue) => {
+            if (filterValue.startsWith('entity:')) selectedEntities.push(filterValue.replace('entity:', ''));
+            if (filterValue.startsWith('action:')) selectedActions.push(filterValue.replace('action:', ''));
+            if (filterValue.startsWith('dept:')) selectedDepts.push(filterValue.replace('dept:', ''));
+        });
+
         const filtered = safeAuditLogs.filter((log) => {
-            const act = String(log?.action || '').toUpperCase();
-            if (suppressReadAudits && (act === 'READ' || act === 'VIEW' || act === 'VIEWED')) {
+            const canonicalAction = toCanonicalAction(log?.action);
+            const canonicalEntity = toCanonicalEntity(log?.entityType);
+
+            // 1. ACTION FILTERING (Canonical: CREATED, READ, UPDATED, DELETED)
+            if (selectedActions.length > 0 && !selectedActions.includes(canonicalAction)) {
                 return false;
             }
-            if (auditCategory === 'ALL') return true;
-            const ent = String(log?.entityType || '').toUpperCase();
-            if (auditCategory === 'REQUESTS') return ent.includes('DOCUMENT_REQUEST');
-            if (auditCategory === 'DOCUMENTS') return ent.includes('DOCUMENT') && !ent.includes('REQUEST');
-            if (auditCategory === 'GOVERNANCE') return ent.includes('COORDINATOR') || ent.includes('SHARE');
-            if (auditCategory === 'USERS') return ent.includes('USER') || ent.includes('DEPARTMENT');
+
+            // 2. ENTITY FILTERING (Canonical: DOCUMENTS, DEPARTMENTS, USERS, DOCUMENT_REQUEST, COORDINATOR_REQUEST)
+            if (selectedEntities.length > 0 && !selectedEntities.includes(canonicalEntity.key)) {
+                return false;
+            }
+
+            // 3. DEPARTMENT FILTERING
+            if (selectedDepts.length > 0) {
+                const actorId = typeof log?.actor === 'object' ? log.actor?.id : (log?.actorId ?? log?.actor);
+                const actor = safeUsers.find((item) => item?.id === actorId);
+                const parsedData = parseLogData(log?.data);
+                const logDeptId = actor?.departmentId || log?.departmentId || parsedData?.departmentId;
+                if (!logDeptId || !selectedDepts.includes(logDeptId)) {
+                    return false;
+                }
+            }
+
             return true;
         });
 
         const formatted = filtered.map((log) => {
             const actorId = typeof log?.actor === 'object' ? log.actor?.id : (log?.actorId ?? log?.actor);
-            const actor = safeUsers.find((item) => item?.id === actorId);
+            const actor = safeUsers.find((item) => item?.id === actorId) || (typeof log?.actor === 'object' ? log.actor : null);
             const actorName = actor ? `${actor.firstName ?? ''} ${actor.lastName ?? ''}`.trim() || actor.name || 'Records Office' : 'Institutional System';
-            const actorRole = actor?.role ?? constants.USERS_ROLE.MEMBER;
+            const actorRole = actor?.role ?? (typeof log?.actor === 'object' ? log.actor?.role : null) ?? constants.USERS_ROLE.MEMBER;
             const actorDepartment = safeDepts.find((item) => item?.id === actor?.departmentId)?.name ?? 'Records Management Office';
-            const actionFormatted = log?.action ? log.action.replace(/_/g, ' ') : 'Action';
-            const entityTypeFormatted = log?.entityType ? log.entityType.replace(/_/g, ' ') : 'Record';
+            const canonicalAction = toCanonicalAction(log?.action);
+            const canonicalEntity = toCanonicalEntity(log?.entityType);
 
             const parsedData = parseLogData(log?.data);
             const subjectOrTitle = parsedData.title || parsedData.subject || parsedData.name || null;
@@ -529,7 +689,7 @@ const DashboardPage = ({
             if (subjectOrTitle) {
                 humanDescription = `"${subjectOrTitle}"`;
             } else {
-                humanDescription = `${actionFormatted.toLowerCase()} on ${entityTypeFormatted.toLowerCase()}`;
+                humanDescription = `${canonicalAction.toLowerCase()} on ${canonicalEntity.label.toLowerCase()}`;
             }
 
             const logDate = log?.createdAt ? new Date(log.createdAt) : null;
@@ -546,8 +706,10 @@ const DashboardPage = ({
                 ...log,
                 id: log?.id,
                 title: humanDescription,
-                category: entityTypeFormatted,
-                action: actionFormatted,
+                category: canonicalEntity.label,
+                action: canonicalAction,
+                canonicalAction,
+                entityBadge: canonicalEntity,
                 user: actorName,
                 actorUser: actor,
                 role: actorRole,
@@ -557,18 +719,48 @@ const DashboardPage = ({
             };
         });
 
-        const totalCount = formatted.length;
+        // 4. SEARCH QUERY FILTERING
+        const q = auditSearch.trim().toLowerCase();
+        const searchFiltered = q
+            ? formatted.filter((item) =>
+                  item.user.toLowerCase().includes(q) ||
+                  item.title.toLowerCase().includes(q) ||
+                  item.canonicalAction.toLowerCase().includes(q) ||
+                  item.entityBadge.label.toLowerCase().includes(q) ||
+                  item.department.toLowerCase().includes(q) ||
+                  item.role.toLowerCase().includes(q)
+              )
+            : formatted;
+
+        // 5. SORTING
+        searchFiltered.sort((a, b) => {
+            if (auditSort === 'date-desc') {
+                return new Date(b?.createdAt || 0) - new Date(a?.createdAt || 0);
+            }
+            if (auditSort === 'date-asc') {
+                return new Date(a?.createdAt || 0) - new Date(b?.createdAt || 0);
+            }
+            if (auditSort === 'name-asc') {
+                return (a.user || '').localeCompare(b.user || '');
+            }
+            if (auditSort === 'name-desc') {
+                return (b.user || '').localeCompare(a.user || '');
+            }
+            return 0;
+        });
+
+        const totalCount = searchFiltered.length;
         const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
         const safePage = Math.min(Math.max(1, auditPage), totalPages);
         const startIndex = (safePage - 1) * PAGE_SIZE;
-        const pageSlice = formatted.slice(startIndex, startIndex + PAGE_SIZE);
+        const pageSlice = searchFiltered.slice(startIndex, startIndex + PAGE_SIZE);
 
         return {
             paginatedAuditLogs: pageSlice,
             totalAuditPages: totalPages,
             totalAuditCount: totalCount,
         };
-    }, [auditLogs, users, departments, auditCategory, auditPage, suppressReadAudits]);
+    }, [auditLogs, users, departments, auditFilters, auditSearch, auditSort, auditPage]);
 
     // HANDLERS
     const handleActivityClick = (activity) => {
@@ -595,10 +787,6 @@ const DashboardPage = ({
         <div className={`flex flex-col gap-3.5 sm:gap-4.5 w-full ${className ?? ''}`} {...props}>
             {/* 1. EXECUTIVE WELCOME COMMAND HERO */}
             <div className="relative overflow-hidden rounded-2xl border border-surface-border bg-surface p-4 sm:p-5 shadow-xs">
-                {/* AMBIENT BACKGROUND GLOW */}
-                <div className="pointer-events-none absolute -right-20 -top-20 h-64 w-64 rounded-full bg-accent/10 blur-3xl" />
-                <div className="pointer-events-none absolute -left-20 -bottom-20 h-56 w-56 rounded-full bg-information/10 blur-3xl" />
-
                 <div className="relative flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                     {/* LEFT CONTENT */}
                     <div className="flex flex-col gap-1.5 max-w-2xl">
@@ -632,15 +820,15 @@ const DashboardPage = ({
                         </p>
                     </div>
 
-                    {/* RIGHT ACTION BUTTONS */}
-                    <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 shrink-0 self-stretch sm:self-auto">
+                    {/* RIGHT ACTION BUTTONS (MOBILE OPTIMIZED TOUCH TARGETS) */}
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full lg:w-auto shrink-0">
                         {!isStaff ? (
                             <Button
                                 variant="secondary"
                                 leadingIcon={Plus}
                                 label="Request Clearance"
                                 onClick={() => (onRequestDocument ? onRequestDocument() : onNavigate?.('requests'))}
-                                className="flex-1 sm:flex-initial"
+                                className="w-full sm:w-auto justify-center"
                             />
                         ) : (
                             <Button
@@ -648,7 +836,7 @@ const DashboardPage = ({
                                 leadingIcon={FileUp}
                                 label="Upload Document"
                                 onClick={() => (onUploadDocument ? onUploadDocument() : onNavigate?.('documents'))}
-                                className="flex-1 sm:flex-initial"
+                                className="w-full sm:w-auto justify-center"
                             />
                         )}
 
@@ -656,8 +844,8 @@ const DashboardPage = ({
                             variant="primary"
                             leadingIcon={Folder}
                             label="Browse Repository"
-                            onClick={() => (onUploadDocument ? onUploadDocument() : onNavigate?.('documents'))}
-                            className="flex-1 sm:flex-initial shadow-xs hover:shadow-md transition-shadow"
+                            onClick={() => onNavigate?.('documents')}
+                            className="w-full sm:w-auto justify-center shadow-xs hover:shadow-md transition-shadow"
                         />
                     </div>
                 </div>
@@ -768,370 +956,9 @@ const DashboardPage = ({
                 </div>
             </div>
 
-            {/* 3. DOCUMENT ANALYSIS HUB */}
-            <div className="p-4 sm:p-5 rounded-2xl bg-surface border border-surface-border flex flex-col gap-3.5 shadow-xs">
-                {/* HUB HEADER & CONTROLS */}
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-surface-border pb-3">
-                    <div className="flex items-center gap-3 min-w-0">
-                        <div className="p-2 rounded-lg bg-accent-background text-accent shrink-0">
-                            <TrendingUp className="h-4 w-4" />
-                        </div>
-                        <div className="flex flex-col min-w-0">
-                            <div className="flex items-center gap-2">
-                                <h2 className="text-base font-bold font-serif text-text truncate">
-                                    Document Analysis
-                                </h2>
-                                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-accent-background text-accent border border-accent-border shrink-0">
-                                    Shared Records
-                                </span>
-                            </div>
-                            <span className="text-xs text-text-muted truncate">
-                                Weekly views, reader velocity, and top accessing college units across shared repository files.
-                            </span>
-                        </div>
-                    </div>
-
-                    {/* TOOLBAR CONTROLS */}
-                    <div className="flex items-center gap-2.5 self-start md:self-auto flex-wrap sm:flex-nowrap">
-                        {/* VIEW MODE TOGGLE */}
-                        <div className="flex items-center bg-surface-hover/70 p-0.5 rounded-lg border border-surface-border">
-                            <button
-                                type="button"
-                                onClick={() => setAnalyticsViewMode('LIST')}
-                                className={`px-2.5 py-1 rounded-md text-xs font-medium transition-all flex items-center gap-1.5 cursor-pointer ${
-                                    analyticsViewMode === 'LIST'
-                                        ? 'bg-accent text-text-inverted shadow-2xs font-semibold'
-                                        : 'text-text-muted hover:text-text'
-                                }`}
-                                title="List View (Default)"
-                            >
-                                <List className="h-3.5 w-3.5" />
-                                <span>List</span>
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => setAnalyticsViewMode('GRID')}
-                                className={`px-2.5 py-1 rounded-md text-xs font-medium transition-all flex items-center gap-1.5 cursor-pointer ${
-                                    analyticsViewMode === 'GRID'
-                                        ? 'bg-accent text-text-inverted shadow-2xs font-semibold'
-                                        : 'text-text-muted hover:text-text'
-                                }`}
-                                title="Grid View"
-                            >
-                                <LayoutGrid className="h-3.5 w-3.5" />
-                                <span>Grid</span>
-                            </button>
-                        </div>
-
-                        {/* SORT SELECTOR */}
-                        <div className="flex items-center bg-surface-hover/70 p-0.5 rounded-lg border border-surface-border">
-                            <button
-                                type="button"
-                                onClick={() => setAnalyticsSortBy('READS')}
-                                className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-                                    analyticsSortBy === 'READS'
-                                        ? 'bg-accent text-text-inverted font-semibold shadow-2xs'
-                                        : 'text-text-muted hover:text-text'
-                                }`}
-                            >
-                                Most Read
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => setAnalyticsSortBy('RECENT')}
-                                className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-                                    analyticsSortBy === 'RECENT'
-                                        ? 'bg-accent text-text-inverted font-semibold shadow-2xs'
-                                        : 'text-text-muted hover:text-text'
-                                }`}
-                            >
-                                Recent Reads
-                            </button>
-                        </div>
-                    </div>
-                </div>
-
-                {/* ANALYTICS CONTENT: LIST vs GRID */}
-                {documentAnalyticsList.length === 0 ? (
-                    <div className="py-12 text-center flex flex-col items-center justify-center gap-2.5 text-text-muted border border-dashed border-surface-border rounded-xl">
-                        <div className="p-3 rounded-full bg-surface-hover text-text-muted">
-                            <BarChart3 className="h-6 w-6" />
-                        </div>
-                        <span className="text-sm font-bold text-text">No Shared Document Activity</span>
-                        <p className="text-xs text-text-muted max-w-sm">
-                            Only documents shared with colleges or located inside shared folders appear in readership analytics.
-                        </p>
-                    </div>
-                ) : analyticsViewMode === 'LIST' ? (
-                    /* LIST VIEW */
-                    <div className="flex flex-col divide-y divide-surface-border">
-                        {documentAnalyticsList.map((item) => (
-                            <div
-                                key={item.id}
-                                onClick={() => {
-                                    if (item.documentItem) {
-                                        onSelectActivity?.({ ...item.documentItem, _targetTab: 'information' });
-                                    }
-                                }}
-                                className="py-3 px-2 sm:px-3 rounded-xl flex flex-col md:flex-row md:items-center justify-between gap-3 hover:bg-surface-hover/60 transition-colors cursor-pointer group"
-                            >
-                                {/* FILE TITLE & METADATA */}
-                                <div className="flex items-start gap-3 min-w-0 flex-1">
-                                    <div className="p-2 rounded-lg bg-surface border border-surface-border text-accent group-hover:border-accent/40 shrink-0 mt-0.5">
-                                        <FileText className="h-4 w-4" />
-                                    </div>
-                                    <div className="flex flex-col gap-1 min-w-0">
-                                        <div className="flex items-center gap-2 flex-wrap">
-                                            <span
-                                                className="text-xs sm:text-sm font-bold text-text truncate group-hover:text-accent transition-colors"
-                                                title={item.title}
-                                            >
-                                                {item.title}
-                                            </span>
-                                            <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded-full border ${CLASSIFICATION_STYLES[item.classification] || CLASSIFICATION_STYLES.PUBLIC}`}>
-                                                {item.classification}
-                                            </span>
-                                        </div>
-
-                                        <div className="flex items-center gap-2 text-xs text-text-muted flex-wrap">
-                                            {item.parentFolderName && (
-                                                <span className="flex items-center gap-1 text-[11px] font-medium text-text bg-surface-hover px-1.5 py-0.5 rounded">
-                                                    📁 {item.parentFolderName}
-                                                </span>
-                                            )}
-                                            <span className="truncate">{item.departmentName}</span>
-                                            <span>•</span>
-                                            <span className="flex items-center gap-1 font-semibold text-text">
-                                                <Eye className="h-3 w-3 text-accent" />
-                                                {item.weekReads} reads this week
-                                            </span>
-                                            <span className="text-[11px]">({item.totalReads} total)</span>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                {/* RIGHT SIDE: 7-DAY MINI GRAPH & TOP DEPT */}
-                                <div className="w-full md:w-64 shrink-0 flex flex-col gap-1 pt-2 md:pt-0 border-t md:border-t-0 border-surface-border/60">
-                                    <div className="flex items-center justify-between text-[10px] text-text-muted px-0.5 font-medium">
-                                        <span className="truncate max-w-[140px]">Top: {item.topDeptName}</span>
-                                        <span className="font-mono text-[9px] uppercase">SUN - SAT</span>
-                                    </div>
-                                    <ReadershipChart precomputedSlots={item.slots} compact={true} showPeak={false} />
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                ) : (
-                    /* GRID VIEW */
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pt-1">
-                        {documentAnalyticsList.map((item) => (
-                            <div
-                                key={item.id}
-                                onClick={() => {
-                                    if (item.documentItem) {
-                                        onSelectActivity?.({ ...item.documentItem, _targetTab: 'information' });
-                                    }
-                                }}
-                                className="p-4 rounded-xl border border-surface-border bg-surface hover:bg-surface-hover hover:border-accent/40 transition-all flex flex-col justify-between gap-3 cursor-pointer group shadow-2xs"
-                            >
-                                <div className="flex flex-col gap-2">
-                                    <div className="flex items-start justify-between gap-2">
-                                        <div className="flex items-center gap-2 min-w-0">
-                                            <div className="p-1.5 rounded-lg bg-accent-background text-accent shrink-0">
-                                                <FileText className="h-4 w-4" />
-                                            </div>
-                                            <span
-                                                className="font-bold text-xs text-text truncate group-hover:text-accent transition-colors"
-                                                title={item.title}
-                                            >
-                                                {item.title}
-                                            </span>
-                                        </div>
-                                        <ArrowUpRight className="h-3.5 w-3.5 text-text-muted opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
-                                    </div>
-
-                                    <div className="flex items-center gap-1.5 flex-wrap">
-                                        {item.parentFolderName && (
-                                            <span className="text-[10px] font-medium bg-surface-hover px-1.5 py-0.5 rounded border border-surface-border">
-                                                📁 {item.parentFolderName}
-                                            </span>
-                                        )}
-                                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${CLASSIFICATION_STYLES[item.classification] || CLASSIFICATION_STYLES.PUBLIC}`}>
-                                            {item.classification}
-                                        </span>
-                                    </div>
-                                </div>
-
-                                <div className="flex flex-col gap-1.5 pt-2 border-t border-surface-border">
-                                    <div className="flex items-center justify-between text-xs">
-                                        <span className="font-semibold text-text flex items-center gap-1">
-                                            <Eye className="h-3 w-3 text-accent" />
-                                            <span>{item.weekReads} Reads</span>
-                                            <span className="text-text-muted font-normal text-[11px]">- {item.totalReads} total</span>
-                                        </span>
-                                        <span className="text-[11px] text-text-muted">
-                                            {item.weekUniqueReaders} {item.weekUniqueReaders === 1 ? 'reader' : 'readers'}
-                                        </span>
-                                    </div>
-
-                                    <div className="w-full pt-1">
-                                        <ReadershipChart precomputedSlots={item.slots} showPeak={false} />
-                                    </div>
-
-                                    <div className="flex items-center justify-between text-[10px] text-text-muted pt-1">
-                                        <span className="truncate">Top: {item.topDeptName}</span>
-                                        <span className="font-mono">Weekly Trend</span>
-                                    </div>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                )}
-            </div>
-
-            {/* 4. TWO-COLUMN SPLIT: AUDIT LOGS + ACTION ITEMS */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-3.5 sm:gap-4.5">
-                {/* LEFT 2 COLUMNS: AUDIT LOGS */}
-                <div className="lg:col-span-2 p-4 sm:p-5 rounded-2xl bg-surface border border-surface-border flex flex-col gap-3.5 shadow-xs">
-                    {/* AUDIT HEADER & CONTROLS */}
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-surface-border pb-3">
-                        <div className="flex items-center gap-2.5">
-                            <div className="p-2 rounded-lg bg-accent-background text-accent">
-                                <Activity className="h-4 w-4" />
-                            </div>
-                            <div className="flex flex-col">
-                                <div className="flex items-center gap-2">
-                                    <h2 className="text-base font-bold text-text">
-                                        Audit Logs
-                                    </h2>
-                                    <span className="text-[11px] font-semibold text-text-muted">
-                                        ({totalAuditCount} events)
-                                    </span>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* CONTROLS */}
-                        <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
-                            {/* SUPPRESS READS TOGGLE */}
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    setSuppressReadAudits((prev) => !prev);
-                                    setAuditPage(1);
-                                }}
-                                className={`px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-colors cursor-pointer flex items-center gap-1.5 border ${
-                                    suppressReadAudits
-                                        ? 'bg-accent/15 border-accent text-accent font-semibold'
-                                        : 'bg-surface border-surface-border text-text-muted hover:text-text'
-                                }`}
-                                title={suppressReadAudits ? 'Reads are suppressed. Click to show read events.' : 'Click to suppress read events from cluttering the audit trail.'}
-                            >
-                                {suppressReadAudits ? <EyeOff className="h-3.5 w-3.5 text-accent" /> : <Eye className="h-3.5 w-3.5" />}
-                                <span>{suppressReadAudits ? 'Reads Suppressed' : 'Suppress Reads'}</span>
-                            </button>
-
-                            {/* SELECT FIELD CATEGORY FILTER */}
-                            <div className="w-44 sm:w-48 shrink-0">
-                                <SelectField
-                                    value={auditCategory}
-                                    options={AUDIT_CATEGORY_OPTIONS}
-                                    onChange={(newVal) => {
-                                        setAuditCategory(newVal);
-                                        setAuditPage(1);
-                                    }}
-                                    leadingIcon={Filter}
-                                    placeholder="Filter by category..."
-                                    dropdownAlign="right"
-                                    size="sm"
-                                />
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* AUDIT LOG ITEMS (FIXED HEIGHT WITH SCROLL) */}
-                    <div className="h-[380px] sm:h-[420px] overflow-y-auto pr-1 flex flex-col divide-y divide-surface-border">
-                        {paginatedAuditLogs.length === 0 ? (
-                            <div className="h-full flex flex-col items-center justify-center text-xs text-text-muted text-center p-4">
-                                No activity recorded under "{AUDIT_CATEGORY_OPTIONS.find((o) => o.value === auditCategory)?.label ?? auditCategory}" yet.
-                            </div>
-                        ) : (
-                            paginatedAuditLogs.map((activity) => (
-                                <div
-                                    key={activity.id}
-                                    onClick={() => handleActivityClick(activity)}
-                                    className="py-2.5 px-2 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2 hover:bg-surface-hover/60 transition-colors cursor-pointer group"
-                                >
-                                    {/* ACTOR & ACTION DESCRIPTION */}
-                                    <div className="flex items-start gap-2.5 min-w-0">
-                                        <Avatar
-                                            src={activity.actorUser ? resolveUserAvatar(activity.actorUser, activeUser) : null}
-                                            alt={activity.user}
-                                            size="small"
-                                            className="h-7 w-7 shrink-0 text-xs mt-0.5 border border-surface-border"
-                                        />
-
-                                        <div className="flex flex-col gap-0.5 min-w-0">
-                                            <div className="flex items-center gap-2 flex-wrap">
-                                                <span className="text-xs font-bold text-text truncate group-hover:text-accent transition-colors">
-                                                    {activity.user}
-                                                </span>
-                                                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${ROLE_BADGE_STYLES[activity.role] || 'bg-surface-hover text-text-muted border-surface-border'}`}>
-                                                    {activity.role}
-                                                </span>
-                                                <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded border ${ACTION_VERB_STYLES[activity.action] || 'bg-surface-hover text-text-muted border-surface-border'}`}>
-                                                    {activity.action}
-                                                </span>
-                                            </div>
-
-                                            <div className="flex items-center gap-1.5 text-xs text-text-muted truncate">
-                                                <span className="truncate">{activity.title}</span>
-                                                <span>•</span>
-                                                <span className="truncate">{activity.department}</span>
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    {/* TIMESTAMP */}
-                                    <div className="text-[11px] text-text-muted shrink-0 self-end sm:self-center font-mono">
-                                        {activity.timestamp}
-                                    </div>
-                                </div>
-                            ))
-                        )}
-                    </div>
-
-                    {/* PAGINATION CONTROLS */}
-                    {totalAuditPages > 1 && (
-                        <div className="flex items-center justify-between pt-2.5 border-t border-surface-border text-xs text-text-muted mt-auto">
-                            <span>
-                                Page {auditPage} of {totalAuditPages}
-                            </span>
-                            <div className="flex items-center gap-2">
-                                <button
-                                    type="button"
-                                    disabled={auditPage <= 1}
-                                    onClick={() => setAuditPage((prev) => Math.max(1, prev - 1))}
-                                    className="px-2.5 py-1 rounded-md border border-surface-border bg-surface hover:bg-surface-hover disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors flex items-center gap-1 font-medium"
-                                >
-                                    <ChevronLeft className="h-3.5 w-3.5" />
-                                    <span>Previous</span>
-                                </button>
-                                <button
-                                    type="button"
-                                    disabled={auditPage >= totalAuditPages}
-                                    onClick={() => setAuditPage((prev) => Math.min(totalAuditPages, prev + 1))}
-                                    className="px-2.5 py-1 rounded-md border border-surface-border bg-surface hover:bg-surface-hover disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors flex items-center gap-1 font-medium"
-                                >
-                                    <span>Next</span>
-                                    <ChevronRight className="h-3.5 w-3.5" />
-                                </button>
-                            </div>
-                        </div>
-                    )}
-                </div>
-
-                {/* RIGHT 1 COLUMN: ACTION ITEMS & CLEARANCES */}
+            {/* 3. TWO-COLUMN ROW: PENDING REQUESTS + DOCUMENT ANALYSIS */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5 sm:gap-4.5">
+                {/* LEFT COLUMN: PENDING REQUESTS */}
                 <div className="p-4 sm:p-5 rounded-2xl bg-surface border border-surface-border flex flex-col gap-3.5 shadow-xs">
                     <div className="flex items-center justify-between border-b border-surface-border pb-3">
                         <div className="flex items-center gap-2.5">
@@ -1139,23 +966,70 @@ const DashboardPage = ({
                                 <Inbox className="h-4 w-4" />
                             </div>
                             <h2 className="text-base font-bold text-text">
-                                Action Clearances
+                                Pending Requests
                             </h2>
                         </div>
-                        <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${pendingActionItems.length > 0 ? 'bg-warning-background text-warning border-warning-border' : 'bg-accent-background text-accent border-accent-border'}`}>
-                            {pendingActionItems.length} Pending
-                        </span>
+
+                        {/* SEGMENTED CONTROL: DOCUMENT / COORDINATOR */}
+                        <div className="flex items-center bg-surface-hover/70 p-0.5 rounded-lg border border-surface-border shrink-0">
+                            <button
+                                type="button"
+                                onClick={() => setPendingRequestType('DOCUMENT')}
+                                className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer flex items-center gap-1.5 ${
+                                    pendingRequestType === 'DOCUMENT'
+                                        ? 'bg-accent text-text-inverted font-semibold shadow-2xs'
+                                        : 'text-text-muted hover:text-text'
+                                }`}
+                            >
+                                <span>Document</span>
+                                {pendingDocCount > 0 && (
+                                    <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-semibold ${
+                                        pendingRequestType === 'DOCUMENT'
+                                            ? 'bg-text-inverted/20 text-text-inverted'
+                                            : 'bg-surface-border text-text-muted'
+                                    }`}>
+                                        {pendingDocCount}
+                                    </span>
+                                )}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setPendingRequestType('COORDINATOR')}
+                                className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer flex items-center gap-1.5 ${
+                                    pendingRequestType === 'COORDINATOR'
+                                        ? 'bg-accent text-text-inverted font-semibold shadow-2xs'
+                                        : 'text-text-muted hover:text-text'
+                                }`}
+                            >
+                                <span>Coordinator</span>
+                                {pendingCoordCount > 0 && (
+                                    <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-semibold ${
+                                        pendingRequestType === 'COORDINATOR'
+                                            ? 'bg-text-inverted/20 text-text-inverted'
+                                            : 'bg-surface-border text-text-muted'
+                                    }`}>
+                                        {pendingCoordCount}
+                                    </span>
+                                )}
+                            </button>
+                        </div>
                     </div>
 
                     {/* MATCHING FIXED HEIGHT WITH SCROLL */}
-                    <div className="h-[380px] sm:h-[420px] overflow-y-auto pr-1 flex flex-col gap-2.5">
+                    <div className="h-[380px] sm:h-[420px] overflow-y-auto pr-1 flex flex-col gap-2">
                         {pendingActionItems.length === 0 ? (
                             <div className="h-full flex flex-col items-center justify-center gap-2.5 text-center text-text-muted border border-dashed border-surface-border rounded-xl p-4">
                                 <div className="p-2.5 rounded-full bg-accent-background text-accent">
                                     <CheckCircle2 className="h-5 w-5" />
                                 </div>
-                                <span className="text-xs sm:text-sm font-bold text-text">All Clearances Resolved</span>
-                                <span className="text-xs text-text-muted max-w-xs">No pending student certifications or administrative reviews awaiting action.</span>
+                                <span className="text-xs sm:text-sm font-bold text-text">
+                                    {pendingRequestType === 'COORDINATOR' ? 'No Coordinator Requests' : 'No Document Requests'}
+                                </span>
+                                <span className="text-xs text-text-muted max-w-xs">
+                                    {pendingRequestType === 'COORDINATOR'
+                                        ? 'No elevated coordinator approvals or departmental reviews awaiting clearance.'
+                                        : 'All student and faculty clearance inquiries are currently resolved.'}
+                                </span>
                             </div>
                         ) : (
                             pendingActionItems.map((item) => (
@@ -1165,31 +1039,368 @@ const DashboardPage = ({
                                         if (item.type === 'coordinator_request') {
                                             onNavigate?.('coordinator');
                                         } else {
-                                            onNavigate?.('requests');
+                                            if (onSelectActivity && item.item) {
+                                                onSelectActivity({ ...item.item, _targetTab: 'messages' });
+                                            } else {
+                                                onNavigate?.('requests');
+                                            }
                                         }
                                     }}
-                                    className="p-3 rounded-xl border border-surface-border bg-surface-hover/30 hover:bg-surface-hover hover:border-accent/40 transition-all flex flex-col gap-2 cursor-pointer group shadow-2xs shrink-0"
+                                    className="py-2.5 px-3 rounded-xl border border-surface-border bg-surface hover:bg-surface-hover/70 hover:border-accent/40 transition-all flex items-center justify-between gap-3 cursor-pointer group shadow-2xs shrink-0"
                                 >
-                                    <div className="flex items-center justify-between gap-2">
-                                        <span className="text-xs font-bold text-text truncate capitalize group-hover:text-accent transition-colors">
-                                            {item.title}
-                                        </span>
-                                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-surface border border-surface-border text-text-muted shrink-0">
+                                    {/* [ Name / Subject ] */}
+                                    <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                                        <Avatar
+                                            src={item.requesterUser ? resolveUserAvatar(item.requesterUser, activeUser) : null}
+                                            alt={item.name}
+                                            size="small"
+                                            className="h-7 w-7 shrink-0 text-xs border border-surface-border group-hover:border-accent/40 transition-colors"
+                                        />
+                                        <div className="flex items-center gap-1.5 min-w-0 truncate">
+                                            <span className="text-xs font-bold text-text truncate group-hover:text-accent transition-colors">
+                                                {item.name}
+                                            </span>
+                                            <span className="text-text-muted text-xs shrink-0">•</span>
+                                            <span className="text-xs text-text-muted truncate capitalize">
+                                                {item.subject}
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    {/* [ coordinator or document request ] [ Time ] */}
+                                    <div className="flex items-center gap-2 shrink-0">
+                                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${item.badgeStyle}`}>
                                             {item.badge}
                                         </span>
-                                    </div>
-                                    <div className="flex items-center justify-between text-xs text-text-muted">
-                                        <span className="truncate">{item.subtitle}</span>
-                                        <span className="font-semibold text-accent shrink-0 flex items-center gap-1">
-                                            {item.date}
-                                            <ArrowRight className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+                                        <span className="text-[11px] text-text-muted font-mono bg-surface-hover/70 px-2 py-0.5 rounded-md border border-surface-border/50 shrink-0">
+                                            {item.time}
                                         </span>
+                                        <ArrowRight className="h-3.5 w-3.5 text-text-muted opacity-0 group-hover:opacity-100 transition-opacity shrink-0 hidden sm:inline" />
                                     </div>
                                 </div>
                             ))
                         )}
                     </div>
                 </div>
+
+                {/* RIGHT COLUMN: DOCUMENT ANALYSIS (LOCKED TO GRID, MAX 3 CARDS VISIBLE BEFORE SCROLL) */}
+                <div className="p-4 sm:p-5 rounded-2xl bg-surface border border-surface-border flex flex-col gap-3.5 shadow-xs">
+                    {/* HUB HEADER & CONTROLS */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-surface-border pb-3">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                            <div className="p-2 rounded-lg bg-accent-background text-accent shrink-0">
+                                <TrendingUp className="h-4 w-4" />
+                            </div>
+                            <h2 className="text-base font-bold font-serif text-text truncate">
+                                Document Analysis
+                            </h2>
+                        </div>
+
+                        {/* SEARCH & SORT SELECTOR */}
+                        <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap shrink-0 self-stretch sm:self-auto">
+                            <div className="w-full sm:w-40 md:w-48 shrink-0">
+                                <SearchField
+                                    placeholder="Search analysis..."
+                                    value={analysisSearch}
+                                    onChange={(e) => setAnalysisSearch(e.target.value)}
+                                    onClear={() => setAnalysisSearch('')}
+                                    size="sm"
+                                />
+                            </div>
+
+                            <div className="flex items-center bg-surface-hover/70 p-0.5 rounded-lg border border-surface-border shrink-0">
+                                <button
+                                    type="button"
+                                    onClick={() => setAnalyticsSortBy('READS')}
+                                    className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer ${
+                                        analyticsSortBy === 'READS'
+                                            ? 'bg-accent text-text-inverted font-semibold shadow-2xs'
+                                            : 'text-text-muted hover:text-text'
+                                    }`}
+                                >
+                                    Most Read
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setAnalyticsSortBy('RECENT')}
+                                    className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer ${
+                                        analyticsSortBy === 'RECENT'
+                                            ? 'bg-accent text-text-inverted font-semibold shadow-2xs'
+                                            : 'text-text-muted hover:text-text'
+                                    }`}
+                                >
+                                    Recent Reads
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* MATCHING FIXED HEIGHT WITH SCROLL (SHOWS MAX 3 GRID CARDS BEFORE SCROLLING) */}
+                    <div className="h-[380px] sm:h-[420px] overflow-y-auto pr-1">
+                        {documentAnalyticsList.length === 0 ? (
+                            <div className="h-full flex flex-col items-center justify-center gap-2.5 text-center text-text-muted border border-dashed border-surface-border rounded-xl p-4">
+                                <div className="p-2.5 rounded-full bg-surface-hover text-text-muted">
+                                    <BarChart3 className="h-5 w-5" />
+                                </div>
+                                <span className="text-xs sm:text-sm font-bold text-text">No Shared Document Activity</span>
+                                <span className="text-xs text-text-muted max-w-xs">
+                                    {analysisSearch
+                                        ? `No records found matching "${analysisSearch}".`
+                                        : 'Only documents shared with colleges or located inside shared folders appear in readership analytics.'}
+                                </span>
+                            </div>
+                        ) : (
+                            <div className="grid grid-cols-1 gap-3">
+                                {documentAnalyticsList.map((item) => (
+                                    <div
+                                        key={item.id}
+                                        onClick={() => {
+                                            if (item.documentItem) {
+                                                onSelectActivity?.({ ...item.documentItem, _targetTab: 'information' });
+                                            }
+                                        }}
+                                        className="p-3.5 rounded-xl border border-surface-border bg-surface-hover/20 hover:bg-surface-hover/50 hover:border-accent/40 transition-all flex flex-col gap-3 cursor-pointer group shadow-2xs shrink-0"
+                                    >
+                                        {/* DOCUMENT HEADER TITLE & INLINE META BADGES */}
+                                        <div className="flex items-center justify-between gap-2.5 min-w-0">
+                                            <div className="flex items-center gap-2 min-w-0 flex-1">
+                                                <div className="p-1.5 rounded-lg bg-accent-background text-accent shrink-0">
+                                                    <FileText className="h-3.5 w-3.5" />
+                                                </div>
+                                                <span
+                                                    className="font-bold text-xs text-text truncate group-hover:text-accent transition-colors"
+                                                    title={item.title}
+                                                >
+                                                    {item.title}
+                                                </span>
+                                            </div>
+
+                                            <div className="flex items-center gap-1.5 shrink-0">
+                                                {item.parentFolderName && (
+                                                    <span
+                                                        className="text-[10px] font-medium bg-surface-hover px-1.5 py-0.5 rounded border border-surface-border text-text-muted truncate max-w-[120px] sm:max-w-[160px]"
+                                                        title={item.parentFolderName}
+                                                    >
+                                                        📁 {item.parentFolderName}
+                                                    </span>
+                                                )}
+                                                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${CLASSIFICATION_STYLES[item.classification] || CLASSIFICATION_STYLES.UNCLASSIFIED}`}>
+                                                    {item.classificationLabel}
+                                                </span>
+                                                <ArrowUpRight className="h-3.5 w-3.5 text-text-muted opacity-0 group-hover:opacity-100 transition-opacity shrink-0 hidden sm:inline" />
+                                            </div>
+                                        </div>
+
+                                        {/* MODERN DUAL-GRAPH PANEL */}
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-2 border-t border-surface-border">
+                                            {/* GRAPH 1: READ OF THE WEEK */}
+                                            <div className="p-2.5 rounded-lg bg-surface border border-surface-border flex flex-col gap-1.5">
+                                                <div className="flex items-center justify-between text-xs">
+                                                    <span className="font-semibold text-text flex items-center gap-1 text-[11px]">
+                                                        <Eye className="h-3 w-3 text-accent" />
+                                                        <span>{item.weekReads} weekly reads</span>
+                                                    </span>
+                                                    <span className="text-[10px] text-text-muted font-medium">
+                                                        {item.weekUniqueReaders} {item.weekUniqueReaders === 1 ? 'reader' : 'readers'}
+                                                    </span>
+                                                </div>
+
+                                                <div className="w-full pt-0.5">
+                                                    <ReadershipChart precomputedSlots={item.slots} compact={true} showPeak={false} />
+                                                </div>
+
+                                                <div className="flex items-center justify-between text-[10px] text-text-muted pt-0.5 border-t border-surface-border/50">
+                                                    <span className="truncate">Top: {item.topDeptName}</span>
+                                                    <span className="font-mono text-[9px] uppercase tracking-wider text-accent font-semibold">SUN – SAT</span>
+                                                </div>
+                                            </div>
+
+                                            {/* GRAPH 2: ALL TIME READ */}
+                                            <div className="p-2.5 rounded-lg bg-surface border border-surface-border flex flex-col gap-1.5">
+                                                <div className="flex items-center justify-between text-xs">
+                                                    <span className="font-semibold text-text flex items-center gap-1 text-[11px]">
+                                                        <BarChart3 className="h-3 w-3 text-sky-500" />
+                                                        <span>{item.totalReads} All-Time Reads</span>
+                                                    </span>
+                                                    <span className="text-[10px] text-text-muted font-medium">
+                                                        {item.totalUniqueReaders} {item.totalUniqueReaders === 1 ? 'reader' : 'readers'}
+                                                    </span>
+                                                </div>
+
+                                                <div className="w-full pt-0.5">
+                                                    <ReadershipChart precomputedSlots={item.allTimeSlots} compact={true} showPeak={false} color="#0ea5e9" />
+                                                </div>
+
+                                                <div className="flex items-center justify-between text-[10px] text-text-muted pt-0.5 border-t border-surface-border/50">
+                                                    <span className="truncate">Cumulative History</span>
+                                                    <span className="font-mono text-[9px] uppercase tracking-wider text-sky-600 dark:text-sky-400 font-semibold">ALL TIME</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+
+            {/* 4. AUDIT LOGS (FULL WIDTH) */}
+            <div className="p-4 sm:p-5 rounded-2xl bg-surface border border-surface-border flex flex-col gap-3.5 shadow-xs">
+                {/* AUDIT HEADER & CONTROLS */}
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-surface-border pb-3">
+                    <div className="flex items-center gap-2.5">
+                        <div className="p-2 rounded-lg bg-accent-background text-accent">
+                            <Activity className="h-4 w-4" />
+                        </div>
+                        <h2 className="text-base font-bold text-text">
+                            Audit Logs
+                        </h2>
+                    </div>
+
+                    {/* CONTROLS: SEARCH, SORT BEFORE FILTER */}
+                    <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+                        {/* 1. SEARCH FIELD */}
+                        <div className="w-full sm:w-52 md:w-60 shrink-0">
+                            <SearchField
+                                placeholder="Search audit trail..."
+                                value={auditSearch}
+                                onChange={(e) => {
+                                    setAuditSearch(e.target.value);
+                                    setAuditPage(1);
+                                }}
+                                onClear={() => {
+                                    setAuditSearch('');
+                                    setAuditPage(1);
+                                }}
+                                size="sm"
+                            />
+                        </div>
+
+                        {/* 2. SORT SELECTFIELD (BEFORE FILTER) */}
+                        <div className="w-full sm:w-44 md:w-48 shrink-0">
+                            <SelectField
+                                value={auditSort}
+                                options={AUDIT_SORT_OPTIONS}
+                                onChange={(newSort) => {
+                                    setAuditSort(newSort);
+                                    setAuditPage(1);
+                                }}
+                                leadingIcon={Clock}
+                                placeholder="Sort by..."
+                                dropdownAlign="right"
+                                size="sm"
+                            />
+                        </div>
+
+                        {/* 3. FILTER COMBOFIELD */}
+                        <div className="w-full sm:w-52 md:w-60 shrink-0">
+                            <ComboField
+                                options={auditFilterOptions}
+                                value={auditFilters}
+                                onChange={(newFilters) => {
+                                    setAuditFilters(newFilters);
+                                    setAuditPage(1);
+                                }}
+                                isMultiple={true}
+                                leadingIcon={Filter}
+                                placeholder="Filter activities..."
+                                dropdownAlign="right"
+                                size="sm"
+                            />
+                        </div>
+                    </div>
+                </div>
+
+                {/* AUDIT LOG ITEMS (FIXED HEIGHT WITH SCROLL) */}
+                <div className="h-[380px] sm:h-[420px] overflow-y-auto pr-1 flex flex-col gap-2">
+                    {paginatedAuditLogs.length === 0 ? (
+                        <div className="h-full flex flex-col items-center justify-center text-xs text-text-muted text-center p-4">
+                            No audit activity matching your filter and search criteria.
+                        </div>
+                    ) : (
+                        paginatedAuditLogs.map((activity) => (
+                            <div
+                                key={activity.id}
+                                onClick={() => handleActivityClick(activity)}
+                                className="py-2.5 px-3 rounded-xl border border-surface-border bg-surface hover:bg-surface-hover/70 hover:border-accent/40 transition-all cursor-pointer group flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 shadow-2xs"
+                            >
+                                {/* ACTOR & ACTION DESCRIPTION WITH [ role ] [ entity ] [ action ] */}
+                                <div className="flex items-center gap-3 min-w-0">
+                                    <Avatar
+                                        src={activity.actorUser ? resolveUserAvatar(activity.actorUser, activeUser) : null}
+                                        alt={activity.user}
+                                        size="small"
+                                        className="h-8 w-8 shrink-0 text-xs border border-surface-border group-hover:border-accent/40 transition-colors"
+                                    />
+
+                                    <div className="flex flex-col gap-1 min-w-0">
+                                        <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+                                            <span className="text-xs font-bold text-text truncate group-hover:text-accent transition-colors">
+                                                {activity.user}
+                                            </span>
+
+                                            {/* [ role ] */}
+                                            <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${ROLE_BADGE_STYLES[activity.role] || 'bg-surface-hover text-text-muted border-surface-border'}`}>
+                                                {activity.role}
+                                            </span>
+
+                                            {/* [ entity ] */}
+                                            <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${activity.entityBadge?.style || 'bg-surface-hover text-text-muted border-surface-border'}`}>
+                                                {activity.entityBadge?.label || 'Documents'}
+                                            </span>
+
+                                            {/* [ action ] */}
+                                            <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded border ${ACTION_VERB_STYLES[activity.canonicalAction] || 'bg-surface-hover text-text-muted border-surface-border'}`}>
+                                                {activity.canonicalAction}
+                                            </span>
+                                        </div>
+
+                                        <div className="flex items-center gap-1.5 text-xs text-text-muted truncate">
+                                            <span className="truncate font-medium text-text/80">{activity.title}</span>
+                                            <span>•</span>
+                                            <span className="truncate">{activity.department}</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* TIMESTAMP */}
+                                <div className="text-[11px] text-text-muted shrink-0 self-end sm:self-center font-mono bg-surface-hover/60 px-2 py-1 rounded-md border border-surface-border/50">
+                                    {activity.timestamp}
+                                </div>
+                            </div>
+                        ))
+                    )}
+                </div>
+
+                {/* PAGINATION CONTROLS */}
+                {totalAuditPages > 1 && (
+                    <div className="flex items-center justify-between pt-2.5 border-t border-surface-border text-xs text-text-muted mt-auto">
+                        <span>
+                            Page {auditPage} of {totalAuditPages}
+                        </span>
+                        <div className="flex items-center gap-2">
+                            <button
+                                type="button"
+                                disabled={auditPage <= 1}
+                                onClick={() => setAuditPage((prev) => Math.max(1, prev - 1))}
+                                className="px-2.5 py-1 rounded-md border border-surface-border bg-surface hover:bg-surface-hover disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors flex items-center gap-1 font-medium"
+                            >
+                                <ChevronLeft className="h-3.5 w-3.5" />
+                                <span>Previous</span>
+                            </button>
+                            <button
+                                type="button"
+                                disabled={auditPage >= totalAuditPages}
+                                onClick={() => setAuditPage((prev) => Math.min(totalAuditPages, prev + 1))}
+                                className="px-2.5 py-1 rounded-md border border-surface-border bg-surface hover:bg-surface-hover disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors flex items-center gap-1 font-medium"
+                            >
+                                <span>Next</span>
+                                <ChevronRight className="h-3.5 w-3.5" />
+                            </button>
+                        </div>
+                    </div>
+                )}
             </div>
         </div>
     );

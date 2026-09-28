@@ -188,7 +188,7 @@ const DepartmentsPage = ({
                 insertDepartment({
                     code: formCode.trim().toUpperCase(),
                     name: formName.trim(),
-                }),
+                }, currentUser),
                 minTimer,
             ]);
 
@@ -277,7 +277,7 @@ const DepartmentsPage = ({
                 updateDepartment(editingDepartment.id, {
                     code: formCode.trim().toUpperCase(),
                     name: formName.trim(),
-                }),
+                }, currentUser),
                 minTimer,
             ]);
 
@@ -360,7 +360,7 @@ const DepartmentsPage = ({
 
             const minTimer = new Promise((resolve) => setTimeout(resolve, 500));
             await Promise.all([
-                deleteDepartment(deletingDepartment.id),
+                deleteDepartment(deletingDepartment.id, currentUser),
                 minTimer,
             ]);
             if (selectedDepartment?.id === deletingDepartment.id) {
