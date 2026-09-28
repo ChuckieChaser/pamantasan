@@ -366,13 +366,7 @@ const coordinatorApprovalService = {
             }
 
             case constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_REOPEN: {
-                const docStore = useDocumentStore.getState();
-                const reqId = payloadData.documentRequestId ?? payloadData.id;
-                if (!reqId) throw new Error('Document Request ID missing from request payload.');
-                await docStore.updateDocumentRequest(reqId, {
-                    status: constants.DOCUMENT_REQUESTS_STATUS.OPEN,
-                });
-                break;
+                throw new Error('Closed and resolved document requests cannot be reopened for compliance and auditing.');
             }
 
             default:

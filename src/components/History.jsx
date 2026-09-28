@@ -34,14 +34,25 @@ const History = ({
     // STATES
     const [searchQuery, setSearchQuery] = useState('');
 
+    // SORTED HISTORY DATA (RECENTLY ADDED FIRST)
+    const sortedHistory = useMemo(() => {
+        if (!Array.isArray(data)) return [];
+        return [...data].sort((a, b) => {
+            const timeA = new Date(a?.updatedAt || a?.createdAt || a?.timestamp || a?.date || 0).getTime();
+            const timeB = new Date(b?.updatedAt || b?.createdAt || b?.timestamp || b?.date || 0).getTime();
+            if (timeB !== timeA) return timeB - timeA;
+            return String(b?.id || '').localeCompare(String(a?.id || ''));
+        });
+    }, [data]);
+
     // FILTERED DATA
     const filteredHistory = useMemo(() => {
         if (!searchQuery.trim()) {
-            return data;
+            return sortedHistory;
         }
 
         const query = searchQuery.trim().toLowerCase();
-        return data.filter((item) => {
+        return sortedHistory.filter((item) => {
             const name = (item.title || item.name || item.subject || item.action || '').toLowerCase();
             const universityId = (item.universityId || '').toLowerCase();
             const email = (item.email || '').toLowerCase();
@@ -62,7 +73,7 @@ const History = ({
                 reason.includes(query)
             );
         });
-    }, [data, searchQuery]);
+    }, [sortedHistory, searchQuery]);
 
     // RENDER
     return (

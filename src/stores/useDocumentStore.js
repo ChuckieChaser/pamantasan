@@ -157,12 +157,23 @@ const useDocumentStore = create((set, get) => ({
                 entityId: newDocument.id,
                 action: newDocument.isFolder ? constants.AUDIT_LOGS_ACTION.CREATED : constants.AUDIT_LOGS_ACTION.UPLOADED,
                 data: {
+                    old: null,
+                    new: {
+                        id: newDocument.id,
+                        name: newDocument.name,
+                        departmentId: newDocument.departmentId,
+                        isFolder: newDocument.isFolder,
+                        mimeType: newDocument.mimeType,
+                    },
                     title: newDocument.name || 'Document',
                     departmentId: newDocument.departmentId,
                     isFolder: newDocument.isFolder,
                 },
-                targetRoles: ['RMO_STAFF'],
-                isMajor: false,
+                targetRoles: newDocument.departmentId
+                    ? ['ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF', 'OFFICER']
+                    : ['ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF'],
+                targetDepartmentId: newDocument.departmentId || null,
+                isMajor: true,
             }).catch(() => {});
 
             return newDocument;
@@ -217,6 +228,7 @@ const useDocumentStore = create((set, get) => ({
                 });
             }
 
+            const targetDeptId = updatedDocument.departmentId || existingDoc?.departmentId;
             systemEventService.recordSystemEvent({
                 entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT,
                 entityId: id,
@@ -225,10 +237,13 @@ const useDocumentStore = create((set, get) => ({
                     old: previousData,
                     new: newData,
                     title: updatedDocument.name || existingDoc?.name || 'Document',
-                    departmentId: updatedDocument.departmentId || existingDoc?.departmentId,
+                    departmentId: targetDeptId,
                 },
-                targetRoles: ['RMO_STAFF'],
-                isMajor: false,
+                targetRoles: targetDeptId
+                    ? ['ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF', 'OFFICER']
+                    : ['ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF'],
+                targetDepartmentId: targetDeptId || null,
+                isMajor: true,
             }).catch(() => {});
 
             return updatedDocument;
@@ -285,11 +300,13 @@ const useDocumentStore = create((set, get) => ({
                 entityId: id,
                 action: isArchived ? constants.AUDIT_LOGS_ACTION.ARCHIVED : constants.AUDIT_LOGS_ACTION.UNARCHIVED,
                 data: {
+                    old: { isArchived: !isArchived },
+                    new: { isArchived: isArchived },
                     title: targetDoc?.name || 'Document',
                     targetCount: targetIds.length,
                 },
-                targetRoles: ['RMO_STAFF'],
-                isMajor: false,
+                targetRoles: ['ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF'],
+                isMajor: true,
             }).catch(() => {});
 
             return targetIds;
@@ -326,10 +343,17 @@ const useDocumentStore = create((set, get) => ({
                 entityId: id,
                 action: constants.AUDIT_LOGS_ACTION.DELETED,
                 data: {
+                    old: {
+                        id,
+                        name: targetDoc?.name,
+                        isFolder: targetDoc?.isFolder,
+                        departmentId: targetDoc?.departmentId,
+                    },
+                    new: null,
                     title: targetDoc?.name || 'Document',
                     targetCount: targetIds.length,
                 },
-                targetRoles: ['RMO_STAFF'],
+                targetRoles: ['ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF'],
                 isMajor: true,
             }).catch(() => {});
 
@@ -430,6 +454,30 @@ const useDocumentStore = create((set, get) => ({
                 error: null,
             }));
 
+            const targetDoc = get().documents.find((d) => d.id === docId);
+            systemEventService.recordSystemEvent({
+                entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_VERSION,
+                entityId: newVersion.id || docId,
+                action: constants.AUDIT_LOGS_ACTION.CREATED,
+                data: {
+                    old: null,
+                    new: {
+                        id: newVersion.id,
+                        documentId: docId,
+                        version: newVersion.version,
+                        name: newVersion.name || targetDoc?.name,
+                    },
+                    documentId: docId,
+                    version: newVersion.version,
+                    title: `${targetDoc?.name || 'Document'} v${newVersion.version || '1.0'}`,
+                },
+                targetRoles: targetDoc?.departmentId
+                    ? ['ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF', 'OFFICER']
+                    : ['ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF'],
+                targetDepartmentId: targetDoc?.departmentId || null,
+                isMajor: true,
+            }).catch(() => {});
+
             return newVersion;
         } catch (error) {
             const message = error?.errors?.[0]?.message ?? error?.message ?? 'Failed to insert document version.';
@@ -474,6 +522,33 @@ const useDocumentStore = create((set, get) => ({
                 error: null,
             }));
 
+            const previousVerData = {};
+            const newVerData = {};
+            if (existingVersion) {
+                Object.keys(validatedPayload).forEach((k) => {
+                    if (existingVersion[k] !== undefined && existingVersion[k] !== validatedPayload[k]) {
+                        previousVerData[k] = existingVersion[k];
+                        newVerData[k] = validatedPayload[k];
+                    }
+                });
+            }
+            const targetDoc = get().documents.find((d) => d.id === docId);
+
+            systemEventService.recordSystemEvent({
+                entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_VERSION,
+                entityId: id,
+                action: constants.AUDIT_LOGS_ACTION.UPDATED,
+                data: {
+                    old: previousVerData,
+                    new: newVerData,
+                    documentId: docId,
+                    version: updatedVersion?.version ?? existingVersion?.version,
+                    title: `${targetDoc?.name || 'Document'} Version ${updatedVersion?.version ?? existingVersion?.version ?? ''}`,
+                },
+                targetRoles: ['ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF'],
+                isMajor: false,
+            }).catch(() => {});
+
             return updatedVersion;
         } catch (error) {
             const message = error?.errors?.[0]?.message ?? error?.message ?? 'Failed to update document version.';
@@ -487,6 +562,7 @@ const useDocumentStore = create((set, get) => ({
         set({ isLoading: true, error: null });
 
         try {
+            const existingVersion = get().documentVersions.find((item) => item.id === id);
             const isDeleted = await documentService.deleteDocumentVersion(id);
 
             if (isDeleted) {
@@ -498,6 +574,28 @@ const useDocumentStore = create((set, get) => ({
                     isLoading: false,
                     error: null,
                 }));
+
+                const docId = existingVersion?.documentId ?? existingVersion?.document?.id;
+                const targetDoc = get().documents.find((d) => d.id === docId);
+
+                systemEventService.recordSystemEvent({
+                    entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_VERSION,
+                    entityId: id,
+                    action: constants.AUDIT_LOGS_ACTION.DELETED,
+                    data: {
+                        old: {
+                            id,
+                            documentId: docId,
+                            version: existingVersion?.version,
+                            name: existingVersion?.name,
+                        },
+                        new: null,
+                        documentId: docId,
+                        title: `${targetDoc?.name || 'Document'} Version ${existingVersion?.version ?? ''}`,
+                    },
+                    targetRoles: ['ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF'],
+                    isMajor: true,
+                }).catch(() => {});
             } else {
                 set({ isLoading: false });
             }
@@ -537,12 +635,14 @@ const useDocumentStore = create((set, get) => ({
                 entityId: documentId,
                 action: constants.AUDIT_LOGS_ACTION.REVERTED,
                 data: {
+                    old: { version: targetDoc?.currentVersion ?? null },
+                    new: { version: newVersion?.version, revertedTo: targetVersion?.version },
                     title: targetDoc?.name || 'Document',
                     targetVersion: targetVersion?.version,
                     newVersion: newVersion?.version,
                 },
-                targetRoles: ['RMO_STAFF'],
-                isMajor: false,
+                targetRoles: ['ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF'],
+                isMajor: true,
             }).catch(() => {});
 
             return newVersion;
@@ -650,19 +750,31 @@ const useDocumentStore = create((set, get) => ({
 
             const targetRecId = newShare.recipient?.id ?? newShare.recipientId;
             const targetDeptId = newShare.department?.id ?? newShare.departmentId;
+            const targetDoc = (get().documents || []).find(
+                (d) => d.id === (validatedPayload.documentId ?? newShare.documentId)
+            );
+
             systemEventService.recordSystemEvent({
                 actorId: validatedPayload.sharerId,
                 entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_SHARE,
                 entityId: newShare.id,
                 action: constants.AUDIT_LOGS_ACTION.SHARED,
                 data: {
+                    old: null,
+                    new: {
+                        id: newShare.id,
+                        documentId: validatedPayload.documentId,
+                        departmentId: targetDeptId,
+                        recipientId: targetRecId,
+                        status: newShare.status,
+                    },
+                    title: targetDoc?.name ? `${targetDoc.name} Shared` : 'Document Shared',
                     documentId: validatedPayload.documentId,
                     departmentId: targetDeptId,
                     recipientId: targetRecId,
-                    status: newShare.status,
                 },
                 targetUserIds: targetRecId ? [targetRecId] : [],
-                targetRoles: targetRecId ? [] : ['DIRECTOR', 'OFFICER'],
+                targetRoles: ['OFFICER', 'ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF'],
                 targetDepartmentId: targetDeptId,
                 isMajor: true,
             }).catch(() => {});
@@ -711,24 +823,38 @@ const useDocumentStore = create((set, get) => ({
 
             const targetRecId = merged.recipient?.id ?? merged.recipientId;
             const targetDeptId = merged.department?.id ?? merged.departmentId;
+            const targetDoc = (get().documents || []).find((d) => d.id === merged.documentId);
             let shareAction = constants.AUDIT_LOGS_ACTION.UPDATED;
+            let targetRoles = ['ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF'];
             const st = String(merged.status || '').toUpperCase();
-            if (st === constants.DOCUMENT_SHARES_STATUS.PUBLISHED) shareAction = constants.AUDIT_LOGS_ACTION.PUBLISHED;
-            else if (st === constants.DOCUMENT_SHARES_STATUS.STASHED) shareAction = constants.AUDIT_LOGS_ACTION.STASHED;
-            else if (st === constants.DOCUMENT_SHARES_STATUS.APPROVED) shareAction = constants.AUDIT_LOGS_ACTION.APPROVED;
+
+            if (st === constants.DOCUMENT_SHARES_STATUS.PUBLISHED) {
+                shareAction = constants.AUDIT_LOGS_ACTION.PUBLISHED;
+                targetRoles = targetRecId
+                    ? ['DIRECTOR', 'OFFICER', 'ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF']
+                    : ['MEMBER', 'OFFICER', 'DIRECTOR', 'ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF'];
+            } else if (st === constants.DOCUMENT_SHARES_STATUS.STASHED) {
+                shareAction = constants.AUDIT_LOGS_ACTION.STASHED;
+                targetRoles = ['OFFICER', 'ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF'];
+            } else if (st === constants.DOCUMENT_SHARES_STATUS.APPROVED) {
+                shareAction = constants.AUDIT_LOGS_ACTION.APPROVED;
+                targetRoles = ['DIRECTOR', 'ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF'];
+            }
 
             systemEventService.recordSystemEvent({
                 entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_SHARE,
                 entityId: id,
                 action: shareAction,
                 data: {
+                    old: { status: existing?.status },
+                    new: { status: merged.status },
+                    title: targetDoc?.name ? `${targetDoc.name} ${shareAction}` : `Document Share ${shareAction}`,
                     documentId: merged.documentId,
                     departmentId: targetDeptId,
                     recipientId: targetRecId,
-                    status: merged.status,
                 },
                 targetUserIds: targetRecId ? [targetRecId] : [],
-                targetRoles: targetRecId ? [] : ['DIRECTOR', 'OFFICER'],
+                targetRoles,
                 targetDepartmentId: targetDeptId,
                 isMajor: true,
             }).catch(() => {});
@@ -758,17 +884,29 @@ const useDocumentStore = create((set, get) => ({
 
                 const targetRecId = existingShare?.recipient?.id ?? existingShare?.recipientId;
                 const targetDeptId = existingShare?.department?.id ?? existingShare?.departmentId;
+                const docId = existingShare?.documentId ?? existingShare?.document?.id;
+                const targetDoc = (get().documents || []).find((d) => d.id === docId);
+
                 systemEventService.recordSystemEvent({
                     entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_SHARE,
                     entityId: id,
                     action: constants.AUDIT_LOGS_ACTION.UNSHARED,
                     data: {
-                        documentId: existingShare?.documentId ?? existingShare?.document?.id,
+                        old: {
+                            id,
+                            documentId: docId,
+                            departmentId: targetDeptId,
+                            recipientId: targetRecId,
+                            status: existingShare?.status,
+                        },
+                        new: null,
+                        title: targetDoc?.name ? `${targetDoc.name} Unshared` : 'Document Unshared',
+                        documentId: docId,
                         departmentId: targetDeptId,
                         recipientId: targetRecId,
                     },
                     targetUserIds: targetRecId ? [targetRecId] : [],
-                    targetRoles: targetRecId ? [] : ['DIRECTOR', 'OFFICER'],
+                    targetRoles: ['DIRECTOR', 'OFFICER', 'ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF'],
                     targetDepartmentId: targetDeptId,
                     isMajor: true,
                 }).catch(() => {});
@@ -934,6 +1072,29 @@ const useDocumentStore = create((set, get) => ({
                         newShare,
                     ],
                 }));
+
+                const targetDoc = (get().documents || []).find((d) => d.id === documentId);
+                systemEventService.recordSystemEvent({
+                    actorId: sharerId,
+                    entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_SHARE,
+                    entityId: newShare.id,
+                    action: constants.AUDIT_LOGS_ACTION.SHARED,
+                    data: {
+                        old: null,
+                        new: {
+                            id: newShare.id,
+                            documentId,
+                            departmentId,
+                            status: constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL,
+                        },
+                        title: targetDoc?.name ? `${targetDoc.name} Shared` : 'Document Shared',
+                        documentId,
+                        departmentId,
+                    },
+                    targetRoles: ['OFFICER', 'ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF'],
+                    targetDepartmentId: departmentId,
+                    isMajor: true,
+                }).catch(() => {});
             }
 
             return newShare;
@@ -1000,6 +1161,35 @@ const useDocumentStore = create((set, get) => ({
                         ...createdShares,
                     ],
                 }));
+
+                for (const deptId of deptIdList) {
+                    const deptShares = createdShares.filter(
+                        (cs) => (cs.department?.id ?? cs.departmentId) === deptId
+                    );
+                    if (deptShares.length > 0) {
+                        systemEventService.recordSystemEvent({
+                            actorId: sharerId,
+                            entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_SHARE,
+                            entityId: rootDocId,
+                            action: constants.AUDIT_LOGS_ACTION.SHARED,
+                            data: {
+                                old: null,
+                                new: {
+                                    rootDocId,
+                                    departmentId: deptId,
+                                    sharedCount: deptShares.length,
+                                    status: constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL,
+                                },
+                                title: targetDoc?.name ? `${targetDoc.name} Shared` : 'Document Shared',
+                                documentId: rootDocId,
+                                departmentId: deptId,
+                            },
+                            targetRoles: ['OFFICER', 'ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF'],
+                            targetDepartmentId: deptId,
+                            isMajor: true,
+                        }).catch(() => {});
+                    }
+                }
             }
 
             return createdShares;
@@ -1043,6 +1233,26 @@ const useDocumentStore = create((set, get) => ({
                 documentShares: state.documentShares.filter((s) => !deletedIds.has(s.id)),
             }));
 
+            systemEventService.recordSystemEvent({
+                entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_SHARE,
+                entityId: rootDocId,
+                action: constants.AUDIT_LOGS_ACTION.UNSHARED,
+                data: {
+                    old: {
+                        rootDocId,
+                        departmentId,
+                        deletedCount: deletedIds.size,
+                    },
+                    new: null,
+                    title: targetDoc?.name ? `${targetDoc.name} Unshared` : 'Document Unshared',
+                    documentId: rootDocId,
+                    departmentId,
+                },
+                targetRoles: ['DIRECTOR', 'OFFICER', 'ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF'],
+                targetDepartmentId: departmentId,
+                isMajor: true,
+            }).catch(() => {});
+
             return deletedIds.size;
         } catch (error) {
             console.error('Failed to recursively unshare document:', error);
@@ -1052,11 +1262,41 @@ const useDocumentStore = create((set, get) => ({
 
     unshareDocument: async (shareId) => {
         try {
+            const existingShare = (get().documentShares || []).find((s) => s.id === shareId);
             const isDeleted = await documentService.deleteDocumentShare(shareId);
             if (isDeleted) {
                 set((state) => ({
                     documentShares: state.documentShares.filter((item) => item.id !== shareId),
                 }));
+
+                const docId = existingShare?.documentId ?? existingShare?.document?.id;
+                const deptId = existingShare?.department?.id ?? existingShare?.departmentId;
+                const recId = existingShare?.recipient?.id ?? existingShare?.recipientId;
+                const targetDoc = (get().documents || []).find((d) => d.id === docId);
+
+                systemEventService.recordSystemEvent({
+                    entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_SHARE,
+                    entityId: shareId,
+                    action: constants.AUDIT_LOGS_ACTION.UNSHARED,
+                    data: {
+                        old: {
+                            id: shareId,
+                            documentId: docId,
+                            departmentId: deptId,
+                            recipientId: recId,
+                            status: existingShare?.status,
+                        },
+                        new: null,
+                        title: targetDoc?.name ? `${targetDoc.name} Unshared` : 'Document Unshared',
+                        documentId: docId,
+                        departmentId: deptId,
+                        recipientId: recId,
+                    },
+                    targetUserIds: recId ? [recId] : [],
+                    targetRoles: ['DIRECTOR', 'OFFICER', 'ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF'],
+                    targetDepartmentId: deptId,
+                    isMajor: true,
+                }).catch(() => {});
             }
             return isDeleted;
         } catch (error) {
@@ -1114,6 +1354,31 @@ const useDocumentStore = create((set, get) => ({
                     return item;
                 }),
             }));
+
+            let targetRoles = ['ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF'];
+            if (nextStatus === constants.DOCUMENT_SHARES_STATUS.APPROVED) {
+                targetRoles = ['DIRECTOR', 'ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF'];
+            } else if (nextStatus === constants.DOCUMENT_SHARES_STATUS.PUBLISHED) {
+                targetRoles = ['MEMBER', 'OFFICER', 'DIRECTOR', 'ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF'];
+            } else if (nextStatus === constants.DOCUMENT_SHARES_STATUS.STASHED) {
+                targetRoles = ['OFFICER', 'ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF'];
+            }
+
+            systemEventService.recordSystemEvent({
+                entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_SHARE,
+                entityId: rootDocId,
+                action: nextStatus,
+                data: {
+                    old: { status: 'PREVIOUS' },
+                    new: { status: nextStatus, updatedCount: sharesToUpdate.length },
+                    title: targetDoc?.name ? `${targetDoc.name} ${nextStatus}` : `Document Share ${nextStatus}`,
+                    documentId: rootDocId,
+                    departmentId,
+                },
+                targetRoles,
+                targetDepartmentId: departmentId,
+                isMajor: true,
+            }).catch(() => {});
 
             return sharesToUpdate.map((s) => ({
                 ...s,
@@ -1211,6 +1476,27 @@ const useDocumentStore = create((set, get) => ({
                         ...updatedBaseShares.filter((u) => !state.documentShares.some((s) => s.id === u.id)),
                     ],
                 }));
+
+                const targetDoc = (get().documents || []).find((d) => d.id === rootDocId);
+                systemEventService.recordSystemEvent({
+                    actorId: publisherId,
+                    entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_SHARE,
+                    entityId: rootDocId,
+                    action: constants.AUDIT_LOGS_ACTION.PUBLISHED,
+                    data: {
+                        old: { status: constants.DOCUMENT_SHARES_STATUS.APPROVED },
+                        new: {
+                            status: constants.DOCUMENT_SHARES_STATUS.PUBLISHED,
+                            targetMemberCount: 'ALL',
+                        },
+                        title: targetDoc?.name ? `${targetDoc.name} Published` : 'Document Published',
+                        documentId: rootDocId,
+                        departmentId,
+                    },
+                    targetRoles: ['MEMBER', 'OFFICER', 'DIRECTOR', 'ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF'],
+                    targetDepartmentId: departmentId,
+                    isMajor: true,
+                }).catch(() => {});
 
                 return updatedBaseShares;
             } else {
@@ -1337,6 +1623,28 @@ const useDocumentStore = create((set, get) => ({
                     ],
                 }));
 
+                const targetDoc = (get().documents || []).find((d) => d.id === rootDocId);
+                systemEventService.recordSystemEvent({
+                    actorId: publisherId,
+                    entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_SHARE,
+                    entityId: rootDocId,
+                    action: constants.AUDIT_LOGS_ACTION.PUBLISHED,
+                    data: {
+                        old: { status: constants.DOCUMENT_SHARES_STATUS.APPROVED },
+                        new: {
+                            status: constants.DOCUMENT_SHARES_STATUS.PUBLISHED,
+                            targetMemberCount: targetMemberIds.length,
+                        },
+                        title: targetDoc?.name ? `${targetDoc.name} Published` : 'Document Published',
+                        documentId: rootDocId,
+                        departmentId,
+                    },
+                    targetUserIds: targetMemberIds,
+                    targetRoles: ['DIRECTOR', 'OFFICER', 'ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF'],
+                    targetDepartmentId: departmentId,
+                    isMajor: true,
+                }).catch(() => {});
+
                 return createdOrUpdatedShares;
             }
         } catch (error) {
@@ -1374,6 +1682,25 @@ const useDocumentStore = create((set, get) => ({
                 ),
             }));
 
+            const targetDoc = (get().documents || []).find(
+                (d) => d.id === (existing?.documentId ?? existing?.document?.id)
+            );
+            systemEventService.recordSystemEvent({
+                entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_SHARE,
+                entityId: shareId,
+                action: constants.AUDIT_LOGS_ACTION.APPROVED,
+                data: {
+                    old: { status: existing?.status || constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL },
+                    new: { status: constants.DOCUMENT_SHARES_STATUS.APPROVED },
+                    title: targetDoc?.name ? `${targetDoc.name} Approved` : 'Document Share Approved',
+                    documentId: existing?.documentId,
+                    departmentId: deptId,
+                },
+                targetRoles: ['DIRECTOR', 'ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF'],
+                targetDepartmentId: deptId,
+                isMajor: true,
+            }).catch(() => {});
+
             return merged;
         } catch (error) {
             console.error('Failed to approve document share:', error);
@@ -1410,6 +1737,25 @@ const useDocumentStore = create((set, get) => ({
                 ),
             }));
 
+            const targetDoc = (get().documents || []).find(
+                (d) => d.id === (existing?.documentId ?? existing?.document?.id)
+            );
+            systemEventService.recordSystemEvent({
+                entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_SHARE,
+                entityId: shareId,
+                action: constants.AUDIT_LOGS_ACTION.PENDING_APPROVAL,
+                data: {
+                    old: { status: existing?.status },
+                    new: { status: constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL },
+                    title: targetDoc?.name ? `${targetDoc.name} Share Reset` : 'Document Share Reset',
+                    documentId: existing?.documentId,
+                    departmentId: deptId,
+                },
+                targetRoles: ['OFFICER', 'ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF'],
+                targetDepartmentId: deptId,
+                isMajor: true,
+            }).catch(() => {});
+
             return merged;
         } catch (error) {
             console.error('Failed to unapprove document share:', error);
@@ -1419,11 +1765,37 @@ const useDocumentStore = create((set, get) => ({
 
     rejectShare: async (shareId) => {
         try {
+            const existing = (get().documentShares || []).find((s) => s.id === shareId);
+            const deptId = existing?.department?.id ?? existing?.departmentId;
+            const docId = existing?.documentId ?? existing?.document?.id;
+            const targetDoc = (get().documents || []).find((d) => d.id === docId);
+
             const isDeleted = await documentService.deleteDocumentShare(shareId);
             if (isDeleted) {
                 set((state) => ({
                     documentShares: state.documentShares.filter((item) => item.id !== shareId),
                 }));
+
+                systemEventService.recordSystemEvent({
+                    entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_SHARE,
+                    entityId: shareId,
+                    action: constants.AUDIT_LOGS_ACTION.REJECTED,
+                    data: {
+                        old: {
+                            id: shareId,
+                            documentId: docId,
+                            departmentId: deptId,
+                            status: existing?.status,
+                        },
+                        new: null,
+                        title: targetDoc?.name ? `${targetDoc.name} Rejected` : 'Document Share Rejected',
+                        documentId: docId,
+                        departmentId: deptId,
+                    },
+                    targetRoles: ['ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF'],
+                    targetDepartmentId: deptId,
+                    isMajor: true,
+                }).catch(() => {});
             }
             return isDeleted;
         } catch (error) {
@@ -1461,6 +1833,29 @@ const useDocumentStore = create((set, get) => ({
                 ),
             }));
 
+            const targetDoc = (get().documents || []).find(
+                (d) => d.id === (existing?.documentId ?? existing?.document?.id)
+            );
+            systemEventService.recordSystemEvent({
+                entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_SHARE,
+                entityId: shareId,
+                action: constants.AUDIT_LOGS_ACTION.PUBLISHED,
+                data: {
+                    old: { status: existing?.status },
+                    new: { status: constants.DOCUMENT_SHARES_STATUS.PUBLISHED },
+                    title: targetDoc?.name ? `${targetDoc.name} Published` : 'Document Published',
+                    documentId: existing?.documentId,
+                    departmentId: deptId,
+                    recipientId: recId,
+                },
+                targetUserIds: recId ? [recId] : [],
+                targetRoles: recId
+                    ? ['DIRECTOR', 'OFFICER', 'ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF']
+                    : ['MEMBER', 'OFFICER', 'DIRECTOR', 'ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF'],
+                targetDepartmentId: deptId,
+                isMajor: true,
+            }).catch(() => {});
+
             return merged;
         } catch (error) {
             console.error('Failed to publish document share:', error);
@@ -1496,6 +1891,25 @@ const useDocumentStore = create((set, get) => ({
                     item.id === shareId ? merged : item
                 ),
             }));
+
+            const targetDoc = (get().documents || []).find(
+                (d) => d.id === (existing?.documentId ?? existing?.document?.id)
+            );
+            systemEventService.recordSystemEvent({
+                entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_SHARE,
+                entityId: shareId,
+                action: constants.AUDIT_LOGS_ACTION.APPROVED,
+                data: {
+                    old: { status: existing?.status },
+                    new: { status: constants.DOCUMENT_SHARES_STATUS.APPROVED },
+                    title: targetDoc?.name ? `${targetDoc.name} Unpublished` : 'Document Unpublished',
+                    documentId: existing?.documentId,
+                    departmentId: deptId,
+                },
+                targetRoles: ['DIRECTOR', 'OFFICER', 'ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF'],
+                targetDepartmentId: deptId,
+                isMajor: true,
+            }).catch(() => {});
 
             return merged;
         } catch (error) {
@@ -1533,6 +1947,25 @@ const useDocumentStore = create((set, get) => ({
                 ),
             }));
 
+            const targetDoc = (get().documents || []).find(
+                (d) => d.id === (existing?.documentId ?? existing?.document?.id)
+            );
+            systemEventService.recordSystemEvent({
+                entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_SHARE,
+                entityId: shareId,
+                action: constants.AUDIT_LOGS_ACTION.STASHED,
+                data: {
+                    old: { status: existing?.status },
+                    new: { status: constants.DOCUMENT_SHARES_STATUS.STASHED },
+                    title: targetDoc?.name ? `${targetDoc.name} Stashed` : 'Document Stashed',
+                    documentId: existing?.documentId,
+                    departmentId: deptId,
+                },
+                targetRoles: ['OFFICER', 'ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF'],
+                targetDepartmentId: deptId,
+                isMajor: true,
+            }).catch(() => {});
+
             return merged;
         } catch (error) {
             console.error('Failed to stash document share:', error);
@@ -1568,6 +2001,25 @@ const useDocumentStore = create((set, get) => ({
                     item.id === shareId ? merged : item
                 ),
             }));
+
+            const targetDoc = (get().documents || []).find(
+                (d) => d.id === (existing?.documentId ?? existing?.document?.id)
+            );
+            systemEventService.recordSystemEvent({
+                entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_SHARE,
+                entityId: shareId,
+                action: constants.AUDIT_LOGS_ACTION.APPROVED,
+                data: {
+                    old: { status: existing?.status },
+                    new: { status: constants.DOCUMENT_SHARES_STATUS.APPROVED },
+                    title: targetDoc?.name ? `${targetDoc.name} Restored from Stash` : 'Document Restored',
+                    documentId: existing?.documentId,
+                    departmentId: deptId,
+                },
+                targetRoles: ['DIRECTOR', 'OFFICER', 'ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF'],
+                targetDepartmentId: deptId,
+                isMajor: true,
+            }).catch(() => {});
 
             return merged;
         } catch (error) {
@@ -1643,16 +2095,24 @@ const useDocumentStore = create((set, get) => ({
                 error: null,
             }));
 
+            const diffData = {
+                old: null,
+                new: {
+                    id: newRequest.id,
+                    subject: newRequest.subject || 'Document Request',
+                    status: newRequest.status || constants.DOCUMENT_REQUESTS_STATUS.OPEN,
+                    requesterId: validatedPayload.requesterId,
+                },
+            };
+
             systemEventService.recordSystemEvent({
                 actorId: validatedPayload.requesterId,
                 entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_REQUEST,
                 entityId: newRequest.id,
                 action: constants.AUDIT_LOGS_ACTION.CREATED,
-                data: {
-                    subject: newRequest.subject || 'Document Request',
-                    requesterId: validatedPayload.requesterId,
-                },
-                targetRoles: ['RMO_STAFF'],
+                data: diffData,
+                targetUserIds: [validatedPayload.requesterId],
+                targetRoles: ['ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF'],
                 isMajor: true,
             }).catch(() => {});
 
@@ -1676,6 +2136,12 @@ const useDocumentStore = create((set, get) => ({
             };
             const validatedPayload = mutationSchema.UpdateDocumentRequestSchema.parse(payloadWithUpdate);
             const existingRequest = get().documentRequests.find((item) => item?.id === id) ?? {};
+
+            // Security & Governance: Closed requests cannot be reopened
+            const isClosed = existingRequest?.status === constants.DOCUMENT_REQUESTS_STATUS.RESOLVED || existingRequest?.status === constants.DOCUMENT_REQUESTS_STATUS.REJECTED;
+            if (isClosed && String(payload?.status || '').toUpperCase() === constants.DOCUMENT_REQUESTS_STATUS.OPEN) {
+                throw new Error('Closed and resolved document requests cannot be reopened for compliance and auditing.');
+            }
 
             const result = await documentService.updateDocumentRequest(id, validatedPayload);
 
@@ -1719,18 +2185,29 @@ const useDocumentStore = create((set, get) => ({
                 ? mergedRequest.requester?.id
                 : (mergedRequest.requesterId ?? mergedRequest.requester);
 
+            const diffData = {
+                old: {
+                    id: id,
+                    subject: existingRequest.subject || 'Document Request',
+                    status: existingRequest.status || constants.DOCUMENT_REQUESTS_STATUS.OPEN,
+                    rejectionReason: existingRequest.rejectionReason || null,
+                },
+                new: {
+                    id: id,
+                    subject: mergedRequest.subject || 'Document Request',
+                    status: mergedRequest.status,
+                    rejectionReason: payload.rejectionReason ?? mergedRequest.rejectionReason ?? null,
+                },
+            };
+
             systemEventService.recordSystemEvent({
                 actorId: payload.resolverId || null,
                 entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_REQUEST,
                 entityId: id,
                 action: actionType,
-                data: {
-                    subject: mergedRequest.subject || 'Document Request',
-                    status: mergedRequest.status,
-                    rejectionReason: payload.rejectionReason || null,
-                },
+                data: diffData,
                 targetUserIds: requesterId ? [requesterId] : [],
-                targetRoles: ['RMO_STAFF'],
+                targetRoles: ['ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF'],
                 isMajor: true,
             }).catch(() => {});
 
@@ -1743,11 +2220,22 @@ const useDocumentStore = create((set, get) => ({
         }
     },
 
-    deleteDocumentRequest: async (id) => {
+    deleteDocumentRequest: async (id, actorUser = null) => {
         set({ isLoading: true, error: null });
 
         try {
             const existingRequest = (get().documentRequests || []).find((item) => item?.id === id);
+            const isClosed = existingRequest?.status === constants.DOCUMENT_REQUESTS_STATUS.RESOLVED || existingRequest?.status === constants.DOCUMENT_REQUESTS_STATUS.REJECTED;
+            const isAdmin = actorUser ? constants.isAdminRole(actorUser.role) : false;
+            const requesterId = typeof existingRequest?.requester === 'object'
+                ? existingRequest?.requester?.id
+                : (existingRequest?.requesterId ?? existingRequest?.requester);
+            const isOwner = actorUser && String(requesterId) === String(actorUser.id);
+
+            if (isClosed && (!isAdmin || isOwner)) {
+                throw new Error('Closed and resolved document requests cannot be deleted for compliance and auditing.');
+            }
+
             const isDeleted = await documentService.deleteDocumentRequest(id);
 
             if (isDeleted) {
@@ -1760,14 +2248,24 @@ const useDocumentStore = create((set, get) => ({
                     error: null,
                 }));
 
+                const diffData = {
+                    old: {
+                        id: id,
+                        subject: existingRequest?.subject || 'Document Request',
+                        status: existingRequest?.status || constants.DOCUMENT_REQUESTS_STATUS.OPEN,
+                        requesterId: requesterId,
+                    },
+                    new: null,
+                };
+
                 systemEventService.recordSystemEvent({
+                    actorId: actorUser?.id || null,
                     entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_REQUEST,
                     entityId: id,
                     action: constants.AUDIT_LOGS_ACTION.DELETED,
-                    data: {
-                        subject: existingRequest?.subject || 'Document Request',
-                    },
-                    targetRoles: ['RMO_STAFF'],
+                    data: diffData,
+                    targetUserIds: requesterId ? [requesterId] : [],
+                    targetRoles: ['ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF'],
                     isMajor: true,
                 }).catch(() => {});
             } else {
@@ -1826,19 +2324,26 @@ const useDocumentStore = create((set, get) => ({
 
             const req = get().documentRequests.find((r) => r?.id === payload.documentRequestId);
             const requesterId = req ? (typeof req.requester === 'object' ? req.requester?.id : (req.requesterId ?? req.requester)) : null;
-            const isSenderRequester = requesterId && String(requesterId) === String(payload.userId);
+
+            const diffData = {
+                old: null,
+                new: {
+                    id: newMessage.id,
+                    documentRequestId: payload.documentRequestId,
+                    subject: req?.subject || 'Document Request',
+                    message: typeof payload.message === 'string' ? payload.message.slice(0, 120) : 'Message',
+                    userId: payload.userId,
+                },
+            };
 
             systemEventService.recordSystemEvent({
                 actorId: payload.userId,
                 entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_REQUEST,
                 entityId: payload.documentRequestId,
-                action: constants.AUDIT_LOGS_ACTION.COMMENTED,
-                data: {
-                    subject: req?.subject || 'Document Request',
-                    messageSnippet: typeof payload.message === 'string' ? payload.message.slice(0, 80) : 'Message',
-                },
-                targetUserIds: isSenderRequester ? [] : (requesterId ? [requesterId] : []),
-                targetRoles: isSenderRequester ? ['RMO_STAFF'] : [],
+                action: constants.AUDIT_LOGS_ACTION.CREATED,
+                data: diffData,
+                targetUserIds: requesterId ? [requesterId] : [],
+                targetRoles: ['ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF'],
                 isMajor: false,
             }).catch(() => {});
 
@@ -1851,10 +2356,11 @@ const useDocumentStore = create((set, get) => ({
         }
     },
 
-    deleteDocumentRequestMessage: async (id) => {
+    deleteDocumentRequestMessage: async (id, actorUser = null) => {
         set({ isLoading: true, error: null });
 
         try {
+            const existingMessage = (get().documentRequestMessages || []).find((item) => item?.id === id);
             const isDeleted = await documentService.deleteDocumentRequestMessage(id);
 
             if (isDeleted) {
@@ -1863,6 +2369,31 @@ const useDocumentStore = create((set, get) => ({
                     isLoading: false,
                     error: null,
                 }));
+
+                const reqId = existingMessage?.documentRequest?.id ?? existingMessage?.documentRequestId;
+                const req = get().documentRequests.find((r) => r?.id === reqId);
+                const requesterId = req ? (typeof req.requester === 'object' ? req.requester?.id : (req.requesterId ?? req.requester)) : null;
+
+                const diffData = {
+                    old: {
+                        id: id,
+                        documentRequestId: reqId,
+                        message: typeof existingMessage?.message === 'string' ? existingMessage.message.slice(0, 120) : 'Message',
+                        userId: existingMessage?.user?.id ?? existingMessage?.userId,
+                    },
+                    new: null,
+                };
+
+                systemEventService.recordSystemEvent({
+                    actorId: actorUser?.id ?? existingMessage?.user?.id ?? existingMessage?.userId ?? null,
+                    entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_REQUEST,
+                    entityId: reqId || id,
+                    action: constants.AUDIT_LOGS_ACTION.DELETED,
+                    data: diffData,
+                    targetUserIds: requesterId ? [requesterId] : [],
+                    targetRoles: ['ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF'],
+                    isMajor: false,
+                }).catch(() => {});
             } else {
                 set({ isLoading: false });
             }
@@ -1923,17 +2454,26 @@ const useDocumentStore = create((set, get) => ({
             const req = get().documentRequests.find((r) => r?.id === payload.documentRequestId);
             const requesterId = req ? (typeof req.requester === 'object' ? req.requester?.id : (req.requesterId ?? req.requester)) : null;
 
+            const diffData = {
+                old: null,
+                new: {
+                    id: newAttachment.id,
+                    documentRequestId: payload.documentRequestId,
+                    documentId: payload.documentId,
+                    subject: req?.subject || 'Document Request',
+                    fileName: payload.name || 'Attachment',
+                    attachedById: payload.attachedById,
+                },
+            };
+
             systemEventService.recordSystemEvent({
                 actorId: payload.attachedById,
                 entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_REQUEST_ATTACHMENT,
                 entityId: payload.documentRequestId,
-                action: constants.AUDIT_LOGS_ACTION.ATTACHED,
-                data: {
-                    subject: req?.subject || 'Document Request',
-                    fileName: payload.name || 'Clearance File',
-                },
+                action: constants.AUDIT_LOGS_ACTION.CREATED,
+                data: diffData,
                 targetUserIds: requesterId ? [requesterId] : [],
-                targetRoles: ['RMO_STAFF'],
+                targetRoles: ['ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF'],
                 isMajor: true,
             }).catch(() => {});
 
@@ -1946,10 +2486,11 @@ const useDocumentStore = create((set, get) => ({
         }
     },
 
-    deleteDocumentRequestAttachment: async (id) => {
+    deleteDocumentRequestAttachment: async (id, actorUser = null) => {
         set({ isLoading: true, error: null });
 
         try {
+            const existingAttachment = (get().documentRequestAttachments || []).find((item) => item?.id === id);
             const isDeleted = await documentService.deleteDocumentRequestAttachment(id);
 
             if (isDeleted) {
@@ -1958,6 +2499,31 @@ const useDocumentStore = create((set, get) => ({
                     isLoading: false,
                     error: null,
                 }));
+
+                const reqId = existingAttachment?.documentRequest?.id ?? existingAttachment?.documentRequestId;
+                const req = get().documentRequests.find((r) => r?.id === reqId);
+                const requesterId = req ? (typeof req.requester === 'object' ? req.requester?.id : (req.requesterId ?? req.requester)) : null;
+
+                const diffData = {
+                    old: {
+                        id: id,
+                        documentRequestId: reqId,
+                        documentId: existingAttachment?.document?.id ?? existingAttachment?.documentId,
+                        fileName: existingAttachment?.name || 'Attachment',
+                    },
+                    new: null,
+                };
+
+                systemEventService.recordSystemEvent({
+                    actorId: actorUser?.id ?? existingAttachment?.attachedBy?.id ?? existingAttachment?.attachedById ?? null,
+                    entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_REQUEST_ATTACHMENT,
+                    entityId: reqId || id,
+                    action: constants.AUDIT_LOGS_ACTION.DELETED,
+                    data: diffData,
+                    targetUserIds: requesterId ? [requesterId] : [],
+                    targetRoles: ['ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF'],
+                    isMajor: true,
+                }).catch(() => {});
             } else {
                 set({ isLoading: false });
             }

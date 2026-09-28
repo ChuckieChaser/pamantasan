@@ -650,7 +650,19 @@ const AppContent = () => {
                         fileName
                     );
                     const docToRecord = matchedDoc || (targetDocId ? { id: targetDocId, name: fileName } : (item?.id ? item : null));
-                    if (docToRecord && currentUser?.id) {
+                    const isDocReqContext = Boolean(
+                        item?.documentRequestId ||
+                        item?.documentRequest ||
+                        (selectedItem?.subject && (selectedItem?.requesterId || selectedItem?.requester))
+                    );
+                    const reqRequesterId = item?.documentRequest?.requester?.id ??
+                        item?.documentRequest?.requesterId ??
+                        selectedItem?.requesterId ??
+                        selectedItem?.requester?.id ??
+                        selectedItem?.requester;
+                    const isRequester = !isDocReqContext || (currentUser?.id && String(currentUser.id) === String(reqRequesterId));
+
+                    if (isRequester && docToRecord && currentUser?.id) {
                         systemEventService.recordDocumentRead({
                             document: docToRecord,
                             user: currentUser,

@@ -622,8 +622,7 @@ const Inspector = ({
             (cr) =>
                 cr.status === constants.COORDINATOR_REQUESTS_STATUS.PENDING &&
                 (cr.action === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_RESOLVE ||
-                 cr.action === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_REJECT ||
-                 cr.action === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_REOPEN) &&
+                 cr.action === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_REJECT) &&
                 String(cr.data?.documentRequestId ?? '') === String(activeItem.id)
         ) ?? null;
     }, [activeItem, isDocumentRequest, allCoordinatorRequests]);
@@ -1371,7 +1370,7 @@ const Inspector = ({
         if (isRequestLocked) {
             showToast({
                 title: 'Thread Locked',
-                description: 'This document request has been closed. Reopen it to send messages.',
+                description: 'This document request has been closed and cannot be reopened.',
                 variant: 'warning',
             });
             return;
@@ -3725,7 +3724,7 @@ const Inspector = ({
                                                         Request is {currentStatus.toLowerCase()}
                                                     </span>
                                                     <span className="text-[10px] text-text-muted truncate">
-                                                        Messaging is locked until reopened.
+                                                        Messaging is locked. Request finalized.
                                                     </span>
                                                 </div>
                                             </div>
@@ -4114,8 +4113,6 @@ const Inspector = ({
                                     <span className="font-semibold truncate">
                                         {pendingStatusRequest.action === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_RESOLVE
                                             ? 'Resolution'
-                                            : pendingStatusRequest.action === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_REOPEN
-                                            ? 'Reopen'
                                             : 'Rejection'} awaiting Admin approval
                                     </span>
                                 </div>

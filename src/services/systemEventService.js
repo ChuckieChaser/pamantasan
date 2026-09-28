@@ -456,7 +456,7 @@ const systemEventService = {
 
     /**
      * Records a document read / view event.
-     * Uses session debouncing (10-min window per user:doc) to prevent database spam.
+     * Enforces once-per-user recording to accurately feed readership analytics without duplication.
      */
     recordDocumentRead: async ({ document, user, version = null }) => {
         if (!document?.id || !user?.id) return null;
@@ -468,6 +468,22 @@ const systemEventService = {
 
         // Check if recently read in this session
         if (lastRead && Date.now() - lastRead < DEBOUNCE_WINDOW_MS) {
+            return null;
+        }
+
+        // Check if user has already read this document previously (once per user only)
+        const loadedLogs = useAuditStore.getState().auditLogs || [];
+        const hasExistingRead = loadedLogs.some((l) => {
+            const act = String(l?.action || '').toUpperCase();
+            const isReadAct = ['READ', 'VIEW', 'VIEWED', 'DOWNLOAD', 'DOWNLOADED', 'ACCESS', 'ACCESSED'].includes(act);
+            const isDoc = String(l?.entityType || '').toUpperCase() === 'DOCUMENT';
+            const matchDoc = String(l?.entityId || l?.documentId) === docId;
+            const matchActor = String(l?.actorId || l?.actor?.id) === userId;
+            return isReadAct && isDoc && matchDoc && matchActor;
+        });
+
+        if (hasExistingRead) {
+            recentReadCache.set(cacheKey, Date.now());
             return null;
         }
 
@@ -483,11 +499,14 @@ const systemEventService = {
                 entityId: docId,
                 action: 'READ',
                 data: JSON.stringify({
-                    title: docTitle,
-                    departmentId: departmentId,
-                    role: user.role || constants.USERS_ROLE.MEMBER,
-                    version: version || document.currentVersion || 1,
-                    timestamp: new Date().toISOString(),
+                    old: null,
+                    new: {
+                        title: docTitle,
+                        departmentId: departmentId,
+                        role: user.role || constants.USERS_ROLE.MEMBER,
+                        version: version || document.currentVersion || 1,
+                        timestamp: new Date().toISOString(),
+                    },
                 }),
                 createdAt: new Date().toISOString(),
             };

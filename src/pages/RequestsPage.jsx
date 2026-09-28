@@ -428,8 +428,7 @@ const RequestsPage = ({
             if (!cr || cr.status !== constants.COORDINATOR_REQUESTS_STATUS.PENDING) return false;
             if (
                 cr.action !== constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_RESOLVE &&
-                cr.action !== constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_REJECT &&
-                cr.action !== constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_REOPEN
+                cr.action !== constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_REJECT
             ) return false;
 
             const reqId = typeof cr.requester === 'object' ? cr.requester?.id : (cr.requesterId ?? cr.requester);
@@ -640,11 +639,11 @@ const RequestsPage = ({
     const handleUpdateDocumentStatus = async (requestId, nextStatus, rejectionNote = null) => {
         const targetReq = (documentRequests || []).find((r) => String(r.id) === String(requestId)) ?? viewingDocumentRequest ?? {};
         const isClosed = targetReq.status === constants.DOCUMENT_REQUESTS_STATUS.RESOLVED || targetReq.status === constants.DOCUMENT_REQUESTS_STATUS.REJECTED;
-        if (isClosed && nextStatus === constants.DOCUMENT_REQUESTS_STATUS.OPEN) {
+        if (isClosed) {
             showToast({
                 type: 'error',
                 title: 'Action Prohibited',
-                description: 'Closed and resolved document requests cannot be reopened for compliance and auditing.',
+                description: 'Closed and resolved document requests cannot be updated or reopened for compliance and auditing.',
             });
             return;
         }
@@ -684,8 +683,15 @@ const RequestsPage = ({
                         documentRequestId: requestId,
                         subject: targetReq.subject || targetReq.title || 'Document Request',
                         requesterName: targetReq.requesterName || 'Member',
-                        status: nextStatus,
-                        ...(rejectionNote ? { rejectionReason: rejectionNote } : {}),
+                        requesterId: targetReq.requesterId ?? targetReq.requester?.id ?? targetReq.requester,
+                        old: {
+                            status: targetReq.status,
+                            rejectionReason: targetReq.rejectionReason || null,
+                        },
+                        new: {
+                            status: nextStatus,
+                            rejectionReason: rejectionNote || null,
+                        },
                     },
                 });
                 useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
@@ -951,7 +957,7 @@ const RequestsPage = ({
 
         setIsDeletingRequest(true);
         try {
-            await deleteDocumentRequest(deletingRequestItem.id);
+            await deleteDocumentRequest(deletingRequestItem.id, activeUser);
             showToast({
                 type: 'success',
                 title: 'Request Deleted',
@@ -1241,7 +1247,12 @@ const RequestsPage = ({
 
                                                                                         await storageService.downloadDocument(path, fileName);
                                                                                         const docToRecord = matchedDoc || (targetDocId ? { id: targetDocId, name: fileName } : null);
-                                                                                        if (docToRecord && currentUser?.id) {
+                                                                                        const requestRequesterId = typeof viewingDocumentRequest?.requester === 'object'
+                                                                                            ? viewingDocumentRequest?.requester?.id
+                                                                                            : (viewingDocumentRequest?.requesterId ?? viewingDocumentRequest?.requester);
+                                                                                        const isRequester = currentUser?.id && String(currentUser.id) === String(requestRequesterId);
+
+                                                                                        if (isRequester && docToRecord && currentUser?.id) {
                                                                                             systemEventService.recordDocumentRead({
                                                                                                 document: docToRecord,
                                                                                                 user: currentUser,
@@ -1434,73 +1445,6 @@ const RequestsPage = ({
                                                     </span>
                                                 </div>
                                             </div>
-                                            {pendingStatusRequest && pendingStatusRequest.action === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_REOPEN ? (
-                                                <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-md bg-amber-500/10 border border-amber-500/20 text-xs text-amber-700 dark:text-amber-300">
-                                                    <div className="flex items-center gap-1.5 min-w-0">
-                                                        <Clock className="h-3.5 w-3.5 animate-pulse shrink-0 text-amber-500" />
-                                                        <span className="font-semibold">
-                                                            Reopen awaiting Admin approval
-                                                        </span>
-                                                    </div>
-                                                    {isAdmin && (
-                                                        <div className="flex items-center gap-1.5 shrink-0 ml-1">
-                                                            <Button
-                                                                variant="primary"
-                                                                size="sm"
-                                                                leadingIcon={CheckCircle2}
-                                                                onClick={async () => {
-                                                                    try {
-                                                                        await coordinatorApprovalService.executeApprovedRequest(pendingStatusRequest, currentUser);
-                                                                        await fetchCoordinatorRequests();
-                                                                        showToast({
-                                                                            type: 'success',
-                                                                            title: 'Request Approved',
-                                                                            description: 'Document request reopened.',
-                                                                        });
-                                                                    } catch (err) {
-                                                                        showToast({
-                                                                            type: 'error',
-                                                                            title: 'Approval Failed',
-                                                                            description: err?.message ?? 'Could not approve request.',
-                                                                        });
-                                                                    }
-                                                                }}
-                                                                className="h-6 px-2 text-[11px]"
-                                                            >
-                                                                Approve
-                                                            </Button>
-                                                            <Button
-                                                                variant="destructive"
-                                                                size="sm"
-                                                                leadingIcon={XCircle}
-                                                                onClick={async () => {
-                                                                    try {
-                                                                        await coordinatorApprovalService.updateCoordinatorRequestStatus({
-                                                                            requestId: pendingStatusRequest.id,
-                                                                            status: constants.COORDINATOR_REQUESTS_STATUS.REJECTED,
-                                                                        });
-                                                                        await fetchCoordinatorRequests();
-                                                                        showToast({
-                                                                            type: 'warning',
-                                                                            title: 'Request Rejected',
-                                                                            description: 'Reopen request rejected.',
-                                                                        });
-                                                                    } catch (err) {
-                                                                        showToast({
-                                                                            type: 'error',
-                                                                            title: 'Rejection Failed',
-                                                                            description: err?.message ?? 'Could not reject request.',
-                                                                        });
-                                                                    }
-                                                                }}
-                                                                className="h-6 px-2 text-[11px]"
-                                                            >
-                                                                Reject
-                                                            </Button>
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            ) : null}
                                         </div>
                                     </div>
                                 );
@@ -1561,8 +1505,6 @@ const RequestsPage = ({
                                                         <span className="font-semibold">
                                                             {pendingStatusRequest.action === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_RESOLVE
                                                                 ? 'Resolution'
-                                                                : pendingStatusRequest.action === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_REOPEN
-                                                                ? 'Reopen'
                                                                 : 'Rejection'} awaiting Admin approval
                                                         </span>
                                                     </div>
