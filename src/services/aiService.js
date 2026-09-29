@@ -11,6 +11,8 @@ export const aiService = {
      */
     analyzeDocumentFile: async ({
         storagePath,
+        downloadUrl = null,
+        fileBase64 = null,
         mimeType,
         fileName,
         fileSize = 0,
@@ -34,6 +36,8 @@ export const aiService = {
                     .map(l => l.trim())
                     .filter(l => l.length > 2 && !/^(page \d+|confidential|official|date|printed)/i.test(l));
 
+                const isShortDoc = cleaned.length < 200 || lines.length <= 2;
+
                 // 1. Memoranda, Directives, Circulars, Governance Guidelines
                 if (
                     /\b(memorandum|memo|circular|directive|governance|guidelines|guideline)\b/i.test(lowerText) ||
@@ -52,57 +56,84 @@ export const aiService = {
                         : 'official administrative procedures and operational standards';
                     const purpose = purposeMatch
                         ? purposeMatch.replace(/^(purpose|objective)[:\s]+/i, '').trim()
-                        : 'timely preparation, supervisory review, and submission of official department reports';
+                        : 'timely preparation and review of official institutional records';
 
                     const line1 = `Governance memorandum issued by the ${issuingOffice} regarding ${subject}.`;
-                    const line2 = `Establishes formal guidelines for ${purpose.replace(/[.]+$/, '')}, mandating accurate data submission and secure records management.`;
-                    const line3 = `Takes effect immediately upon issuance with strict operational compliance required across all concerned offices and personnel.`;
-
-                    fallbackSummary = `${line1}\n\n${line2}\n\n${line3}`;
+                    if (isShortDoc) {
+                        fallbackSummary = line1;
+                    } else if (cleaned.length < 600) {
+                        const line2 = `Establishes formal directives for ${purpose.replace(/[.]+$/, '')}, mandating administrative coordination and secure records management.`;
+                        fallbackSummary = `${line1}\n\n${line2}`;
+                    } else {
+                        const line2 = `Establishes formal directives for ${purpose.replace(/[.]+$/, '')}, mandating administrative coordination and secure records management.`;
+                        const line3 = `Takes effect immediately upon issuance with mandatory operational compliance required across all designated units.`;
+                        fallbackSummary = `${line1}\n\n${line2}\n\n${line3}`;
+                    }
                     fallbackClassification = constants.DOCUMENT_VERSIONS_CLASSIFICATION.PRIVATE;
                 } else if (
                     /\b(grade|grades|scholastic|evaluation|cwa|gwa|units|transcript)\b/i.test(lowerText) ||
                     /\b(tor|transcript of records)\b/i.test(lowerText)
                 ) {
                     const subjectLine = `Official academic report presenting student scholastic evaluation and course performance metrics.`;
-                    const gradeDetails = lines.find(l => /cwa|gwa|average|grade|units/i.test(l)) || lines[1] || 'Details student scholastic performance, subject marks, and credit unit completion';
+                    const gradeDetails = lines.find(l => /cwa|gwa|average|grade|units/i.test(l)) || lines[1] || 'Details student scholastic performance and credit unit completion';
                     const detailsLine = `Covers ${gradeDetails.replace(/[:—]/g, ' ').trim()}.`;
-                    const conclusionLine = `Serves as authoritative academic record for prerequisite validation, standing review, and registrar archiving.`;
-                    fallbackSummary = `${subjectLine}\n\n${detailsLine}\n\n${conclusionLine}`;
+                    if (isShortDoc) {
+                        fallbackSummary = `${subjectLine}\n\n${detailsLine}`;
+                    } else {
+                        const conclusionLine = `Serves as authoritative academic record for prerequisite validation, academic review, and registrar archiving.`;
+                        fallbackSummary = `${subjectLine}\n\n${detailsLine}\n\n${conclusionLine}`;
+                    }
                     fallbackClassification = constants.DOCUMENT_VERSIONS_CLASSIFICATION.CONFIDENTIAL;
                 } else if (/\b(syllabus|course outline|curriculum)\b/i.test(lowerText)) {
                     const subjectLine = `Academic course syllabus outlining curricular competencies, grading breakdown, and learning outcomes.`;
                     const detailsLine = lines.slice(0, 2).join(' — ').substring(0, 130) + '.';
-                    const conclusionLine = `Establishes instructional objectives and student academic performance expectations for the academic term.`;
-                    fallbackSummary = `${subjectLine}\n\n${detailsLine}\n\n${conclusionLine}`;
+                    if (isShortDoc) {
+                        fallbackSummary = `${subjectLine}\n\n${detailsLine}`;
+                    } else {
+                        const conclusionLine = `Establishes instructional objectives and student academic performance expectations for the academic term.`;
+                        fallbackSummary = `${subjectLine}\n\n${detailsLine}\n\n${conclusionLine}`;
+                    }
                     fallbackClassification = constants.DOCUMENT_VERSIONS_CLASSIFICATION.PRIVATE;
                 } else if (/\b(profile|curriculum vitae|pds|resume)\b/i.test(lowerText)) {
                     const subjectLine = `Institutional profile summary outlining verified user credentials, account status, and role privileges.`;
-                    const detailsLine = lines.slice(0, 2).join(' — ').substring(0, 130) + '.';
-                    const conclusionLine = `Maintained as verified reference documentation for user authorization and institutional identity oversight.`;
-                    fallbackSummary = `${subjectLine}\n\n${detailsLine}\n\n${conclusionLine}`;
+                    if (isShortDoc) {
+                        fallbackSummary = subjectLine;
+                    } else {
+                        const detailsLine = lines.slice(0, 2).join(' — ').substring(0, 130) + '.';
+                        fallbackSummary = `${subjectLine}\n\n${detailsLine}`;
+                    }
                     fallbackClassification = constants.DOCUMENT_VERSIONS_CLASSIFICATION.CONFIDENTIAL;
                 } else {
                     const firstSentence = lines[0] ? lines[0].substring(0, 110) : 'official university affairs';
-                    const secondSentence = lines[1] ? lines[1].substring(0, 120) : 'Details administrative transactions, operational policies, and formal notifications';
-                    fallbackSummary = `Official documentation addressing ${firstSentence}.\n\n${secondSentence}.\n\nMaintained for institutional reference, operational continuity, and administrative governance.`;
+                    if (isShortDoc) {
+                        fallbackSummary = `Official institutional record concerning ${firstSentence}.`;
+                    } else if (cleaned.length < 500) {
+                        const secondSentence = lines[1] ? lines[1].substring(0, 120) : 'Details administrative transactions, operational policies, and formal notifications';
+                        fallbackSummary = `Official documentation addressing ${firstSentence}.\n\n${secondSentence}.`;
+                    } else {
+                        const secondSentence = lines[1] ? lines[1].substring(0, 120) : 'Details administrative transactions, operational policies, and formal notifications';
+                        fallbackSummary = `Official documentation addressing ${firstSentence}.\n\n${secondSentence}.\n\nMaintained for institutional reference, operational continuity, and administrative governance.`;
+                    }
                 }
+            } else if (lowerName.includes('receipt') || lowerName.includes('voucher') || lowerName.includes('clearance')) {
+                fallbackSummary = `Official transaction clearance and financial documentation recorded for ${cleanedName}.`;
+                fallbackClassification = constants.DOCUMENT_VERSIONS_CLASSIFICATION.CONFIDENTIAL;
             } else if (lowerName.includes('profile') || lowerName.includes('user')) {
-                fallbackSummary = `Institutional profile summary detailing verified user credentials, administrative status, and system permissions.\n\nOutlines departmental affiliation, role-based clearance, and operational authorization across university modules.\n\nServes as reference documentation for account identity verification and administrative governance.`;
+                fallbackSummary = `Institutional profile summary detailing verified credentials, departmental affiliation, and system permissions for ${cleanedName}.`;
                 fallbackClassification = constants.DOCUMENT_VERSIONS_CLASSIFICATION.CONFIDENTIAL;
             } else if (lowerName.includes('grade') || /\b(tor|transcript)\b/i.test(lowerName)) {
-                fallbackSummary = `Official academic record presenting student course completions, semester evaluations, and scholastic standing.\n\nDetails subject marks, earned credit units, and cumulative performance metrics for the recorded academic term.\n\nServes as authoritative record for credential verification, prerequisite clearance, and registrar archiving.`;
+                fallbackSummary = `Official academic record presenting student course completions, semester evaluations, and scholastic standing.\n\nServes as authoritative record for credential verification and registrar archiving.`;
                 fallbackClassification = constants.DOCUMENT_VERSIONS_CLASSIFICATION.CONFIDENTIAL;
             } else if (lowerName.includes('memo') || lowerName.includes('circular') || lowerName.includes('governance')) {
-                fallbackSummary = `Official administrative memorandum communicating institutional directives, operational guidelines, and policy updates.\n\nDetails compliance expectations, implementation timelines, and responsibilities for relevant university departments.\n\nEnforces administrative standardization and operational coordination across institutional units.`;
+                fallbackSummary = `Official administrative memorandum communicating institutional directives and operational guidelines.\n\nDetails compliance expectations and implementation timelines for relevant university departments.`;
                 fallbackClassification = constants.DOCUMENT_VERSIONS_CLASSIFICATION.PRIVATE;
             } else if (lowerName.includes('syllabus') || lowerName.includes('curriculum')) {
-                fallbackSummary = `Official academic course syllabus detailing subject curriculum, instructional competencies, and learning outcomes.\n\nOutlines modular lecture topics, evaluation criteria, grading policies, and required academic benchmarks.\n\nGuides instructional delivery and student academic performance standards for the enrolled course.`;
+                fallbackSummary = `Official academic course syllabus detailing subject curriculum, instructional competencies, and learning outcomes.\n\nGuides instructional delivery and student academic performance standards.`;
                 fallbackClassification = constants.DOCUMENT_VERSIONS_CLASSIFICATION.PRIVATE;
             } else {
                 const isRandomName = /^[a-z0-9_]{10,}$/i.test(cleanedName) || /^[asdfjklqwertyzxcvbnm]+$/i.test(cleanedName);
                 const subjectLabel = isRandomName ? 'institutional administrative records' : `university matters concerning ${cleanedName}`;
-                fallbackSummary = `Institutional documentation detailing official ${subjectLabel}.\n\nOutlines relevant administrative guidelines, subject transactions, and operational records for institutional stakeholders.\n\nMaintained as formal record for departmental reference, accountability, and operational continuity.`;
+                fallbackSummary = `Institutional documentation detailing official ${subjectLabel}.\n\nMaintained as formal record for departmental reference, accountability, and operational continuity.`;
             }
 
             return {
@@ -123,6 +154,8 @@ export const aiService = {
             const analyzeCallable = httpsCallable(functions, 'analyzeDocumentFile');
             const response = await analyzeCallable({
                 storagePath,
+                downloadUrl,
+                fileBase64,
                 mimeType,
                 fileName,
                 fileSize,
@@ -133,10 +166,29 @@ export const aiService = {
                 extractedText,
             });
 
-            return response?.data || generateClientFallback();
+            const resData = response?.data || generateClientFallback();
+            if ((!resData.embedding || !Array.isArray(resData.embedding) || resData.embedding.length === 0) && resData.summary) {
+                try {
+                    const fallbackEmbedding = await aiService.generateTextEmbedding(`${fileName} ${resData.summary}`);
+                    if (fallbackEmbedding && Array.isArray(fallbackEmbedding) && fallbackEmbedding.length > 0) {
+                        resData.embedding = fallbackEmbedding;
+                    }
+                } catch {
+                    // Non-fatal
+                }
+            }
+            return resData;
         } catch (error) {
             console.warn('[aiService.analyzeDocumentFile] AI processing error:', error?.message);
             const fallback = generateClientFallback();
+            try {
+                const fallbackEmbedding = await aiService.generateTextEmbedding(`${fileName} ${fallback.summary}`);
+                if (fallbackEmbedding && Array.isArray(fallbackEmbedding) && fallbackEmbedding.length > 0) {
+                    fallback.embedding = fallbackEmbedding;
+                }
+            } catch {
+                // Non-fatal
+            }
             return {
                 ...fallback,
                 error: error?.message,

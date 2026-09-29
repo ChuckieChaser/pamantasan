@@ -18,6 +18,8 @@ import {
     X,
     Plus,
     Trash2,
+    ArrowDownAZ,
+    ArrowUpAZ,
 } from 'lucide-react';
 import {
     AreaField,
@@ -25,6 +27,7 @@ import {
     Browser,
     Button,
     Container,
+    History,
     Modal,
     TextField,
     formatDateTime,
@@ -38,7 +41,7 @@ import {
     useAuthStore,
     useCoordinatorStore,
 } from '../stores';
-import { storageService, coordinatorApprovalService } from '../services';
+import { storageService, coordinatorApprovalService, systemEventService } from '../services';
 import { constants } from '../constants';
 
 
@@ -52,10 +55,10 @@ const DOCUMENT_COLUMNS = [
 ];
 
 const DOCUMENT_SORT_OPTIONS = [
-    { value: 'date-desc', label: 'Recently Submitted', icon: Clock },
-    { value: 'date-asc', label: 'Oldest Submitted', icon: Clock },
-    { value: 'name-asc', label: 'Subject (A to Z)', icon: Inbox },
-    { value: 'name-desc', label: 'Subject (Z to A)', icon: Inbox },
+    { value: 'name-asc', label: 'Name (A to Z)', icon: ArrowDownAZ },
+    { value: 'name-desc', label: 'Name (Z to A)', icon: ArrowUpAZ },
+    { value: 'date-desc', label: 'Recently Added', icon: Clock },
+    { value: 'date-asc', label: 'Oldest Added', icon: Clock },
 ];
 
 const DOCUMENT_FILTER_OPTIONS = [
@@ -135,9 +138,14 @@ const RequestsPage = ({
     const [formSubject, setFormSubject] = useState('');
     const [createFormErrors, setCreateFormErrors] = useState({});
 
-    // REQUEST DELETION CONFIRMATION STATE
+    // REQUEST CONFIRMATION DIALOG STATES
     const [deletingRequestItem, setDeletingRequestItem] = useState(null);
     const [isDeletingRequest, setIsDeletingRequest] = useState(false);
+    const [resolvingRequestItem, setResolvingRequestItem] = useState(null);
+    const [isResolvingRequest, setIsResolvingRequest] = useState(false);
+    const [rejectingRequestItem, setRejectingRequestItem] = useState(null);
+    const [rejectReason, setRejectReason] = useState('');
+    const [isRejectingRequest, setIsRejectingRequest] = useState(false);
 
     // HOOKS
     const { showToast } = useToast();
@@ -171,17 +179,53 @@ const RequestsPage = ({
         fetchCoordinatorRequests?.().catch(() => {});
     }, [fetchDocumentRequests, fetchDocuments, fetchUsers, fetchDepartments, fetchCoordinatorRequests]);
 
-    // LISTEN FOR EXTERNAL DELETE TRIGGER (E.G. FROM INSPECTOR QUICK ACTION)
+    // DERIVED VALUES: ACCESS & ACTIVE USER
+    const activeUser = currentUser ?? authUser;
+    const isStaff = constants.isStaffRole(activeUser?.role);
+    const canCreateRequest = !isStaff;
+
+    // LISTEN FOR EXTERNAL TRIGGERS (E.G. FROM INSPECTOR QUICK ACTIONS)
     useEffect(() => {
         const handleDeleteDocRequestEvent = (event) => {
             if (event.detail) {
                 const targetRequest = (documentRequests || []).find((r) => r.id === event.detail.id) ?? event.detail;
+                const isClosed = targetRequest.status === constants.DOCUMENT_REQUESTS_STATUS.RESOLVED || targetRequest.status === constants.DOCUMENT_REQUESTS_STATUS.REJECTED;
+                const isOwner = activeUser && String(targetRequest.requesterId ?? targetRequest.requester) === String(activeUser.id);
+                if (isClosed && (!isAdmin || isOwner)) {
+                    showToast({
+                        type: 'error',
+                        title: 'Action Prohibited',
+                        description: 'Closed and resolved document requests cannot be deleted for compliance and auditing.',
+                    });
+                    return;
+                }
                 setDeletingRequestItem(targetRequest);
             }
         };
+        const handleResolveDocRequestEvent = (event) => {
+            if (event.detail) {
+                const targetRequest = (documentRequests || []).find((r) => r.id === event.detail.id) ?? event.detail;
+                setResolvingRequestItem(targetRequest);
+            }
+        };
+        const handleRejectDocRequestEvent = (event) => {
+            if (event.detail) {
+                const targetRequest = (documentRequests || []).find((r) => r.id === event.detail.id) ?? event.detail;
+                setRejectReason('');
+                setRejectingRequestItem(targetRequest);
+            }
+        };
+
         window.addEventListener('pamantasan:delete-document-request', handleDeleteDocRequestEvent);
-        return () => window.removeEventListener('pamantasan:delete-document-request', handleDeleteDocRequestEvent);
-    }, [documentRequests]);
+        window.addEventListener('pamantasan:resolve-document-request', handleResolveDocRequestEvent);
+        window.addEventListener('pamantasan:reject-document-request', handleRejectDocRequestEvent);
+
+        return () => {
+            window.removeEventListener('pamantasan:delete-document-request', handleDeleteDocRequestEvent);
+            window.removeEventListener('pamantasan:resolve-document-request', handleResolveDocRequestEvent);
+            window.removeEventListener('pamantasan:reject-document-request', handleRejectDocRequestEvent);
+        };
+    }, [documentRequests, isAdmin, activeUser]);
 
     // KEEP VIEWING DOCUMENT REQUEST IN SYNC WITH STORE UPDATES
     useEffect(() => {
@@ -194,13 +238,21 @@ const RequestsPage = ({
         }
     }, [documentRequests, viewingDocumentRequest]);
 
-    // DERIVED VALUES: ACCESS & DATA
-    const activeUser = currentUser ?? authUser;
-    const isStaff = constants.isStaffRole(activeUser?.role);
-    const canCreateRequest = !isStaff;
+    // ROLE SCOPING: NON-ADMIN/NON-COORDINATORS (REGULAR USERS) ONLY SEE THEIR OWN SUBMITTED REQUESTS
+    const scopedDocumentRequests = useMemo(() => {
+        const all = documentRequests || [];
+        if (isAdmin || isCoordinator) {
+            return all;
+        }
+        if (!activeUser?.id) return [];
+        return all.filter((req) => {
+            const reqId = typeof req.requester === 'object' ? req.requester?.id : (req.requesterId ?? req.requester);
+            return String(reqId) === String(activeUser.id);
+        });
+    }, [documentRequests, isAdmin, isCoordinator, activeUser?.id]);
 
     const formattedDocumentData = useMemo(() => {
-        return (documentRequests || []).map((request) => {
+        return (scopedDocumentRequests || []).map((request) => {
             const requesterId = typeof request.requester === 'object'
                 ? request.requester?.id
                 : (request.requesterId ?? request.requester);
@@ -246,6 +298,28 @@ const RequestsPage = ({
                 ? formatDateTime(lastModifiedDate)
                 : 'Recent';
 
+            let docRejectionReason = request.rejectionReason || null;
+            if (!docRejectionReason) {
+                const rejectionMsg = [...requestMessages]
+                    .reverse()
+                    .find((m) => m.message && (
+                        m.message.startsWith('Rejection Note:') ||
+                        m.message.includes('<!-- rejection_reason:') ||
+                        m.message.toLowerCase().includes('rejection reason:')
+                    ));
+                if (rejectionMsg) {
+                    const text = rejectionMsg.message;
+                    if (text.startsWith('Rejection Note:')) {
+                        docRejectionReason = text.replace(/^Rejection Note:\s*/, '').trim();
+                    } else {
+                        const tagMatch = text.match(/<!-- rejection_reason:(.*?) -->/);
+                        if (tagMatch) {
+                            docRejectionReason = tagMatch[1].trim();
+                        }
+                    }
+                }
+            }
+
             return {
                 ...request,
                 id: request.id,
@@ -258,6 +332,7 @@ const RequestsPage = ({
                 requesterName,
                 user: requesterName,
                 status: request.status || constants.DOCUMENT_REQUESTS_STATUS.OPEN,
+                rejectionReason: docRejectionReason,
                 messages: requestMessages,
                 attachments: requestAttachments,
                 messageCount: `${requestMessages.length} messages`,
@@ -269,7 +344,20 @@ const RequestsPage = ({
                 badge: request.status || constants.DOCUMENT_REQUESTS_STATUS.OPEN,
             };
         });
-    }, [documentRequests, messages, attachments, users, documents, documentVersions]);
+    }, [scopedDocumentRequests, messages, attachments, users, documents, documentVersions]);
+
+    // PARTITION: ACTIVE REQUESTS (FOR BROWSER) VS RESOLVED/REJECTED (FOR HISTORY)
+    const pendingDocumentData = useMemo(() => {
+        return formattedDocumentData.filter(
+            (request) => request.status === constants.DOCUMENT_REQUESTS_STATUS.OPEN || request.status === 'OPEN'
+        );
+    }, [formattedDocumentData]);
+
+    const closedDocumentData = useMemo(() => {
+        return formattedDocumentData.filter(
+            (request) => request.status === constants.DOCUMENT_REQUESTS_STATUS.RESOLVED || request.status === constants.DOCUMENT_REQUESTS_STATUS.REJECTED
+        );
+    }, [formattedDocumentData]);
 
     const activeViewingMessages = useMemo(() => {
         if (!viewingDocumentRequest) {
@@ -340,8 +428,7 @@ const RequestsPage = ({
             if (!cr || cr.status !== constants.COORDINATOR_REQUESTS_STATUS.PENDING) return false;
             if (
                 cr.action !== constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_RESOLVE &&
-                cr.action !== constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_REJECT &&
-                cr.action !== constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_REOPEN
+                cr.action !== constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_REJECT
             ) return false;
 
             const reqId = typeof cr.requester === 'object' ? cr.requester?.id : (cr.requesterId ?? cr.requester);
@@ -401,12 +488,12 @@ const RequestsPage = ({
                 _targetTab: selectedItem?._targetTab ?? selectedRequestItem?._targetTab ?? 'information',
             };
         }
-        return selectedItem ?? selectedRequestItem;
+        return null;
     }, [selectedItem, selectedRequestItem, formattedDocumentData]);
 
     // HANDLERS
-    const handleSelectRequest = (item, targetTab = 'information') => {
-        const itemWithTab = item ? { ...item, _targetTab: targetTab } : null;
+    const handleSelectRequest = (item, targetTab = null) => {
+        const itemWithTab = item ? (targetTab ? { ...item, _targetTab: targetTab } : item) : null;
         setSelectedRequestItem(itemWithTab);
         onSelectRequest?.(itemWithTab, targetTab);
     };
@@ -467,7 +554,7 @@ const RequestsPage = ({
             showToast({
                 type: 'warning',
                 title: 'Thread Locked',
-                description: 'This document request has been closed. Reopen it to send messages.',
+                description: 'This document request has been closed. Conversation history is preserved as read-only.',
             });
             return;
         }
@@ -549,15 +636,21 @@ const RequestsPage = ({
         }
     };
 
-    const handleUpdateDocumentStatus = async (requestId, nextStatus) => {
+    const handleUpdateDocumentStatus = async (requestId, nextStatus, rejectionNote = null) => {
         const targetReq = (documentRequests || []).find((r) => String(r.id) === String(requestId)) ?? viewingDocumentRequest ?? {};
-        const isReopen = nextStatus === constants.DOCUMENT_REQUESTS_STATUS.OPEN && (
-            targetReq.status === constants.DOCUMENT_REQUESTS_STATUS.RESOLVED ||
-            targetReq.status === constants.DOCUMENT_REQUESTS_STATUS.REJECTED
-        );
+        const isClosed = targetReq.status === constants.DOCUMENT_REQUESTS_STATUS.RESOLVED || targetReq.status === constants.DOCUMENT_REQUESTS_STATUS.REJECTED;
+        if (isClosed) {
+            showToast({
+                type: 'error',
+                title: 'Action Prohibited',
+                description: 'Closed and resolved document requests cannot be updated or reopened for compliance and auditing.',
+            });
+            return;
+        }
+
         const isResolveOrReject = nextStatus === constants.DOCUMENT_REQUESTS_STATUS.RESOLVED || nextStatus === constants.DOCUMENT_REQUESTS_STATUS.REJECTED;
 
-        if (isCoordinator && (isResolveOrReject || isReopen)) {
+        if (isCoordinator && isResolveOrReject) {
             const existingPending = (coordinatorRequests || []).find((cr) => {
                 if (!cr || cr.status !== constants.COORDINATOR_REQUESTS_STATUS.PENDING) return false;
                 const payloadData = typeof cr.data === 'string' ? JSON.parse(cr.data || '{}') : (cr.data || {});
@@ -575,13 +668,10 @@ const RequestsPage = ({
 
             try {
                 const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
-                let action = constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_REOPEN;
-                let actionLabel = 'reopening';
+                let action = constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_RESOLVE;
+                let actionLabel = 'resolution';
 
-                if (nextStatus === constants.DOCUMENT_REQUESTS_STATUS.RESOLVED) {
-                    action = constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_RESOLVE;
-                    actionLabel = 'resolution';
-                } else if (nextStatus === constants.DOCUMENT_REQUESTS_STATUS.REJECTED) {
+                if (nextStatus === constants.DOCUMENT_REQUESTS_STATUS.REJECTED) {
                     action = constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_REJECT;
                     actionLabel = 'rejection';
                 }
@@ -593,7 +683,15 @@ const RequestsPage = ({
                         documentRequestId: requestId,
                         subject: targetReq.subject || targetReq.title || 'Document Request',
                         requesterName: targetReq.requesterName || 'Member',
-                        status: nextStatus,
+                        requesterId: targetReq.requesterId ?? targetReq.requester?.id ?? targetReq.requester,
+                        old: {
+                            status: targetReq.status,
+                            rejectionReason: targetReq.rejectionReason || null,
+                        },
+                        new: {
+                            status: nextStatus,
+                            rejectionReason: rejectionNote || null,
+                        },
                     },
                 });
                 useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
@@ -615,7 +713,23 @@ const RequestsPage = ({
         }
 
         try {
-            const updated = await updateDocumentRequest(requestId, { status: nextStatus });
+            const activeUserId = activeUser?.id ?? useAuthStore.getState().currentUser?.id;
+            if (rejectionNote && activeUserId) {
+                try {
+                    await insertDocumentRequestMessage({
+                        documentRequestId: requestId,
+                        userId: activeUserId,
+                        message: `Rejection Note: ${rejectionNote}`,
+                    });
+                } catch {
+                    /* ignore message error */
+                }
+            }
+
+            const updated = await updateDocumentRequest(requestId, {
+                status: nextStatus,
+                rejectionReason: rejectionNote || undefined,
+            });
             showToast({
                 type: 'success',
                 title: 'Status Updated',
@@ -624,7 +738,13 @@ const RequestsPage = ({
             setViewingDocumentRequest(null);
             if (activeSelectedRequest?.id === requestId) {
                 const targetTab = activeSelectedRequest?._targetTab ?? selectedRequestItem?._targetTab ?? 'information';
-                const nextItem = { ...activeSelectedRequest, ...updated, status: nextStatus, _targetTab: targetTab };
+                const nextItem = {
+                    ...activeSelectedRequest,
+                    ...updated,
+                    status: nextStatus,
+                    rejectionReason: rejectionNote || activeSelectedRequest?.rejectionReason,
+                    _targetTab: targetTab,
+                };
                 setSelectedRequestItem(nextItem);
                 onSelectRequest?.(nextItem, targetTab);
             }
@@ -653,8 +773,9 @@ const RequestsPage = ({
             return;
         }
 
-        if (actionKey === 'open_request') {
-            await handleUpdateDocumentStatus(item.id, constants.DOCUMENT_REQUESTS_STATUS.OPEN);
+        if (actionKey === 'view_request') {
+            setViewingDocumentRequest(item);
+            handleSelectRequest(item, 'messages');
             return;
         }
 
@@ -664,17 +785,58 @@ const RequestsPage = ({
         }
 
         if (actionKey === 'resolve') {
-            await handleUpdateDocumentStatus(item.id, constants.DOCUMENT_REQUESTS_STATUS.RESOLVED);
+            setResolvingRequestItem(item);
             return;
         }
 
         if (actionKey === 'reject') {
-            await handleUpdateDocumentStatus(item.id, constants.DOCUMENT_REQUESTS_STATUS.REJECTED);
+            setRejectReason('');
+            setRejectingRequestItem(item);
             return;
         }
 
         if (actionKey === 'delete') {
+            const isClosed = item.status === constants.DOCUMENT_REQUESTS_STATUS.RESOLVED || item.status === constants.DOCUMENT_REQUESTS_STATUS.REJECTED;
+            const isOwner = activeUser && String(item.requesterId ?? item.requester) === String(activeUser.id);
+            if (isClosed && (!isAdmin || isOwner)) {
+                showToast({
+                    type: 'error',
+                    title: 'Action Prohibited',
+                    description: 'Closed and resolved document requests cannot be deleted for compliance and auditing.',
+                });
+                return;
+            }
             setDeletingRequestItem(item);
+        }
+    };
+
+    const handleConfirmResolveRequest = async () => {
+        if (!resolvingRequestItem?.id) return;
+        setIsResolvingRequest(true);
+        try {
+            await handleUpdateDocumentStatus(
+                resolvingRequestItem.id,
+                constants.DOCUMENT_REQUESTS_STATUS.RESOLVED
+            );
+            setResolvingRequestItem(null);
+        } finally {
+            setIsResolvingRequest(false);
+        }
+    };
+
+    const handleConfirmRejectRequest = async () => {
+        if (!rejectingRequestItem?.id) return;
+        setIsRejectingRequest(true);
+        try {
+            await handleUpdateDocumentStatus(
+                rejectingRequestItem.id,
+                constants.DOCUMENT_REQUESTS_STATUS.REJECTED,
+                rejectReason.trim() || null
+            );
+            setRejectingRequestItem(null);
+            setRejectReason('');
+        } finally {
+            setIsRejectingRequest(false);
         }
     };
 
@@ -720,7 +882,7 @@ const RequestsPage = ({
 
         try {
             const minTimer = new Promise((resolve) => setTimeout(resolve, 500));
-            await Promise.all([
+            const [newRequest] = await Promise.all([
                 insertDocumentRequest({
                     requesterId: activeUserId,
                     subject: formSubject.trim(),
@@ -728,6 +890,39 @@ const RequestsPage = ({
                 }),
                 minTimer,
             ]);
+
+            const requester = users.find((user) => user.id === activeUserId) ?? currentUser;
+            const requesterFirstName = requester?.firstName ?? '';
+            const requesterLastName = requester?.lastName ?? '';
+            const requesterName = `${requesterFirstName} ${requesterLastName}`.trim() || requester?.name || requester?.email || 'User';
+            const createdAtDate = newRequest?.createdAt || new Date().toISOString();
+            const updatedAtDate = newRequest?.updatedAt || createdAtDate;
+
+            const formattedNewRequest = {
+                ...newRequest,
+                id: newRequest.id,
+                title: newRequest.subject || formSubject.trim(),
+                subject: newRequest.subject || formSubject.trim(),
+                requester: requesterName,
+                requesterId: activeUserId,
+                requesterUser: requester,
+                requesterAvatar: resolveUserAvatar(requester, currentUser) || requester?.avatarPath,
+                requesterName,
+                user: requesterName,
+                status: newRequest.status || constants.DOCUMENT_REQUESTS_STATUS.OPEN,
+                messages: [],
+                attachments: [],
+                messageCount: '0 messages',
+                metadata: `${requesterName} · 0 msgs`,
+                description: `${newRequest.subject || formSubject.trim()} from ${requesterName}.`,
+                createdAt: createdAtDate,
+                updatedAt: updatedAtDate,
+                date: formatDateTime(createdAtDate),
+                badge: newRequest.status || constants.DOCUMENT_REQUESTS_STATUS.OPEN,
+            };
+
+            setSelectedRequestItem(formattedNewRequest);
+            onSelectRequest?.(formattedNewRequest);
 
             showToast({
                 type: 'success',
@@ -747,13 +942,26 @@ const RequestsPage = ({
         if (!deletingRequestItem?.id) {
             return;
         }
+
+        const isClosed = deletingRequestItem.status === constants.DOCUMENT_REQUESTS_STATUS.RESOLVED || deletingRequestItem.status === constants.DOCUMENT_REQUESTS_STATUS.REJECTED;
+        const isOwner = activeUser && String(deletingRequestItem.requesterId ?? deletingRequestItem.requester) === String(activeUser.id);
+        if (isClosed && (!isAdmin || isOwner)) {
+            showToast({
+                type: 'error',
+                title: 'Action Prohibited',
+                description: 'Closed and resolved document requests cannot be deleted for compliance and auditing.',
+            });
+            setDeletingRequestItem(null);
+            return;
+        }
+
         setIsDeletingRequest(true);
         try {
-            await deleteDocumentRequest(deletingRequestItem.id);
+            await deleteDocumentRequest(deletingRequestItem.id, activeUser);
             showToast({
                 type: 'success',
                 title: 'Request Deleted',
-                description: 'Document request has been removed.',
+                description: 'Document request has been deleted.',
             });
             if (activeSelectedRequest?.id === deletingRequestItem.id) {
                 setSelectedRequestItem(null);
@@ -776,20 +984,35 @@ const RequestsPage = ({
         <Container variant="page" className={`flex flex-col gap-6 ${className ?? ''}`} {...props}>
             <Browser
                 resourceName="document_requests"
-                title="Document Requests"
-                description="Review, process, and clear institutional document verification requests."
-                data={formattedDocumentData}
+                title="Manage Document Request"
+                description="Manage institutional document request."
+                data={pendingDocumentData}
                 columns={DOCUMENT_COLUMNS}
                 sortOptions={DOCUMENT_SORT_OPTIONS}
                 filterOptions={DOCUMENT_FILTER_OPTIONS}
                 selectedItem={activeSelectedRequest}
                 addItemLabel={canCreateRequest ? "New Request" : undefined}
                 addItemIcon={canCreateRequest ? Plus : undefined}
-                searchPlaceholder="Search by request subject or requester..."
+                searchPlaceholder="Search request..."
                 onAddItem={canCreateRequest ? handleOpenCreateModal : undefined}
                 onSelectItem={handleSelectRequest}
                 onOpenItem={handleSelectRequest}
                 onItemAction={handleDocumentAction}
+            />
+
+            <hr className="border-t border-surface-border my-2" />
+
+            {/* CLOSED / RESOLVED DOCUMENT REQUESTS (AUDIT LEDGER) */}
+            <History
+                title="Closed Requests"
+                description="Preserved for compliance and auditing."
+                resourceName="document_requests"
+                data={closedDocumentData}
+                selectedId={activeSelectedRequest?.id}
+                onItemClick={(item) => handleSelectRequest(item)}
+                onItemAction={handleDocumentAction}
+                emptyMessage="No closed document requests on record."
+                searchPlaceholder="Search request..."
             />
 
             {/* NEW DOCUMENT REQUEST MODAL */}
@@ -902,10 +1125,10 @@ const RequestsPage = ({
                                         })();
 
                                         const bubbleStyle = isCurrentUser
-                                            ? 'bg-accent text-text-inverted rounded-br-sm'
+                                            ? 'bg-accent text-text-inverted rounded-2xl rounded-br-xs shadow-2xs'
                                             : isFellowAdmin
-                                            ? 'bg-warning-background border border-warning-border text-text rounded-bl-sm'
-                                            : 'bg-surface border border-surface-border text-text rounded-bl-sm';
+                                            ? 'bg-warning-background border border-warning-border/80 text-text rounded-2xl rounded-bl-xs shadow-2xs'
+                                            : 'bg-surface border border-surface-border text-text rounded-2xl rounded-bl-xs shadow-2xs';
 
                                         const formattedFullTime = formatFullDateTime(message.createdAt);
 
@@ -1023,6 +1246,19 @@ const RequestsPage = ({
                                                                                         }
 
                                                                                         await storageService.downloadDocument(path, fileName);
+                                                                                        const docToRecord = matchedDoc || (targetDocId ? { id: targetDocId, name: fileName } : null);
+                                                                                        const requestRequesterId = typeof viewingDocumentRequest?.requester === 'object'
+                                                                                            ? viewingDocumentRequest?.requester?.id
+                                                                                            : (viewingDocumentRequest?.requesterId ?? viewingDocumentRequest?.requester);
+                                                                                        const isRequester = currentUser?.id && String(currentUser.id) === String(requestRequesterId);
+
+                                                                                        if (isRequester && docToRecord && currentUser?.id) {
+                                                                                            systemEventService.recordDocumentRead({
+                                                                                                document: docToRecord,
+                                                                                                user: currentUser,
+                                                                                                version: latestVer?.version,
+                                                                                            }).catch(() => {});
+                                                                                        }
                                                                                     } catch (err) {
                                                                                         showToast({
                                                                                             type: 'error',
@@ -1124,12 +1360,12 @@ const RequestsPage = ({
                                                                     leadingIcon={XCircle}
                                                                     onClick={async () => {
                                                                         try {
-                                                                            await coordinatorApprovalService.rejectCoordinatorRequest(pendingReq);
+                                                                            await coordinatorApprovalService.rejectCoordinatorRequest(pendingReq, currentUser);
                                                                             await fetchCoordinatorRequests();
                                                                             showToast({
                                                                                 type: 'success',
                                                                                 title: 'Request Rejected',
-                                                                                description: 'Attachment request rejected and removed.',
+                                                                                description: 'Attachment request rejected and deleted.',
                                                                             });
                                                                         } catch (err) {
                                                                             showToast({
@@ -1209,90 +1445,6 @@ const RequestsPage = ({
                                                     </span>
                                                 </div>
                                             </div>
-                                            {pendingStatusRequest && pendingStatusRequest.action === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_REOPEN ? (
-                                                <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-md bg-amber-500/10 border border-amber-500/20 text-xs text-amber-700 dark:text-amber-300">
-                                                    <div className="flex items-center gap-1.5 min-w-0">
-                                                        <Clock className="h-3.5 w-3.5 animate-pulse shrink-0 text-amber-500" />
-                                                        <span className="font-semibold">
-                                                            Reopen awaiting Admin approval
-                                                        </span>
-                                                    </div>
-                                                    {isAdmin && (
-                                                        <div className="flex items-center gap-1.5 shrink-0 ml-1">
-                                                            <Button
-                                                                variant="primary"
-                                                                size="sm"
-                                                                leadingIcon={CheckCircle2}
-                                                                onClick={async () => {
-                                                                    try {
-                                                                        await coordinatorApprovalService.executeApprovedRequest(pendingStatusRequest, currentUser);
-                                                                        await fetchCoordinatorRequests();
-                                                                        showToast({
-                                                                            type: 'success',
-                                                                            title: 'Request Approved',
-                                                                            description: 'Document request reopened.',
-                                                                        });
-                                                                    } catch (err) {
-                                                                        showToast({
-                                                                            type: 'error',
-                                                                            title: 'Approval Failed',
-                                                                            description: err?.message ?? 'Could not approve request.',
-                                                                        });
-                                                                    }
-                                                                }}
-                                                                className="h-6 px-2 text-[11px]"
-                                                            >
-                                                                Approve
-                                                            </Button>
-                                                            <Button
-                                                                variant="destructive"
-                                                                size="sm"
-                                                                leadingIcon={XCircle}
-                                                                onClick={async () => {
-                                                                    try {
-                                                                        await coordinatorApprovalService.updateCoordinatorRequestStatus({
-                                                                            requestId: pendingStatusRequest.id,
-                                                                            status: constants.COORDINATOR_REQUESTS_STATUS.REJECTED,
-                                                                        });
-                                                                        await fetchCoordinatorRequests();
-                                                                        showToast({
-                                                                            type: 'warning',
-                                                                            title: 'Request Rejected',
-                                                                            description: 'Reopen request rejected.',
-                                                                        });
-                                                                    } catch (err) {
-                                                                        showToast({
-                                                                            type: 'error',
-                                                                            title: 'Rejection Failed',
-                                                                            description: err?.message ?? 'Could not reject request.',
-                                                                        });
-                                                                    }
-                                                                }}
-                                                                className="h-6 px-2 text-[11px]"
-                                                            >
-                                                                Reject
-                                                            </Button>
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            ) : (
-                                                constants.isStaffRole(currentUser?.role) && (
-                                                    <Button
-                                                        variant="secondary"
-                                                        size="sm"
-                                                        leadingIcon={RotateCcw}
-                                                        onClick={() =>
-                                                            handleUpdateDocumentStatus(
-                                                                viewingDocumentRequest.id,
-                                                                constants.DOCUMENT_REQUESTS_STATUS.OPEN
-                                                            )
-                                                        }
-                                                        className="shrink-0 text-xs"
-                                                    >
-                                                        Reopen Request
-                                                    </Button>
-                                                )
-                                            )}
                                         </div>
                                     </div>
                                 );
@@ -1335,12 +1487,12 @@ const RequestsPage = ({
                                         onChange={(changeEvent) => setReplyMessage(changeEvent.target.value)}
                                     />
 
-                                    <div className="flex items-center justify-between gap-2">
-                                        <div className="flex items-center gap-2">
+                                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5">
+                                        <div className="flex items-center gap-2 flex-wrap">
                                             <button
                                                 type="button"
                                                 onClick={handleOpenAttachModal}
-                                                className="p-2 rounded-md border border-surface-border bg-surface hover:bg-surface-hover text-text-muted hover:text-accent transition-colors cursor-pointer shrink-0"
+                                                className="p-2 rounded-lg border border-surface-border bg-surface hover:bg-surface-hover text-text-muted hover:text-accent transition-colors cursor-pointer shrink-0 shadow-2xs"
                                                 title="Attach Document from Repository"
                                             >
                                                 <Paperclip className="h-4 w-4" />
@@ -1353,8 +1505,6 @@ const RequestsPage = ({
                                                         <span className="font-semibold">
                                                             {pendingStatusRequest.action === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_RESOLVE
                                                                 ? 'Resolution'
-                                                                : pendingStatusRequest.action === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_REOPEN
-                                                                ? 'Reopen'
                                                                 : 'Rejection'} awaiting Admin approval
                                                         </span>
                                                     </div>
@@ -1421,12 +1571,8 @@ const RequestsPage = ({
                                                     {viewingDocumentRequest.status !== constants.DOCUMENT_REQUESTS_STATUS.RESOLVED && (
                                                         <Button
                                                             variant="secondary"
-                                                            onClick={() =>
-                                                                handleUpdateDocumentStatus(
-                                                                    viewingDocumentRequest.id,
-                                                                    constants.DOCUMENT_REQUESTS_STATUS.RESOLVED
-                                                                )
-                                                            }
+                                                            size="sm"
+                                                            onClick={() => setResolvingRequestItem(viewingDocumentRequest)}
                                                         >
                                                             Mark Resolved
                                                         </Button>
@@ -1434,12 +1580,11 @@ const RequestsPage = ({
                                                     {viewingDocumentRequest.status !== constants.DOCUMENT_REQUESTS_STATUS.REJECTED && (
                                                         <Button
                                                             variant="destructive"
-                                                            onClick={() =>
-                                                                handleUpdateDocumentStatus(
-                                                                    viewingDocumentRequest.id,
-                                                                    constants.DOCUMENT_REQUESTS_STATUS.REJECTED
-                                                                )
-                                                            }
+                                                            size="sm"
+                                                            onClick={() => {
+                                                                setRejectReason('');
+                                                                setRejectingRequestItem(viewingDocumentRequest);
+                                                            }}
                                                         >
                                                             Reject
                                                         </Button>
@@ -1452,6 +1597,7 @@ const RequestsPage = ({
                                             variant="primary"
                                             onClick={handleSendReply}
                                             isDisabled={!replyMessage.trim() && stagedAttachments.length === 0}
+                                            className="w-full sm:w-auto shadow-2xs"
                                         >
                                             Send Message
                                         </Button>
@@ -1487,7 +1633,7 @@ const RequestsPage = ({
                                 value={attachSearchTerm}
                                 onChange={(changeEvent) => setAttachSearchTerm(changeEvent.target.value)}
                                 placeholder="Search documents by name..."
-                                className="w-full pl-9 pr-3 py-2 text-xs rounded-md border border-surface-border bg-surface text-text focus:outline-hidden focus:border-accent focus:ring-1 focus:ring-accent"
+                                className="w-full pl-9 pr-3 py-2 text-xs rounded-md border border-surface-border bg-surface text-text focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent"
                             />
                         </div>
 
@@ -1542,13 +1688,70 @@ const RequestsPage = ({
                 </Modal>
             )}
 
+            {/* RESOLVE REQUEST CONFIRMATION MODAL */}
+            {resolvingRequestItem && (
+                <Modal
+                    isOpen={Boolean(resolvingRequestItem)}
+                    onClose={() => !isResolvingRequest && setResolvingRequestItem(null)}
+                    title="Resolve Document Request"
+                    description={`Are you sure you want to mark "${resolvingRequestItem.subject || 'this document request'}" as resolved?`}
+                    icon={CheckCircle2}
+                    size="sm"
+                    callout={
+                        isCoordinator
+                            ? "This will submit a resolution request to the Administrator for approval."
+                            : "Marking this request as resolved locks the thread communications and preserves clearance records for compliance and auditing."
+                    }
+                    calloutVariant="neutral"
+                    onConfirm={handleConfirmResolveRequest}
+                    confirmLabel={isResolvingRequest ? 'Resolving...' : (isCoordinator ? 'Submit Resolution' : 'Mark Resolved')}
+                    cancelLabel="Cancel"
+                    isConfirmLoading={isResolvingRequest}
+                    isConfirmDisabled={isResolvingRequest}
+                />
+            )}
+
+            {/* REJECT REQUEST CONFIRMATION MODAL */}
+            {rejectingRequestItem && (
+                <Modal
+                    isOpen={Boolean(rejectingRequestItem)}
+                    onClose={() => !isRejectingRequest && setRejectingRequestItem(null)}
+                    title="Reject Document Request"
+                    description={`Are you sure you want to reject "${rejectingRequestItem.subject || 'this document request'}"?`}
+                    icon={XCircle}
+                    variant="destructive"
+                    size="md"
+                    callout={
+                        isCoordinator
+                            ? "This will submit a rejection request to the Administrator for review."
+                            : "Rejecting this document request will close the thread and record the rejection in institutional audit logs."
+                    }
+                    calloutVariant="destructive"
+                    onConfirm={handleConfirmRejectRequest}
+                    confirmLabel={isRejectingRequest ? 'Rejecting...' : (isCoordinator ? 'Submit Rejection' : 'Reject Request')}
+                    cancelLabel="Cancel"
+                    isConfirmLoading={isRejectingRequest}
+                    isConfirmDisabled={isRejectingRequest}
+                >
+                    <div className="flex flex-col gap-3 py-2">
+                        <AreaField
+                            label="Rejection Reason (Optional)"
+                            placeholder="State reason for rejecting request..."
+                            value={rejectReason}
+                            onChange={(e) => setRejectReason(e.target.value)}
+                            helperText="Provide specific feedback or prerequisites so the requester understands why clearance was declined."
+                        />
+                    </div>
+                </Modal>
+            )}
+
             {/* DELETE REQUEST CONFIRMATION MODAL */}
             {deletingRequestItem && (
                 <Modal
                     isOpen={Boolean(deletingRequestItem)}
                     onClose={() => !isDeletingRequest && setDeletingRequestItem(null)}
                     title="Delete Request"
-                    description={`Are you sure you want to delete this document request?`}
+                    description={`Are you sure you want to delete "${deletingRequestItem.subject || 'this document request'}"?`}
                     icon={Trash2}
                     variant="destructive"
                     size="sm"

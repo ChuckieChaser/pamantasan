@@ -8,20 +8,26 @@ import { renderIcon } from './common';
 
 
 // --- CONFIGURATIONS ---
-const BASE_STYLE = 'h-9 py-1 px-3 text-sm rounded-md border bg-surface hover:bg-surface-hover focus-within:bg-surface text-text placeholder:text-text-muted transition-colors inline-flex items-center gap-2 w-full disabled:cursor-not-allowed disabled:opacity-50';
+const SIZE_STYLE = {
+    sm: 'h-8 py-1 px-2.5 text-xs',
+    md: 'h-9 py-1 px-3 text-xs sm:text-sm',
+    lg: 'h-10.5 py-1.5 px-3.5 text-sm sm:text-base',
+};
+
+const BASE_STYLE = 'rounded-md border bg-surface hover:bg-surface-hover focus-within:bg-surface text-text placeholder:text-text-muted transition-colors inline-flex items-center gap-2 sm:gap-2.5 w-full disabled:cursor-not-allowed disabled:opacity-50';
 const ICON_STYLE = 'h-4 w-4 shrink-0';
 
 const FIELD_WRAPPER_STYLE = 'flex flex-col gap-1 w-full';
-const FIELD_LABEL_STYLE = 'text-xs font-medium text-text';
-const FIELD_HELPER_STYLE = 'text-xs text-text-muted';
-const FIELD_ERROR_STYLE = 'text-xs text-error';
+const FIELD_LABEL_STYLE = 'text-xs font-semibold text-text';
+const FIELD_HELPER_STYLE = 'text-[11px] text-text-muted';
+const FIELD_ERROR_STYLE = 'text-[11px] text-error font-medium';
 
 const STATE_STYLE = {
     default: 'border-surface-border focus-within:border-accent',
     error:   'border-error-border focus-within:border-error',
 };
 
-const AREA_BASE_STYLE = 'p-3 text-sm rounded-md border bg-surface hover:bg-surface-hover focus-within:bg-surface text-text placeholder:text-text-muted transition-colors w-full min-h-20 flex items-start gap-2 disabled:cursor-not-allowed disabled:opacity-50';
+const AREA_BASE_STYLE = 'p-3 text-sm rounded-md border bg-surface hover:bg-surface-hover focus-within:bg-surface text-text placeholder:text-text-muted transition-colors w-full min-h-20 flex items-start gap-2.5 disabled:cursor-not-allowed disabled:opacity-50';
 
 const DROPDOWN_VERTICAL_STYLE = {
     bottom: 'top-full mt-1',
@@ -44,6 +50,13 @@ const TextField = ({
     type = 'text',
     value,
     placeholder,
+    size = 'md',
+    suffixButton = null,
+    suffixText = null,
+    onSuffixClick = null,
+    suffixOptions = null,
+    selectedSuffix = null,
+    onSuffixChange = null,
     required = false,
     isRequired = false,
     isDisabled = false,
@@ -52,6 +65,14 @@ const TextField = ({
     className,
     ...props
 }) => {
+    // STATES: SUFFIX DROPDOWN
+    const [isSuffixOpen, setIsSuffixOpen] = useState(false);
+    const suffixDropdownReference = useRef(null);
+
+    useClickOutside(suffixDropdownReference, () => {
+        setIsSuffixOpen(false);
+    });
+
     // HANDLERS
     const handleChange = (event) => {
         if (isDisabled || isReadOnly) {
@@ -63,11 +84,24 @@ const TextField = ({
 
     // DERIVED VALUES
     const isFieldRequired = required || isRequired;
+    const currentSizeStyle = SIZE_STYLE[size] ?? SIZE_STYLE.md;
     const stateStyle = error ? STATE_STYLE.error : STATE_STYLE.default;
-    const composedControlClassName = `${BASE_STYLE} ${stateStyle} ${className ?? ''}`.trim();
+    const composedControlClassName = `${BASE_STYLE} ${currentSizeStyle} ${stateStyle} ${className ?? ''}`.trim();
 
     const renderedLeadingIcon = renderIcon(leadingIcon, ICON_STYLE);
     const renderedTrailingIcon = renderIcon(trailingIcon, ICON_STYLE);
+
+    // UNIFIED SUFFIX CONTROL LOGIC
+    const activeSuffixLabel = suffixButton || suffixText;
+    const effectiveSuffixOptions = Array.isArray(suffixOptions) && suffixOptions.length > 0
+        ? suffixOptions
+        : (activeSuffixLabel ? [activeSuffixLabel] : null);
+
+    const hasSuffixControl = Boolean(effectiveSuffixOptions && effectiveSuffixOptions.length > 0);
+    const isInteractiveDropdown = Boolean(effectiveSuffixOptions && effectiveSuffixOptions.length > 1);
+    const currentSelectedSuffix = selectedSuffix ?? (hasSuffixControl
+        ? (typeof effectiveSuffixOptions[0] === 'object' ? effectiveSuffixOptions[0].value : effectiveSuffixOptions[0])
+        : activeSuffixLabel ?? '');
 
     // RENDER
     return (
@@ -81,7 +115,7 @@ const TextField = ({
 
             <div className={composedControlClassName}>
                 {renderedLeadingIcon && (
-                    <span className="text-text-muted shrink-0">
+                    <span className="text-text-muted shrink-0 flex items-center">
                         {renderedLeadingIcon}
                     </span>
                 )}
@@ -93,11 +127,88 @@ const TextField = ({
                     required={isFieldRequired}
                     placeholder={placeholder}
                     onChange={handleChange}
-                    className="w-full bg-transparent text-sm text-text placeholder:text-text-muted outline-none focus:outline-none focus-visible:outline-none disabled:cursor-not-allowed"
+                    className="w-full bg-transparent text-inherit text-text placeholder:text-text-muted outline-none focus:outline-none focus-visible:outline-none disabled:cursor-not-allowed min-w-0"
                     {...props}
                 />
+
+                {/* UNIFIED SUFFIX CONTROL (MATCHING PILL DESIGN) */}
+                {hasSuffixControl && (
+                    <div ref={suffixDropdownReference} className="relative shrink-0 flex items-center">
+                        {isInteractiveDropdown ? (
+                            <button
+                                type="button"
+                                disabled={isDisabled || isReadOnly}
+                                onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    if (onSuffixClick) {
+                                        onSuffixClick();
+                                    }
+                                    setIsSuffixOpen((prev) => !prev);
+                                }}
+                                className={`h-7 px-2.5 rounded-md flex items-center gap-1.5 text-xs font-mono font-medium border border-surface-border transition-all cursor-pointer select-none disabled:opacity-50 ${
+                                    isSuffixOpen
+                                        ? 'bg-accent/10 border-accent/40 text-accent font-semibold shadow-xs'
+                                        : 'bg-surface-hover hover:bg-surface-border text-text hover:text-accent'
+                                }`}
+                                title="Select extension"
+                            >
+                                <span className="truncate max-w-28 sm:max-w-36">{currentSelectedSuffix}</span>
+                                <ChevronDown className={`h-3 w-3 text-text-muted transition-transform shrink-0 ${isSuffixOpen ? 'rotate-180 text-accent' : ''}`} />
+                            </button>
+                        ) : (
+                            <button
+                                type="button"
+                                disabled={isDisabled || isReadOnly}
+                                onClick={(e) => {
+                                    if (onSuffixClick) {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        onSuffixClick();
+                                    }
+                                }}
+                                className={`h-7 px-2.5 rounded-md flex items-center text-xs font-mono font-medium border border-surface-border bg-surface-hover text-text-muted select-none ${
+                                    onSuffixClick ? 'hover:bg-surface-border hover:text-text cursor-pointer' : 'cursor-default'
+                                }`}
+                                title={currentSelectedSuffix}
+                            >
+                                <span className="truncate max-w-28 sm:max-w-40">{currentSelectedSuffix}</span>
+                            </button>
+                        )}
+
+                        {isInteractiveDropdown && isSuffixOpen && (
+                            <div className="absolute right-0 top-full mt-1.5 z-[100] min-w-36 max-h-48 overflow-y-auto bg-surface border border-surface-border rounded-lg shadow-xl py-1 flex flex-col gap-0.5 animate-fade-in">
+                                {effectiveSuffixOptions.map((opt) => {
+                                    const optVal = typeof opt === 'object' ? opt.value : opt;
+                                    const optLabel = typeof opt === 'object' ? (opt.label ?? opt.value) : opt;
+                                    const isSelected = optVal === currentSelectedSuffix;
+
+                                    return (
+                                        <button
+                                            key={optVal}
+                                            type="button"
+                                            onClick={(e) => {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                onSuffixChange?.(optVal);
+                                                setIsSuffixOpen(false);
+                                            }}
+                                            className={`px-3 py-1.5 text-xs font-mono text-left flex items-center justify-between gap-2 hover:bg-surface-hover transition-colors cursor-pointer ${
+                                                isSelected ? 'bg-accent/10 text-accent font-bold' : 'text-text'
+                                            }`}
+                                        >
+                                            <span className="truncate">{optLabel}</span>
+                                            {isSelected && <Check className="h-3.5 w-3.5 text-accent shrink-0" />}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+                )}
+
                 {renderedTrailingIcon && (
-                    <span className="text-text-muted shrink-0">
+                    <span className="text-text-muted shrink-0 flex items-center">
                         {renderedTrailingIcon}
                     </span>
                 )}
@@ -117,6 +228,7 @@ const PasswordField = ({
     trailingIcon,
     value,
     placeholder = 'Enter password...',
+    size = 'md',
     required = false,
     isRequired = false,
     isDisabled = false,
@@ -147,8 +259,9 @@ const PasswordField = ({
 
     // DERIVED VALUES
     const isFieldRequired = required || isRequired;
+    const currentSizeStyle = SIZE_STYLE[size] ?? SIZE_STYLE.md;
     const stateStyle = error ? STATE_STYLE.error : STATE_STYLE.default;
-    const composedControlClassName = `${BASE_STYLE} ${stateStyle} ${className ?? ''}`.trim();
+    const composedControlClassName = `${BASE_STYLE} ${currentSizeStyle} ${stateStyle} ${className ?? ''}`.trim();
 
     const renderedLeadingIcon = renderIcon(leadingIcon, ICON_STYLE);
     const renderedTrailingIcon = renderIcon(trailingIcon, ICON_STYLE);
@@ -165,7 +278,7 @@ const PasswordField = ({
 
             <div className={composedControlClassName}>
                 {renderedLeadingIcon && (
-                    <span className="text-text-muted shrink-0">
+                    <span className="text-text-muted shrink-0 flex items-center">
                         {renderedLeadingIcon}
                     </span>
                 )}
@@ -177,11 +290,11 @@ const PasswordField = ({
                     required={isFieldRequired}
                     placeholder={placeholder}
                     onChange={handleChange}
-                    className="w-full bg-transparent text-sm text-text placeholder:text-text-muted outline-none focus:outline-none focus-visible:outline-none disabled:cursor-not-allowed"
+                    className="w-full bg-transparent text-inherit text-text placeholder:text-text-muted outline-none focus:outline-none focus-visible:outline-none disabled:cursor-not-allowed min-w-0"
                     {...props}
                 />
                 {renderedTrailingIcon ? (
-                    <span className="text-text-muted shrink-0">
+                    <span className="text-text-muted shrink-0 flex items-center">
                         {renderedTrailingIcon}
                     </span>
                 ) : (
@@ -190,7 +303,7 @@ const PasswordField = ({
                         tabIndex={-1}
                         disabled={isDisabled}
                         onClick={handleToggleVisibility}
-                        className="text-text-muted hover:text-text transition-colors cursor-pointer shrink-0"
+                        className="text-text-muted hover:text-text transition-colors cursor-pointer shrink-0 flex items-center p-0.5"
                         title={isPasswordVisible ? 'Hide password' : 'Show password'}
                     >
                         {isPasswordVisible ? (
@@ -284,6 +397,7 @@ const SearchField = ({
     trailingIcon,
     value,
     placeholder = 'Search...',
+    size = 'md',
     isDisabled = false,
     onClear,
     onChange,
@@ -308,8 +422,9 @@ const SearchField = ({
     };
 
     // DERIVED VALUES
+    const currentSizeStyle = SIZE_STYLE[size] ?? SIZE_STYLE.md;
     const stateStyle = error ? STATE_STYLE.error : STATE_STYLE.default;
-    const composedControlClassName = `${BASE_STYLE} ${stateStyle} ${className ?? ''}`.trim();
+    const composedControlClassName = `${BASE_STYLE} ${currentSizeStyle} ${stateStyle} ${className ?? ''}`.trim();
 
     const renderedLeadingIcon = leadingIcon
         ? renderIcon(leadingIcon, ICON_STYLE)
@@ -323,7 +438,7 @@ const SearchField = ({
             {label && <label className={FIELD_LABEL_STYLE}>{label}</label>}
 
             <div className={composedControlClassName}>
-                <span className="text-text-muted shrink-0">
+                <span className="text-text-muted shrink-0 flex items-center">
                     {renderedLeadingIcon}
                 </span>
                 <input
@@ -332,11 +447,11 @@ const SearchField = ({
                     disabled={isDisabled}
                     placeholder={placeholder}
                     onChange={handleChange}
-                    className="w-full bg-transparent text-sm text-text placeholder:text-text-muted outline-none focus:outline-none focus-visible:outline-none disabled:cursor-not-allowed"
+                    className="w-full bg-transparent text-inherit text-text placeholder:text-text-muted outline-none focus:outline-none focus-visible:outline-none disabled:cursor-not-allowed min-w-0"
                     {...props}
                 />
                 {renderedTrailingIcon ? (
-                    <span className="text-text-muted shrink-0">
+                    <span className="text-text-muted shrink-0 flex items-center">
                         {renderedTrailingIcon}
                     </span>
                 ) : value ? (
@@ -344,7 +459,7 @@ const SearchField = ({
                         type="button"
                         disabled={isDisabled}
                         onClick={handleClear}
-                        className="text-text-muted hover:text-text transition-colors cursor-pointer shrink-0"
+                        className="text-text-muted hover:text-text transition-colors cursor-pointer shrink-0 flex items-center p-0.5"
                         title="Clear search"
                     >
                         <X className={ICON_STYLE} />
@@ -363,6 +478,7 @@ const SelectField = ({
     value,
     options = [],
     placeholder = 'Select option...',
+    size = 'md',
     leadingIcon,
     trailingIcon,
     dropdownAlign = 'auto',
@@ -377,7 +493,7 @@ const SelectField = ({
 }) => {
     // STATES
     const [isOpen, setIsOpen] = useState(false);
-    const [dropdownCoords, setDropdownCoords] = useState({ top: 0, left: 0, width: 0, openUpward: false, isPositioned: false });
+    const [dropdownCoords, setDropdownCoords] = useState({ top: 0, bottom: 0, left: 0, width: 0, openUpward: false, isPositioned: false });
 
     // REFS
     const containerRef = useRef(null);
@@ -390,13 +506,12 @@ const SelectField = ({
         const rect = triggerRef.current.getBoundingClientRect();
         const spaceBelow = window.innerHeight - rect.bottom;
         const spaceAbove = rect.top;
-        const estimatedDropdownHeight = Math.min(options.length * 32 + 16, 240);
+        const estimatedDropdownHeight = Math.min(options.length * 36 + 16, 260);
 
         const openUpward = dropdownAlign === 'top' || (dropdownAlign === 'auto' && spaceBelow < estimatedDropdownHeight && spaceAbove > spaceBelow);
 
-        const top = openUpward
-            ? rect.top - 4
-            : rect.bottom + 4;
+        const top = rect.bottom + 4;
+        const bottom = Math.max(8, window.innerHeight - rect.top + 4);
 
         let left = rect.left;
         const dropdownWidth = Math.max(rect.width, 180);
@@ -406,8 +521,8 @@ const SelectField = ({
         }
 
         setDropdownCoords({
-            top: openUpward ? undefined : top,
-            bottom: openUpward ? (window.innerHeight - rect.top + 4) : undefined,
+            top,
+            bottom,
             left: Math.max(16, Math.min(left, window.innerWidth - dropdownWidth - 16)),
             width: dropdownWidth,
             openUpward,
@@ -416,13 +531,24 @@ const SelectField = ({
     };
 
     useLayoutEffect(() => {
+        if (!isOpen) return;
+
+        updatePosition();
+        window.addEventListener('resize', updatePosition);
         window.addEventListener('scroll', updatePosition, true);
 
         return () => {
             window.removeEventListener('resize', updatePosition);
             window.removeEventListener('scroll', updatePosition, true);
         };
-    }, [isOpen, dropdownAlign]);
+    }, [isOpen, dropdownAlign, options.length]);
+
+    // CLOSE IMMEDIATELY IF DISABLED
+    useEffect(() => {
+        if (isDisabled && isOpen) {
+            setIsOpen(false);
+        }
+    }, [isDisabled, isOpen]);
 
     // OUTSIDE CLICK (CHECK CONTAINER AND PORTAL DROPDOWN)
     useEffect(() => {
@@ -455,9 +581,10 @@ const SelectField = ({
 
         if (!isOpen) {
             updatePosition();
+            setIsOpen(true);
+        } else {
+            setIsOpen(false);
         }
-
-        setIsOpen((previousState) => !previousState);
     };
 
     const handleSelectOption = (optionValue) => {
@@ -472,8 +599,9 @@ const SelectField = ({
     // DERIVED VALUES
     const isFieldRequired = required || isRequired;
     const selectedOption = options.find((option) => option.value === value);
+    const currentSizeStyle = SIZE_STYLE[size] ?? SIZE_STYLE.md;
     const stateStyle = error ? STATE_STYLE.error : STATE_STYLE.default;
-    const composedTriggerClassName = `${BASE_STYLE} ${stateStyle} justify-between cursor-pointer ${className ?? ''}`.trim();
+    const composedTriggerClassName = `${BASE_STYLE} ${currentSizeStyle} ${stateStyle} justify-between cursor-pointer ${className ?? ''}`.trim();
 
     const displayLeadingIcon = leadingIcon ?? selectedOption?.icon;
     const renderedLeadingIcon = renderIcon(displayLeadingIcon, ICON_STYLE);
@@ -481,8 +609,8 @@ const SelectField = ({
 
     const dropdownStyle = {
         position: 'fixed',
-        top: dropdownCoords.openUpward ? 'auto' : `${dropdownCoords.top + 4}px`,
-        bottom: dropdownCoords.openUpward ? `${Math.max(8, window.innerHeight - dropdownCoords.top + 4)}px` : 'auto',
+        top: dropdownCoords.openUpward ? 'auto' : `${dropdownCoords.top}px`,
+        bottom: dropdownCoords.openUpward ? `${dropdownCoords.bottom}px` : 'auto',
         left: dropdownAlign === 'right' ? 'auto' : `${Math.max(8, dropdownCoords.left)}px`,
         right: dropdownAlign === 'right' ? `${Math.max(8, window.innerWidth - (dropdownCoords.left + dropdownCoords.width))}px` : 'auto',
         minWidth: `${dropdownCoords.width}px`,
@@ -513,11 +641,11 @@ const SelectField = ({
             >
                 <div className="flex items-center gap-2 truncate min-w-0 flex-1">
                     {renderedLeadingIcon && (
-                        <span className="text-text-muted shrink-0">
+                        <span className="text-text-muted shrink-0 flex items-center">
                             {renderedLeadingIcon}
                         </span>
                     )}
-                    <span className={`truncate ${selectedOption ? 'text-text' : 'text-text-muted'}`}>
+                    <span className={`truncate text-sm ${selectedOption ? 'text-text' : 'text-text-muted'}`}>
                         {selectedOption?.label ?? placeholder}
                     </span>
                 </div>
@@ -590,6 +718,7 @@ const ComboField = ({
     values,
     options = [],
     placeholder = 'Filter criteria...',
+    size = 'md',
     leadingIcon,
     trailingIcon,
     dropdownAlign = 'auto',
@@ -646,8 +775,9 @@ const ComboField = ({
         }));
     }, [options]);
 
+    const currentSizeStyle = SIZE_STYLE[size] ?? SIZE_STYLE.md;
     const stateStyle = error ? STATE_STYLE.error : STATE_STYLE.default;
-    const composedTriggerClassName = `${BASE_STYLE} ${stateStyle} justify-between cursor-pointer ${className ?? ''}`.trim();
+    const composedTriggerClassName = `${BASE_STYLE} ${currentSizeStyle} ${stateStyle} justify-between cursor-pointer ${className ?? ''}`.trim();
     const verticalStyle = DROPDOWN_VERTICAL_STYLE[position.vertical] ?? DROPDOWN_VERTICAL_STYLE.bottom;
     const horizontalStyle = DROPDOWN_HORIZONTAL_STYLE[position.horizontal] ?? (
         dropdownAlign === 'right' ? DROPDOWN_HORIZONTAL_STYLE.right : DROPDOWN_HORIZONTAL_STYLE.left
@@ -756,7 +886,7 @@ const ComboField = ({
             {isOpen && (
                 <div
                     ref={dropdownRef}
-                    className={`absolute z-50 ${composedPositionStyle} min-w-full w-max max-w-[calc(100vw-2rem)] sm:max-w-2xl`}
+                    className={`absolute z-[100] ${composedPositionStyle} min-w-full w-max max-w-[calc(100vw-2rem)] sm:max-w-2xl`}
                 >
                     <Container
                         variant="dropdown"
@@ -835,6 +965,9 @@ const ComboField = ({
 };
 
 
+const SuffixField = (props) => <TextField {...props} />;
+
+
 // --- EXPORTS ---
 export {
     AreaField,
@@ -842,5 +975,6 @@ export {
     PasswordField,
     SearchField,
     SelectField,
+    SuffixField,
     TextField,
 };

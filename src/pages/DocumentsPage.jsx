@@ -4,6 +4,7 @@ import {
     Plus,
     UploadCloud,
     FolderPlus,
+    FolderUp,
     FileText,
     Folder,
     FileUp,
@@ -29,6 +30,7 @@ import {
     Image as ImageIcon,
     Crop,
     Smartphone,
+    Building2,
 } from 'lucide-react';
 import {
     Badge,
@@ -46,6 +48,9 @@ import {
     resolveUserAvatar,
     formatDateTime,
     getMimeTypeFromFilename,
+    formatMimeTypeLabel,
+    getExtensionFromMimeType,
+    fileToBase64,
 } from '../components';
 import { useToast, useAuth } from '../hooks';
 import { constants } from '../constants';
@@ -68,6 +73,8 @@ import {
 
 
 // --- CONFIGURATIONS ---
+const FILE_EXTENSION_OPTIONS = ['.pdf', '.docx', '.xlsx', '.pptx', '.txt', '.csv', '.png', '.jpg'];
+
 const DOCUMENT_COLUMNS = [
     { key: 'title', label: 'Name' },
     { key: 'classification', label: 'Classification' },
@@ -86,7 +93,8 @@ const buildBreadcrumbsForFolder = (folderId, allDocs, isArchived = false) => {
         curr = (allDocs || []).find((d) => d.id === parentId);
     }
     const rootLabel = isArchived ? 'Archives' : 'Repository Root';
-    return [{ id: 'root', label: rootLabel }, ...chain];
+    const full = [{ id: 'root', label: rootLabel }, ...chain];
+    return full.length <= 2 ? full : full.slice(-2);
 };
 
 const BASE_FILTER_OPTIONS = [
@@ -133,6 +141,7 @@ const DocumentsPage = ({
 
     // REFS
     const fileInputReference = useRef(null);
+    const folderInputReference = useRef(null);
 
     // STATES: REPOSITORY & NAVIGATION
     const [localCreatedItems, setLocalCreatedItems] = useState([]);
@@ -174,6 +183,7 @@ const DocumentsPage = ({
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
     const [editItem, setEditItem] = useState(null);
     const [editFormName, setEditFormName] = useState('');
+    const [editFormExtension, setEditFormExtension] = useState('.pdf');
     const [editFormSummary, setEditFormSummary] = useState('');
     const [editFormClassification, setEditFormClassification] = useState(constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED);
     const [editFormComment, setEditFormComment] = useState('');
@@ -192,6 +202,12 @@ const DocumentsPage = ({
     const [selectedPublishMemberIds, setSelectedPublishMemberIds] = useState([]);
     const [memberSearchQuery, setMemberSearchQuery] = useState('');
     const [isPublishingMembers, setIsPublishingMembers] = useState(false);
+
+    // STATES: ACTION CONFIRMATION & REJECTION MODALS
+    const [confirmActionModal, setConfirmActionModal] = useState(null);
+    const [rejectionActionModal, setRejectionActionModal] = useState(null);
+    const [rejectionReasonText, setRejectionReasonText] = useState('');
+    const [isSubmittingAction, setIsSubmittingAction] = useState(false);
 
     // HOOKS
     const { showToast, showProcessing } = useToast();
@@ -215,6 +231,7 @@ const DocumentsPage = ({
     const approveShare = useDocumentStore((state) => state.approveShare);
     const unapproveShare = useDocumentStore((state) => state.unapproveShare);
     const rejectShare = useDocumentStore((state) => state.rejectShare);
+    const unrejectShare = useDocumentStore((state) => state.unrejectShare);
     const publishShare = useDocumentStore((state) => state.publishShare);
     const unpublishShare = useDocumentStore((state) => state.unpublishShare);
     const stashShare = useDocumentStore((state) => state.stashShare);
@@ -363,6 +380,8 @@ const DocumentsPage = ({
                 resolvedStatus = constants.DOCUMENT_SHARES_STATUS.APPROVED;
             } else if (effectiveDeptShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL)) {
                 resolvedStatus = constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL;
+            } else if (effectiveDeptShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.REJECTED)) {
+                resolvedStatus = constants.DOCUMENT_SHARES_STATUS.REJECTED;
             } else {
                 resolvedStatus = effectiveDeptShares[0]?.status ?? '—';
             }
@@ -370,7 +389,7 @@ const DocumentsPage = ({
             const primaryShare = effectiveDeptShares.find((s) => s.status === resolvedStatus) || effectiveDeptShares[0];
 
             // Role-based status gating:
-            // OFFICER: PENDING_APPROVAL, APPROVED, STASHED, PUBLISHED
+            // OFFICER: PENDING_APPROVAL, APPROVED, STASHED, PUBLISHED, REJECTED
             if (isOfficer) {
                 if (
                     [
@@ -378,6 +397,7 @@ const DocumentsPage = ({
                         constants.DOCUMENT_SHARES_STATUS.APPROVED,
                         constants.DOCUMENT_SHARES_STATUS.STASHED,
                         constants.DOCUMENT_SHARES_STATUS.PUBLISHED,
+                        constants.DOCUMENT_SHARES_STATUS.REJECTED,
                     ].includes(resolvedStatus)
                 ) {
                     setAccessibleItem(doc.id, {
@@ -466,8 +486,11 @@ const DocumentsPage = ({
             });
         }
 
-        // 3. Filter documents to accessible ones
+        // 3. Filter documents to accessible ones (Non-administrative roles never see folders)
         const accessibleDocs = documents.filter((doc) => {
+            if (!isStaff && doc.isFolder) {
+                return false;
+            }
             if (doc.isFolder) {
                 return accessibleFolderIdSet.has(doc.id) || accessibleFolderIdSet.has(cleanId(doc.id));
             }
@@ -535,12 +558,15 @@ const DocumentsPage = ({
             })();
             const itemStatus = shareMeta?.status ?? '—';
 
+            const displayName = doc.isFolder ? doc.name : (doc.name || '').replace(/\.[^/.]+$/, '').trim() || doc.name;
+
             return {
                 id: doc.id,
                 parentId: doc.parentId ?? 'root',
-                title: doc.name,
-                name: doc.name,
+                title: displayName,
+                name: displayName,
                 subtitle: doc.isFolder ? 'DIR' : 'Document',
+                mimeType: doc.isFolder ? 'folder' : (latestVer?.mimeType ?? null),
                 description: doc.comment ?? null,
                 summary: doc.isFolder ? null : (latestVer?.summary ?? null),
                 comment: doc.comment ?? null,
@@ -581,7 +607,7 @@ const DocumentsPage = ({
         const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
         const targetClean = cleanId(targetId);
         const matched = repositoryItems.find((item) => cleanId(item.id) === targetClean);
-        return matched ?? selectedItem ?? selectedDocument;
+        return matched ?? null;
     }, [selectedItem, selectedDocument, repositoryItems]);
 
     const activeFolderId = useMemo(() => {
@@ -601,36 +627,34 @@ const DocumentsPage = ({
         return repositoryItems.filter((item) => {
             const matchesArchiveState = !item.isArchived;
             if (!matchesArchiveState) return false;
+            if (!isStaff) {
+                return !item.isFolder;
+            }
             const itemParent = item.parentId ?? 'root';
             if (activeFolderId === 'root') {
                 return !itemParent || itemParent === 'root';
             }
             return cleanId(itemParent) === cleanId(activeFolderId);
         });
-    }, [repositoryItems, activeFolderId]);
+    }, [repositoryItems, activeFolderId, isStaff]);
 
     const activeBreadcrumbsList = useMemo(() => {
-        if (activeFolderId !== 'root') {
-            const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
-            const parentFolder = repositoryItems.find((f) => cleanId(f.id) === cleanId(activeFolderId));
-            if (parentFolder) {
-                return [
-                    INITIAL_BREADCRUMBS[0],
-                    { id: parentFolder.id, label: parentFolder.name || parentFolder.title || 'Folder' },
-                ];
-            }
+        if (!isStaff) {
+            return [{ id: 'root', label: 'Documents' }];
         }
-        return breadcrumbsList;
-    }, [activeFolderId, repositoryItems, breadcrumbsList]);
+        if (activeFolderId !== 'root') {
+            const list = buildBreadcrumbsForFolder(activeFolderId, documents);
+            return list.length <= 2 ? list : list.slice(-2);
+        }
+        return breadcrumbsList.length <= 2 ? breadcrumbsList : breadcrumbsList.slice(-2);
+    }, [activeFolderId, documents, breadcrumbsList, isStaff]);
 
     const currentDirectoryLabel = activeBreadcrumbsList[activeBreadcrumbsList.length - 1]?.label ?? 'current directory';
 
     // HANDLERS
-    const handleBreadcrumbClick = (breadcrumbItem, breadcrumbIndex) => {
+    const handleBreadcrumbClick = (breadcrumbItem) => {
         setCurrentFolderId(breadcrumbItem.id);
-        setBreadcrumbsList((previousBreadcrumbs) =>
-            previousBreadcrumbs.slice(0, breadcrumbIndex + 1),
-        );
+        setBreadcrumbsList(buildBreadcrumbsForFolder(breadcrumbItem.id, documents));
         setSelectedDocument(null);
         onSelectDocument?.(null);
     };
@@ -867,17 +891,18 @@ const DocumentsPage = ({
                     : null;
                 const path = latestVer?.path || editItem.path;
 
+                const fullFileName = editItem.isFolder ? editFormName.trim() : `${editFormName.trim()}${editFormExtension}`;
                 if (path) {
                     showToast({
                         type: 'information',
                         title: 'Analyzing Document with AI',
-                        description: `Reading content of "${editFormName || editItem.name}" via Vertex AI Gemini Flash...`,
+                        description: `Reading content of "${fullFileName || editItem.name}" via Vertex AI Gemini Flash...`,
                     });
 
                     const res = await aiService.analyzeDocumentFile({
                         storagePath: path,
                         mimeType: latestVer?.mimeType || 'application/octet-stream',
-                        fileName: editFormName.trim() || editItem.name || 'document',
+                        fileName: fullFileName || editItem.name || 'document',
                         fileSize: latestVer?.sizeBytes || 0,
                     });
 
@@ -897,7 +922,7 @@ const DocumentsPage = ({
                         description: `Summary and classification updated (${res?.classification || 'Analyzed'}).`,
                     });
                 } else {
-                    const cleanedName = editFormName.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
+                    const cleanedName = (editItem.isFolder ? editFormName : `${editFormName}${editFormExtension}`).replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
                     const generated = `Institutional documentation and operational records pertaining to ${cleanedName}.`;
                     setEditFormSummary(generated);
                     if (editFormErrors.summary) {
@@ -932,6 +957,7 @@ const DocumentsPage = ({
             : null;
         const path = latestVer?.path || editItem.path;
 
+        const fullFileName = editItem.isFolder ? editFormName.trim() : `${editFormName.trim()}${editFormExtension}`;
         if (path) {
             showToast({
                 type: 'information',
@@ -942,8 +968,9 @@ const DocumentsPage = ({
                 const res = await aiService.analyzeDocumentFile({
                     storagePath: path,
                     mimeType: latestVer?.mimeType || 'application/octet-stream',
-                    fileName: editFormName.trim() || editItem.name || 'document',
+                    fileName: fullFileName || editItem.name || 'document',
                     fileSize: latestVer?.sizeBytes || 0,
+                    extractedText: editFormSummary || latestVer?.summary || null,
                 });
                 if (res?.classification && res.classification !== 'UNCLASSIFIED') {
                     setEditFormClassification(res.classification);
@@ -997,18 +1024,27 @@ const DocumentsPage = ({
             return;
         }
 
+        const cleanSavedName = editItem.isFolder
+            ? editFormName.trim()
+            : editFormName.trim().replace(/\.[^/.]+$/, '').trim();
+
+        const targetMimeType = editItem.isFolder
+            ? undefined
+            : (getMimeTypeFromFilename(`file${editFormExtension}`) || 'application/pdf');
+
         setIsSavingEdit(true);
         try {
             if (isCoordinator) {
                 const docPayload = {
                     documentId: editItem.id,
-                    documentTitle: editFormName.trim(),
+                    documentTitle: cleanSavedName,
                     isFolder: Boolean(editItem.isFolder),
                     new: {
-                        name: editFormName.trim(),
+                        name: cleanSavedName,
                         comment: editFormComment.trim() || null,
                         summary: editItem.isFolder ? null : (editFormSummary.trim() || null),
                         classification: editItem.isFolder ? null : editFormClassification,
+                        mimeType: editItem.isFolder ? null : targetMimeType,
                     },
                 };
 
@@ -1023,18 +1059,17 @@ const DocumentsPage = ({
                 showToast({
                     type: 'success',
                     title: 'Request Submitted',
-                    description: `Edit request for "${editFormName.trim()}" sent for Administrator approval.`,
+                    description: `Edit request for "${cleanSavedName}" sent for Administrator approval.`,
                 });
                 setIsEditModalOpen(false);
                 return;
             }
 
             await useDocumentStore.getState().updateDocument(editItem.id, {
-                name: editFormName.trim(),
+                name: cleanSavedName,
                 comment: editFormComment.trim() || null,
             });
 
-            let updatedMimeType = editItem.mimeType;
             if (!editItem.isFolder) {
                 const vers = (documentVersions || []).filter(
                     (v) => (v.document?.id ?? v.documentId) === editItem.id
@@ -1043,13 +1078,12 @@ const DocumentsPage = ({
                     ? [...vers].sort((a, b) => b.version - a.version)[0]
                     : null;
                 if (latestVer) {
-                    const derivedMimeType = getMimeTypeFromFilename(editFormName.trim());
-                    updatedMimeType = derivedMimeType;
                     await useDocumentStore.getState().updateDocumentVersion(latestVer.id, {
+                        documentId: editItem.id,
                         summary: editFormSummary.trim() || null,
                         classification: editFormClassification,
                         changeSummary: 'Updated metadata via editor',
-                        ...(derivedMimeType ? { mimeType: derivedMimeType } : {}),
+                        mimeType: targetMimeType,
                     });
                 }
             }
@@ -1059,13 +1093,13 @@ const DocumentsPage = ({
             const timestamp = new Date().toISOString();
             const updatedSelected = {
                 ...editItem,
-                name: editFormName.trim(),
-                title: editFormName.trim(),
+                name: cleanSavedName,
+                title: cleanSavedName,
                 comment: editFormComment.trim() || null,
                 description: editItem.isFolder ? (editFormComment.trim() || null) : (editFormSummary.trim() || null),
                 summary: editItem.isFolder ? null : (editFormSummary.trim() || null),
                 classification: editItem.isFolder ? '—' : editFormClassification,
-                mimeType: editItem.isFolder ? undefined : updatedMimeType,
+                mimeType: editItem.isFolder ? undefined : targetMimeType,
                 updatedAt: timestamp,
                 date: formatDateTime(timestamp),
             };
@@ -1078,7 +1112,7 @@ const DocumentsPage = ({
             showToast({
                 type: 'success',
                 title: editItem.isFolder ? 'Folder Updated' : 'Document Updated',
-                description: `Changes to "${editFormName.trim()}" have been saved.`,
+                description: `Changes to "${cleanSavedName}" have been saved.`,
             });
 
             setIsEditModalOpen(false);
@@ -1092,6 +1126,124 @@ const DocumentsPage = ({
             });
         } finally {
             setIsSavingEdit(false);
+        }
+    };
+
+    const handleConfirmAction = async () => {
+        if (!confirmActionModal) return;
+        const { actionKey, item, shareId, deptId, docTitle } = confirmActionModal;
+        setIsSubmittingAction(true);
+        try {
+            if (actionKey === 'approve') {
+                if (item.isFolder && deptId) {
+                    await updateShareStatusRecursive(item.id, deptId, constants.DOCUMENT_SHARES_STATUS.APPROVED);
+                } else {
+                    await approveShare(shareId);
+                }
+                showToast({
+                    type: 'success',
+                    title: item.isFolder ? 'Folder Approved' : 'Document Approved',
+                    description: `Approved "${docTitle}" for department director review.`,
+                });
+            } else if (actionKey === 'unapprove') {
+                if (item.isFolder && deptId) {
+                    await updateShareStatusRecursive(item.id, deptId, constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL);
+                } else {
+                    await unapproveShare(shareId);
+                }
+                showToast({
+                    type: 'information',
+                    title: 'Approval Revoked',
+                    description: `Reverted "${docTitle}" to pending approval.`,
+                });
+            } else if (actionKey === 'stash') {
+                if (item.isFolder && deptId) {
+                    await updateShareStatusRecursive(item.id, deptId, constants.DOCUMENT_SHARES_STATUS.STASHED);
+                } else {
+                    await stashShare(shareId);
+                }
+                showToast({
+                    type: 'information',
+                    title: item.isFolder ? 'Folder Stashed' : 'Document Stashed',
+                    description: `Stashed "${docTitle}" at upper management level.`,
+                });
+            } else if (actionKey === 'unstash') {
+                if (item.isFolder && deptId) {
+                    await updateShareStatusRecursive(item.id, deptId, constants.DOCUMENT_SHARES_STATUS.APPROVED);
+                } else {
+                    await unstashShare(shareId);
+                }
+                showToast({
+                    type: 'success',
+                    title: item.isFolder ? 'Folder Unstashed' : 'Document Unstashed',
+                    description: `Restored "${docTitle}" to approved state.`,
+                });
+            } else if (actionKey === 'unreject') {
+                if (item.isFolder && deptId) {
+                    await updateShareStatusRecursive(item.id, deptId, constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL);
+                } else {
+                    await unrejectShare(shareId);
+                }
+                showToast({
+                    type: 'success',
+                    title: item.isFolder ? 'Folder Restored' : 'Document Restored',
+                    description: `Restored "${docTitle}" to pending approval.`,
+                });
+            }
+            if (currentUser) {
+                syncAllDocumentShares(currentUser, departments).catch(() => {});
+            }
+            setConfirmActionModal(null);
+        } catch (err) {
+            console.error(`Failed to execute ${actionKey}:`, err);
+            showToast({
+                type: 'error',
+                title: 'Action Failed',
+                description: err?.message || `Could not complete ${actionKey}.`,
+            });
+        } finally {
+            setIsSubmittingAction(false);
+        }
+    };
+
+    const handleConfirmRejection = async () => {
+        if (!rejectionActionModal) return;
+        const { item, shareId, deptId, docTitle } = rejectionActionModal;
+        const reason = rejectionReasonText.trim();
+        if (!reason) {
+            showToast({
+                type: 'warning',
+                title: 'Rejection Reason Required',
+                description: 'Please specify a reason for rejecting this document.',
+            });
+            return;
+        }
+        setIsSubmittingAction(true);
+        try {
+            if (item.isFolder && deptId) {
+                await updateShareStatusRecursive(item.id, deptId, constants.DOCUMENT_SHARES_STATUS.REJECTED);
+            } else {
+                await rejectShare(shareId, reason, currentUser?.id);
+            }
+            showToast({
+                type: 'warning',
+                title: item.isFolder ? 'Folder Rejected' : 'Document Rejected',
+                description: `Rejected "${docTitle}". The item remains in your repository as Rejected.`,
+            });
+            if (currentUser) {
+                syncAllDocumentShares(currentUser, departments).catch(() => {});
+            }
+            setRejectionActionModal(null);
+            setRejectionReasonText('');
+        } catch (err) {
+            console.error('Failed to reject share:', err);
+            showToast({
+                type: 'error',
+                title: 'Rejection Failed',
+                description: err?.message || 'Could not reject document.',
+            });
+        } finally {
+            setIsSubmittingAction(false);
         }
     };
 
@@ -1115,7 +1267,7 @@ const DocumentsPage = ({
             return;
         }
 
-        if (['approve', 'unapprove', 'reject', 'unpublish', 'stash', 'unstash', 'unshare'].includes(actionKey)) {
+        if (['approve', 'unapprove', 'reject', 'unreject', 'unpublish', 'stash', 'unstash', 'unshare'].includes(actionKey)) {
             let shareRecord = item.share;
             if (!shareRecord) {
                 if (actionKey === 'unshare' && (item.departmentId || item.department)) {
@@ -1143,45 +1295,55 @@ const DocumentsPage = ({
 
             const docTitle = item.title || item.name || 'document';
             const deptId = shareRecord?.department?.id ?? shareRecord?.departmentId ?? currentUser?.departmentId;
+
+            if (['approve', 'unapprove', 'stash', 'unstash', 'unreject'].includes(actionKey)) {
+                const titles = {
+                    approve: `Approve ${item.isFolder ? 'Folder' : 'Document'}`,
+                    unapprove: `Revoke Approval for ${item.isFolder ? 'Folder' : 'Document'}`,
+                    stash: `Stash ${item.isFolder ? 'Folder' : 'Document'}`,
+                    unstash: `Unstash ${item.isFolder ? 'Folder' : 'Document'}`,
+                    unreject: `Unreject ${item.isFolder ? 'Folder' : 'Document'}`,
+                };
+                const messages = {
+                    approve: `Are you sure you want to approve "${docTitle}" for department director review?`,
+                    unapprove: `Are you sure you want to revert "${docTitle}" to pending approval?`,
+                    stash: `Are you sure you want to stash "${docTitle}"? It will be held at upper management level.`,
+                    unstash: `Are you sure you want to unstash "${docTitle}" and restore it to approved status?`,
+                    unreject: `Are you sure you want to unreject "${docTitle}" and return it to pending approval?`,
+                };
+                const primaryLabels = {
+                    approve: 'Approve',
+                    unapprove: 'Revoke Approval',
+                    stash: 'Stash Item',
+                    unstash: 'Unstash Item',
+                    unreject: 'Unreject',
+                };
+                setConfirmActionModal({
+                    actionKey,
+                    item,
+                    shareId,
+                    deptId,
+                    docTitle,
+                    title: titles[actionKey] || 'Confirm Action',
+                    message: messages[actionKey] || `Are you sure you want to proceed with ${actionKey}?`,
+                    primaryLabel: primaryLabels[actionKey] || 'Confirm',
+                });
+                return;
+            }
+
+            if (actionKey === 'reject') {
+                setRejectionReasonText('');
+                setRejectionActionModal({
+                    item,
+                    shareId,
+                    deptId,
+                    docTitle,
+                });
+                return;
+            }
+
             try {
-                if (actionKey === 'approve') {
-                    if (item.isFolder && deptId) {
-                        await updateShareStatusRecursive(item.id, deptId, constants.DOCUMENT_SHARES_STATUS.APPROVED);
-                    } else {
-                        await approveShare(shareId);
-                    }
-                    showToast({
-                        type: 'success',
-                        title: item.isFolder ? 'Folder Approved' : 'Document Approved',
-                        description: `Approved "${docTitle}" for department director review.`,
-                    });
-                } else if (actionKey === 'unapprove') {
-                    if (item.isFolder && deptId) {
-                        await updateShareStatusRecursive(item.id, deptId, constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL);
-                    } else {
-                        await unapproveShare(shareId);
-                    }
-                    showToast({
-                        type: 'information',
-                        title: 'Approval Revoked',
-                        description: `Reverted "${docTitle}" to pending approval.`,
-                    });
-                } else if (actionKey === 'reject') {
-                    if (item.isFolder && deptId) {
-                        await unshareDocumentRecursive(item.id, deptId);
-                    } else {
-                        await rejectShare(shareId);
-                    }
-                    showToast({
-                        type: 'warning',
-                        title: item.isFolder ? 'Folder Rejected' : 'Document Rejected',
-                        description: `Rejected "${docTitle}" and removed from department view.`,
-                    });
-                    if (selectedDocument?.id === item.id) {
-                        setSelectedDocument(null);
-                        onSelectDocument?.(null);
-                    }
-                } else if (actionKey === 'publish') {
+                if (actionKey === 'publish') {
                     if (item.isFolder && deptId) {
                         await updateShareStatusRecursive(item.id, deptId, constants.DOCUMENT_SHARES_STATUS.PUBLISHED);
                     } else {
@@ -1203,28 +1365,6 @@ const DocumentsPage = ({
                         title: item.isFolder ? 'Folder Unpublished' : 'Document Unpublished',
                         description: `Unpublished "${docTitle}" from department members.`,
                     });
-                } else if (actionKey === 'stash') {
-                    if (item.isFolder && deptId) {
-                        await updateShareStatusRecursive(item.id, deptId, constants.DOCUMENT_SHARES_STATUS.STASHED);
-                    } else {
-                        await stashShare(shareId);
-                    }
-                    showToast({
-                        type: 'information',
-                        title: item.isFolder ? 'Folder Stashed' : 'Document Stashed',
-                        description: `Stashed "${docTitle}" at upper management level.`,
-                    });
-                } else if (actionKey === 'unstash') {
-                    if (item.isFolder && deptId) {
-                        await updateShareStatusRecursive(item.id, deptId, constants.DOCUMENT_SHARES_STATUS.APPROVED);
-                    } else {
-                        await unstashShare(shareId);
-                    }
-                    showToast({
-                        type: 'success',
-                        title: item.isFolder ? 'Folder Unstashed' : 'Document Unstashed',
-                        description: `Restored "${docTitle}" to approved state.`,
-                    });
                 } else if (actionKey === 'unshare') {
                     if (item.isFolder && deptId) {
                         await unshareDocumentRecursive(item.id, deptId);
@@ -1233,9 +1373,12 @@ const DocumentsPage = ({
                     }
                     showToast({
                         type: 'success',
-                        title: 'Share Removed',
-                        description: `Removed department share for "${docTitle}".`,
+                        title: 'Share Deleted',
+                        description: `Deleted department share for "${docTitle}".`,
                     });
+                }
+                if (currentUser) {
+                    syncAllDocumentShares(currentUser, departments).catch(() => {});
                 }
             } catch (err) {
                 console.error(`Failed to execute ${actionKey}:`, err);
@@ -1264,7 +1407,28 @@ const DocumentsPage = ({
 
         if (actionKey === 'edit') {
             setEditItem(item);
-            setEditFormName(item.name || item.title || '');
+            let rawName = (item.name || item.title || '').replace(/\.[^/.]+$/, '').trim();
+            let rawExtension = '.pdf';
+            if (!item.isFolder) {
+                const vers = (documentVersions || []).filter(
+                    (v) => (v.document?.id ?? v.documentId) === item.id
+                );
+                const latestVer = vers.length > 0
+                    ? [...vers].sort((a, b) => b.version - a.version)[0]
+                    : null;
+                const effectiveMime = latestVer?.mimeType || item.mimeType;
+                if (effectiveMime) {
+                    rawExtension = getExtensionFromMimeType(effectiveMime);
+                } else {
+                    const originalRaw = item.name || item.title || '';
+                    const lastDot = originalRaw.lastIndexOf('.');
+                    if (lastDot > 0) {
+                        rawExtension = originalRaw.slice(lastDot).toLowerCase();
+                    }
+                }
+            }
+            setEditFormName(rawName);
+            setEditFormExtension(rawExtension);
             setEditFormComment(item.comment || item.description || '');
 
             if (!item.isFolder) {
@@ -1295,6 +1459,15 @@ const DocumentsPage = ({
                         documents,
                         documentVersions
                     );
+                    const childFiles = (documents || []).filter(
+                        (d) => !d.isFolder && (d.parentId === item.id || d.parentFolderId === item.id)
+                    );
+                    childFiles.forEach((file) => {
+                        systemEventService.recordDocumentRead({
+                            document: file,
+                            user: currentUser,
+                        }).catch(() => {});
+                    });
                 } else {
                     const vers = (documentVersions || []).filter(
                         (v) => (v.document?.id ?? v.documentId) === item.id
@@ -1304,6 +1477,13 @@ const DocumentsPage = ({
                         : null;
                     const path = latestVer?.path || item.path || item.url || item.downloadUrl;
                     await storageService.downloadDocument(path, fileName);
+                    if (currentUser?.id) {
+                        systemEventService.recordDocumentRead({
+                            document: item,
+                            user: currentUser,
+                            version: latestVer?.version,
+                        }).catch(() => {});
+                    }
                 }
             } catch (err) {
                 showToast({
@@ -1584,7 +1764,7 @@ const DocumentsPage = ({
             showToast({
                 type: 'success',
                 title: deletingItem.isFolder ? 'Folder Deleted' : 'Document Deleted',
-                description: `"${deletingItem.title || deletingItem.name}" removed from repository.`,
+                description: `"${deletingItem.title || deletingItem.name}" deleted from repository.`,
             });
             setDeletingItem(null);
         } catch (error) {
@@ -1770,13 +1950,17 @@ const DocumentsPage = ({
                 }
 
                 const finalFileName = item.fileName || item.file?.name || (item.title ? item.title.split('/').pop() : 'document');
+                const cleanDocName = finalFileName.replace(/\.[^/.]+$/, '').trim() || finalFileName;
 
                 // 2. Check if creating new version or new document
                 let targetDocumentId = item.action === 'create_new' ? null : item.existingDocumentId;
 
                 if (!targetDocumentId && activeUserId && item.action !== 'create_new') {
                     const existingDoc = knownDocs.find(
-                        (d) => !d.isFolder && (d.parentId ?? null) === targetParentId && !d.isArchived && d.name.toLowerCase() === finalFileName.toLowerCase()
+                        (d) => !d.isFolder && (d.parentId ?? null) === targetParentId && !d.isArchived && (
+                            d.name.toLowerCase() === cleanDocName.toLowerCase() ||
+                            d.name.toLowerCase() === finalFileName.toLowerCase()
+                        )
                     );
                     if (existingDoc) {
                         targetDocumentId = existingDoc.id;
@@ -1854,8 +2038,15 @@ const DocumentsPage = ({
                     // Call Vertex AI for version diffing, OCR/summary, and embeddings
                     let aiResult = null;
                     try {
+                        let fileBase64 = null;
+                        if (item.file && item.file.size <= 15 * 1024 * 1024) {
+                            fileBase64 = await fileToBase64(item.file).catch(() => null);
+                        }
+
                         aiResult = await aiService.analyzeDocumentFile({
                             storagePath: storageResult.path,
+                            downloadUrl: storageResult.downloadUrl || null,
+                            fileBase64,
                             mimeType: storageResult.mimeType || item.file.type || getMimeTypeFromFilename(finalFileName),
                             fileName: finalFileName,
                             fileSize: storageResult.sizeBytes || item.file.size || 0,
@@ -1902,7 +2093,7 @@ const DocumentsPage = ({
                             entityId: String(targetDocumentId),
                             action: constants.AUDIT_LOGS_ACTION.UPDATED,
                             data: JSON.stringify({
-                                title: finalFileName,
+                                title: cleanDocName,
                                 version: nextVersionNum,
                                 isVersionUpdate: true,
                                 isFolder: false,
@@ -1921,7 +2112,7 @@ const DocumentsPage = ({
                     let createdDoc = null;
                     if (activeUserId) {
                         createdDoc = await documentService.insertDocument({
-                            name: finalFileName,
+                            name: cleanDocName,
                             isFolder: false,
                             isArchived: false,
                             parentId: targetParentId,
@@ -1961,8 +2152,15 @@ const DocumentsPage = ({
                     // Call Vertex AI for multimodal analysis, OCR, classification, and embeddings
                     let aiResult = null;
                     try {
+                        let fileBase64 = null;
+                        if (item.file && item.file.size <= 15 * 1024 * 1024) {
+                            fileBase64 = await fileToBase64(item.file).catch(() => null);
+                        }
+
                         aiResult = await aiService.analyzeDocumentFile({
                             storagePath: storageResult.path,
+                            downloadUrl: storageResult.downloadUrl || null,
+                            fileBase64,
                             mimeType: storageResult.mimeType || item.file.type || getMimeTypeFromFilename(finalFileName),
                             fileName: finalFileName,
                             fileSize: storageResult.sizeBytes || item.file.size || 0,
@@ -2003,7 +2201,7 @@ const DocumentsPage = ({
                                 entityId: String(targetDocumentId),
                                 action: constants.AUDIT_LOGS_ACTION.UPLOADED,
                                 data: JSON.stringify({
-                                    title: finalFileName,
+                                    title: cleanDocName,
                                     version: 1,
                                     isVersionUpdate: false,
                                     isFolder: false,
@@ -2051,6 +2249,21 @@ const DocumentsPage = ({
 
         await fetchDocuments().catch(() => {});
         toastProcess.complete();
+
+        // Auto-select the newly uploaded primary document
+        if (validItems.length > 0) {
+            const primaryItem = validItems[0];
+            const latestDocs = useDocumentStore.getState().documents || [];
+            const primaryName = primaryItem?.fileName || primaryItem?.title || primaryItem?.name;
+            const matchedUploadedDoc = latestDocs.find(
+                (d) => (primaryItem?.existingDocumentId && d.id === primaryItem.existingDocumentId) ||
+                       (primaryName && (d.name === primaryName || d.title === primaryName))
+            );
+            if (matchedUploadedDoc) {
+                setSelectedDocument(matchedUploadedDoc);
+                onSelectDocument?.(matchedUploadedDoc);
+            }
+        }
 
         // DISPATCH NOTIFICATIONS TO RMO STAFF
         if (activeUserId && validItems.length > 0) {
@@ -2147,13 +2360,16 @@ const DocumentsPage = ({
 
         const fallbackExtractedItems = selectedFiles.map((file) => {
             const isImage = ocrService.isImageFile(file);
+            const pathParts = file.webkitRelativePath ? file.webkitRelativePath.split('/').filter(Boolean) : [];
+            const folderPathParts = pathParts.length > 1 ? pathParts.slice(0, -1) : [];
+            const relativePath = file.webkitRelativePath ? `/${file.webkitRelativePath}` : `/${file.name}`;
             return {
                 id: `doc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
                 parentId: currentFolderId,
-                relativePath: `/${file.name}`,
+                relativePath: relativePath,
                 fileName: file.name,
-                folderPathParts: [],
-                title: `/${file.name}`,
+                folderPathParts: folderPathParts,
+                title: relativePath,
                 subtitle: `DOC-${new Date().getFullYear()}-GEN-${Math.floor(100 + Math.random() * 900)}`,
                 description: null,
                 category: isImage ? 'Image' : 'Document',
@@ -2371,6 +2587,12 @@ const DocumentsPage = ({
                     }).catch(() => {});
                 }
                 await fetchDocuments();
+                if (created?.id) {
+                    const latestDocs = useDocumentStore.getState().documents || [];
+                    const matchedFolder = latestDocs.find((d) => d.id === created.id) || created;
+                    setSelectedDocument(matchedFolder);
+                    onSelectDocument?.(matchedFolder);
+                }
             } else {
                 const newFolderItem = {
                     id: `folder-${Date.now()}`,
@@ -2391,6 +2613,8 @@ const DocumentsPage = ({
                     tags: ['Folder'],
                 };
                 setLocalCreatedItems((previousItems) => [newFolderItem, ...previousItems]);
+                setSelectedDocument(newFolderItem);
+                onSelectDocument?.(newFolderItem);
             }
 
             setIsCreateModalOpen(false);
@@ -2497,8 +2721,29 @@ const DocumentsPage = ({
         const sharedDeptIds = new Set(
             activeSharesForModalDoc.map((s) => cleanId(s.department?.id ?? s.departmentId))
         );
-        return (departments || []).filter((d) => !sharedDeptIds.has(cleanId(d.id)));
-    }, [departments, activeSharesForModalDoc, shareModalDocument]);
+        const userDeptClean = cleanId(currentUser?.departmentId || (typeof currentUser?.department === 'object' ? currentUser?.department?.id : null));
+        const docDeptClean = cleanId(shareModalDocument?.departmentId || shareModalDocument?.department?.id);
+        const userDeptNameLower = (typeof currentUser?.department === 'string' ? currentUser?.department : currentUser?.department?.name || '').toLowerCase().trim();
+
+        return (departments || []).filter((d) => {
+            const dClean = cleanId(d.id);
+            // 1. Exclude already shared departments
+            if (sharedDeptIds.has(dClean)) return false;
+
+            const name = (d.name || '').toLowerCase().trim();
+            const code = (d.code || '').toLowerCase().trim();
+
+            // 2. Exclude Records Management Office (RMO)
+            if (name.includes('records management') || code === 'rmo') return false;
+
+            // 3. Exclude user's own department and the document's own department
+            if (userDeptClean && dClean === userDeptClean) return false;
+            if (docDeptClean && dClean === docDeptClean) return false;
+            if (userDeptNameLower && name === userDeptNameLower) return false;
+
+            return true;
+        });
+    }, [departments, activeSharesForModalDoc, shareModalDocument, currentUser]);
 
     const filteredAvailableDepartments = useMemo(() => {
         if (!departmentSearchQuery.trim()) return availableDepartmentsToShare;
@@ -2594,6 +2839,10 @@ const DocumentsPage = ({
 
             setSelectedShareDepartmentIds([]);
             setDepartmentSearchQuery('');
+            setShareModalDocument(null);
+            if (currentUser) {
+                syncAllDocumentShares(currentUser, departments).catch(() => {});
+            }
         } catch (err) {
             console.error('Failed to share document/folder:', err);
             showToast({
@@ -2643,15 +2892,15 @@ const DocumentsPage = ({
                 await unshareDocumentRecursive(shareModalDocument.id, deptId);
                 showToast({
                     type: 'success',
-                    title: 'Share Removed',
-                    description: `Removed "${docTitle}" and all nested contents from ${departmentName || 'department'}.`,
+                    title: 'Share Deleted',
+                    description: `Deleted "${docTitle}" and all nested contents from ${departmentName || 'department'}.`,
                 });
             } else if (shareId) {
                 await unshareDocument(shareId);
                 showToast({
                     type: 'success',
-                    title: 'Share Removed',
-                    description: `Removed share for ${departmentName || 'department'}.`,
+                    title: 'Share Deleted',
+                    description: `Deleted share for ${departmentName || 'department'}.`,
                 });
             }
         } catch (err) {
@@ -2688,6 +2937,11 @@ const DocumentsPage = ({
             return fullName.includes(q) || univId.includes(q) || email.includes(q);
         });
     }, [departmentMembers, memberSearchQuery]);
+
+    const selectedPublishMembers = useMemo(() => {
+        const idSet = new Set(selectedPublishMemberIds);
+        return departmentMembers.filter((m) => idSet.has(m.id));
+    }, [departmentMembers, selectedPublishMemberIds]);
 
     const handleToggleMemberSelection = (memberId) => {
         setSelectedPublishMemberIds((prev) =>
@@ -2730,6 +2984,9 @@ const DocumentsPage = ({
             setPublishModalDocument(null);
             setSelectedPublishMemberIds([]);
             setMemberSearchQuery('');
+            if (currentUser) {
+                syncAllDocumentShares(currentUser, departments).catch(() => {});
+            }
         } catch (err) {
             console.error('Failed to publish document to members:', err);
             showToast({
@@ -2810,139 +3067,140 @@ const DocumentsPage = ({
             <Modal
                 isOpen={isCreateModalOpen}
                 onClose={handleRequestCloseCreateModal}
-                title="Add to Repository"
-                description={`Choose an action to add items into ${currentDirectoryLabel}.`}
+                title={creationMode === 'file' ? 'Upload to Repository' : 'Create New Folder'}
+                description={`Items will be placed in ${currentDirectoryLabel}.`}
                 icon={creationMode === 'file' ? FileUp : FolderPlus}
                 size="lg"
+                confirmOnClose={false}
                 primaryAction={modalPrimaryAction}
                 secondaryAction={modalSecondaryAction}
             >
-                {/* 1. CREATION MODE SELECTOR: 3 TILES INCLUDING PHONE SCAN */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <button
-                        type="button"
-                        onClick={() => handleCreationModeChange('file')}
-                        className={`p-4 rounded-xl border-2 flex flex-col items-center justify-center text-center gap-2.5 transition-colors cursor-pointer select-none ${
-                            creationMode === 'file'
-                                ? 'bg-accent-background border-accent text-text'
-                                : 'bg-surface border-surface-border hover:bg-surface-hover hover:border-surface-border text-text'
-                        }`}
-                    >
-                        <div
-                            className={`p-2.5 rounded-full transition-colors ${
+                {/* 1. TOP HEADER CONTROLS: SEGMENTED SWITCHER & QUICK SCAN ACTION */}
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pb-3 border-b border-surface-border">
+                    {/* Modern Segmented Control */}
+                    <div className="inline-flex p-1 rounded-xl bg-surface-hover/80 border border-surface-border self-start">
+                        <button
+                            type="button"
+                            onClick={() => handleCreationModeChange('file')}
+                            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                                 creationMode === 'file'
-                                    ? 'bg-accent text-text-inverted'
-                                    : 'bg-surface-hover text-text-muted'
+                                    ? 'bg-surface text-text shadow-xs border border-surface-border/80'
+                                    : 'text-text-muted hover:text-text'
                             }`}
                         >
-                            <FileUp className="h-5 w-5" />
-                        </div>
-                        <div className="flex flex-col gap-0.5">
-                            <span className="font-bold text-xs text-text">Upload Documents</span>
-                            <span className="text-[10px] text-text-muted">
-                                Single files or folder trees
-                            </span>
-                        </div>
-                    </button>
+                            <FileUp className={`h-4 w-4 ${creationMode === 'file' ? 'text-accent' : 'text-text-muted'}`} />
+                            <span>Upload Documents</span>
+                            {stagedDroppedItems.length > 0 && (
+                                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-accent/15 text-accent">
+                                    {stagedDroppedItems.length}
+                                </span>
+                            )}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => handleCreationModeChange('folder')}
+                            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                                creationMode === 'folder'
+                                    ? 'bg-surface text-text shadow-xs border border-surface-border/80'
+                                    : 'text-text-muted hover:text-text'
+                            }`}
+                        >
+                            <FolderPlus className={`h-4 w-4 ${creationMode === 'folder' ? 'text-accent' : 'text-text-muted'}`} />
+                            <span>Create Folder</span>
+                        </button>
+                    </div>
 
+                    {/* Wireless Phone Camera Quick Action */}
                     <button
                         type="button"
                         onClick={() => setIsMobileScanModalOpen(true)}
-                        className="p-4 rounded-xl border-2 border-accent/40 bg-accent/5 hover:bg-accent/15 hover:border-accent flex flex-col items-center justify-center text-center gap-2.5 transition-all cursor-pointer select-none shadow-xs group"
-                        title="Scan documents with your phone's camera"
+                        className="inline-flex items-center justify-center gap-2 px-3 py-1.5 rounded-xl border border-accent/30 bg-accent/5 hover:bg-accent/10 text-accent text-xs font-medium transition-all cursor-pointer shadow-2xs group"
+                        title="Scan documents wirelessly using your smartphone camera"
                     >
-                        <div className="p-2.5 rounded-full bg-accent/20 text-accent group-hover:scale-110 transition-transform">
-                            <Smartphone className="h-5 w-5" />
-                        </div>
-                        <div className="flex flex-col gap-0.5">
-                            <span className="font-bold text-xs text-accent flex items-center gap-1 justify-center">
-                                <span>Scan with Phone</span>
-                                <span className="text-[8px] px-1 py-0.2 rounded bg-accent text-text-inverted font-extrabold uppercase">New</span>
-                            </span>
-                            <span className="text-[10px] text-text-muted">
-                                Snap document wirelessly
-                            </span>
-                        </div>
-                    </button>
-
-                    <button
-                        type="button"
-                        onClick={() => handleCreationModeChange('folder')}
-                        className={`p-4 rounded-xl border-2 flex flex-col items-center justify-center text-center gap-2.5 transition-colors cursor-pointer select-none ${
-                            creationMode === 'folder'
-                                ? 'bg-accent-background border-accent text-text'
-                                : 'bg-surface border-surface-border hover:bg-surface-hover hover:border-surface-border text-text'
-                        }`}
-                    >
-                        <div
-                            className={`p-2.5 rounded-full transition-colors ${
-                                creationMode === 'folder'
-                                    ? 'bg-accent text-text-inverted'
-                                    : 'bg-surface-hover text-text-muted'
-                            }`}
-                        >
-                            <FolderPlus className="h-5 w-5" />
-                        </div>
-                        <div className="flex flex-col gap-0.5">
-                            <span className="font-bold text-xs text-text">Create Folder</span>
-                            <span className="text-[10px] text-text-muted">
-                                Group and organize files
-                            </span>
-                        </div>
+                        <Smartphone className="h-3.5 w-3.5 transition-transform group-hover:scale-110" />
+                        <span>Scan with Phone</span>
+                        <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-accent/20 text-accent uppercase tracking-wider">
+                            Camera
+                        </span>
                     </button>
                 </div>
 
                 {/* 2. MODE CONTENT A: FILE / FOLDER DROPZONE */}
                 {creationMode === 'file' && (
-                    <div className="flex flex-col gap-4 mt-2">
+                    <div className="flex flex-col gap-4 mt-1">
                         {fileError && (
-                            <div className="p-3 rounded-lg bg-error-background border border-error-border text-xs text-error">
-                                {fileError}
+                            <div className="p-3 rounded-lg bg-error-background border border-error-border text-xs text-error flex items-center gap-2">
+                                <AlertTriangle className="h-4 w-4 shrink-0" />
+                                <span>{fileError}</span>
                             </div>
                         )}
 
-                        {/* DROPZONE AREA */}
+                        {/* REFINED DROPZONE */}
                         <div
                             onDragOver={handleDropzoneDragOver}
                             onDragLeave={handleDropzoneDragLeave}
                             onDrop={handleDropzoneDrop}
-                            onClick={() => fileInputReference.current?.click()}
-                            className={`border-2 border-dashed rounded-xl p-8 flex flex-col items-center justify-center text-center gap-3 transition-colors cursor-pointer ${
+                            className={`relative group border-2 border-dashed rounded-2xl p-7 flex flex-col items-center justify-center text-center gap-3 transition-all ${
                                 isDropzoneDragActive
-                                    ? 'border-accent bg-accent-background/50 scale-[0.99]'
-                                    : 'border-surface-border hover:border-accent/60 bg-surface hover:bg-surface-hover/50'
+                                    ? 'border-accent bg-accent/10 scale-[0.995] ring-4 ring-accent/10'
+                                    : 'border-surface-border hover:border-accent/50 bg-surface hover:bg-surface-hover/30'
                             }`}
                         >
-                            <div className="p-3 rounded-full bg-surface-hover border border-surface-border text-text-muted">
-                                <UploadCloud className="h-8 w-8 text-accent" />
+                            <div className="p-3.5 rounded-2xl bg-surface-hover border border-surface-border text-accent group-hover:scale-105 transition-transform shadow-2xs">
+                                <UploadCloud className="h-7 w-7 text-accent" />
                             </div>
-                            <div className="flex flex-col gap-1">
+
+                            <div className="flex flex-col gap-1 max-w-sm">
                                 <span className="text-sm font-semibold text-text">
-                                    Click to browse files or drag & drop here
+                                    Drag and drop documents or directories here
                                 </span>
                                 <span className="text-xs text-text-muted">
-                                    Drop single files or nested folder structures to upload
+                                    Preserves nested folder structures automatically
                                 </span>
                             </div>
-                            <div className="flex items-center gap-2">
-                                <span className="text-xs font-medium text-text-muted px-3 py-1 rounded-full bg-surface-hover border border-surface-border">
-                                    Destination: {currentDirectoryLabel}
-                                </span>
+
+                            {/* Dual browse action buttons */}
+                            <div className="flex items-center gap-2 mt-1">
                                 <button
                                     type="button"
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        setIsMobileScanModalOpen(true);
-                                    }}
-                                    className="text-xs font-medium text-accent hover:underline flex items-center gap-1 cursor-pointer"
+                                    onClick={() => fileInputReference.current?.click()}
+                                    className="px-3.5 py-1.5 rounded-lg bg-accent text-text-inverted text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer shadow-xs flex items-center gap-1.5"
                                 >
-                                    <Smartphone className="h-3 w-3" />
-                                    <span>Scan with Phone Camera</span>
+                                    <FileUp className="h-3.5 w-3.5" />
+                                    <span>Browse Files</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => folderInputReference.current?.click()}
+                                    className="px-3.5 py-1.5 rounded-lg bg-surface-hover hover:bg-surface-border border border-surface-border text-text text-xs font-semibold transition-colors cursor-pointer shadow-2xs flex items-center gap-1.5"
+                                    title="Select an entire folder from your computer"
+                                >
+                                    <FolderUp className="h-3.5 w-3.5 text-text-muted" />
+                                    <span>Browse Folder</span>
                                 </button>
                             </div>
+
+                            <div className="flex items-center gap-2 mt-2 pt-2 border-t border-surface-border/60 w-full justify-center">
+                                <span className="text-[11px] text-text-muted flex items-center gap-1">
+                                    <span>Destination:</span>
+                                    <span className="font-semibold text-text px-2 py-0.5 rounded-md bg-surface-hover border border-surface-border font-mono text-[10px]">
+                                        {currentDirectoryLabel}
+                                    </span>
+                                </span>
+                            </div>
+
                             <input
                                 ref={fileInputReference}
                                 type="file"
+                                multiple
+                                onChange={handleFileInputChange}
+                                className="hidden"
+                            />
+                            <input
+                                ref={folderInputReference}
+                                type="file"
+                                webkitdirectory=""
+                                directory=""
                                 multiple
                                 onChange={handleFileInputChange}
                                 className="hidden"
@@ -2951,15 +3209,18 @@ const DocumentsPage = ({
 
                         {/* STAGED ITEMS QUEUE PREVIEW */}
                         {stagedDroppedItems.length > 0 && (
-                            <div className="flex flex-col gap-2">
-                                <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="flex flex-col gap-2.5 mt-1">
+                                <div className="flex flex-wrap items-center justify-between gap-2 px-0.5">
                                     <span className="text-xs font-semibold text-text flex items-center gap-2">
                                         <Layers className="h-4 w-4 text-accent" />
-                                        Staged for Upload ({stagedDroppedItems.length} {stagedDroppedItems.length === 1 ? 'item' : 'items'})
+                                        <span>Staged Items</span>
+                                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-accent/15 text-accent">
+                                            {stagedDroppedItems.length}
+                                        </span>
                                     </span>
-                                    <div className="flex items-center gap-3">
+                                    <div className="flex items-center gap-2 flex-wrap">
                                         {stagedDroppedItems.some((item) => item.isImage) && (
-                                            <div className="flex items-center gap-1.5 text-[11px] text-text-muted bg-surface-hover/60 px-2 py-0.5 rounded-md border border-surface-border">
+                                            <div className="flex items-center gap-1.5 text-[11px] text-text-muted bg-surface-hover/70 px-2.5 py-1 rounded-lg border border-surface-border">
                                                 <span className="font-medium">Images:</span>
                                                 <button
                                                     type="button"
@@ -2969,7 +3230,7 @@ const DocumentsPage = ({
                                                 >
                                                     All OCR to PDF
                                                 </button>
-                                                <span>•</span>
+                                                <span className="text-surface-border">•</span>
                                                 <button
                                                     type="button"
                                                     onClick={() => handleSetAllImagesOcrMode('normal_image')}
@@ -2980,8 +3241,8 @@ const DocumentsPage = ({
                                                 </button>
                                             </div>
                                         )}
-                                        <div className="flex items-center gap-1.5 text-[11px] text-text-muted bg-surface-hover/60 px-2 py-0.5 rounded-md border border-surface-border">
-                                            <span className="font-medium">Set All:</span>
+                                        <div className="flex items-center gap-1.5 text-[11px] text-text-muted bg-surface-hover/70 px-2.5 py-1 rounded-lg border border-surface-border">
+                                            <span className="font-medium">Classification:</span>
                                             <button
                                                 type="button"
                                                 onClick={() => handleSetAllStagedClassification(constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED)}
@@ -2990,7 +3251,7 @@ const DocumentsPage = ({
                                             >
                                                 Auto AI
                                             </button>
-                                            <span>•</span>
+                                            <span className="text-surface-border">•</span>
                                             <button
                                                 type="button"
                                                 onClick={() => handleSetAllStagedClassification(constants.DOCUMENT_VERSIONS_CLASSIFICATION.PUBLIC)}
@@ -2999,7 +3260,7 @@ const DocumentsPage = ({
                                             >
                                                 Public
                                             </button>
-                                            <span>•</span>
+                                            <span className="text-surface-border">•</span>
                                             <button
                                                 type="button"
                                                 onClick={() => handleSetAllStagedClassification(constants.DOCUMENT_VERSIONS_CLASSIFICATION.PRIVATE)}
@@ -3012,43 +3273,49 @@ const DocumentsPage = ({
                                         <button
                                             type="button"
                                             onClick={handleClearAllStagedItems}
-                                            className="text-xs text-error hover:underline cursor-pointer"
+                                            className="text-xs text-error hover:underline cursor-pointer font-medium px-1"
                                         >
                                             Clear All
                                         </button>
                                     </div>
                                 </div>
 
-                                <div className="max-h-56 overflow-y-auto divide-y divide-surface-border border border-surface-border rounded-lg bg-surface">
+                                <div className="max-h-60 overflow-y-auto divide-y divide-surface-border border border-surface-border rounded-xl bg-surface shadow-2xs">
                                     {stagedDroppedItems.map((stagedItem) => (
                                         <div
                                             key={stagedItem.id}
-                                            className="px-3 py-2.5 flex items-center justify-between text-xs hover:bg-surface-hover gap-3"
+                                            className="px-3.5 py-2.5 flex items-center justify-between text-xs hover:bg-surface-hover/60 transition-colors gap-3"
                                         >
-                                            <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                                            <div className="flex items-center gap-3 min-w-0 flex-1">
                                                 {stagedItem.previewUrl ? (
                                                     <img
                                                         src={stagedItem.previewUrl}
                                                         alt="Document Preview"
-                                                        className="h-8 w-8 rounded object-cover border border-accent/40 shadow-xs shrink-0 cursor-pointer"
+                                                        className="h-9 w-9 rounded-lg object-cover border border-accent/40 shadow-xs shrink-0 cursor-pointer hover:opacity-80 transition-opacity"
                                                         onClick={() => handleOpenScanner(stagedItem)}
                                                         title="Click to re-adjust crop/whitening"
                                                     />
                                                 ) : stagedItem.isImage ? (
                                                     stagedItem.ocrMode === 'ocr_pdf' ? (
-                                                        <ScanText className="h-4 w-4 text-accent shrink-0" />
+                                                        <div className="h-9 w-9 rounded-lg bg-accent/10 border border-accent/20 flex items-center justify-center shrink-0">
+                                                            <ScanText className="h-4 w-4 text-accent" />
+                                                        </div>
                                                     ) : (
-                                                        <ImageIcon className="h-4 w-4 text-information shrink-0" />
+                                                        <div className="h-9 w-9 rounded-lg bg-surface-hover border border-surface-border flex items-center justify-center shrink-0">
+                                                            <ImageIcon className="h-4 w-4 text-information" />
+                                                        </div>
                                                     )
                                                 ) : (
-                                                    <FileText className="h-4 w-4 text-accent shrink-0" />
+                                                    <div className="h-9 w-9 rounded-lg bg-surface-hover border border-surface-border flex items-center justify-center shrink-0">
+                                                        <FileText className="h-4 w-4 text-accent" />
+                                                    </div>
                                                 )}
                                                 <div className="flex flex-col min-w-0">
                                                     <div className="flex items-center gap-1.5 flex-wrap">
                                                         <span className="truncate font-medium text-text font-mono text-[11px]" title={stagedItem.relativePath}>
                                                             {stagedItem.relativePath}
                                                         </span>
-                                                        <span className="text-[10px] text-text-muted shrink-0">
+                                                        <span className="text-[10px] text-text-muted shrink-0 font-mono">
                                                             ({stagedItem.size})
                                                         </span>
                                                         {stagedItem.isScannerEnhanced && (
@@ -3063,12 +3330,12 @@ const DocumentsPage = ({
                                                             }`}>
                                                                 <Sparkles className="h-2.5 w-2.5" />
                                                                 {stagedItem.scannerFilter === 'original'
-                                                                    ? 'Original Color'
+                                                                    ? 'Original'
                                                                     : stagedItem.scannerFilter === 'bw'
-                                                                    ? 'B&W Clean'
+                                                                    ? 'B&W'
                                                                     : stagedItem.scannerFilter === 'gray'
                                                                     ? 'Grayscale'
-                                                                    : 'Magic White'}
+                                                                    : 'Whitened'}
                                                             </span>
                                                         )}
                                                         {stagedItem.isMobileCaptured && (
@@ -3081,15 +3348,15 @@ const DocumentsPage = ({
                                                     <div className="flex items-center gap-3 mt-1 flex-wrap">
                                                         {stagedItem.isImage && stagedItem.ocrMode === 'ocr_pdf' && (
                                                             <span className="text-[10px] text-accent font-medium flex items-center gap-1">
-                                                                <span>➔ Will convert to <strong>{(stagedItem.fileName || '').replace(/\.[^/.]+$/, '')}.pdf</strong> via Cloud OCR</span>
+                                                                <span>➔ Convert to <strong>{(stagedItem.fileName || '').replace(/\.[^/.]+$/, '')}.pdf</strong> via Cloud OCR</span>
                                                             </span>
                                                         )}
-                                                        <div className="flex items-center gap-1 text-[10px] text-text-muted">
-                                                            <span>Class:</span>
+                                                        <div className="flex items-center gap-1.5 text-[10px] text-text-muted">
+                                                            <span className="font-medium">Class:</span>
                                                             <select
                                                                 value={stagedItem.classification || constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED}
                                                                 onChange={(e) => handleSetStagedItemClassification(stagedItem.id, e.target.value)}
-                                                                className="text-[10px] py-0.5 px-1.5 rounded bg-surface hover:bg-surface-border border border-surface-border text-text font-medium cursor-pointer focus:outline-none focus:border-accent"
+                                                                className="text-[10px] py-0.5 px-2 rounded-md bg-surface hover:bg-surface-hover border border-surface-border text-text font-medium cursor-pointer focus:outline-none focus:border-accent"
                                                                 title="Security classification for this document"
                                                             >
                                                                 <option value={constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED}>✨ Auto (AI Classify)</option>
@@ -3109,7 +3376,7 @@ const DocumentsPage = ({
                                                     <button
                                                         type="button"
                                                         onClick={() => handleOpenScanner(stagedItem)}
-                                                        className={`flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium border cursor-pointer transition-all shadow-xs ${
+                                                        className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-medium border cursor-pointer transition-all shadow-2xs ${
                                                             stagedItem.isScannerEnhanced
                                                                 ? 'bg-accent/15 border-accent/40 text-accent hover:bg-accent/25'
                                                                 : 'bg-surface-hover hover:bg-surface-border text-text hover:text-accent border-surface-border'
@@ -3123,7 +3390,7 @@ const DocumentsPage = ({
 
                                                 {/* OCR MODE TOGGLE BUTTONS FOR IMAGES */}
                                                 {stagedItem.isImage && (
-                                                    <div className="flex items-center gap-1 bg-surface-hover p-0.5 rounded-lg border border-surface-border">
+                                                    <div className="flex items-center gap-0.5 bg-surface-hover p-0.5 rounded-lg border border-surface-border">
                                                         <button
                                                             type="button"
                                                             onClick={() => handleToggleOcrMode(stagedItem.id, 'ocr_pdf')}
@@ -3135,7 +3402,7 @@ const DocumentsPage = ({
                                                             title="Scan image text with Cloud OCR and convert into searchable PDF"
                                                         >
                                                             <ScanText className="h-3 w-3" />
-                                                            <span>OCR to PDF</span>
+                                                            <span>OCR</span>
                                                         </button>
                                                         <button
                                                             type="button"
@@ -3148,7 +3415,7 @@ const DocumentsPage = ({
                                                             title="Upload file directly as normal image"
                                                         >
                                                             <ImageIcon className="h-3 w-3" />
-                                                            <span>Image Only</span>
+                                                            <span>Raw</span>
                                                         </button>
                                                     </div>
                                                 )}
@@ -3165,14 +3432,14 @@ const DocumentsPage = ({
                                                 ) : (
                                                     <>
                                                         {stagedItem.action === 'create_version' && (
-                                                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-accent/15 text-accent border border-accent/30">
+                                                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-accent/15 text-accent border border-accent/30 font-mono">
                                                                 v{stagedItem.nextVersion ?? 2}.0
                                                             </span>
                                                         )}
                                                         <button
                                                             type="button"
                                                             onClick={() => handleRemoveStagedItem(stagedItem.id)}
-                                                            className="group/btn h-7 w-7 rounded-md hover:bg-error/10 text-text-muted hover:text-error flex items-center justify-center cursor-pointer transition-colors"
+                                                            className="group/btn h-7 w-7 rounded-lg hover:bg-error/10 text-text-muted hover:text-error flex items-center justify-center cursor-pointer transition-colors"
                                                             title="Click to remove from staging"
                                                         >
                                                             <Check className="h-4 w-4 text-accent group-hover/btn:hidden transition-all" />
@@ -3192,9 +3459,16 @@ const DocumentsPage = ({
                 {/* 3. MODE CONTENT B: FOLDER DETAILS FORM */}
                 {creationMode === 'folder' && (
                     <div className="flex flex-col gap-4 mt-2">
+                        <div className="p-3 rounded-xl bg-surface-hover/70 border border-surface-border flex items-center gap-2.5 text-xs text-text-muted">
+                            <Folder className="h-4 w-4 text-accent shrink-0" />
+                            <span>
+                                Creating folder inside <strong className="text-text font-mono font-medium">{currentDirectoryLabel}</strong>
+                            </span>
+                        </div>
+
                         <TextField
-                            label="Name"
-                            placeholder="Enter folder name"
+                            label="Folder Name"
+                            placeholder="e.g. Research Papers, Memorandums 2026..."
                             value={folderTitle}
                             onChange={(event) => {
                                 setFolderTitle(event.target.value);
@@ -3208,8 +3482,8 @@ const DocumentsPage = ({
                         />
 
                         <AreaField
-                            label="Comment"
-                            placeholder="Enter comment..."
+                            label="Description / Purpose (Optional)"
+                            placeholder="Add brief context or notes regarding this folder..."
                             value={folderDescription}
                             onChange={(event) => setFolderDescription(event.target.value)}
                             rows={3}
@@ -3348,18 +3622,41 @@ const DocumentsPage = ({
                 >
                     <div className="flex flex-col gap-4 py-2">
                         {/* 1. NAME (REQUIRED FOR BOTH) */}
-                        <TextField
-                            label="Name"
-                            placeholder={editItem.isFolder ? 'Enter folder name...' : 'Enter document filename...'}
-                            value={editFormName}
-                            onChange={(event) => {
-                                setEditFormName(event.target.value);
-                                if (editFormErrors.name) setEditFormErrors((prev) => ({ ...prev, name: '' }));
-                            }}
-                            error={editFormErrors.name}
-                            leadingIcon={editItem.isFolder ? Folder : FileText}
-                            required
-                        />
+                        {editItem.isFolder ? (
+                            <TextField
+                                label="Name"
+                                placeholder="Enter folder name..."
+                                value={editFormName}
+                                onChange={(event) => {
+                                    setEditFormName(event.target.value);
+                                    if (editFormErrors.name) setEditFormErrors((prev) => ({ ...prev, name: '' }));
+                                }}
+                                error={editFormErrors.name}
+                                leadingIcon={Folder}
+                                required
+                            />
+                        ) : (
+                            <TextField
+                                label="File Name"
+                                placeholder="Enter document filename..."
+                                value={editFormName}
+                                onChange={(event) => {
+                                    let val = event.target.value;
+                                    if (editFormExtension && val.toLowerCase().endsWith(editFormExtension.toLowerCase())) {
+                                        val = val.slice(0, -editFormExtension.length);
+                                    }
+                                    setEditFormName(val);
+                                    if (editFormErrors.name) setEditFormErrors((prev) => ({ ...prev, name: '' }));
+                                }}
+                                suffixOptions={FILE_EXTENSION_OPTIONS}
+                                selectedSuffix={editFormExtension}
+                                onSuffixChange={(ext) => setEditFormExtension(ext)}
+                                error={editFormErrors.name}
+                                leadingIcon={FileText}
+                                helperText={`Format: ${formatMimeTypeLabel(getMimeTypeFromFilename(`file${editFormExtension}`))}`}
+                                required
+                            />
+                        )}
 
                         {/* 2. FOR FILES ONLY: CLASSIFICATION WITH SPARKLES AI BUTTON */}
                         {!editItem.isFolder && (
@@ -3550,12 +3847,12 @@ const DocumentsPage = ({
                         setSelectedShareDepartmentIds([]);
                         setDepartmentSearchQuery('');
                     }}
-                    title={`Share ${shareModalDocument.isFolder ? 'Folder' : 'Document'} to Departments`}
-                    description={`Configure department access and review permissions for "${shareModalDocument.title || shareModalDocument.name}".`}
+                    title={`Share ${shareModalDocument.isFolder ? 'Folder' : 'Document'}`}
+                    description={`Manage departmental distribution and review routing for "${shareModalDocument.title || shareModalDocument.name}".`}
                     icon={Share2}
-                    size="md"
+                    size="xl"
                     secondaryAction={{
-                        label: 'Done',
+                        label: 'Close',
                         onClick: () => {
                             setShareModalDocument(null);
                             setSelectedShareDepartmentIds([]);
@@ -3563,7 +3860,7 @@ const DocumentsPage = ({
                         },
                     }}
                 >
-                    <div className="flex flex-col gap-5">
+                    <div className="flex flex-col gap-4">
                         {/* FOLDER CASCADING SHARE BANNER */}
                         {shareModalDocument.isFolder && (
                             <div className="p-3.5 rounded-xl border border-accent/20 bg-accent/5 flex items-start gap-3">
@@ -3573,69 +3870,100 @@ const DocumentsPage = ({
                                 <div className="flex flex-col gap-0.5 text-xs">
                                     <span className="font-semibold text-text">Recursive Folder Cascade</span>
                                     <span className="text-text-muted leading-relaxed">
-                                        Sharing this folder will automatically share all nested files and subfolders to the selected departments with <strong className="text-text">Pending Approval</strong> status.
+                                        Sharing this folder automatically cascades to all nested files and subfolders for selected departments under <strong className="text-text">Pending Approval</strong>.
                                     </span>
                                 </div>
                             </div>
                         )}
 
-                        {/* 1. SELECT TARGET DEPARTMENTS (MULTI-SELECT) */}
-                        <div className="p-4 rounded-xl border border-surface-border bg-surface-hover flex flex-col gap-3">
-                            <div className="flex items-center justify-between gap-2">
-                                <span className="text-xs font-semibold text-text">
-                                    Target Departments ({selectedShareDepartmentIds.length} of {availableDepartmentsToShare.length} selected)
-                                </span>
-                                {availableDepartmentsToShare.length > 0 && (
-                                    <div className="flex items-center gap-2">
-                                        <button
-                                            type="button"
-                                            onClick={handleSelectAllDepartments}
-                                            className="text-xs text-accent hover:underline font-medium cursor-pointer"
-                                        >
-                                            {selectedShareDepartmentIds.length === filteredAvailableDepartments.length && filteredAvailableDepartments.length > 0
-                                                ? 'Deselect All'
-                                                : 'Select All'}
-                                        </button>
-                                        {selectedShareDepartmentIds.length > 0 && (
+                        {/* 2-COLUMN LAYOUT: LEFT = PICKER / DISPATCH, RIGHT = ACTIVE SHARES */}
+                        <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-stretch">
+                            {/* LEFT COLUMN: DEPARTMENT PICKER */}
+                            <div className="md:col-span-7 flex flex-col gap-3.5 p-4 rounded-xl border border-surface-border bg-surface-hover/30">
+                                <div className="flex items-center justify-between gap-2">
+                                    <div>
+                                        <h4 className="text-xs font-bold text-text uppercase tracking-wider">
+                                            Target Departments
+                                        </h4>
+                                        <p className="text-[11px] text-text-muted">
+                                            Select departments to route for review
+                                        </p>
+                                    </div>
+                                    {availableDepartmentsToShare.length > 0 && (
+                                        <div className="flex items-center gap-2">
                                             <button
                                                 type="button"
-                                                onClick={() => setSelectedShareDepartmentIds([])}
-                                                className="text-xs text-text-muted hover:text-text cursor-pointer"
+                                                onClick={handleSelectAllDepartments}
+                                                className="text-xs text-accent hover:underline font-medium cursor-pointer"
                                             >
-                                                Clear
+                                                {selectedShareDepartmentIds.length === filteredAvailableDepartments.length && filteredAvailableDepartments.length > 0
+                                                    ? 'Deselect All'
+                                                    : 'Select All'}
                                             </button>
-                                        )}
-                                    </div>
-                                )}
-                            </div>
-
-                            {availableDepartmentsToShare.length === 0 ? (
-                                <div className="p-3 rounded-lg border border-surface-border bg-surface text-center text-xs text-text-muted">
-                                    All available departments already have access to this {shareModalDocument.isFolder ? 'folder' : 'document'}.
-                                </div>
-                            ) : (
-                                <>
-                                    {availableDepartmentsToShare.length > 4 && (
-                                        <div className="relative">
-                                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-text-muted" />
-                                            <input
-                                                type="text"
-                                                value={departmentSearchQuery}
-                                                onChange={(e) => setDepartmentSearchQuery(e.target.value)}
-                                                placeholder="Filter departments..."
-                                                className="w-full pl-8.5 pr-3 py-1.5 text-xs bg-surface border border-surface-border rounded-lg text-text focus:outline-none focus:border-accent"
-                                            />
+                                            {selectedShareDepartmentIds.length > 0 && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setSelectedShareDepartmentIds([])}
+                                                    className="text-xs text-text-muted hover:text-text cursor-pointer"
+                                                >
+                                                    Clear ({selectedShareDepartmentIds.length})
+                                                </button>
+                                            )}
                                         </div>
                                     )}
+                                </div>
 
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto pr-1">
-                                        {filteredAvailableDepartments.map((dept) => {
+                                {/* SEARCH FILTER */}
+                                <div className="relative">
+                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-text-muted" />
+                                    <input
+                                        type="text"
+                                        value={departmentSearchQuery}
+                                        onChange={(e) => setDepartmentSearchQuery(e.target.value)}
+                                        placeholder="Search departments by name or code..."
+                                        className="w-full pl-8.5 pr-8 py-2 text-xs bg-surface border border-surface-border rounded-lg text-text focus:outline-none focus:border-accent transition-colors"
+                                    />
+                                    {departmentSearchQuery && (
+                                        <button
+                                            type="button"
+                                            onClick={() => setDepartmentSearchQuery('')}
+                                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-muted hover:text-text p-0.5 cursor-pointer"
+                                        >
+                                            <X className="h-3.5 w-3.5" />
+                                        </button>
+                                    )}
+                                </div>
+
+                                {/* AVAILABLE DEPARTMENTS LIST */}
+                                <div className="flex-1 overflow-y-auto max-h-[290px] pr-1 space-y-1.5 min-h-[180px]">
+                                    {availableDepartmentsToShare.length === 0 ? (
+                                        <div className="h-full min-h-[180px] flex flex-col items-center justify-center p-6 text-center rounded-lg border border-dashed border-surface-border bg-surface/50 text-xs text-text-muted gap-2">
+                                            <Building2 className="h-6 w-6 text-text-muted/50" />
+                                            <span className="font-semibold text-text">No Departments Available</span>
+                                            <span className="text-[11px] max-w-xs leading-relaxed">
+                                                All eligible departments already have access to this {shareModalDocument.isFolder ? 'folder' : 'document'}.
+                                            </span>
+                                        </div>
+                                    ) : filteredAvailableDepartments.length === 0 ? (
+                                        <div className="h-full min-h-[180px] flex flex-col items-center justify-center p-6 text-center rounded-lg border border-dashed border-surface-border bg-surface/50 text-xs text-text-muted gap-1.5">
+                                            <Search className="h-5 w-5 text-text-muted/50" />
+                                            <span>No departments match &quot;{departmentSearchQuery}&quot;</span>
+                                            <button
+                                                type="button"
+                                                onClick={() => setDepartmentSearchQuery('')}
+                                                className="text-accent text-[11px] hover:underline mt-1 cursor-pointer"
+                                            >
+                                                Clear filter
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        filteredAvailableDepartments.map((dept) => {
                                             const isSelected = selectedShareDepartmentIds.includes(dept.id);
                                             return (
                                                 <div
                                                     key={dept.id}
                                                     onClick={() => handleToggleDepartmentSelection(dept.id)}
-                                                    className={`p-2.5 rounded-lg border transition-all cursor-pointer flex items-center justify-between gap-2 ${
+                                                    className={`p-2.5 rounded-lg border transition-all cursor-pointer flex items-center justify-between gap-3 ${
                                                         isSelected
                                                             ? 'border-accent bg-accent/10 shadow-xs'
                                                             : 'border-surface-border bg-surface hover:border-surface-border-strong hover:bg-surface-hover'
@@ -3656,106 +3984,136 @@ const DocumentsPage = ({
                                                                 {dept.name}
                                                             </span>
                                                             <span className="text-[10px] text-text-muted">
-                                                                {dept.code}
+                                                                Code: {dept.code || 'DEPT'}
                                                             </span>
                                                         </div>
                                                     </div>
-                                                    <Badge variant="neutral" size="xs" label={dept.code} />
+                                                    <Badge
+                                                        variant={isSelected ? 'accent' : 'neutral'}
+                                                        size="xs"
+                                                        label={dept.code || 'DEPT'}
+                                                    />
                                                 </div>
                                             );
-                                        })}
-                                    </div>
+                                        })
+                                    )}
+                                </div>
 
-                                    <div className="flex items-center justify-between pt-1 gap-2">
-                                        <span className="text-[11px] text-text-muted">
-                                            Routes to Department Officers for approval before director review.
-                                        </span>
-                                        <Button
-                                            variant="primary"
-                                            size="sm"
-                                            leadingIcon={Share2}
-                                            isLoading={isSharingDepartment}
-                                            isDisabled={selectedShareDepartmentIds.length === 0 || isSharingDepartment}
-                                            onClick={handleShareSubmit}
-                                            className="shrink-0"
-                                        >
-                                            {selectedShareDepartmentIds.length > 1
-                                                ? `Share to ${selectedShareDepartmentIds.length} Departments`
-                                                : selectedShareDepartmentIds.length === 1
-                                                ? 'Share to 1 Department'
-                                                : 'Share'}
-                                        </Button>
-                                    </div>
-                                </>
-                            )}
-                        </div>
-
-                        {/* 2. ACTIVE SHARES LIST */}
-                        <div className="flex flex-col gap-2">
-                            <div className="flex items-center justify-between">
-                                <span className="text-xs font-semibold text-text">
-                                    Current Department Shares ({activeSharesForModalDoc.length})
-                                </span>
+                                {/* DISPATCH FOOTER */}
+                                <div className="pt-2 border-t border-surface-border flex items-center justify-between gap-3 mt-auto">
+                                    <span className="text-[11px] text-text-muted">
+                                        {selectedShareDepartmentIds.length} of {availableDepartmentsToShare.length} selected
+                                    </span>
+                                    <Button
+                                        variant="primary"
+                                        size="sm"
+                                        leadingIcon={Share2}
+                                        isLoading={isSharingDepartment}
+                                        isDisabled={selectedShareDepartmentIds.length === 0 || isSharingDepartment}
+                                        onClick={handleShareSubmit}
+                                    >
+                                        {selectedShareDepartmentIds.length > 1
+                                            ? `Share to ${selectedShareDepartmentIds.length} Departments`
+                                            : selectedShareDepartmentIds.length === 1
+                                            ? 'Share to 1 Department'
+                                            : 'Select Departments'}
+                                    </Button>
+                                </div>
                             </div>
 
-                            {activeSharesForModalDoc.length === 0 ? (
-                                <div className="p-4 rounded-xl border border-surface-border bg-surface text-center text-xs text-text-muted">
-                                    This {shareModalDocument.isFolder ? 'folder' : 'document'} is currently unshared (status: —). Only Administrators and Coordinators have access.
+                            {/* RIGHT COLUMN: ACTIVE SHARES LIST */}
+                            <div className="md:col-span-5 flex flex-col gap-3.5 p-4 rounded-xl border border-surface-border bg-surface">
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <h4 className="text-xs font-bold text-text uppercase tracking-wider">
+                                            Active Shares
+                                        </h4>
+                                        <p className="text-[11px] text-text-muted">
+                                            Currently granted access
+                                        </p>
+                                    </div>
+                                    <Badge
+                                        variant={activeSharesForModalDoc.length > 0 ? 'accent' : 'neutral'}
+                                        size="xs"
+                                        label={`${activeSharesForModalDoc.length} Shared`}
+                                    />
                                 </div>
-                            ) : (
-                                <div className="flex flex-col gap-2 max-h-60 overflow-y-auto pr-1">
-                                    {activeSharesForModalDoc.map((share) => {
-                                        const dept = departments.find(
-                                            (d) => d.id === (share.department?.id ?? share.departmentId)
-                                        );
-                                        const badgeVariant =
-                                            share.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED
-                                                ? 'success'
-                                                : share.status === constants.DOCUMENT_SHARES_STATUS.APPROVED
-                                                ? 'success'
-                                                : share.status === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL
-                                                ? 'warning'
-                                                : 'neutral';
 
-                                        const shareKey = share.id || (share.department?.id ?? share.departmentId);
-                                        const isUnsharing = unsharingShareId === share.id || unsharingShareId === (share.department?.id ?? share.departmentId);
+                                <div className="flex-1 overflow-y-auto max-h-[360px] pr-1 space-y-2 min-h-[180px]">
+                                    {activeSharesForModalDoc.length === 0 ? (
+                                        <div className="h-full min-h-[180px] flex flex-col items-center justify-center p-6 text-center rounded-lg border border-dashed border-surface-border bg-surface-hover/30 text-xs text-text-muted gap-2">
+                                            <Share2 className="h-6 w-6 text-text-muted/40" />
+                                            <span className="font-semibold text-text">Not Shared Externally</span>
+                                            <span className="text-[11px] leading-relaxed max-w-xs">
+                                                This {shareModalDocument.isFolder ? 'folder' : 'document'} is currently internal to your department. Use the picker on the left to share with other units.
+                                            </span>
+                                        </div>
+                                    ) : (
+                                        activeSharesForModalDoc.map((share) => {
+                                            const dept = departments.find(
+                                                (d) => d.id === (share.department?.id ?? share.departmentId)
+                                            );
+                                            const badgeVariant =
+                                                share.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED
+                                                    ? 'success'
+                                                    : share.status === constants.DOCUMENT_SHARES_STATUS.APPROVED
+                                                    ? 'success'
+                                                    : share.status === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL
+                                                    ? 'warning'
+                                                    : 'neutral';
 
-                                        return (
-                                            <div
-                                                key={shareKey}
-                                                className="p-3 rounded-xl border border-surface-border bg-surface flex items-center justify-between gap-3"
-                                            >
-                                                <div className="flex flex-col gap-1 min-w-0 flex-1">
-                                                    <div className="flex items-center gap-2 flex-wrap">
-                                                        <span className="font-semibold text-xs text-text truncate">
-                                                            {dept?.name || 'Department'}
-                                                        </span>
-                                                        <Badge variant={badgeVariant} label={share.status} />
-                                                        {shareModalDocument.isFolder && (
-                                                            <Badge variant="neutral" size="xs" label="Cascading" />
-                                                        )}
-                                                    </div>
-                                                    <span className="text-[11px] text-text-muted">
-                                                        Shared {formatDateTime(share.createdAt)}
-                                                    </span>
-                                                </div>
+                                            const shareKey = share.id || (share.department?.id ?? share.departmentId);
+                                            const isUnsharing = unsharingShareId === share.id || unsharingShareId === (share.department?.id ?? share.departmentId);
 
-                                                <Button
-                                                    variant="destructive"
-                                                    size="xs"
-                                                    leadingIcon={Trash2}
-                                                    isLoading={isUnsharing}
-                                                    isDisabled={Boolean(unsharingShareId)}
-                                                    onClick={() => handleUnshareClick(share, dept?.name)}
-                                                    className="shrink-0"
+                                            return (
+                                                <div
+                                                    key={shareKey}
+                                                    className="p-3 rounded-lg border border-surface-border bg-surface-hover/50 hover:bg-surface-hover transition-colors flex items-start justify-between gap-2.5"
                                                 >
-                                                    Unshare
-                                                </Button>
-                                            </div>
-                                        );
-                                    })}
+                                                    <div className="flex flex-col gap-1 min-w-0 flex-1">
+                                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                                            <span className="font-semibold text-xs text-text truncate">
+                                                                {dept?.name || 'Department'}
+                                                            </span>
+                                                            {dept?.code && (
+                                                                <span className="text-[10px] text-text-muted font-mono">
+                                                                    ({dept.code})
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                                            <Badge variant={badgeVariant} size="xs" label={share.status} />
+                                                            {shareModalDocument.isFolder && (
+                                                                <Badge variant="neutral" size="xs" label="Cascading" />
+                                                            )}
+                                                        </div>
+                                                        <span className="text-[10px] text-text-muted pt-0.5">
+                                                            Shared {formatDateTime(share.createdAt)}
+                                                        </span>
+                                                    </div>
+
+                                                    <Button
+                                                        variant="destructive"
+                                                        size="xs"
+                                                        leadingIcon={Trash2}
+                                                        isLoading={isUnsharing}
+                                                        isDisabled={Boolean(unsharingShareId)}
+                                                        onClick={() => handleUnshareClick(share, dept?.name)}
+                                                        className="shrink-0"
+                                                    >
+                                                        Revoke
+                                                    </Button>
+                                                </div>
+                                            );
+                                        })
+                                    )}
                                 </div>
-                            )}
+
+                                <div className="pt-2 border-t border-surface-border text-[11px] text-text-muted flex items-center gap-1.5">
+                                    <Clock className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+                                    <span>Routes to Department Officers for approval before director review.</span>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </Modal>
@@ -3770,10 +4128,10 @@ const DocumentsPage = ({
                         setSelectedPublishMemberIds([]);
                         setMemberSearchQuery('');
                     }}
-                    title={`Publish ${publishModalDocument.isFolder ? 'Folder' : 'Document'} to Department Members`}
-                    description={`Configure faculty member visibility within ${userDepartment}. You can publish to all department members or choose specific members.`}
+                    title={`Publish ${publishModalDocument.isFolder ? 'Folder' : 'Document'} to Faculty`}
+                    description={`Configure faculty member distribution within ${userDepartment}.`}
                     icon={Send}
-                    size="md"
+                    size="xl"
                     secondaryAction={{
                         label: 'Cancel',
                         onClick: () => {
@@ -3783,7 +4141,7 @@ const DocumentsPage = ({
                         },
                     }}
                 >
-                    <div className="flex flex-col gap-5">
+                    <div className="flex flex-col gap-4">
                         {/* RECURSIVE FOLDER CASCADE BANNER */}
                         {publishModalDocument.isFolder && (
                             <div className="p-3.5 rounded-xl border border-accent/20 bg-accent/5 flex items-start gap-3">
@@ -3793,193 +4151,436 @@ const DocumentsPage = ({
                                 <div className="flex flex-col gap-0.5 text-xs">
                                     <span className="font-semibold text-text">Recursive Folder Cascade</span>
                                     <span className="text-text-muted leading-relaxed">
-                                        Publishing this folder will automatically publish all nested files and subfolders to the selected members with <strong className="text-text">Published</strong> status.
+                                        Publishing this folder automatically cascades to all nested files and subfolders for selected members with <strong className="text-text">Published</strong> status.
                                     </span>
                                 </div>
                             </div>
                         )}
 
-                        {/* AUDIENCE SELECTOR: ALL MEMBERS vs SPECIFIC MEMBERS */}
-                        <div className="flex flex-col gap-2">
-                            <span className="text-xs font-semibold text-text">
-                                Publication Scope
-                            </span>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                <div
-                                    onClick={() => setPublishMode('all')}
-                                    className={`p-3 rounded-xl border transition-all cursor-pointer flex items-start gap-3 ${
-                                        publishMode === 'all'
-                                            ? 'border-accent bg-accent/10 shadow-xs'
-                                            : 'border-surface-border bg-surface hover:border-surface-border-strong hover:bg-surface-hover'
-                                    }`}
-                                >
-                                    <div className="p-2 rounded-lg bg-surface border border-surface-border text-accent shrink-0">
-                                        <Users className="h-4 w-4" />
-                                    </div>
-                                    <div className="flex flex-col gap-0.5 min-w-0">
-                                        <span className="text-xs font-bold text-text">All Department Members</span>
-                                        <span className="text-[11px] text-text-muted leading-tight">
-                                            Every member in {userDepartment} can view and download.
-                                        </span>
-                                    </div>
+                        {/* 2-COLUMN LAYOUT: LEFT = SCOPE & MEMBER PICKER, RIGHT = DISTRIBUTION AUDIENCE */}
+                        <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-stretch">
+                            {/* LEFT COLUMN: PUBLICATION SCOPE & MEMBER PICKER */}
+                            <div className="md:col-span-7 flex flex-col gap-3.5 p-4 rounded-xl border border-surface-border bg-surface-hover/30">
+                                <div className="flex flex-col gap-1">
+                                    <h4 className="text-xs font-bold text-text uppercase tracking-wider">
+                                        Publication Scope
+                                    </h4>
+                                    <p className="text-[11px] text-text-muted">
+                                        Choose who can view this {publishModalDocument.isFolder ? 'folder' : 'document'}
+                                    </p>
                                 </div>
 
-                                <div
-                                    onClick={() => setPublishMode('specific')}
-                                    className={`p-3 rounded-xl border transition-all cursor-pointer flex items-start gap-3 ${
-                                        publishMode === 'specific'
-                                            ? 'border-accent bg-accent/10 shadow-xs'
-                                            : 'border-surface-border bg-surface hover:border-surface-border-strong hover:bg-surface-hover'
-                                    }`}
-                                >
-                                    <div className="p-2 rounded-lg bg-surface border border-surface-border text-accent shrink-0">
-                                        <UserCheck className="h-4 w-4" />
-                                    </div>
-                                    <div className="flex flex-col gap-0.5 min-w-0">
-                                        <span className="text-xs font-bold text-text">Select Specific Members</span>
-                                        <span className="text-[11px] text-text-muted leading-tight">
-                                            Only designated department members receive access.
-                                        </span>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* SPECIFIC MEMBER PICKER */}
-                        {publishMode === 'specific' && (
-                            <div className="p-4 rounded-xl border border-surface-border bg-surface-hover flex flex-col gap-3">
-                                <div className="flex items-center justify-between gap-2">
-                                    <span className="text-xs font-semibold text-text">
-                                        Department Members ({selectedPublishMemberIds.length} of {departmentMembers.length} selected)
-                                    </span>
-                                    {departmentMembers.length > 0 && (
-                                        <div className="flex items-center gap-2">
-                                            <button
-                                                type="button"
-                                                onClick={handleSelectAllMembers}
-                                                className="text-xs text-accent hover:underline font-medium cursor-pointer"
-                                            >
-                                                {selectedPublishMemberIds.length === filteredDepartmentMembers.length && filteredDepartmentMembers.length > 0
-                                                    ? 'Deselect All'
-                                                    : 'Select All'}
-                                            </button>
-                                            {selectedPublishMemberIds.length > 0 && (
-                                                <button
-                                                    type="button"
-                                                    onClick={() => setSelectedPublishMemberIds([])}
-                                                    className="text-xs text-text-muted hover:text-text cursor-pointer"
-                                                >
-                                                    Clear
-                                                </button>
-                                            )}
+                                {/* SCOPE SELECTION CARDS */}
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                                    <div
+                                        onClick={() => setPublishMode('all')}
+                                        className={`p-3 rounded-xl border transition-all cursor-pointer flex items-start gap-3 ${
+                                            publishMode === 'all'
+                                                ? 'border-accent bg-accent/10 shadow-xs'
+                                                : 'border-surface-border bg-surface hover:border-surface-border-strong hover:bg-surface-hover'
+                                        }`}
+                                    >
+                                        <div className="p-2 rounded-lg bg-surface border border-surface-border text-accent shrink-0">
+                                            <Users className="h-4 w-4" />
                                         </div>
-                                    )}
+                                        <div className="flex flex-col gap-0.5 min-w-0">
+                                            <span className="text-xs font-bold text-text">All Members</span>
+                                            <span className="text-[11px] text-text-muted leading-tight">
+                                                All {departmentMembers.length} faculty in {userDepartment}.
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    <div
+                                        onClick={() => setPublishMode('specific')}
+                                        className={`p-3 rounded-xl border transition-all cursor-pointer flex items-start gap-3 ${
+                                            publishMode === 'specific'
+                                                ? 'border-accent bg-accent/10 shadow-xs'
+                                                : 'border-surface-border bg-surface hover:border-surface-border-strong hover:bg-surface-hover'
+                                        }`}
+                                    >
+                                        <div className="p-2 rounded-lg bg-surface border border-surface-border text-accent shrink-0">
+                                            <UserCheck className="h-4 w-4" />
+                                        </div>
+                                        <div className="flex flex-col gap-0.5 min-w-0">
+                                            <span className="text-xs font-bold text-text">Designated</span>
+                                            <span className="text-[11px] text-text-muted leading-tight">
+                                                Publish to specific faculty only.
+                                            </span>
+                                        </div>
+                                    </div>
                                 </div>
 
-                                {departmentMembers.length === 0 ? (
-                                    <div className="p-3 rounded-lg border border-surface-border bg-surface text-center text-xs text-text-muted">
-                                        No other active members found in {userDepartment}.
-                                    </div>
-                                ) : (
-                                    <>
-                                        <div className="relative">
-                                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-text-muted" />
-                                            <input
-                                                type="text"
-                                                value={memberSearchQuery}
-                                                onChange={(e) => setMemberSearchQuery(e.target.value)}
-                                                placeholder="Search members by name, ID, or email..."
-                                                className="w-full pl-8.5 pr-3 py-1.5 text-xs bg-surface border border-surface-border rounded-lg text-text focus:outline-none focus:border-accent"
-                                            />
-                                        </div>
-
-                                        <div className="flex flex-col gap-1.5 max-h-56 overflow-y-auto pr-1">
-                                            {filteredDepartmentMembers.map((member) => {
-                                                const isSelected = selectedPublishMemberIds.includes(member.id);
-                                                const avatarSrc = resolveUserAvatar(member, currentUser);
-                                                const memberFullName = `${member.firstName || ''} ${member.lastName || ''}`.trim() || 'Faculty Member';
-
-                                                return (
-                                                    <div
-                                                        key={member.id}
-                                                        onClick={() => handleToggleMemberSelection(member.id)}
-                                                        className={`p-2.5 rounded-lg border transition-all cursor-pointer flex items-center justify-between gap-3 ${
-                                                            isSelected
-                                                                ? 'border-accent bg-accent/10 shadow-xs'
-                                                                : 'border-surface-border bg-surface hover:border-surface-border-strong hover:bg-surface-hover'
-                                                        }`}
+                                {/* SPECIFIC MEMBER PICKER PANEL */}
+                                {publishMode === 'specific' ? (
+                                    <div className="flex flex-col gap-2.5 pt-1">
+                                        <div className="flex items-center justify-between gap-2">
+                                            <span className="text-xs font-semibold text-text">
+                                                Faculty Members ({selectedPublishMemberIds.length} of {departmentMembers.length} selected)
+                                            </span>
+                                            {departmentMembers.length > 0 && (
+                                                <div className="flex items-center gap-2">
+                                                    <button
+                                                        type="button"
+                                                        onClick={handleSelectAllMembers}
+                                                        className="text-xs text-accent hover:underline font-medium cursor-pointer"
                                                     >
-                                                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                                                            <div
-                                                                className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${
-                                                                    isSelected
-                                                                        ? 'bg-accent border-accent text-accent-foreground'
-                                                                        : 'border-surface-border bg-surface'
-                                                                }`}
-                                                            >
-                                                                {isSelected && <Check className="h-3 w-3 stroke-[3]" />}
-                                                            </div>
-
-                                                            <Avatar
-                                                                src={avatarSrc}
-                                                                alt={memberFullName}
-                                                                size="sm"
-                                                                className="shrink-0"
-                                                            />
-
-                                                            <div className="flex flex-col min-w-0">
-                                                                <span className="text-xs font-semibold text-text truncate">
-                                                                    {memberFullName}
-                                                                </span>
-                                                                <span className="text-[10px] text-text-muted truncate">
-                                                                    {member.universityId || member.email}
-                                                                </span>
-                                                            </div>
-                                                        </div>
-
-                                                        <Badge
-                                                            variant="neutral"
-                                                            size="xs"
-                                                            label={member.role}
-                                                            className="shrink-0"
-                                                        />
-                                                    </div>
-                                                );
-                                            })}
-                                            {filteredDepartmentMembers.length === 0 && (
-                                                <div className="p-3 text-center text-xs text-text-muted">
-                                                    No members match &quot;{memberSearchQuery}&quot;.
+                                                        {selectedPublishMemberIds.length === filteredDepartmentMembers.length && filteredDepartmentMembers.length > 0
+                                                            ? 'Deselect All'
+                                                            : 'Select All'}
+                                                    </button>
+                                                    {selectedPublishMemberIds.length > 0 && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setSelectedPublishMemberIds([])}
+                                                            className="text-xs text-text-muted hover:text-text cursor-pointer"
+                                                        >
+                                                            Clear
+                                                        </button>
+                                                    )}
                                                 </div>
                                             )}
                                         </div>
-                                    </>
-                                )}
-                            </div>
-                        )}
 
-                        {/* SUBMIT BUTTON */}
-                        <div className="flex items-center justify-between pt-1 gap-2 border-t border-surface-border">
-                            <span className="text-[11px] text-text-muted">
-                                Officers and Director retain persistent management access.
-                            </span>
-                            <Button
-                                variant="primary"
-                                size="sm"
-                                leadingIcon={Send}
-                                isLoading={isPublishingMembers}
-                                isDisabled={isPublishingMembers || (publishMode === 'specific' && selectedPublishMemberIds.length === 0)}
-                                onClick={handlePublishSubmit}
-                                className="shrink-0"
-                            >
-                                {publishMode === 'all'
-                                    ? 'Publish to All Members'
-                                    : selectedPublishMemberIds.length > 1
-                                    ? `Publish to ${selectedPublishMemberIds.length} Members`
-                                    : selectedPublishMemberIds.length === 1
-                                    ? 'Publish to 1 Member'
-                                    : 'Select Members'}
-                            </Button>
+                                        {departmentMembers.length === 0 ? (
+                                            <div className="p-4 rounded-lg border border-surface-border bg-surface text-center text-xs text-text-muted">
+                                                No faculty members found in {userDepartment}.
+                                            </div>
+                                        ) : (
+                                            <>
+                                                <div className="relative">
+                                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-text-muted" />
+                                                    <input
+                                                        type="text"
+                                                        value={memberSearchQuery}
+                                                        onChange={(e) => setMemberSearchQuery(e.target.value)}
+                                                        placeholder="Search members by name, ID, or email..."
+                                                        className="w-full pl-8.5 pr-8 py-2 text-xs bg-surface border border-surface-border rounded-lg text-text focus:outline-none focus:border-accent transition-colors"
+                                                    />
+                                                    {memberSearchQuery && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setMemberSearchQuery('')}
+                                                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-muted hover:text-text p-0.5 cursor-pointer"
+                                                        >
+                                                            <X className="h-3.5 w-3.5" />
+                                                        </button>
+                                                    )}
+                                                </div>
+
+                                                <div className="flex flex-col gap-1.5 max-h-[190px] overflow-y-auto pr-1">
+                                                    {filteredDepartmentMembers.map((member) => {
+                                                        const isSelected = selectedPublishMemberIds.includes(member.id);
+                                                        const avatarSrc = resolveUserAvatar(member, currentUser);
+                                                        const memberFullName = `${member.firstName || ''} ${member.lastName || ''}`.trim() || 'Faculty Member';
+
+                                                        return (
+                                                            <div
+                                                                key={member.id}
+                                                                onClick={() => handleToggleMemberSelection(member.id)}
+                                                                className={`p-2 rounded-lg border transition-all cursor-pointer flex items-center justify-between gap-2.5 ${
+                                                                    isSelected
+                                                                        ? 'border-accent bg-accent/10 shadow-xs'
+                                                                        : 'border-surface-border bg-surface hover:border-surface-border-strong hover:bg-surface-hover'
+                                                                }`}
+                                                            >
+                                                                <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                                                                    <div
+                                                                        className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${
+                                                                            isSelected
+                                                                                ? 'bg-accent border-accent text-accent-foreground'
+                                                                                : 'border-surface-border bg-surface'
+                                                                        }`}
+                                                                    >
+                                                                        {isSelected && <Check className="h-3 w-3 stroke-[3]" />}
+                                                                    </div>
+
+                                                                    <Avatar
+                                                                        src={avatarSrc}
+                                                                        alt={memberFullName}
+                                                                        size="sm"
+                                                                        className="shrink-0"
+                                                                    />
+
+                                                                    <div className="flex flex-col min-w-0">
+                                                                        <span className="text-xs font-semibold text-text truncate">
+                                                                            {memberFullName}
+                                                                        </span>
+                                                                        <span className="text-[10px] text-text-muted truncate">
+                                                                            {member.universityId || member.email}
+                                                                        </span>
+                                                                    </div>
+                                                                </div>
+
+                                                                <Badge
+                                                                    variant={isSelected ? 'accent' : 'neutral'}
+                                                                    size="xs"
+                                                                    label={member.role}
+                                                                    className="shrink-0"
+                                                                />
+                                                            </div>
+                                                        );
+                                                    })}
+                                                    {filteredDepartmentMembers.length === 0 && (
+                                                        <div className="p-3 text-center text-xs text-text-muted">
+                                                            No members match &quot;{memberSearchQuery}&quot;.
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </>
+                                        )}
+                                    </div>
+                                ) : (
+                                    <div className="p-4 rounded-xl border border-accent/20 bg-accent/5 flex items-start gap-3 my-auto">
+                                        <div className="p-2 rounded-lg bg-accent/10 text-accent shrink-0">
+                                            <Users className="h-4 w-4" />
+                                        </div>
+                                        <div className="flex flex-col gap-1 text-xs">
+                                            <span className="font-semibold text-text">Broadcast Distribution Mode</span>
+                                            <span className="text-text-muted leading-relaxed">
+                                                All active faculty members in {userDepartment} will be granted immediate access. Any future members assigned to this department will automatically inherit access.
+                                            </span>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* ACTION FOOTER */}
+                                <div className="pt-2 border-t border-surface-border flex items-center justify-between gap-3 mt-auto">
+                                    <span className="text-[11px] text-text-muted">
+                                        {publishMode === 'all'
+                                            ? `All ${departmentMembers.length} members`
+                                            : `${selectedPublishMemberIds.length} members selected`}
+                                    </span>
+                                    <Button
+                                        variant="primary"
+                                        size="sm"
+                                        leadingIcon={Send}
+                                        isLoading={isPublishingMembers}
+                                        isDisabled={isPublishingMembers || (publishMode === 'specific' && selectedPublishMemberIds.length === 0)}
+                                        onClick={handlePublishSubmit}
+                                    >
+                                        {publishMode === 'all'
+                                            ? 'Publish to All Members'
+                                            : selectedPublishMemberIds.length > 1
+                                            ? `Publish to ${selectedPublishMemberIds.length} Members`
+                                            : selectedPublishMemberIds.length === 1
+                                            ? 'Publish to 1 Member'
+                                            : 'Select Members'}
+                                    </Button>
+                                </div>
+                            </div>
+
+                            {/* RIGHT COLUMN: DISTRIBUTION AUDIENCE OVERVIEW */}
+                            <div className="md:col-span-5 flex flex-col gap-3.5 p-4 rounded-xl border border-surface-border bg-surface">
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <h4 className="text-xs font-bold text-text uppercase tracking-wider">
+                                            Distribution Audience
+                                        </h4>
+                                        <p className="text-[11px] text-text-muted">
+                                            Recipient overview
+                                        </p>
+                                    </div>
+                                    <Badge
+                                        variant="neutral"
+                                        size="xs"
+                                        label={userDepartment}
+                                    />
+                                </div>
+
+                                <div className="flex-1 overflow-y-auto max-h-[360px] pr-1 space-y-2 min-h-[180px]">
+                                    {publishMode === 'all' ? (
+                                        <>
+                                            <div className="p-3 rounded-lg border border-accent/20 bg-accent/5 flex items-center justify-between gap-2">
+                                                <div className="flex items-center gap-2 min-w-0">
+                                                    <Globe className="h-4 w-4 text-accent shrink-0" />
+                                                    <div className="flex flex-col min-w-0">
+                                                        <span className="text-xs font-semibold text-text">Entire Department</span>
+                                                        <span className="text-[10px] text-text-muted">
+                                                            {departmentMembers.length} faculty recipient{departmentMembers.length === 1 ? '' : 's'}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                                <Badge variant="success" size="xs" label="Broadcasting" />
+                                            </div>
+
+                                            <div className="space-y-1.5 pt-1">
+                                                {departmentMembers.map((member) => {
+                                                    const avatarSrc = resolveUserAvatar(member, currentUser);
+                                                    const memberFullName = `${member.firstName || ''} ${member.lastName || ''}`.trim() || 'Faculty Member';
+                                                    return (
+                                                        <div
+                                                            key={member.id}
+                                                            className="p-2 rounded-lg border border-surface-border bg-surface-hover/40 flex items-center justify-between gap-2"
+                                                        >
+                                                            <div className="flex items-center gap-2 min-w-0">
+                                                                <Avatar src={avatarSrc} alt={memberFullName} size="xs" className="shrink-0" />
+                                                                <div className="flex flex-col min-w-0">
+                                                                    <span className="text-xs font-medium text-text truncate">
+                                                                        {memberFullName}
+                                                                    </span>
+                                                                    <span className="text-[10px] text-text-muted truncate">
+                                                                        {member.universityId || member.email}
+                                                                    </span>
+                                                                </div>
+                                                            </div>
+                                                            <Badge variant="neutral" size="xs" label="Included" />
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <div className="p-3 rounded-lg border border-surface-border bg-surface-hover/30 flex items-center justify-between gap-2">
+                                                <div className="flex items-center gap-2 min-w-0">
+                                                    <UserCheck className="h-4 w-4 text-accent shrink-0" />
+                                                    <div className="flex flex-col min-w-0">
+                                                        <span className="text-xs font-semibold text-text">Designated Recipients</span>
+                                                        <span className="text-[10px] text-text-muted">
+                                                            {selectedPublishMembers.length} member{selectedPublishMembers.length === 1 ? '' : 's'} chosen
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                                <Badge
+                                                    variant={selectedPublishMembers.length > 0 ? 'accent' : 'neutral'}
+                                                    size="xs"
+                                                    label={`${selectedPublishMembers.length} Selected`}
+                                                />
+                                            </div>
+
+                                            {selectedPublishMembers.length === 0 ? (
+                                                <div className="h-44 flex flex-col items-center justify-center p-6 text-center rounded-lg border border-dashed border-surface-border bg-surface-hover/30 text-xs text-text-muted gap-2">
+                                                    <UserCheck className="h-6 w-6 text-text-muted/40" />
+                                                    <span className="font-semibold text-text">No Recipients Chosen</span>
+                                                    <span className="text-[11px] leading-relaxed max-w-xs">
+                                                        Select faculty members from the left panel to populate this distribution list.
+                                                    </span>
+                                                </div>
+                                            ) : (
+                                                <div className="space-y-1.5 pt-1">
+                                                    {selectedPublishMembers.map((member) => {
+                                                        const avatarSrc = resolveUserAvatar(member, currentUser);
+                                                        const memberFullName = `${member.firstName || ''} ${member.lastName || ''}`.trim() || 'Faculty Member';
+                                                        return (
+                                                            <div
+                                                                key={member.id}
+                                                                className="p-2 rounded-lg border border-surface-border bg-surface-hover/50 flex items-center justify-between gap-2"
+                                                            >
+                                                                <div className="flex items-center gap-2 min-w-0">
+                                                                    <Avatar src={avatarSrc} alt={memberFullName} size="xs" className="shrink-0" />
+                                                                    <div className="flex flex-col min-w-0">
+                                                                        <span className="text-xs font-medium text-text truncate">
+                                                                            {memberFullName}
+                                                                        </span>
+                                                                        <span className="text-[10px] text-text-muted truncate">
+                                                                            {member.universityId || member.email}
+                                                                        </span>
+                                                                    </div>
+                                                                </div>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleToggleMemberSelection(member.id)}
+                                                                    className="p-1 rounded text-text-muted hover:text-error hover:bg-error/10 transition-colors cursor-pointer"
+                                                                    title="Remove from distribution list"
+                                                                >
+                                                                    <X className="h-3.5 w-3.5" />
+                                                                </button>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            )}
+                                        </>
+                                    )}
+                                </div>
+
+                                <div className="pt-2 border-t border-surface-border text-[11px] text-text-muted flex items-center gap-1.5">
+                                    <Globe className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+                                    <span>Published items appear directly in faculty member dashboards.</span>
+                                </div>
+                            </div>
                         </div>
+                    </div>
+                </Modal>
+            )}
+
+            {/* ACTION CONFIRMATION MODAL */}
+            {Boolean(confirmActionModal) && (
+                <Modal
+                    isOpen={Boolean(confirmActionModal)}
+                    onClose={() => {
+                        if (!isSubmittingAction) {
+                            setConfirmActionModal(null);
+                        }
+                    }}
+                    title={confirmActionModal.title}
+                    description={confirmActionModal.message}
+                    icon={confirmActionModal.actionKey === 'stash' ? Clock : CheckCircle2}
+                    size="sm"
+                    confirmOnClose={false}
+                    primaryAction={{
+                        label: confirmActionModal.primaryLabel,
+                        variant: confirmActionModal.actionKey === 'unapprove' ? 'warning' : 'primary',
+                        isLoading: isSubmittingAction,
+                        isDisabled: isSubmittingAction,
+                        onClick: handleConfirmAction,
+                    }}
+                    secondaryAction={{
+                        label: 'Cancel',
+                        isDisabled: isSubmittingAction,
+                        onClick: () => setConfirmActionModal(null),
+                    }}
+                >
+                    <div className="text-xs text-text-muted leading-relaxed">
+                        Please confirm you wish to perform this action. The status will update immediately across departmental queues.
+                    </div>
+                </Modal>
+            )}
+
+            {/* REJECTION FORM MODAL */}
+            {Boolean(rejectionActionModal) && (
+                <Modal
+                    isOpen={Boolean(rejectionActionModal)}
+                    onClose={() => {
+                        if (!isSubmittingAction) {
+                            setRejectionActionModal(null);
+                            setRejectionReasonText('');
+                        }
+                    }}
+                    title={`Reject ${rejectionActionModal.item?.isFolder ? 'Folder' : 'Document'}`}
+                    description={`Provide a reason for rejecting "${rejectionActionModal.docTitle}". The item remains in your repository as Rejected.`}
+                    icon={AlertTriangle}
+                    size="md"
+                    confirmOnClose={false}
+                    primaryAction={{
+                        label: 'Confirm Rejection',
+                        variant: 'danger',
+                        isLoading: isSubmittingAction,
+                        isDisabled: isSubmittingAction || !rejectionReasonText.trim(),
+                        onClick: handleConfirmRejection,
+                    }}
+                    secondaryAction={{
+                        label: 'Cancel',
+                        isDisabled: isSubmittingAction,
+                        onClick: () => {
+                            setRejectionActionModal(null);
+                            setRejectionReasonText('');
+                        },
+                    }}
+                >
+                    <div className="flex flex-col gap-4">
+                        <AreaField
+                            label="Rejection Reason"
+                            required
+                            placeholder="Explain why this document is being rejected so the administrator can take corrective action..."
+                            value={rejectionReasonText}
+                            onChange={(e) => setRejectionReasonText(e.target.value)}
+                            rows={4}
+                        />
+                        <p className="text-[11px] text-text-muted">
+                            This reason will be recorded on the version audit log and shown to repository administrators.
+                        </p>
                     </div>
                 </Modal>
             )}
@@ -4222,11 +4823,16 @@ function annotateDuplicates(extractedList, targetParentId, existingDocs, existin
         }
 
         if (resolvedParentId !== 'will-create-folder') {
+            const rawItemName = (item.fileName || item.title || '').trim();
+            const cleanItemName = rawItemName.replace(/\.[^/.]+$/, '').trim();
             const matchingDoc = (existingDocs || []).find(
                 (d) => !d.isFolder &&
                 !d.isArchived &&
                 (d.parentId ?? null) === resolvedParentId &&
-                d.name.toLowerCase() === (item.fileName || item.title).toLowerCase()
+                (
+                    d.name.toLowerCase() === cleanItemName.toLowerCase() ||
+                    d.name.toLowerCase() === rawItemName.toLowerCase()
+                )
             );
 
             if (matchingDoc) {

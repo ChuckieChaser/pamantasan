@@ -416,7 +416,11 @@ const authService = {
     },
 
     sendPasswordResetOtp: async (email) => {
-        const cleanEmail = email?.trim().toLowerCase() ?? '';
+        const raw = email?.trim().toLowerCase() ?? '';
+        const cleanEmail = raw.includes('@')
+            ? raw
+            : (raw ? `${raw}${constants.INSTITUTIONAL_CONFIGURATION.EMAIL_DOMAIN}` : '');
+
         if (!cleanEmail) {
             throw new Error('Institutional email is required.');
         }
@@ -455,7 +459,10 @@ const authService = {
     },
 
     verifyPasswordResetOtp: async (email, otp) => {
-        const cleanEmail = email?.trim().toLowerCase() ?? '';
+        const raw = email?.trim().toLowerCase() ?? '';
+        const cleanEmail = raw.includes('@')
+            ? raw
+            : (raw ? `${raw}${constants.INSTITUTIONAL_CONFIGURATION.EMAIL_DOMAIN}` : '');
         const cleanOtp = otp?.trim() ?? '';
 
         if (!cleanEmail || !cleanOtp) {
@@ -481,7 +488,10 @@ const authService = {
     },
 
     resetPasswordWithOtp: async (email, otp, newPassword) => {
-        const cleanEmail = email?.trim().toLowerCase() ?? '';
+        const raw = email?.trim().toLowerCase() ?? '';
+        const cleanEmail = raw.includes('@')
+            ? raw
+            : (raw ? `${raw}${constants.INSTITUTIONAL_CONFIGURATION.EMAIL_DOMAIN}` : '');
         if (!cleanEmail || !newPassword) {
             throw new Error('Missing required fields for password reset.');
         }

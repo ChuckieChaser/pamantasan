@@ -10,7 +10,11 @@ const INSTITUTIONAL_DOMAIN = '@plpasig.edu.ph';
  */
 async function handleSendPasswordResetOtp(data) {
     const rawEmail = data?.email || data?.data?.email;
-    const cleanEmail = (rawEmail || '').toString().trim().toLowerCase();
+    let cleanEmail = (rawEmail || '').toString().trim().toLowerCase();
+
+    if (cleanEmail && !cleanEmail.includes('@')) {
+        cleanEmail = `${cleanEmail}${INSTITUTIONAL_DOMAIN}`;
+    }
 
     if (!cleanEmail) {
         throw new HttpsError('invalid-argument', 'Institutional email address is required.');
@@ -42,8 +46,12 @@ async function handleVerifyPasswordResetOtp(data) {
     const rawEmail = data?.email || data?.data?.email;
     const rawOtp = data?.otp || data?.data?.otp;
     const rawToken = data?.token || data?.data?.token;
-    const cleanEmail = (rawEmail || '').toString().trim().toLowerCase();
+    let cleanEmail = (rawEmail || '').toString().trim().toLowerCase();
     const cleanOtp = (rawOtp || '').toString().trim();
+
+    if (cleanEmail && !cleanEmail.includes('@')) {
+        cleanEmail = `${cleanEmail}${INSTITUTIONAL_DOMAIN}`;
+    }
 
     if (!cleanEmail || !cleanOtp) {
         throw new HttpsError('invalid-argument', 'Email and verification code are required.');

@@ -45,12 +45,12 @@ const useUserStore = create((set, get) => ({
     // PREVIOUS STATUS
     getPreviousStatus: (userId) => {
         const stored = getStoredPreviousStatus(userId);
-        if (stored) return stored;
+        if (stored && String(stored).toUpperCase() !== 'SUSPENDED') return stored;
         const user = get().users.find((item) => item?.id === userId);
-        if (user?.status && user.status !== 'SUSPENDED') {
+        if (user?.status && String(user.status).toUpperCase() !== 'SUSPENDED') {
             return user.status;
         }
-        return 'PENDING_PASSWORD';
+        return constants.USERS_STATUS.VERIFIED;
     },
 
     // USERS
@@ -65,6 +65,12 @@ const useUserStore = create((set, get) => ({
             if (currentUser && !resolvedUsers.some((u) => u.id === currentUser.id || u.universityId === currentUser.universityId)) {
                 resolvedUsers = [currentUser, ...resolvedUsers];
             }
+
+            resolvedUsers.forEach((u) => {
+                if (u?.id && u?.status && String(u.status).toUpperCase() !== 'SUSPENDED') {
+                    savePreviousStatus(u.id, u.status);
+                }
+            });
 
             set({ users: resolvedUsers, isLoading: false, error: null });
 
@@ -141,7 +147,7 @@ const useUserStore = create((set, get) => ({
         }
     },
 
-    insertUser: async (payload) => {
+    insertUser: async (payload, actor = null) => {
         set({ isLoading: true, error: null });
 
         try {
@@ -174,18 +180,34 @@ const useUserStore = create((set, get) => ({
 
             get().fetchUsers().catch(() => {});
 
+            const resolvedActor = actor || useAuthStore.getState().currentUser;
+            const resolvedActorId = resolvedActor?.id || null;
+            const fullName = `${newUser.firstName || ''} ${newUser.lastName || ''}`.trim() || newUser.email;
+
             systemEventService.recordSystemEvent({
+                actor: resolvedActor,
+                actorId: resolvedActorId,
                 entityType: constants.AUDIT_LOGS_ENTITY_TYPE.USER,
                 entityId: newUser.id,
                 action: constants.AUDIT_LOGS_ACTION.CREATED,
                 data: {
-                    name: `${newUser.firstName || ''} ${newUser.lastName || ''}`.trim() || newUser.email,
-                    role: newUser.role,
+                    id: newUser.id,
+                    universityId: newUser.universityId,
                     email: newUser.email,
+                    name: fullName,
+                    role: newUser.role,
+                    departmentId: newUser.departmentId,
+                    title: `User Created: ${fullName} (${newUser.universityId})`,
+                    description: `User account for "${fullName}" was created in the institutional directory.`,
                 },
-                targetRoles: ['ADMINISTRATOR'],
+                targetRoles: ['ADMINISTRATOR', 'COORDINATOR'],
+                targetDepartmentId: newUser.departmentId || null,
+                targetUserIds: resolvedActorId ? [resolvedActorId] : [],
+                excludeActor: false,
                 isMajor: true,
-            }).catch(() => {});
+            }).catch((err) => {
+                console.warn('[useUserStore] recordSystemEvent warning on insertUser:', err);
+            });
 
             return newUser;
         } catch (error) {
@@ -196,7 +218,7 @@ const useUserStore = create((set, get) => ({
         }
     },
 
-    updateUser: async (id, payload) => {
+    updateUser: async (id, payload, actor = null) => {
         set({ isLoading: true, error: null });
 
         try {
@@ -280,19 +302,53 @@ const useUserStore = create((set, get) => ({
             if (isSuspended) userAction = constants.AUDIT_LOGS_ACTION.SUSPENDED;
             else if (isUnsuspended) userAction = constants.AUDIT_LOGS_ACTION.UNSUSPENDED;
 
+            // Compute old vs new diff for affected/changed fields only
+            const previousData = {};
+            const newData = {};
+            Object.keys(validatedPayload).forEach((k) => {
+                if (existingUser && existingUser[k] !== undefined && existingUser[k] !== validatedPayload[k]) {
+                    previousData[k] = existingUser[k];
+                    newData[k] = validatedPayload[k];
+                }
+            });
+            if (isSuspended && previousData.status === undefined) {
+                previousData.status = existingUser?.status || 'ACTIVE';
+                newData.status = 'SUSPENDED';
+            } else if (isUnsuspended && previousData.status === undefined) {
+                previousData.status = 'SUSPENDED';
+                newData.status = validatedPayload.status || 'ACTIVE';
+            }
+
+            const resolvedActor = actor || useAuthStore.getState().currentUser;
+            const resolvedActorId = resolvedActor?.id || null;
+            const userName = `${mergedUser.firstName || ''} ${mergedUser.lastName || ''}`.trim() || mergedUser.email || id;
+
             systemEventService.recordSystemEvent({
+                actor: resolvedActor,
+                actorId: resolvedActorId,
                 entityType: constants.AUDIT_LOGS_ENTITY_TYPE.USER,
                 entityId: id,
                 action: userAction,
                 data: {
-                    name: `${mergedUser.firstName || ''} ${mergedUser.lastName || ''}`.trim() || mergedUser.email,
+                    id,
+                    old: previousData,
+                    new: newData,
+                    name: userName,
+                    universityId: mergedUser.universityId,
+                    email: mergedUser.email,
                     role: mergedUser.role,
                     status: mergedUser.status,
+                    departmentId: mergedUser.departmentId,
+                    title: `User Updated: ${userName}`,
+                    description: `Account details for "${userName}" were updated.`,
                 },
                 targetUserIds: [id],
-                targetRoles: ['ADMINISTRATOR'],
-                isMajor: isSuspended || isUnsuspended,
-            }).catch(() => {});
+                targetRoles: ['ADMINISTRATOR', 'COORDINATOR'],
+                targetDepartmentId: mergedUser.departmentId || existingUser?.departmentId || null,
+                isMajor: true,
+            }).catch((err) => {
+                console.warn('[useUserStore] recordSystemEvent warning on updateUser:', err);
+            });
 
             return mergedUser;
         } catch (error) {
@@ -303,7 +359,8 @@ const useUserStore = create((set, get) => ({
         }
     },
 
-    deleteUser: async (id) => {
+    deleteUser: async (id, actor = null) => {
+        const userToDelete = get().users.find((u) => String(u.id) === String(id));
         set({ isLoading: true, error: null });
 
         try {
@@ -319,14 +376,34 @@ const useUserStore = create((set, get) => ({
                     error: null,
                 }));
 
+                const resolvedActor = actor || useAuthStore.getState().currentUser;
+                const resolvedActorId = resolvedActor?.id || null;
+                const userName = userToDelete
+                    ? `${userToDelete.firstName || ''} ${userToDelete.lastName || ''}`.trim() || userToDelete.universityId
+                    : id;
+
                 systemEventService.recordSystemEvent({
+                    actor: resolvedActor,
+                    actorId: resolvedActorId,
                     entityType: constants.AUDIT_LOGS_ENTITY_TYPE.USER,
                     entityId: id,
                     action: constants.AUDIT_LOGS_ACTION.DELETED,
-                    data: { id },
-                    targetRoles: ['ADMINISTRATOR'],
+                    data: {
+                        id,
+                        universityId: userToDelete?.universityId,
+                        email: userToDelete?.email,
+                        name: userName,
+                        title: `User Deleted: ${userName}`,
+                        description: `User account for "${userName}" was deleted from the system.`,
+                    },
+                    targetRoles: ['ADMINISTRATOR', 'COORDINATOR'],
+                    targetDepartmentId: userToDelete?.departmentId || null,
+                    targetUserIds: resolvedActorId ? [resolvedActorId] : [],
+                    excludeActor: false,
                     isMajor: true,
-                }).catch(() => {});
+                }).catch((err) => {
+                    console.warn('[useUserStore] recordSystemEvent warning on deleteUser:', err);
+                });
             } else {
                 set({ isLoading: false });
             }

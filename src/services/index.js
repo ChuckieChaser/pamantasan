@@ -12,4 +12,5 @@ export { coordinatorApprovalService } from './coordinatorApprovalService';
 export { systemEventService } from './systemEventService';
 export { ocrService } from './ocrService';
 export { mobileScanService } from './mobileScanService';
+export { realtimeSyncService } from './realtimeSyncService';
 

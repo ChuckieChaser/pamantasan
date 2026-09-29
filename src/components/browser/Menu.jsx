@@ -266,16 +266,7 @@ const Menu = ({
                                     <span>Reject Request</span>
                                 </button>
                             </>
-                        ) : (
-                            <button
-                                type="button"
-                                onClick={(event) => onActionClick?.(event, 'open_request', item)}
-                                className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                            >
-                                <RotateCcw className={ICON_STYLE} />
-                                <span>Open Request</span>
-                            </button>
-                        )
+                        ) : null
                     ) : null}
 
                     {isStaff && <div className="h-px bg-surface-border my-1" />}
@@ -305,7 +296,7 @@ const Menu = ({
                         <span>View Attachment</span>
                     </button>
 
-                    {!isStaff && (
+                    {!isStaff && item.status === constants.DOCUMENT_REQUESTS_STATUS.OPEN && (
                         <>
                             <div className="h-px bg-surface-border my-1" />
                             <button
@@ -323,14 +314,6 @@ const Menu = ({
 
             {resourceName === 'coordinator_requests' && (
                 <>
-                    <button
-                        type="button"
-                        onClick={(event) => onActionClick?.(event, 'open', item)}
-                        className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                    >
-                        <Eye className={ICON_STYLE} />
-                        <span>Review Payload Details</span>
-                    </button>
                     {isAdmin && item.status === constants.COORDINATOR_REQUESTS_STATUS.PENDING && (
                         <>
                             <button
@@ -339,7 +322,7 @@ const Menu = ({
                                 className="flex items-center gap-2 px-3 py-2 rounded text-accent hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
                             >
                                 <CheckCircle2 className={ICON_STYLE} />
-                                <span>Approve Request</span>
+                                <span>Approve</span>
                             </button>
                             <button
                                 type="button"
@@ -347,11 +330,22 @@ const Menu = ({
                                 className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
                             >
                                 <XCircle className={ICON_STYLE} />
-                                <span>Reject Request</span>
+                                <span>Reject</span>
                             </button>
+                            <div className="h-px bg-surface-border my-1" />
                         </>
                     )}
-                    {!isAdmin && (
+
+                    <button
+                        type="button"
+                        onClick={(event) => onActionClick?.(event, 'view_payload', item)}
+                        className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                    >
+                        <Eye className={ICON_STYLE} />
+                        <span>View Payload</span>
+                    </button>
+
+                    {!isAdmin && item.status === constants.COORDINATOR_REQUESTS_STATUS.PENDING && (
                         <>
                             <div className="h-px bg-surface-border my-1" />
                             <button
@@ -435,34 +429,47 @@ const Menu = ({
                                 </button>
                             )}
 
-                            {isPending ? (
+                            {item.status === constants.DOCUMENT_SHARES_STATUS.REJECTED ? (
                                 <button
                                     type="button"
-                                    onClick={(event) => onActionClick?.(event, 'approve', item)}
+                                    onClick={(event) => onActionClick?.(event, 'unreject', item)}
                                     className="flex items-center gap-2 px-3 py-2 rounded text-accent hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
                                 >
-                                    <Check className={ICON_STYLE} />
-                                    <span>{`Approve ${targetType}`}</span>
+                                    <RotateCcw className={ICON_STYLE} />
+                                    <span>{`Unreject ${targetType}`}</span>
                                 </button>
                             ) : (
-                                <button
-                                    type="button"
-                                    onClick={(event) => onActionClick?.(event, 'unapprove', item)}
-                                    className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                >
-                                    <RotateCcw className={ICON_STYLE} />
-                                    <span>{`Unapprove ${targetType}`}</span>
-                                </button>
-                            )}
+                                <>
+                                    {isPending ? (
+                                        <button
+                                            type="button"
+                                            onClick={(event) => onActionClick?.(event, 'approve', item)}
+                                            className="flex items-center gap-2 px-3 py-2 rounded text-accent hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                        >
+                                            <Check className={ICON_STYLE} />
+                                            <span>{`Approve ${targetType}`}</span>
+                                        </button>
+                                    ) : (
+                                        <button
+                                            type="button"
+                                            onClick={(event) => onActionClick?.(event, 'unapprove', item)}
+                                            className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                        >
+                                            <RotateCcw className={ICON_STYLE} />
+                                            <span>{`Unapprove ${targetType}`}</span>
+                                        </button>
+                                    )}
 
-                            <button
-                                type="button"
-                                onClick={(event) => onActionClick?.(event, 'reject', item)}
-                                className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
-                            >
-                                <XCircle className={ICON_STYLE} />
-                                <span>{`Reject ${targetType}`}</span>
-                            </button>
+                                    <button
+                                        type="button"
+                                        onClick={(event) => onActionClick?.(event, 'reject', item)}
+                                        className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
+                                    >
+                                        <XCircle className={ICON_STYLE} />
+                                        <span>{`Reject ${targetType}`}</span>
+                                    </button>
+                                </>
+                            )}
 
                             <div className="h-px bg-surface-border my-1" />
 

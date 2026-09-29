@@ -54,6 +54,15 @@ const ForgotPasswordPage = ({ onBackToLogin }) => {
         return () => clearInterval(timer);
     }, [countdown]);
 
+    // HELPER: RESOLVE INSTITUTIONAL EMAIL
+    const resolveFullEmail = (raw) => {
+        const trimmed = (raw || '').trim().toLowerCase();
+        if (!trimmed) return '';
+        return trimmed.includes('@')
+            ? trimmed
+            : `${trimmed}${constants.INSTITUTIONAL_CONFIGURATION.EMAIL_DOMAIN}`;
+    };
+
     // HANDLERS: STEP 1 (EMAIL REQUEST)
     const handleEmailSubmit = async (event) => {
         if (event) {
@@ -61,12 +70,12 @@ const ForgotPasswordPage = ({ onBackToLogin }) => {
             event.stopPropagation();
         }
 
-        const trimmedEmail = email.trim().toLowerCase();
+        const fullEmail = resolveFullEmail(email);
         const errors = {};
 
-        if (!trimmedEmail) {
-            errors.email = 'Email is required.';
-        } else if (!constants.VALIDATION_PATTERNS.EMAIL.test(trimmedEmail)) {
+        if (!fullEmail || fullEmail === constants.INSTITUTIONAL_CONFIGURATION.EMAIL_DOMAIN) {
+            errors.email = 'Email username is required.';
+        } else if (!constants.VALIDATION_PATTERNS.EMAIL.test(fullEmail)) {
             errors.email = `Must be ${constants.INSTITUTIONAL_CONFIGURATION.EMAIL_DOMAIN}`;
         }
 
@@ -79,7 +88,8 @@ const ForgotPasswordPage = ({ onBackToLogin }) => {
         setFieldErrors({});
 
         try {
-            await authService.sendPasswordResetOtp(trimmedEmail);
+            await authService.sendPasswordResetOtp(fullEmail);
+            setEmail(fullEmail);
             setStep('OTP');
             setCountdown(RESEND_COOLDOWN_SECONDS);
             showToast({
@@ -109,7 +119,8 @@ const ForgotPasswordPage = ({ onBackToLogin }) => {
         setFieldErrors({});
 
         try {
-            await authService.sendPasswordResetOtp(email.trim().toLowerCase());
+            const fullEmail = resolveFullEmail(email);
+            await authService.sendPasswordResetOtp(fullEmail);
             setCountdown(RESEND_COOLDOWN_SECONDS);
             showToast({
                 title: 'Code Resent',
@@ -155,7 +166,8 @@ const ForgotPasswordPage = ({ onBackToLogin }) => {
         setFieldErrors({});
 
         try {
-            await authService.verifyPasswordResetOtp(email.trim().toLowerCase(), trimmedOtp);
+            const fullEmail = resolveFullEmail(email);
+            await authService.verifyPasswordResetOtp(fullEmail, trimmedOtp);
             setStep('PASSWORD');
             showToast({
                 title: 'Code Verified',
@@ -206,8 +218,9 @@ const ForgotPasswordPage = ({ onBackToLogin }) => {
         setFieldErrors({});
 
         try {
+            const fullEmail = resolveFullEmail(email);
             await authService.resetPasswordWithOtp(
-                email.trim().toLowerCase(),
+                fullEmail,
                 otp.trim(),
                 newPassword
             );
@@ -326,10 +339,11 @@ const ForgotPasswordPage = ({ onBackToLogin }) => {
 
     // RENDER: STEP 2 (OTP ENTRY)
     if (step === 'OTP') {
+        const fullEmail = resolveFullEmail(email);
         return (
             <AuthLayout
                 title="Enter Verification Code"
-                description={`A 6-digit verification code was sent to ${email}.`}
+                description={`A 6-digit verification code was sent to ${fullEmail}.`}
                 onBack={() => setStep('EMAIL')}
                 backButtonLabel="Use a different email"
             >
@@ -406,17 +420,21 @@ const ForgotPasswordPage = ({ onBackToLogin }) => {
             <form onSubmit={handleEmailSubmit} className="flex flex-col gap-4">
                 <TextField
                     label="Email"
-                    placeholder="Enter your email"
-                    value={email}
+                    placeholder="Enter username"
+                    value={email.replace(/@.*$/, '')}
+                    suffixButton={constants.INSTITUTIONAL_CONFIGURATION.EMAIL_DOMAIN}
                     onChange={(e) => {
-                        setEmail(e.target.value);
+                        let val = e.target.value;
+                        if (val.includes('@')) {
+                            val = val.replace(/@.*$/, '');
+                        }
+                        setEmail(val);
                         if (fieldErrors.email) setFieldErrors((p) => ({ ...p, email: '' }));
                     }}
                     error={fieldErrors.email}
                     leadingIcon={Mail}
-                    type="email"
                     autoComplete="email"
-                    helper="Must be @plpasig.edu.ph"
+                    helperText={`Domain: ${constants.INSTITUTIONAL_CONFIGURATION.EMAIL_DOMAIN}`}
                     required
                     autoFocus
                 />

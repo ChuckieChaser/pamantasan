@@ -1,7 +1,58 @@
 // --- IMPORTS ---
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const nodemailer = require('nodemailer');
+const { getFirestore } = require('firebase-admin/firestore');
+
+// --- THREAD STATE MANAGEMENT (FOR RFC 5322 EMAIL CONVERSATION GROUPING) ---
+let firestoreInstance = null;
+function getDb() {
+    if (!firestoreInstance) {
+        try {
+            firestoreInstance = getFirestore();
+        } catch {
+            firestoreInstance = null;
+        }
+    }
+    return firestoreInstance;
+}
+
+const memoryThreadStore = new Map();
+
+async function getActiveThread(threadKey) {
+    const db = getDb();
+    if (db) {
+        try {
+            const doc = await db.collection('email_threads').doc(threadKey).get();
+            if (doc.exists) {
+                const data = doc.data();
+                if (data && data.expiresAt && Date.now() < data.expiresAt) {
+                    return data;
+                }
+            }
+        } catch (err) {
+            console.warn('[emailService] Firestore thread lookup warning:', err.message);
+        }
+    }
+    const mem = memoryThreadStore.get(threadKey);
+    if (mem && mem.expiresAt && Date.now() < mem.expiresAt) {
+        return mem;
+    }
+    return null;
+}
+
+async function saveActiveThread(threadKey, data) {
+    memoryThreadStore.set(threadKey, data);
+    const db = getDb();
+    if (db) {
+        try {
+            await db.collection('email_threads').doc(threadKey).set(data, { merge: true });
+        } catch (err) {
+            console.warn('[emailService] Firestore thread persist warning:', err.message);
+        }
+    }
+}
 
 // --- ENVIRONMENT FALLBACK ---
 function loadEnvFallback() {
@@ -85,10 +136,39 @@ function getSenderAddress() {
 /**
  * Sends a 6-digit OTP code for password reset.
  * Matches Pamantasan system design tokens: Fraunces serif, Inter sans, emerald-600 accents, zinc surfaces.
+ * Congests OTP resends into a single thread within a 24-hour session window.
  */
 async function sendOtpEmail(toEmail, otpCode) {
     const fromAddress = getSenderAddress();
-    const subject = `[PLP Records] Password Reset Verification Code: ${otpCode}`;
+    const cleanEmail = (toEmail || '').toLowerCase().trim();
+
+    // 24-HOUR CONGESTION WINDOW: All OTP resends within the same 24 hours share the identical thread ID
+    const dayBucket = Math.floor(Date.now() / (24 * 60 * 60 * 1000));
+    const threadHash = crypto
+        .createHash('md5')
+        .update(`${cleanEmail}-otp-${dayBucket}`)
+        .digest('hex');
+
+    const threadKey = `otp_${threadHash}`;
+    const existingThread = await getActiveThread(threadKey);
+
+    const messageId = `<plp-otp-${threadHash}-${Date.now()}@plpasig.edu.ph>`;
+    const baseSubject = `[PLP Records] Password Reset Verification Code`;
+    const isReply = Boolean(existingThread?.rootMessageId);
+
+    // RFC 5322 & Gmail threading REQUIRE the "Re: " prefix on replies to collapse into the conversation
+    const subject = isReply ? `Re: ${baseSubject}` : baseSubject;
+    const inReplyTo = isReply ? existingThread.lastMessageId : null;
+    const references = isReply
+        ? [existingThread.rootMessageId, existingThread.lastMessageId].filter(Boolean)
+        : null;
+
+    const sentTimeStr = new Date().toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+        timeZone: 'Asia/Manila',
+    });
 
     const html = `
     <!DOCTYPE html>
@@ -147,7 +227,7 @@ async function sendOtpEmail(toEmail, otpCode) {
                     <div class="otp-container">
                         <div class="otp-title">Verification Code</div>
                         <div class="otp-number">${otpCode}</div>
-                        <div class="otp-pill">⏱ Valid for 10 minutes</div>
+                        <div class="otp-pill">⏱ Valid for 10 minutes • Sent ${sentTimeStr} PHT</div>
                     </div>
 
                     <!-- SECURITY WARNING BOX -->
@@ -176,27 +256,132 @@ async function sendOtpEmail(toEmail, otpCode) {
     </html>
     `;
 
-    const transport = getTransporter();
-    if (!transport) {
-        console.log(`[SIMULATED EMAIL] To: ${toEmail} | Code: ${otpCode}`);
-        return { simulated: true, code: otpCode };
-    }
-
-    return await transport.sendMail({
+    const mailOptions = {
         from: fromAddress,
         to: toEmail,
         subject: subject,
         html: html,
+        messageId: messageId,
+        headers: {
+            'Thread-Topic': baseSubject,
+            'X-Entity-Ref-ID': threadHash,
+        },
+    };
+
+    if (inReplyTo) {
+        mailOptions.inReplyTo = inReplyTo;
+    }
+    if (references && references.length > 0) {
+        mailOptions.references = references;
+    }
+
+    const transport = getTransporter();
+    let result = null;
+    if (!transport) {
+        console.log(`[SIMULATED EMAIL] To: ${toEmail} | Code: ${otpCode} | MsgId: ${messageId}`);
+        result = { simulated: true, code: otpCode, messageId };
+    } else {
+        result = await transport.sendMail(mailOptions);
+    }
+
+    // Persist thread state for next resend
+    await saveActiveThread(threadKey, {
+        rootMessageId: existingThread?.rootMessageId || messageId,
+        lastMessageId: messageId,
+        subject: baseSubject,
+        updatedAt: Date.now(),
+        expiresAt: Date.now() + 24 * 60 * 60 * 1000,
     });
+
+    return result;
 }
 
 /**
  * Sends an extensible system notification alert (for document modifications, coordinator requests, etc.)
  * Matches Pamantasan system design tokens: Fraunces serif, Inter sans, emerald-600 accents, zinc surfaces.
+ * Congests updates for the same entity within a 1-hour window into a single email thread.
  */
-async function sendNotificationEmail({ toEmail, recipientName, actorName, title, message, actionUrl, actionLabel }) {
+async function sendNotificationEmail({
+    toEmail,
+    recipientName,
+    actorName,
+    title,
+    message,
+    actionUrl,
+    actionLabel,
+    entityType,
+    entityId,
+    targetName,
+}) {
     const fromAddress = getSenderAddress();
-    const subject = `[PLP Records] ${title}`;
+    const cleanEmail = (toEmail || '').toLowerCase().trim();
+    const cleanEntity = (entityType || 'UPDATE').toString().replace(/_/g, ' ').toUpperCase().trim();
+    const cleanTitle = (title || '')
+        .toString()
+        .replace(/\bDomain Removed\b/gi, 'Department Deleted')
+        .replace(/\bDepartment Removed\b/gi, 'Department Deleted')
+        .replace(/\bRemoved\b/gi, 'Deleted')
+        .trim();
+    const cleanMessage = (message || '')
+        .toString()
+        .replace(/\bdomain removed\b/gi, 'department deleted')
+        .replace(/\bdepartment removed\b/gi, 'department deleted')
+        .replace(/\bwas removed\b/gi, 'was deleted')
+        .replace(/\bremoved\b/gi, 'deleted')
+        .trim();
+    const cleanTarget = (targetName || '')
+        .toString()
+        .replace(/\bRemoved\b/gi, 'Deleted')
+        .trim();
+
+    // 1-HOUR CONGESTION WINDOW: All edits on the same target within 1 hour share the same thread ID
+    const hourBucket = Math.floor(Date.now() / (60 * 60 * 1000));
+    const entityKey = (entityType && entityId)
+        ? `${cleanEntity}:${entityId}`
+        : (cleanTarget || cleanTitle || 'system-event');
+
+    const threadHash = crypto
+        .createHash('md5')
+        .update(`${cleanEmail}-${entityKey.toLowerCase()}-${hourBucket}`)
+        .digest('hex');
+
+    const threadKey = `notif_${threadHash}`;
+    const existingThread = await getActiveThread(threadKey);
+
+    const messageId = `<plp-notif-${threadHash}-${Date.now()}@plpasig.edu.ph>`;
+
+    // Base subject: consistent and aligned with canonical CRUD action
+    const baseSubject = cleanTitle
+        ? `[PLP Records] ${cleanTitle}`
+        : (cleanTarget ? `[PLP Records] ${cleanEntity}: ${cleanTarget}` : `[PLP Records] System Notification`);
+
+    const isReply = Boolean(existingThread?.rootMessageId);
+    // RFC 5322 & Gmail threading REQUIRE the "Re: " prefix on replies to collapse into the conversation
+    const subject = isReply ? `Re: ${existingThread?.subject || baseSubject}` : baseSubject;
+
+    const inReplyTo = isReply ? existingThread.lastMessageId : null;
+    const references = isReply
+        ? [existingThread.rootMessageId, existingThread.lastMessageId].filter(Boolean)
+        : null;
+
+    const defaultBaseUrl = 'https://pamantasan-records-210fe.web.app';
+    let cleanActionUrl = actionUrl;
+    if (!cleanActionUrl || cleanActionUrl.includes('localhost') || cleanActionUrl.includes('127.0.0.1')) {
+        const ent = String(entityType || '').toUpperCase();
+        if (ent.includes('DOC') && !ent.includes('REQUEST')) {
+            cleanActionUrl = `${defaultBaseUrl}/documents`;
+        } else if (ent.includes('DEPT')) {
+            cleanActionUrl = `${defaultBaseUrl}/departments`;
+        } else if (ent.includes('USER')) {
+            cleanActionUrl = `${defaultBaseUrl}/users`;
+        } else if (ent.includes('REQUEST') || ent.includes('COORDINATOR')) {
+            cleanActionUrl = `${defaultBaseUrl}/requests`;
+        } else {
+            cleanActionUrl = defaultBaseUrl;
+        }
+    } else if (cleanActionUrl.startsWith('/')) {
+        cleanActionUrl = `${defaultBaseUrl}${cleanActionUrl}`;
+    }
 
     const html = `
     <!DOCTYPE html>
@@ -204,7 +389,7 @@ async function sendNotificationEmail({ toEmail, recipientName, actorName, title,
     <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>${title}</title>
+        <title>${cleanTitle}</title>
         <style>
             body { margin: 0; padding: 0; background-color: #f4f4f5; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; }
             .email-wrapper { width: 100%; background-color: #f4f4f5; padding: 40px 16px; }
@@ -220,6 +405,8 @@ async function sendNotificationEmail({ toEmail, recipientName, actorName, title,
             .notification-message { font-size: 13px; color: #52525b; line-height: 1.6; margin: 0; }
             .button-wrapper { text-align: center; margin: 28px 0 12px 0; }
             .btn { display: inline-block; background-color: #059669; color: #ffffff !important; padding: 12px 28px; font-size: 13px; font-weight: 600; text-decoration: none; border-radius: 8px; letter-spacing: 0.2px; }
+            .link-fallback { font-size: 11px; color: #71717a; text-align: center; margin: 0 0 24px 0; word-break: break-all; }
+            .url-text { color: #059669; text-decoration: underline; }
             .footer { background-color: #fafafa; border-top: 1px solid #e4e4e7; padding: 20px 32px; text-align: center; }
             .footer-brand { font-size: 11px; font-weight: 600; color: #3f3f46; margin-bottom: 4px; }
             .footer-sub { font-size: 11px; color: #71717a; line-height: 1.5; margin: 0; }
@@ -240,15 +427,19 @@ async function sendNotificationEmail({ toEmail, recipientName, actorName, title,
 
                     <div class="notification-card">
                         ${actorName ? `<div class="actor-badge">Action by ${actorName}</div>` : ''}
-                        <div class="notification-title">${title}</div>
-                        <p class="notification-message">${message}</p>
+                        <div class="notification-title">${cleanTitle}</div>
+                        <p class="notification-message">${cleanMessage}</p>
                     </div>
 
-                    ${actionUrl ? `
+                    <!-- ACTION BUTTON & WEBSITE LINK -->
                     <div class="button-wrapper">
-                        <a href="${actionUrl}" class="btn">${actionLabel || 'View in Pamantasan Records'}</a>
+                        <a href="${cleanActionUrl}" class="btn">${actionLabel || 'View in Pamantasan Records'}</a>
                     </div>
-                    ` : ''}
+
+                    <div class="link-fallback">
+                        If the button above does not work, copy and paste this link into your browser:<br>
+                        <a href="${cleanActionUrl}" class="url-text">${cleanActionUrl}</a>
+                    </div>
                 </div>
 
                 <!-- INSTITUTIONAL FOOTER -->
@@ -265,18 +456,44 @@ async function sendNotificationEmail({ toEmail, recipientName, actorName, title,
     </html>
     `;
 
-    const transport = getTransporter();
-    if (!transport) {
-        console.log(`[SIMULATED NOTIFICATION] To: ${toEmail} | Title: ${title}`);
-        return { simulated: true, title };
-    }
-
-    return await transport.sendMail({
+    const mailOptions = {
         from: fromAddress,
         to: toEmail,
         subject: subject,
         html: html,
+        messageId: messageId,
+        headers: {
+            'Thread-Topic': existingThread?.subject || baseSubject,
+            'X-Entity-Ref-ID': threadHash,
+        },
+    };
+
+    if (inReplyTo) {
+        mailOptions.inReplyTo = inReplyTo;
+    }
+    if (references && references.length > 0) {
+        mailOptions.references = references;
+    }
+
+    const transport = getTransporter();
+    let result = null;
+    if (!transport) {
+        console.log(`[SIMULATED NOTIFICATION] To: ${toEmail} | Subject: ${subject} | MsgId: ${messageId}`);
+        result = { simulated: true, title, subject, messageId };
+    } else {
+        result = await transport.sendMail(mailOptions);
+    }
+
+    // Persist thread state for next update within the hour
+    await saveActiveThread(threadKey, {
+        rootMessageId: existingThread?.rootMessageId || messageId,
+        lastMessageId: messageId,
+        subject: existingThread?.subject || baseSubject,
+        updatedAt: Date.now(),
+        expiresAt: Date.now() + 60 * 60 * 1000,
     });
+
+    return result;
 }
 
 /**

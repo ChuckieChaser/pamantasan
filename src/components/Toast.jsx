@@ -502,7 +502,7 @@ const ToastViewport = ({ children, className, ...props }) => {
 
     return (
         <div
-            className={`fixed bottom-6 ${leftPositionClass} z-50 flex flex-col gap-3 w-[calc(100vw-3rem)] sm:w-[440px] max-w-lg pointer-events-none ${className ?? ''}`.trim()}
+            className={`fixed bottom-6 ${leftPositionClass} z-[60000] flex flex-col gap-3 w-[calc(100vw-3rem)] sm:w-[440px] max-w-lg pointer-events-none ${className ?? ''}`.trim()}
             {...props}
         >
             {children}

@@ -3,6 +3,7 @@ import { create } from 'zustand';
 
 import { mutationSchema } from '../schemas';
 import { notificationService } from '../services';
+import { useAuthStore } from './useAuthStore';
 
 
 // --- STORE ---
@@ -20,9 +21,14 @@ const useNotificationStore = create((set, get) => ({
 
         try {
             const notifications = await notificationService.fetchNotifications(recipientId);
-            set({ recipientId: recipientId, notifications: notifications, isLoading: false, error: null });
+            const sortedNotifications = [...notifications].sort((a, b) => {
+                const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+                const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+                return timeB - timeA;
+            });
+            set({ recipientId: recipientId, notifications: sortedNotifications, isLoading: false, error: null });
 
-            return notifications;
+            return sortedNotifications;
         } catch (error) {
             const message = error?.message ?? `Failed to fetch notifications for recipient "${recipientId}".`;
             set({ isLoading: false, error: message });
@@ -55,7 +61,13 @@ const useNotificationStore = create((set, get) => ({
             const newNotification = await notificationService.insertNotification(validatedPayload);
 
             set((state) => {
-                const shouldAddToLocal = !state.recipientId || String(state.recipientId) === String(payload.recipientId);
+                const currentUserId = useAuthStore.getState().currentUser?.id;
+                const activeRecipientId = state.recipientId || currentUserId;
+                const shouldAddToLocal = Boolean(
+                    activeRecipientId &&
+                    payload.recipientId &&
+                    String(activeRecipientId).toLowerCase() === String(payload.recipientId).toLowerCase()
+                );
                 return {
                     notifications: shouldAddToLocal ? [newNotification, ...state.notifications] : state.notifications,
                     isLoading: false,
@@ -72,18 +84,23 @@ const useNotificationStore = create((set, get) => ({
         }
     },
 
-    markNotificationAsRead: async (id) => {
+    markNotificationAsRead: async (idOrIds) => {
+        const ids = Array.isArray(idOrIds) ? idOrIds : [idOrIds];
+        const idSet = new Set(ids);
+
         // Optimistic local update
         set((state) => ({
             notifications: state.notifications.map((n) =>
-                n.id === id ? { ...n, isRead: true } : n
+                idSet.has(n.id) ? { ...n, isRead: true } : n
             ),
         }));
 
         try {
-            await notificationService.updateNotification(id, { isRead: true });
+            await Promise.allSettled(
+                ids.map((id) => notificationService.updateNotification(id, { isRead: true }))
+            );
         } catch (error) {
-            console.warn(`Failed to mark notification ${id} as read:`, error);
+            console.warn('Failed to mark notifications as read:', error);
         }
     },
 

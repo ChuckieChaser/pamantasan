@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
     AlertCircle,
+    AlertTriangle,
     Building2,
     Calendar,
     Check,
@@ -14,6 +15,7 @@ import {
     Edit3,
     Eye,
     EyeOff,
+    FileCheck,
     FileText,
     FileType,
     Folder,
@@ -38,6 +40,7 @@ import {
     Tag,
     Trash2,
     Upload,
+    UploadCloud,
     User,
     UserCheck,
     Users,
@@ -60,11 +63,32 @@ import { Avatar, resolveUserAvatar } from './Avatar';
 import { Badge } from './Badge';
 import { Button } from './Button';
 import { Modal } from './Modal';
-import { SelectField, TextField } from './Fields';
+import { AreaField, SelectField, TextField } from './Fields';
 import { SegmentSelection } from './Selections';
 import { Account } from './ui/Account';
-import { constants } from '../constants';
+import { formatMimeTypeLabel } from './common';
+import { constants, isStaffRole } from '../constants';
 import { storageService, coordinatorApprovalService } from '../services';
+
+const isRmoUser = (user, safeDepts = []) => {
+    if (!user) return false;
+    if (isStaffRole(user.role)) return true;
+
+    const deptId = user.departmentId || user.department?.id;
+    if (deptId && Array.isArray(safeDepts)) {
+        const d = safeDepts.find((item) => String(item.id) === String(deptId));
+        if (d) {
+            const name = String(d.name || '').toLowerCase();
+            const code = String(d.code || '').toLowerCase();
+            if (name.includes('records management') || code === 'rmo') return true;
+        }
+    }
+
+    const deptName = String(user.department || user.departmentName || '').toLowerCase();
+    if (deptName.includes('records management') || deptName === 'rmo') return true;
+
+    return false;
+};
 
 
 // --- CONFIGURATIONS ---
@@ -97,6 +121,7 @@ const STATUS_BADGE_VARIANT = {
     [constants.DOCUMENT_SHARES_STATUS.PUBLISHED]: 'success',
     [constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL]: 'warning',
     [constants.DOCUMENT_SHARES_STATUS.STASHED]: 'neutral',
+    [constants.DOCUMENT_SHARES_STATUS.REJECTED]: 'error',
     [constants.USERS_STATUS.VERIFIED]: 'success',
     [constants.USERS_STATUS.PENDING_PASSWORD]: 'warning',
     [constants.USERS_STATUS.PENDING_SSO]: 'information',
@@ -151,6 +176,7 @@ const Inspector = ({
     item = null,
     currentUser = null,
     targetTab = null,
+    onTabChange = null,
     onAction,
     className,
     ...props
@@ -171,6 +197,11 @@ const Inspector = ({
     // VERSION REVERT CONFIRMATION STATE
     const [revertingVersionItem, setRevertingVersionItem] = useState(null);
     const [isRevertingVersion, setIsRevertingVersion] = useState(false);
+
+    // COORDINATOR REJECT CONFIRMATION MODAL STATES (B1 & A4)
+    const [rejectingCoordinatorReq, setRejectingCoordinatorReq] = useState(null);
+    const [coordinatorRejectReason, setCoordinatorRejectReason] = useState('');
+    const [isSubmittingCoordinatorReject, setIsSubmittingCoordinatorReject] = useState(false);
 
     // DEPARTMENT MODALS & FACULTY INSPECTION STATES
     const [viewingFacultyMember, setViewingFacultyMember] = useState(null);
@@ -199,6 +230,17 @@ const Inspector = ({
     const [expandedFolderIds, setExpandedFolderIds] = useState(() => new Set());
     const [selectedTreeItemId, setSelectedTreeItemId] = useState(null);
 
+    // STATES: QUICK ACTION CONFIRMATION & REJECTION MODALS
+    const [inspectorConfirmAction, setInspectorConfirmAction] = useState(null);
+    const [inspectorRejectModal, setInspectorRejectModal] = useState(null);
+    const [inspectorRejectReason, setInspectorRejectReason] = useState('');
+
+    // STATES: RESHARE MODAL (NEW VERSION OR OVERWRITE)
+    const [reshareModal, setReshareModal] = useState(null);
+    const [reshareFile, setReshareFile] = useState(null);
+    const [reshareChangeSummary, setReshareChangeSummary] = useState('');
+    const [isSubmittingReshare, setIsSubmittingReshare] = useState(false);
+
     // HOOKS
     const { showToast } = useToast();
     const { currentUser: authUser } = useAuth();
@@ -211,28 +253,26 @@ const Inspector = ({
     const isDirector = constants.isDirectorRole(activeUser?.role);
     const isMember = constants.isMemberRole(activeUser?.role);
 
-    if (item?.id !== previousItemId) {
-        setPreviousItemId(item?.id);
-        const resolvedTab = normalizeTab(targetTab || item?._targetTab || 'information');
-        setActiveTab(isMember && resolvedTab === 'share' ? 'information' : resolvedTab);
-        setChatInputText('');
-        setStagedAttachments([]);
-        setIsAttachModalOpen(false);
-        setIsEditDepartmentModalOpen(false);
-        setIsEditUserModalOpen(false);
-        setViewingFacultyMember(null);
-        setExpandedFolderIds(new Set());
-        setSelectedTreeItemId(null);
-    }
-
     useEffect(() => {
-        const nextTab = targetTab || item?._targetTab;
-        if (nextTab) {
-            const resolvedTab = normalizeTab(nextTab);
-            const target = isMember && resolvedTab === 'share' ? 'information' : resolvedTab;
-            queueMicrotask(() => setActiveTab(target));
+        if (item?.id !== previousItemId) {
+            setPreviousItemId(item?.id);
+            const explicitTab = targetTab || item?._targetTab;
+            if (explicitTab) {
+                const resolvedTab = normalizeTab(explicitTab);
+                const target = isMember && resolvedTab === 'share' ? 'information' : resolvedTab;
+                setActiveTab(target);
+                onTabChange?.(target);
+            }
+            setChatInputText('');
+            setStagedAttachments([]);
+            setIsAttachModalOpen(false);
+            setIsEditDepartmentModalOpen(false);
+            setIsEditUserModalOpen(false);
+            setViewingFacultyMember(null);
+            setExpandedFolderIds(new Set());
+            setSelectedTreeItemId(null);
         }
-    }, [targetTab, item?.id, item?._targetTab, isMember]);
+    }, [item?.id, previousItemId, targetTab, item?._targetTab, isMember, onTabChange]);
 
     const allDocuments = useDocumentStore((state) => state.documents);
     const allDocumentVersions = useDocumentStore((state) => state.documentVersions ?? state.versions ?? []);
@@ -408,8 +448,9 @@ const Inspector = ({
                     : (latestVer?.classification ?? item.classification ?? constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED),
                 version: item.isFolder
                     ? '—'
-                    : (latestVer ? `v${latestVer.versionNumber ?? latestVer.version ?? 1}.0` : item.version),
-                sizeBytes: latestVer?.sizeBytes ?? item.sizeBytes,
+                    : (latestVer ? `v${latestVer.versionNumber ?? latestVer.version ?? 1}.0` : (item.version || 'v1.0')),
+                sizeBytes: latestVer?.sizeBytes ?? item.sizeBytes ?? (typeof item.size === 'number' ? item.size : undefined),
+                size: item.size || (latestVer?.sizeBytes ? formatBytes(latestVer.sizeBytes) : (item.sizeBytes ? formatBytes(item.sizeBytes) : null)),
                 mimeType: latestVer?.mimeType ?? item.mimeType,
                 path: latestVer?.path ?? item.path,
                 checksum: latestVer?.checksum ?? item.checksum,
@@ -457,10 +498,12 @@ const Inspector = ({
         if (isDocumentRequest) {
             const matchedRequest = (allDocumentRequests || []).find((r) => String(r.id) === String(item?.id));
             const effectiveStatus = matchedRequest?.status ?? item?.status;
+            const effectiveRejection = item?.rejectionReason ?? matchedRequest?.rejectionReason ?? matchedRequest?.rejection_reason ?? null;
             return {
                 ...item,
                 ...(matchedRequest || {}),
                 status: effectiveStatus,
+                rejectionReason: effectiveRejection,
                 updatedAt: matchedRequest?.updatedAt ?? item?.updatedAt,
             };
         }
@@ -516,11 +559,15 @@ const Inspector = ({
             );
         }
 
+        const parsedVersion = item.version
+            ? (parseInt(String(item.version).replace(/^v/i, '').split('.')[0], 10) || 1)
+            : 1;
+
         return [
             {
                 id:             `ver-${item.id}`,
                 documentId:     item.id,
-                version:        item.version ? parseInt(String(item.version).replace(/\D/g, '')) || 1 : 1,
+                version:        parsedVersion,
                 sizeBytes:      item.sizeBytes ?? 1048576,
                 classification: item.classification ?? constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED,
                 changeSummary:  item.changeSummary ?? 'Initial document release.',
@@ -595,8 +642,7 @@ const Inspector = ({
             (cr) =>
                 cr.status === constants.COORDINATOR_REQUESTS_STATUS.PENDING &&
                 (cr.action === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_RESOLVE ||
-                 cr.action === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_REJECT ||
-                 cr.action === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_REOPEN) &&
+                 cr.action === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_REJECT) &&
                 String(cr.data?.documentRequestId ?? '') === String(activeItem.id)
         ) ?? null;
     }, [activeItem, isDocumentRequest, allCoordinatorRequests]);
@@ -718,7 +764,9 @@ const Inspector = ({
             return [];
         }
 
-        return allAuditLogs.filter((log) => log.actor?.id === item.id || log.actorId === item.id);
+        return allAuditLogs
+            .filter((log) => log.actor?.id === item.id || log.actorId === item.id)
+            .sort((a, b) => new Date(b?.createdAt || 0) - new Date(a?.createdAt || 0));
     }, [item, isUser, allAuditLogs]);
 
     const departmentFaculty = useMemo(() => {
@@ -759,6 +807,33 @@ const Inspector = ({
 
         return [];
     }, [item, isDocumentRequest, allRequestMessages]);
+
+    const effectiveRejectionReason = useMemo(() => {
+        const directReason = activeItem?.rejectionReason || item?.rejectionReason;
+        if (directReason) return directReason;
+
+        if (isDocumentRequest) {
+            const rejectionMsg = [...requestMessages]
+                .reverse()
+                .find((m) => m.message && (
+                    m.message.startsWith('Rejection Note:') ||
+                    m.message.includes('<!-- rejection_reason:') ||
+                    m.message.toLowerCase().includes('rejection reason:')
+                ));
+            if (rejectionMsg) {
+                const text = rejectionMsg.message;
+                if (text.startsWith('Rejection Note:')) {
+                    return text.replace(/^Rejection Note:\s*/, '').trim();
+                }
+                const tagMatch = text.match(/<!-- rejection_reason:(.*?) -->/);
+                if (tagMatch) {
+                    return tagMatch[1].trim();
+                }
+                return text;
+            }
+        }
+        return null;
+    }, [activeItem?.rejectionReason, item?.rejectionReason, isDocumentRequest, requestMessages]);
 
     const pendingAttachRequests = useMemo(() => {
         if (!item || !isDocumentRequest) return [];
@@ -908,9 +983,12 @@ const Inspector = ({
     useEffect(() => {
         if (tabOptions.length > 0 && !tabOptions.some((opt) => opt.value === activeTab)) {
             const fallback = tabOptions[0]?.value || 'information';
-            queueMicrotask(() => setActiveTab(fallback));
+            queueMicrotask(() => {
+                setActiveTab(fallback);
+                onTabChange?.(fallback);
+            });
         }
-    }, [tabOptions, activeTab]);
+    }, [tabOptions, activeTab, onTabChange]);
 
     const attachableDocuments = useMemo(() => {
         return allDocuments
@@ -1000,6 +1078,133 @@ const Inspector = ({
         }
     };
 
+    const handleOpenRejectCoordinatorModal = (req) => {
+        setRejectingCoordinatorReq(req);
+        setCoordinatorRejectReason('');
+    };
+
+    const handleCloseRejectCoordinatorModal = () => {
+        if (isSubmittingCoordinatorReject) return;
+        setRejectingCoordinatorReq(null);
+        setCoordinatorRejectReason('');
+    };
+
+    const handleConfirmRejectCoordinatorReq = async () => {
+        if (!rejectingCoordinatorReq) return;
+        setIsSubmittingCoordinatorReject(true);
+        try {
+            await coordinatorApprovalService.rejectCoordinatorRequest({
+                ...rejectingCoordinatorReq,
+                rejectionReason: coordinatorRejectReason.trim() || undefined,
+            }, activeUser);
+            await useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
+            showToast({
+                type: 'warning',
+                title: 'Request Rejected',
+                description: 'Coordinator request was rejected.',
+            });
+            handleCloseRejectCoordinatorModal();
+        } catch (err) {
+            showToast({
+                type: 'error',
+                title: 'Rejection Failed',
+                description: err?.message ?? 'Could not reject request.',
+            });
+        } finally {
+            setIsSubmittingCoordinatorReject(false);
+        }
+    };
+
+    const handleConfirmInspectorAction = async () => {
+        if (!inspectorConfirmAction) return;
+        const { actionKey, targetItem } = inspectorConfirmAction;
+        try {
+            await handleActionClick(actionKey, targetItem);
+            setInspectorConfirmAction(null);
+        } catch (err) {
+            console.error(`Failed inspector action ${actionKey}:`, err);
+        }
+    };
+
+    const handleConfirmInspectorRejection = async () => {
+        if (!inspectorRejectModal) return;
+        const reason = inspectorRejectReason.trim();
+        if (!reason) {
+            showToast({
+                type: 'warning',
+                title: 'Rejection Reason Required',
+                description: 'Please provide a reason for rejecting this document.',
+            });
+            return;
+        }
+        try {
+            await handleActionClick('reject', {
+                ...(inspectorRejectModal.targetItem || item),
+                rejectionReason: reason,
+            });
+            setInspectorRejectModal(null);
+            setInspectorRejectReason('');
+        } catch (err) {
+            console.error('Failed inspector rejection:', err);
+        }
+    };
+
+    const handleConfirmReshare = async () => {
+        if (!reshareModal || !reshareFile) {
+            showToast({
+                type: 'warning',
+                title: 'File Required',
+                description: 'Please select a replacement file to upload.',
+            });
+            return;
+        }
+        setIsSubmittingReshare(true);
+        try {
+            const uploaderId = activeUser?.id;
+            if (reshareModal.mode === 'new_version') {
+                await useDocumentStore.getState().reshareNewVersion(
+                    reshareModal.docId,
+                    reshareModal.shareItem.id,
+                    reshareFile,
+                    uploaderId,
+                    reshareChangeSummary.trim() || 'Revision addressing rejection feedback'
+                );
+                showToast({
+                    type: 'success',
+                    title: 'Document Reshared as New Version',
+                    description: `Created revision for ${reshareModal.targetDeptName} and reset status to Pending Approval.`,
+                });
+            } else {
+                await useDocumentStore.getState().overwriteVersionFileAndReshare(
+                    reshareModal.docId,
+                    reshareModal.shareItem.id,
+                    reshareFile,
+                    uploaderId
+                );
+                showToast({
+                    type: 'success',
+                    title: 'Document Overwritten & Reshared',
+                    description: `Replaced current version file for ${reshareModal.targetDeptName} and reset status to Pending Approval.`,
+                });
+            }
+            if (activeUser) {
+                useDocumentStore.getState().syncAllDocumentShares(activeUser, allDepartments).catch(() => {});
+            }
+            setReshareModal(null);
+            setReshareFile(null);
+            setReshareChangeSummary('');
+        } catch (err) {
+            console.error('Failed to reshare document:', err);
+            showToast({
+                type: 'error',
+                title: 'Reshare Failed',
+                description: err?.message || 'Could not complete reshare operation.',
+            });
+        } finally {
+            setIsSubmittingReshare(false);
+        }
+    };
+
     const handleOpenEditDepartment = () => {
         setDeptFormCode(activeItem?.code ?? '');
         setDeptFormName(activeItem?.name ?? activeItem?.title ?? '');
@@ -1055,7 +1260,7 @@ const Inspector = ({
                 useDepartmentStore.getState().updateDepartment(activeItem.id, {
                     code: deptFormCode.trim().toUpperCase(),
                     name: deptFormName.trim(),
-                }),
+                }, activeUser),
                 minTimer,
             ]);
 
@@ -1084,7 +1289,7 @@ const Inspector = ({
         setUserFormFirstName(u?.firstName ?? '');
         setUserFormMiddleName(u?.middleName ?? '');
         setUserFormLastName(u?.lastName ?? '');
-        setUserFormEmail(u?.email ?? '');
+        setUserFormEmail(u?.email ? u.email.replace(/@.*$/, '') : '');
         setUserFormRole(rawRole);
         setUserFormDepartmentId(isLocked ? resolvedRmoId : (u?.departmentId ?? allDepartments[0]?.id ?? ''));
         setUserFormAvatarPath(u?.avatarPath ?? null);
@@ -1099,9 +1304,11 @@ const Inspector = ({
         if (!userFormFirstName.trim()) errors.firstName = 'First name is required.';
         if (!userFormLastName.trim()) errors.lastName = 'Last name is required.';
 
-        const cleanEmail = userFormEmail.trim().toLowerCase();
+        const rawUsername = userFormEmail.trim().toLowerCase().replace(/@.*$/, '');
+        const cleanEmail = rawUsername ? `${rawUsername}${constants.INSTITUTIONAL_CONFIGURATION.EMAIL_DOMAIN}` : '';
+
         if (!cleanEmail) {
-            errors.email = 'Email is required.';
+            errors.email = 'Email username is required.';
         } else if (!cleanEmail.endsWith(constants.INSTITUTIONAL_CONFIGURATION.EMAIL_DOMAIN)) {
             errors.email = `Must end with ${constants.INSTITUTIONAL_CONFIGURATION.EMAIL_DOMAIN}`;
         } else if (!constants.VALIDATION_PATTERNS.EMAIL.test(cleanEmail)) {
@@ -1145,7 +1352,7 @@ const Inspector = ({
                         firstName: userFormFirstName.trim(),
                         middleName: userFormMiddleName.trim() || null,
                         lastName: userFormLastName.trim(),
-                        email: userFormEmail.trim().toLowerCase(),
+                        email: cleanEmail,
                         departmentId: finalDepartmentId,
                         role: userFormRole,
                         avatarPath: uploadedAvatarPath,
@@ -1176,7 +1383,7 @@ const Inspector = ({
                     firstName: userFormFirstName.trim(),
                     middleName: userFormMiddleName.trim() || null,
                     lastName: userFormLastName.trim(),
-                    email: userFormEmail.trim().toLowerCase(),
+                    email: cleanEmail,
                     departmentId: finalDepartmentId,
                     role: userFormRole,
                     avatarPath: uploadedAvatarPath,
@@ -1310,7 +1517,7 @@ const Inspector = ({
         if (isRequestLocked) {
             showToast({
                 title: 'Thread Locked',
-                description: 'This document request has been closed. Reopen it to send messages.',
+                description: 'This document request has been closed and cannot be reopened.',
                 variant: 'warning',
             });
             return;
@@ -1436,7 +1643,10 @@ const Inspector = ({
     }
 
     // DERIVED VALUES
-    const primaryTitle = activeItem.title ?? activeItem.name ?? activeItem.subject ?? 'Record Details';
+    const rawTitle = activeItem.title ?? activeItem.name ?? activeItem.subject ?? 'Record Details';
+    const primaryTitle = (isFolder || isUser || isDepartment || isDocumentRequest || isCoordinatorRequest)
+        ? rawTitle
+        : (typeof rawTitle === 'string' ? rawTitle.replace(/\.[^/.]+$/, '').trim() || rawTitle : rawTitle);
     const primarySubtitle =
         activeItem.code ??
         activeItem.universityId ??
@@ -1459,9 +1669,9 @@ const Inspector = ({
     const formattedUpdatedDate = formatTimestamp(
         activeItem.updatedAt ?? activeItem.createdAt ?? activeItem.date
     ) ?? formattedCreatedDate;
-    const formattedFileSize = (activeItem.sizeBytes !== undefined && activeItem.sizeBytes !== null)
+    const formattedFileSize = (activeItem.sizeBytes !== undefined && activeItem.sizeBytes !== null && activeItem.sizeBytes > 0)
         ? formatBytes(activeItem.sizeBytes)
-        : (activeItem.size ?? (isFolder ? '0 B' : null));
+        : (activeItem.size && activeItem.size !== '—' ? activeItem.size : (isFolder ? '0 B' : null));
     const mimeType = activeItem.mimeType ?? getMimeTypeFromExtension(activeItem.name ?? activeItem.title);
     const checksum = activeItem.checksum ?? null;
 
@@ -1565,7 +1775,10 @@ const Inspector = ({
                 <SegmentSelection
                     value={activeTab}
                     options={tabOptions}
-                    onChange={setActiveTab}
+                    onChange={(newTab) => {
+                        setActiveTab(newTab);
+                        onTabChange?.(newTab);
+                    }}
                     className="w-full justify-stretch [&>button]:flex-1 mt-1"
                 />
             </div>
@@ -1637,7 +1850,7 @@ const Inspector = ({
                                 </div>
                             )}
 
-                        {isCoordinatorRequest && item.rejectionReason && (
+                        {(isCoordinatorRequest || isDocumentRequest) && effectiveRejectionReason && (
                             <div className="flex flex-col gap-2">
                                 <span className="text-xs font-semibold uppercase tracking-wider text-error select-none">
                                     Rejection Reason
@@ -1646,7 +1859,7 @@ const Inspector = ({
                                     <div className="flex items-center gap-2 font-bold mb-1">
                                         <AlertCircle className="h-4 w-4" /> Rejection Reason
                                     </div>
-                                    {item.rejectionReason}
+                                    {effectiveRejectionReason}
                                 </div>
                             </div>
                         )}
@@ -1693,10 +1906,10 @@ const Inspector = ({
                                                     <FileType className={ICON_STYLE} /> MIME Type
                                                 </span>
                                                 <span
-                                                    className="text-xs text-text-muted truncate max-w-48 cursor-default select-text"
+                                                    className="text-xs text-text font-medium truncate max-w-48 cursor-default select-text"
                                                     title={mimeType}
                                                 >
-                                                    {mimeType}
+                                                    {formatMimeTypeLabel(mimeType)}
                                                 </span>
                                             </div>
                                         )}
@@ -1771,22 +1984,88 @@ const Inspector = ({
                                         {/* TOTAL READS */}
                                         {(() => {
                                             const isFold = Boolean(item?.isFolder || item?.mimeType === 'folder');
-                                            const targetIds = isFold
-                                                ? new Set(getRecursiveDescendantDocIds(item?.id, allDocuments))
-                                                : new Set([item?.id]);
-                                            const readCount = (allAuditLogs || []).filter((log) => {
-                                                const isDoc = targetIds.has(log?.entityId) || targetIds.has(log?.document?.id);
-                                                const isRead = ['READ', 'VIEW', 'VIEWED'].includes(String(log?.action || '').toUpperCase());
-                                                return isDoc && isRead;
-                                            }).length;
+                                            const userMap = new Map((allUsers || []).map((u) => [String(u.id), u]));
+
+                                            if (isFold) {
+                                                const descendantIds = new Set(getRecursiveDescendantDocIds(item?.id, allDocuments));
+                                                const childDocReadersMap = new Map();
+                                                (allAuditLogs || []).forEach((log) => {
+                                                    const docId = log?.entityId || log?.document?.id;
+                                                    if (!docId || !descendantIds.has(docId)) return;
+                                                    const isRead = ['READ', 'VIEW', 'VIEWED', 'DOWNLOAD', 'DOWNLOADED', 'ACCESS', 'ACCESSED'].includes(
+                                                        String(log?.action || '').toUpperCase()
+                                                    );
+                                                    if (!isRead) return;
+
+                                                    const actorId = log?.actor?.id || log?.actorId;
+                                                    if (!actorId) return;
+
+                                                    let actorUser = userMap.get(String(actorId)) || log?.actor;
+                                                    if (!actorUser && typeof log?.data === 'string') {
+                                                        try {
+                                                            const parsed = JSON.parse(log.data);
+                                                            actorUser = { id: actorId, role: parsed.role, departmentId: parsed.departmentId };
+                                                        } catch {}
+                                                    }
+                                                    if (!isRmoUser(actorUser, allDepartments)) {
+                                                        if (!childDocReadersMap.has(docId)) {
+                                                            childDocReadersMap.set(docId, new Set());
+                                                        }
+                                                        childDocReadersMap.get(docId).add(String(actorId));
+                                                    }
+                                                });
+
+                                                let combinedCount = 0;
+                                                childDocReadersMap.forEach((readersSet) => {
+                                                    combinedCount += readersSet.size;
+                                                });
+
+                                                return (
+                                                    <div className={PROPERTY_ROW_STYLE}>
+                                                        <span className={PROPERTY_LABEL_STYLE}>
+                                                            <Eye className={ICON_STYLE} /> Total Reads
+                                                        </span>
+                                                        <span className={PROPERTY_VALUE_STYLE} title={`${combinedCount} combined unique non-RMO reads across folder contents`}>
+                                                            {combinedCount} {combinedCount === 1 ? 'read' : 'reads'} (combined)
+                                                        </span>
+                                                    </div>
+                                                );
+                                            }
+
+                                            // File: unique non-RMO readers
+                                            const targetId = item?.id;
+                                            const nonRmoReaders = new Set();
+                                            (allAuditLogs || []).forEach((log) => {
+                                                const isDoc = log?.entityId === targetId || log?.document?.id === targetId;
+                                                const isRead = ['READ', 'VIEW', 'VIEWED', 'DOWNLOAD', 'DOWNLOADED', 'ACCESS', 'ACCESSED'].includes(
+                                                    String(log?.action || '').toUpperCase()
+                                                );
+                                                if (!isDoc || !isRead) return;
+
+                                                const actorId = log?.actor?.id || log?.actorId;
+                                                if (!actorId) return;
+
+                                                let actorUser = userMap.get(String(actorId)) || log?.actor;
+                                                if (!actorUser && typeof log?.data === 'string') {
+                                                    try {
+                                                        const parsed = JSON.parse(log.data);
+                                                        actorUser = { id: actorId, role: parsed.role, departmentId: parsed.departmentId };
+                                                    } catch {}
+                                                }
+                                                if (!isRmoUser(actorUser, allDepartments)) {
+                                                    nonRmoReaders.add(String(actorId));
+                                                }
+                                            });
+
+                                            const readCount = nonRmoReaders.size;
 
                                             return (
                                                 <div className={PROPERTY_ROW_STYLE}>
                                                     <span className={PROPERTY_LABEL_STYLE}>
                                                         <Eye className={ICON_STYLE} /> Total Reads
                                                     </span>
-                                                    <span className={PROPERTY_VALUE_STYLE} title={`${readCount} total reads`}>
-                                                        {readCount} {readCount === 1 ? 'read' : 'reads'} {isFold ? '(combined)' : ''}
+                                                    <span className={PROPERTY_VALUE_STYLE} title={`${readCount} unique non-RMO faculty reads`}>
+                                                        {readCount} {readCount === 1 ? 'read' : 'reads'}
                                                     </span>
                                                 </div>
                                             );
@@ -2154,6 +2433,75 @@ const Inspector = ({
                                                     />
                                                 </div>
 
+                                                {/* REJECTION FEEDBACK CALLOUT & ADMIN RESHARE ACTIONS */}
+                                                {(() => {
+                                                    const isShareRejected = shareItem.status === constants.DOCUMENT_SHARES_STATUS.REJECTED;
+                                                    if (!isShareRejected) return null;
+
+                                                    const latestVer = documentVersions[0];
+                                                    const rejectionReason = shareItem.rejectionReason || latestVer?.rejectionReason || 'No rejection reason specified.';
+                                                    const rejecter = allUsers.find((u) => u.id === latestVer?.rejecterId);
+                                                    const rejecterName = rejecter ? `${rejecter.firstName || ''} ${rejecter.lastName || ''}`.trim() : null;
+
+                                                    return (
+                                                        <div className="p-3 rounded-lg border border-error/30 bg-error/10 flex flex-col gap-2.5">
+                                                            <div className="flex items-start gap-2">
+                                                                <AlertTriangle className="h-4 w-4 text-error shrink-0 mt-0.5" />
+                                                                <div className="flex flex-col gap-0.5 min-w-0">
+                                                                    <span className="text-xs font-semibold text-error">
+                                                                        Share Rejected by Department Reviewer {rejecterName ? `(${rejecterName})` : ''}
+                                                                    </span>
+                                                                    <p className="text-xs text-text leading-relaxed">
+                                                                        &ldquo;{rejectionReason}&rdquo;
+                                                                    </p>
+                                                                </div>
+                                                            </div>
+
+                                                            {/* ADMIN RESHARE ACTIONS */}
+                                                            {isAdmin && (
+                                                                <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-error/20">
+                                                                    <Button
+                                                                        variant="primary"
+                                                                        size="xs"
+                                                                        leadingIcon={UploadCloud}
+                                                                        onClick={() => {
+                                                                            setReshareModal({
+                                                                                mode: 'new_version',
+                                                                                shareItem,
+                                                                                docId: item.id,
+                                                                                targetDeptName: shareDepartment?.name ?? 'Department',
+                                                                            });
+                                                                            setReshareFile(null);
+                                                                            setReshareChangeSummary('Revision addressing rejection feedback');
+                                                                        }}
+                                                                        className="truncate text-[11px]"
+                                                                    >
+                                                                        Reshare (New Version)
+                                                                    </Button>
+                                                                    <Button
+                                                                        variant="secondary"
+                                                                        size="xs"
+                                                                        leadingIcon={FileCheck}
+                                                                        onClick={() => {
+                                                                            setReshareModal({
+                                                                                mode: 'overwrite',
+                                                                                shareItem,
+                                                                                docId: item.id,
+                                                                                targetDeptName: shareDepartment?.name ?? 'Department',
+                                                                            });
+                                                                            setReshareFile(null);
+                                                                            setReshareChangeSummary('');
+                                                                        }}
+                                                                        className="truncate text-[11px]"
+                                                                    >
+                                                                        Overwrite File & Reshare
+                                                                    </Button>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })()}
+
                                                 {/* VISUAL WORKFLOW TRACKING PIPELINE (4 NODES) */}
                                                 {(() => {
                                                     const statusUpper = String(shareItem.status || '').toUpperCase();
@@ -2352,33 +2700,102 @@ const Inspector = ({
                                                 {(() => {
                                                     const deptId = shareDepartment?.id ?? shareItem.department?.id ?? shareItem.departmentId;
                                                     const isFold = Boolean(item?.isFolder || item?.mimeType === 'folder');
-                                                    const targetDocIds = isFold
-                                                        ? new Set(getRecursiveDescendantDocIds(item?.id, allDocuments))
-                                                        : new Set([item?.id]);
+                                                    const userMap = new Map((allUsers || []).map((u) => [String(u.id), u]));
 
-                                                    const deptAuditLogs = (allAuditLogs || []).filter((log) => {
-                                                        const isDoc = targetDocIds.has(log?.entityId) || targetDocIds.has(log?.document?.id);
-                                                        const isReadAction = ['READ', 'VIEW', 'VIEWED'].includes(String(log?.action || '').toUpperCase());
-                                                        if (!isDoc || !isReadAction) return false;
+                                                    let deptReadCount = 0;
+                                                    let deptAuditLogs = [];
+                                                    let uniqueReadersCount = 0;
 
-                                                        const actorId = log?.actor?.id ?? log?.actorId;
-                                                        const actorUser = (allUsers || []).find((u) => u.id === actorId);
-                                                        let logDeptId = actorUser?.departmentId;
-                                                        if (!logDeptId && typeof log?.data === 'string') {
-                                                            try {
-                                                                const parsed = JSON.parse(log.data);
-                                                                logDeptId = parsed.departmentId;
-                                                            } catch {
-                                                                /* ignore */
+                                                    if (isFold) {
+                                                        const descendantIds = new Set(getRecursiveDescendantDocIds(item?.id, allDocuments));
+                                                        const childDocDeptReadersMap = new Map();
+                                                        const deptUniqueUsers = new Set();
+                                                        const deptLogs = [];
+
+                                                        (allAuditLogs || []).forEach((log) => {
+                                                            const docId = log?.entityId || log?.document?.id;
+                                                            if (!docId || !descendantIds.has(docId)) return;
+                                                            const isReadAction = ['READ', 'VIEW', 'VIEWED', 'DOWNLOAD', 'DOWNLOADED', 'ACCESS', 'ACCESSED'].includes(String(log?.action || '').toUpperCase());
+                                                            if (!isReadAction) return;
+
+                                                            const actorId = String(log?.actor?.id ?? log?.actorId ?? '');
+                                                            if (!actorId) return;
+
+                                                            let actorUser = userMap.get(actorId) || log?.actor;
+                                                            if (!actorUser && typeof log?.data === 'string') {
+                                                                try {
+                                                                    const parsed = JSON.parse(log.data);
+                                                                    actorUser = { id: actorId, role: parsed.role, departmentId: parsed.departmentId };
+                                                                } catch {}
                                                             }
-                                                        }
-                                                        return Boolean(deptId && logDeptId && String(logDeptId) === String(deptId));
-                                                    });
+                                                            if (isRmoUser(actorUser, allDepartments)) return;
 
-                                                    const deptReadCount = deptAuditLogs.length;
-                                                    const uniqueReadersCount = new Set(
-                                                        deptAuditLogs.map((l) => l?.actor?.id ?? l?.actorId).filter(Boolean)
-                                                    ).size;
+                                                            let logDeptId = actorUser?.departmentId;
+                                                            if (!logDeptId && typeof log?.data === 'string') {
+                                                                try {
+                                                                    const parsed = JSON.parse(log.data);
+                                                                    logDeptId = parsed.departmentId;
+                                                                } catch {}
+                                                            }
+
+                                                            if (deptId && logDeptId && String(logDeptId) === String(deptId)) {
+                                                                if (!childDocDeptReadersMap.has(docId)) {
+                                                                    childDocDeptReadersMap.set(docId, new Set());
+                                                                }
+                                                                if (!childDocDeptReadersMap.get(docId).has(actorId)) {
+                                                                    childDocDeptReadersMap.get(docId).add(actorId);
+                                                                    deptLogs.push(log);
+                                                                }
+                                                                deptUniqueUsers.add(actorId);
+                                                            }
+                                                        });
+
+                                                        let totalDeptReads = 0;
+                                                        childDocDeptReadersMap.forEach((readersSet) => {
+                                                            totalDeptReads += readersSet.size;
+                                                        });
+                                                        deptReadCount = totalDeptReads;
+                                                        uniqueReadersCount = deptUniqueUsers.size;
+                                                        deptAuditLogs = deptLogs;
+                                                    } else {
+                                                        const targetDocId = item?.id;
+                                                        const nonRmoUserFirstReadLogs = new Map();
+                                                        (allAuditLogs || []).forEach((log) => {
+                                                            const isDoc = log?.entityId === targetDocId || log?.document?.id === targetDocId;
+                                                            const isReadAction = ['READ', 'VIEW', 'VIEWED', 'DOWNLOAD', 'DOWNLOADED', 'ACCESS', 'ACCESSED'].includes(String(log?.action || '').toUpperCase());
+                                                            if (!isDoc || !isReadAction) return;
+
+                                                            const actorId = String(log?.actor?.id ?? log?.actorId ?? '');
+                                                            if (!actorId) return;
+
+                                                            let actorUser = userMap.get(actorId) || log?.actor;
+                                                            if (!actorUser && typeof log?.data === 'string') {
+                                                                try {
+                                                                    const parsed = JSON.parse(log.data);
+                                                                    actorUser = { id: actorId, role: parsed.role, departmentId: parsed.departmentId };
+                                                                } catch {}
+                                                            }
+                                                            if (isRmoUser(actorUser, allDepartments)) return;
+
+                                                            let logDeptId = actorUser?.departmentId;
+                                                            if (!logDeptId && typeof log?.data === 'string') {
+                                                                try {
+                                                                    const parsed = JSON.parse(log.data);
+                                                                    logDeptId = parsed.departmentId;
+                                                                } catch {}
+                                                            }
+
+                                                            if (deptId && logDeptId && String(logDeptId) === String(deptId)) {
+                                                                if (!nonRmoUserFirstReadLogs.has(actorId)) {
+                                                                    nonRmoUserFirstReadLogs.set(actorId, log);
+                                                                }
+                                                            }
+                                                        });
+
+                                                        deptReadCount = nonRmoUserFirstReadLogs.size;
+                                                        uniqueReadersCount = nonRmoUserFirstReadLogs.size;
+                                                        deptAuditLogs = Array.from(nonRmoUserFirstReadLogs.values());
+                                                    }
 
                                                     return (
                                                         <div className="p-2.5 rounded-md border border-surface-border bg-surface/50 flex flex-col gap-1.5">
@@ -2390,7 +2807,7 @@ const Inspector = ({
                                                                 <span className="text-[10px] font-medium text-text">
                                                                     {deptReadCount} {deptReadCount === 1 ? 'read' : 'reads'}
                                                                     {isFold ? ' (combined)' : ''}
-                                                                    {uniqueReadersCount > 0 ? ` • ${uniqueReadersCount} unique` : ''}
+                                                                    {isFold && uniqueReadersCount > 0 ? ` • ${uniqueReadersCount} unique ${uniqueReadersCount === 1 ? 'reader' : 'readers'}` : ''}
                                                                 </span>
                                                             </div>
                                                             <div className="w-full pt-1">
@@ -2889,84 +3306,161 @@ const Inspector = ({
                     </div>
                 )}
 
-                {activeTab === 'payload' && isCoordinatorRequest && item.data && (
-                    <div className="flex flex-col gap-4">
-                        <div className="p-4 rounded-lg border border-surface-border bg-surface-hover flex flex-col gap-2">
-                            <div className="flex items-center justify-between gap-2">
-                                <span className="text-xs font-semibold text-text">
-                                    {getActionLabel(item.action)}
-                                </span>
-                                <span className="px-2 py-1 rounded text-xs font-bold bg-accent-background border border-accent-border text-accent">
-                                    {item.action}
-                                </span>
-                            </div>
-                            <p className="text-xs text-text-muted leading-relaxed">
-                                {getActionDescription(item.action)}
-                            </p>
-                        </div>
+                {activeTab === 'payload' && isCoordinatorRequest && (() => {
+                    const rawPayload = item.data;
+                    const parsedPayload = typeof rawPayload === 'object' && rawPayload !== null
+                        ? rawPayload
+                        : (() => {
+                              try {
+                                  return JSON.parse(rawPayload);
+                              } catch {
+                                  return rawPayload ? { raw: rawPayload } : {};
+                              }
+                          })();
 
-                        <div className="flex flex-col gap-3">
-                            <span className={SECTION_TITLE_STYLE}>Payload Changes (Old vs New)</span>
+                    const act = String(item.action || '').toUpperCase();
+                    const crudAction = (() => {
+                        if (act.includes('CREATE') || act.includes('UPLOAD') || act.includes('ADD') || act.includes('REGISTER')) return 'CREATE';
+                        if (act.includes('READ') || act.includes('VIEW') || act.includes('ACCESS') || act.includes('DOWNLOAD')) return 'READ';
+                        if (act.includes('DELETE') || act.includes('REMOVE') || act.includes('PURGE')) return 'DELETE';
+                        return 'UPDATE';
+                    })();
 
-                            <div className="grid grid-cols-1 gap-3">
-                                <div className="flex flex-col gap-2 p-3 rounded-lg border border-surface-border bg-surface">
-                                    <div className="flex items-center justify-between pb-2 border-b border-surface-border">
-                                        <span className="text-xs font-bold text-text-muted uppercase tracking-wider">
-                                            Current State (Database)
-                                        </span>
-                                        <span className="text-xs text-text-muted">
-                                            {item.data.old ? 'Existing Record' : 'None (New Entry)'}
-                                        </span>
-                                    </div>
+                    let oldState = parsedPayload.old ?? null;
+                    let newState = parsedPayload.new ?? null;
 
-                                    {item.data.old ? (
-                                        <div className="flex flex-col divide-y divide-surface-border text-xs">
-                                            {Object.entries(item.data.old).map(([fieldKey, fieldValue]) => (
-                                                <div key={fieldKey} className={PROPERTY_ROW_STYLE}>
-                                                    <span className="text-text-muted font-medium capitalize">
-                                                        {fieldKey.replace(/_/g, ' ')}:
-                                                    </span>
-                                                    <span className="font-medium text-text-muted text-right line-through">
-                                                        {String(fieldValue)}
-                                                    </span>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    ) : (
-                                        <div className="py-2 text-center text-xs text-text-muted italic">
-                                            No previous database record (Provisioning new entry)
-                                        </div>
-                                    )}
+                    // Fallback for oldState if missing in UPDATE or DELETE
+                    if (!oldState && (crudAction === 'UPDATE' || crudAction === 'DELETE')) {
+                        if (act.startsWith('USER_') || parsedPayload.userId) {
+                            const targetId = parsedPayload.userId || parsedPayload.id || item.entityId;
+                            const u = allUsers.find((x) => String(x.id) === String(targetId) || String(x.universityId) === String(parsedPayload.universityId));
+                            if (u) {
+                                oldState = {
+                                    universityId: u.universityId,
+                                    name: `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.name,
+                                    email: u.email,
+                                    role: u.role,
+                                    status: u.status,
+                                };
+                            }
+                        } else if (act.startsWith('DEPARTMENT_') || parsedPayload.departmentId) {
+                            const targetId = parsedPayload.departmentId || parsedPayload.id || item.entityId;
+                            const d = allDepartments.find((x) => String(x.id) === String(targetId) || (parsedPayload.code && x.code === parsedPayload.code));
+                            if (d) {
+                                oldState = {
+                                    code: d.code,
+                                    name: d.name,
+                                };
+                            }
+                        } else if (act.startsWith('DOCUMENT_') || parsedPayload.documentId) {
+                            const targetId = parsedPayload.documentId || parsedPayload.id || item.entityId;
+                            const doc = allDocuments.find((x) => String(x.id) === String(targetId));
+                            if (doc) {
+                                oldState = {
+                                    title: doc.title || doc.name,
+                                    classification: doc.classification,
+                                };
+                            }
+                        }
+                    }
+
+                    // Fallback for newState if missing
+                    if (!newState) {
+                        if (crudAction === 'DELETE') {
+                            newState = { status: 'DELETED' };
+                        } else if (crudAction === 'CREATE' || crudAction === 'UPDATE') {
+                            const cleaned = Object.fromEntries(
+                                Object.entries(parsedPayload).filter(([k]) => !['old', 'new', 'userId', 'departmentId', 'documentId', 'requesterId', 'reviewerId'].includes(k))
+                            );
+                            newState = Object.keys(cleaned).length > 0 ? cleaned : parsedPayload;
+                        }
+                    }
+
+                    return (
+                        <div className="flex flex-col gap-4">
+                            <div className="p-4 rounded-lg border border-surface-border bg-surface-hover flex flex-col gap-2">
+                                <div className="flex items-center justify-between gap-2">
+                                    <span className="text-xs font-semibold text-text">
+                                        {getActionLabel(item.action)}
+                                    </span>
+                                    <span className="px-2 py-1 rounded text-xs font-bold bg-accent-background border border-accent-border text-accent">
+                                        {item.action}
+                                    </span>
                                 </div>
+                                <p className="text-xs text-text-muted leading-relaxed">
+                                    {getActionDescription(item.action)}
+                                </p>
+                            </div>
 
-                                <div className="flex flex-col gap-2 p-3 rounded-lg border border-accent-border bg-accent-background">
-                                    <div className="flex items-center justify-between pb-2 border-b border-accent-border">
-                                        <span className="text-xs font-bold text-accent uppercase tracking-wider">
-                                            Proposed State (Coordinator Input)
-                                        </span>
-                                        <span className="px-2 py-1 rounded text-xs font-semibold bg-accent-background text-accent border border-accent-border">
-                                            Pending Authorization
-                                        </span>
+                            <div className="flex flex-col gap-3">
+                                <span className={SECTION_TITLE_STYLE}>Payload Changes (Old vs New)</span>
+
+                                <div className="grid grid-cols-1 gap-3">
+                                    {/* CARD 1: CURRENT STATE (DATABASE) */}
+                                    <div className="flex flex-col gap-2 p-3 rounded-lg border border-surface-border bg-surface">
+                                        <div className="flex items-center justify-between pb-2 border-b border-surface-border">
+                                            <span className="text-xs font-bold text-text-muted uppercase tracking-wider">
+                                                Current State (Database)
+                                            </span>
+                                            <span className="text-xs text-text-muted">
+                                                {crudAction === 'CREATE'
+                                                    ? 'None (New Entry)'
+                                                    : crudAction === 'READ'
+                                                    ? 'None (Read Event)'
+                                                    : oldState && Object.keys(oldState).length > 0
+                                                    ? 'Existing Record'
+                                                    : 'None'}
+                                            </span>
+                                        </div>
+
+                                        {crudAction === 'CREATE' ? (
+                                            <div className="py-2 text-center text-xs text-text-muted italic">
+                                                No previous database record (Provisioning new entry)
+                                            </div>
+                                        ) : crudAction === 'READ' ? (
+                                            <div className="py-2 text-center text-xs text-text-muted italic">
+                                                Read-only access event — no previous state modified.
+                                            </div>
+                                        ) : oldState && Object.keys(oldState).length > 0 ? (
+                                            <div className="flex flex-col divide-y divide-surface-border text-xs">
+                                                {Object.entries(oldState).map(([fieldKey, fieldValue]) => (
+                                                    <div key={fieldKey} className={PROPERTY_ROW_STYLE}>
+                                                        <span className="text-text-muted font-medium capitalize">
+                                                            {fieldKey.replace(/_/g, ' ')}:
+                                                        </span>
+                                                        <span className="font-medium text-text-muted text-right line-through">
+                                                            {typeof fieldValue === 'object' && fieldValue !== null
+                                                                ? JSON.stringify(fieldValue)
+                                                                : String(fieldValue ?? '—')}
+                                                        </span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <div className="py-2 text-center text-xs text-text-muted italic">
+                                                No previous database record
+                                            </div>
+                                        )}
                                     </div>
 
-                                    {item.data.new ? (
-                                        <div className="flex flex-col divide-y divide-accent-border text-xs">
-                                            {Object.entries(item.data.new).map(([fieldKey, fieldValue]) => (
-                                                <div key={fieldKey} className={PROPERTY_ROW_STYLE}>
-                                                    <span className="text-text-muted font-medium capitalize">
-                                                        {fieldKey.replace(/_/g, ' ')}:
-                                                    </span>
-                                                    <span className="font-semibold text-accent text-right">
-                                                        {String(fieldValue)}
-                                                    </span>
-                                                </div>
-                                            ))}
+                                    {/* CARD 2: PROPOSED STATE (COORDINATOR INPUT) */}
+                                    <div className="flex flex-col gap-2 p-3 rounded-lg border border-accent-border bg-accent-background">
+                                        <div className="flex items-center justify-between pb-2 border-b border-accent-border">
+                                            <span className="text-xs font-bold text-accent uppercase tracking-wider">
+                                                Proposed State (Coordinator Input)
+                                            </span>
+                                            <span className="px-2 py-1 rounded text-xs font-semibold bg-accent-background text-accent border border-accent-border">
+                                                {item.status === 'APPROVED' ? 'Approved' : item.status === 'REJECTED' ? 'Rejected' : 'Pending Authorization'}
+                                            </span>
                                         </div>
-                                    ) : (
-                                        <div className="flex flex-col divide-y divide-accent-border text-xs">
-                                            {Object.entries(item.data)
-                                                .filter(([key]) => key !== 'old' && key !== 'new')
-                                                .map(([fieldKey, fieldValue]) => (
+
+                                        {crudAction === 'READ' ? (
+                                            <div className="py-2 text-center text-xs text-accent italic">
+                                                Official university document accessed.
+                                            </div>
+                                        ) : newState && Object.keys(newState).length > 0 ? (
+                                            <div className="flex flex-col divide-y divide-accent-border text-xs">
+                                                {Object.entries(newState).map(([fieldKey, fieldValue]) => (
                                                     <div key={fieldKey} className={PROPERTY_ROW_STYLE}>
                                                         <span className="text-text-muted font-medium capitalize">
                                                             {fieldKey.replace(/_/g, ' ')}:
@@ -2974,42 +3468,47 @@ const Inspector = ({
                                                         <span className="font-semibold text-accent text-right">
                                                             {typeof fieldValue === 'object' && fieldValue !== null
                                                                 ? JSON.stringify(fieldValue)
-                                                                : String(fieldValue)}
+                                                                : String(fieldValue ?? '—')}
                                                         </span>
                                                     </div>
                                                 ))}
-                                        </div>
-                                    )}
+                                            </div>
+                                        ) : (
+                                            <div className="py-2 text-center text-xs text-text-muted italic">
+                                                No proposed modifications
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
                             </div>
-                        </div>
 
-                        {item.status === constants.COORDINATOR_REQUESTS_STATUS.PENDING && (
-                            <div className="p-3 rounded-lg bg-surface-hover border border-surface-border text-xs text-text-muted flex items-start gap-2">
-                                <Clock className="h-4 w-4 text-accent shrink-0 mt-1" />
-                                <span>
-                                    <strong>Pending Administrator Authorization</strong> — Once approved by an administrator, these changes will be committed to the database.
-                                </span>
-                            </div>
-                        )}
-                        {item.status === constants.COORDINATOR_REQUESTS_STATUS.APPROVED && (
-                            <div className="p-3 rounded-lg bg-accent-background border border-accent-border text-xs text-accent flex items-start gap-2">
-                                <CheckCircle2 className="h-4 w-4 text-accent shrink-0 mt-1" />
-                                <span>
-                                    <strong>Authorized & Executed</strong> — Changes have been carried over and successfully committed to university records.
-                                </span>
-                            </div>
-                        )}
-                        {item.status === constants.COORDINATOR_REQUESTS_STATUS.REJECTED && (
-                            <div className="p-3 rounded-lg bg-error-background border border-error-border text-xs text-error flex items-start gap-2">
-                                <AlertCircle className="h-4 w-4 text-error shrink-0 mt-1" />
-                                <span>
-                                    <strong>Rejected</strong> — {item.rejectionReason || 'Request declined by administrator.'}
-                                </span>
-                            </div>
-                        )}
-                    </div>
-                )}
+                            {item.status === constants.COORDINATOR_REQUESTS_STATUS.PENDING && (
+                                <div className="p-3 rounded-lg bg-surface-hover border border-surface-border text-xs text-text-muted flex items-start gap-2">
+                                    <Clock className="h-4 w-4 text-accent shrink-0 mt-1" />
+                                    <span>
+                                        <strong>Pending Administrator Authorization</strong> — Once approved by an administrator, these changes will be committed to the database.
+                                    </span>
+                                </div>
+                            )}
+                            {item.status === constants.COORDINATOR_REQUESTS_STATUS.APPROVED && (
+                                <div className="p-3 rounded-lg bg-accent-background border border-accent-border text-xs text-accent flex items-start gap-2">
+                                    <CheckCircle2 className="h-4 w-4 text-accent shrink-0 mt-1" />
+                                    <span>
+                                        <strong>Authorized & Executed</strong> — Changes have been carried over and successfully committed to university records.
+                                    </span>
+                                </div>
+                            )}
+                            {item.status === constants.COORDINATOR_REQUESTS_STATUS.REJECTED && (
+                                <div className="p-3 rounded-lg bg-error-background border border-error-border text-xs text-error flex items-start gap-2">
+                                    <AlertCircle className="h-4 w-4 text-error shrink-0 mt-1" />
+                                    <span>
+                                        <strong>Rejected</strong> — {item.rejectionReason || 'Request declined by administrator.'}
+                                    </span>
+                                </div>
+                            )}
+                        </div>
+                    );
+                })()}
 
                 {activeTab === 'messages' && isDocumentRequest && (
                     <div className="flex flex-col h-full gap-3">
@@ -3072,6 +3571,14 @@ const Inspector = ({
                                         </div>
                                     )}
                                 </div>
+                                {effectiveRejectionReason && (
+                                    <div className={`${ERROR_CALLOUT_STYLE} mt-2`}>
+                                        <div className="flex items-center gap-2 font-bold mb-1">
+                                            <AlertCircle className="h-4 w-4" /> Rejection Reason
+                                        </div>
+                                        {effectiveRejectionReason}
+                                    </div>
+                                )}
                             </div>
 
                             {/* SCROLLABLE MESSAGE STREAM */}
@@ -3363,7 +3870,7 @@ const Inspector = ({
                                                                         variant="destructive"
                                                                         size="sm"
                                                                         leadingIcon={XCircle}
-                                                                        onClick={() => handleActionClick('reject', pendingReq)}
+                                                                        onClick={() => handleOpenRejectCoordinatorModal(pendingReq)}
                                                                         className="h-7 px-2 text-xs"
                                                                     >
                                                                         Reject
@@ -3433,27 +3940,15 @@ const Inspector = ({
                                                         Request is {currentStatus.toLowerCase()}
                                                     </span>
                                                     <span className="text-[10px] text-text-muted truncate">
-                                                        Messaging is locked until reopened.
+                                                        Messaging is locked. Request finalized.
                                                     </span>
                                                 </div>
                                             </div>
-                                            {canSeePendingStatus && pendingStatusRequest?.action === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_REOPEN ? (
+                                            {canSeePendingStatus && (
                                                 <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-700 dark:text-amber-300 shrink-0">
                                                     <Clock className="w-3.5 h-3.5 text-amber-500 animate-pulse shrink-0" />
-                                                    <span className="font-semibold">Reopen Awaiting Approval</span>
+                                                    <span className="font-semibold">Action Awaiting Approval</span>
                                                 </div>
-                                            ) : isStaff && (
-                                                <Button
-                                                    variant="secondary"
-                                                    size="sm"
-                                                    leadingIcon={RotateCcw}
-                                                    onClick={() => handleActionClick('open_request')}
-                                                    isLoading={activeActionLoading === 'open_request'}
-                                                    isDisabled={Boolean(activeActionLoading) || Boolean(canSeePendingStatus)}
-                                                    className="h-7 px-2.5 text-[11px] shrink-0"
-                                                >
-                                                    Reopen
-                                                </Button>
                                             )}
                                         </div>
                                     );
@@ -3609,32 +4104,94 @@ const Inspector = ({
                         );
                     }
 
-                    // 2. OFFICER ROLE: Approve/Unapprove + Reject
+                    // 2. OFFICER ROLE: Approve/Unapprove + Reject + Unreject
                     if (isOfficer) {
-                        const isPending = item.status === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL;
+                        const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
+                        const userDeptClean = cleanId(activeUser?.departmentId ?? activeUser?.department?.id ?? activeUser?.department);
+                        const officerShare = (documentShares || []).find((s) => {
+                            const sDeptId = cleanId(s.department?.id ?? s.departmentId);
+                            return userDeptClean && sDeptId === userDeptClean;
+                        }) || (allDocumentShares || []).find((s) => {
+                            const sDocId = cleanId(s.document?.id ?? s.documentId);
+                            const sDeptId = cleanId(s.department?.id ?? s.departmentId);
+                            return cleanId(item?.id) === sDocId && userDeptClean && sDeptId === userDeptClean;
+                        }) || item.share || (documentShares && documentShares.length > 0 ? documentShares[0] : null);
+
+                        const rawOfficerStatus = officerShare?.status ?? item.status ?? item.share?.status;
+                        const effectiveOfficerStatus = (rawOfficerStatus && rawOfficerStatus !== '—')
+                            ? String(rawOfficerStatus).toUpperCase()
+                            : constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL;
+
+                        const isApproved = effectiveOfficerStatus === constants.DOCUMENT_SHARES_STATUS.APPROVED;
+                        const isRejected = effectiveOfficerStatus === constants.DOCUMENT_SHARES_STATUS.REJECTED;
+
+                        const targetWithShare = {
+                            ...item,
+                            ...(officerShare ? { share: officerShare } : {}),
+                            status: effectiveOfficerStatus,
+                        };
+
+                        if (isRejected) {
+                            return (
+                                <div className="w-full">
+                                    <Button
+                                        variant="secondary"
+                                        leadingIcon={RotateCcw}
+                                        isLoading={activeActionLoading === 'unreject'}
+                                        isDisabled={Boolean(activeActionLoading)}
+                                        onClick={() => setInspectorConfirmAction({
+                                            actionKey: 'unreject',
+                                            targetItem: targetWithShare,
+                                            title: `Unreject ${item.isFolder ? 'Folder' : 'Document'}`,
+                                            message: `Are you sure you want to unreject "${item.name || item.title || 'this document'}" and return it to pending approval?`,
+                                            primaryLabel: 'Unreject',
+                                            variant: 'primary',
+                                        })}
+                                        className="w-full justify-center truncate px-2"
+                                    >
+                                        Unreject
+                                    </Button>
+                                </div>
+                            );
+                        }
+
                         return (
                             <div className="grid grid-cols-2 gap-2 w-full">
-                                {isPending ? (
-                                    <Button
-                                        variant="primary"
-                                        leadingIcon={CheckCircle2}
-                                        isLoading={activeActionLoading === 'approve'}
-                                        isDisabled={Boolean(activeActionLoading)}
-                                        onClick={() => handleActionClick('approve')}
-                                        className="justify-center truncate px-2"
-                                    >
-                                        Approve
-                                    </Button>
-                                ) : (
+                                {isApproved ? (
                                     <Button
                                         variant="secondary"
                                         leadingIcon={RotateCcw}
                                         isLoading={activeActionLoading === 'unapprove'}
                                         isDisabled={Boolean(activeActionLoading)}
-                                        onClick={() => handleActionClick('unapprove')}
+                                        onClick={() => setInspectorConfirmAction({
+                                            actionKey: 'unapprove',
+                                            targetItem: targetWithShare,
+                                            title: `Revoke Approval for ${item.isFolder ? 'Folder' : 'Document'}`,
+                                            message: `Are you sure you want to revert "${item.name || item.title || 'this document'}" to pending approval?`,
+                                            primaryLabel: 'Revoke Approval',
+                                            variant: 'warning',
+                                        })}
                                         className="justify-center truncate px-2"
                                     >
                                         Unapprove
+                                    </Button>
+                                ) : (
+                                    <Button
+                                        variant="primary"
+                                        leadingIcon={CheckCircle2}
+                                        isLoading={activeActionLoading === 'approve'}
+                                        isDisabled={Boolean(activeActionLoading)}
+                                        onClick={() => setInspectorConfirmAction({
+                                            actionKey: 'approve',
+                                            targetItem: targetWithShare,
+                                            title: `Approve ${item.isFolder ? 'Folder' : 'Document'}`,
+                                            message: `Are you sure you want to approve "${item.name || item.title || 'this document'}" for department director review?`,
+                                            primaryLabel: 'Approve',
+                                            variant: 'primary',
+                                        })}
+                                        className="justify-center truncate px-2"
+                                    >
+                                        Approve
                                     </Button>
                                 )}
                                 <Button
@@ -3642,7 +4199,10 @@ const Inspector = ({
                                     leadingIcon={XCircle}
                                     isLoading={activeActionLoading === 'reject'}
                                     isDisabled={Boolean(activeActionLoading)}
-                                    onClick={() => handleActionClick('reject')}
+                                    onClick={() => {
+                                        setInspectorRejectReason('');
+                                        setInspectorRejectModal({ targetItem: targetWithShare });
+                                    }}
                                     className="justify-center truncate px-2"
                                 >
                                     Reject
@@ -3653,8 +4213,30 @@ const Inspector = ({
 
                     // 3. DIRECTOR ROLE: Publish/Unpublish + Stash/Unstash
                     if (isDirector) {
-                        const isPublished = item.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED;
-                        const isStashed = item.status === constants.DOCUMENT_SHARES_STATUS.STASHED;
+                        const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
+                        const userDeptClean = cleanId(activeUser?.departmentId ?? activeUser?.department?.id ?? activeUser?.department);
+                        const directorShare = (documentShares || []).find((s) => {
+                            const sDeptId = cleanId(s.department?.id ?? s.departmentId);
+                            return userDeptClean && sDeptId === userDeptClean;
+                        }) || (allDocumentShares || []).find((s) => {
+                            const sDocId = cleanId(s.document?.id ?? s.documentId);
+                            const sDeptId = cleanId(s.department?.id ?? s.departmentId);
+                            return cleanId(item?.id) === sDocId && userDeptClean && sDeptId === userDeptClean;
+                        }) || item.share || (documentShares && documentShares.length > 0 ? documentShares[0] : null);
+
+                        const rawDirectorStatus = directorShare?.status ?? item.status ?? item.share?.status;
+                        const effectiveDirectorStatus = (rawDirectorStatus && rawDirectorStatus !== '—')
+                            ? String(rawDirectorStatus).toUpperCase()
+                            : '';
+                        const isPublished = effectiveDirectorStatus === constants.DOCUMENT_SHARES_STATUS.PUBLISHED;
+                        const isStashed = effectiveDirectorStatus === constants.DOCUMENT_SHARES_STATUS.STASHED;
+
+                        const targetWithShare = {
+                            ...item,
+                            ...(directorShare ? { share: directorShare } : {}),
+                            status: effectiveDirectorStatus,
+                        };
+
                         return (
                             <div className="grid grid-cols-2 gap-2 w-full">
                                 {isPublished ? (
@@ -3663,7 +4245,7 @@ const Inspector = ({
                                         leadingIcon={EyeOff}
                                         isLoading={activeActionLoading === 'unpublish'}
                                         isDisabled={Boolean(activeActionLoading)}
-                                        onClick={() => handleActionClick('unpublish')}
+                                        onClick={() => handleActionClick('unpublish', targetWithShare)}
                                         className="justify-center truncate px-2"
                                     >
                                         Unpublish
@@ -3674,7 +4256,7 @@ const Inspector = ({
                                         leadingIcon={Globe}
                                         isLoading={activeActionLoading === 'publish'}
                                         isDisabled={Boolean(activeActionLoading)}
-                                        onClick={() => handleActionClick('publish')}
+                                        onClick={() => handleActionClick('publish', targetWithShare)}
                                         className="justify-center truncate px-2"
                                     >
                                         Publish
@@ -3686,7 +4268,14 @@ const Inspector = ({
                                         leadingIcon={RotateCcw}
                                         isLoading={activeActionLoading === 'unstash'}
                                         isDisabled={Boolean(activeActionLoading)}
-                                        onClick={() => handleActionClick('unstash')}
+                                        onClick={() => setInspectorConfirmAction({
+                                            actionKey: 'unstash',
+                                            targetItem: targetWithShare,
+                                            title: `Unstash ${item.isFolder ? 'Folder' : 'Document'}`,
+                                            message: `Are you sure you want to unstash "${item.name || item.title || 'this document'}" and restore it to approved status?`,
+                                            primaryLabel: 'Unstash Item',
+                                            variant: 'primary',
+                                        })}
                                         className="justify-center truncate px-2"
                                     >
                                         Unstash
@@ -3697,7 +4286,14 @@ const Inspector = ({
                                         leadingIcon={Layers}
                                         isLoading={activeActionLoading === 'stash'}
                                         isDisabled={Boolean(activeActionLoading)}
-                                        onClick={() => handleActionClick('stash')}
+                                        onClick={() => setInspectorConfirmAction({
+                                            actionKey: 'stash',
+                                            targetItem: targetWithShare,
+                                            title: `Stash ${item.isFolder ? 'Folder' : 'Document'}`,
+                                            message: `Are you sure you want to stash "${item.name || item.title || 'this document'}"? It will be held at upper management level.`,
+                                            primaryLabel: 'Stash Item',
+                                            variant: 'secondary',
+                                        })}
                                         className="justify-center truncate px-2"
                                     >
                                         Stash
@@ -3805,14 +4401,14 @@ const Inspector = ({
                                 <Button
                                     variant="destructive"
                                     leadingIcon={XCircle}
-                                    onClick={() => handleActionClick('reject')}
+                                    onClick={() => handleOpenRejectCoordinatorModal(activeItem ?? item)}
                                     className="justify-center truncate"
                                     isDisabled={item.status !== constants.COORDINATOR_REQUESTS_STATUS.PENDING}
                                 >
                                     Reject
                                 </Button>
                             </div>
-                        ) : (
+                        ) : item.status === constants.COORDINATOR_REQUESTS_STATUS.PENDING ? (
                             <Button
                                 variant="destructive"
                                 leadingIcon={Trash2}
@@ -3821,7 +4417,7 @@ const Inspector = ({
                             >
                                 Delete
                             </Button>
-                        )}
+                        ) : null}
                     </div>
                 )}
 
@@ -3834,8 +4430,6 @@ const Inspector = ({
                                     <span className="font-semibold truncate">
                                         {pendingStatusRequest.action === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_RESOLVE
                                             ? 'Resolution'
-                                            : pendingStatusRequest.action === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_REOPEN
-                                            ? 'Reopen'
                                             : 'Rejection'} awaiting Admin approval
                                     </span>
                                 </div>
@@ -3862,18 +4456,7 @@ const Inspector = ({
                                         </button>
                                         <button
                                             type="button"
-                                            onClick={async () => {
-                                                try {
-                                                    await coordinatorApprovalService.updateCoordinatorRequestStatus({
-                                                        requestId: pendingStatusRequest.id,
-                                                        status: constants.COORDINATOR_REQUESTS_STATUS.REJECTED,
-                                                    });
-                                                    useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
-                                                    showToast({ type: 'warning', title: 'Request Rejected', description: 'Request was rejected.' });
-                                                } catch (err) {
-                                                    showToast({ type: 'error', title: 'Rejection Failed', description: err?.message ?? 'Could not reject request.' });
-                                                }
-                                            }}
+                                            onClick={() => handleOpenRejectCoordinatorModal(pendingStatusRequest)}
                                             className="px-2 py-0.5 rounded bg-rose-600 hover:bg-rose-700 text-white font-semibold text-[11px] cursor-pointer"
                                         >
                                             Reject
@@ -3908,28 +4491,45 @@ const Inspector = ({
                                     </Button>
                                 </div>
                             ) : (
-                                <Button
-                                    variant="primary"
-                                    leadingIcon={RotateCcw}
-                                    onClick={() => handleActionClick('open_request')}
-                                    isLoading={activeActionLoading === 'open_request'}
-                                    isDisabled={Boolean(activeActionLoading) || Boolean(canSeePendingStatus)}
-                                    className="w-full justify-center"
-                                >
-                                    Open
-                                </Button>
+                                isAdmin ? (
+                                    <Button
+                                        variant="destructive"
+                                        leadingIcon={Trash2}
+                                        onClick={() => handleActionClick('delete')}
+                                        isLoading={activeActionLoading === 'delete'}
+                                        isDisabled={Boolean(activeActionLoading)}
+                                        className="w-full justify-center"
+                                    >
+                                        Delete
+                                    </Button>
+                                ) : null
                             )
                         ) : (
-                            <Button
-                                variant="destructive"
-                                leadingIcon={Trash2}
-                                onClick={() => handleActionClick('delete')}
-                                isLoading={activeActionLoading === 'delete'}
-                                isDisabled={Boolean(activeActionLoading)}
-                                className="w-full justify-center"
-                            >
-                                Delete
-                            </Button>
+                            activeItem.status === constants.DOCUMENT_REQUESTS_STATUS.OPEN ? (
+                                <Button
+                                    variant="destructive"
+                                    leadingIcon={Trash2}
+                                    onClick={() => handleActionClick('delete')}
+                                    isLoading={activeActionLoading === 'delete'}
+                                    isDisabled={Boolean(activeActionLoading)}
+                                    className="w-full justify-center"
+                                >
+                                    Delete
+                                </Button>
+                            ) : (
+                                isAdmin ? (
+                                    <Button
+                                        variant="destructive"
+                                        leadingIcon={Trash2}
+                                        onClick={() => handleActionClick('delete')}
+                                        isLoading={activeActionLoading === 'delete'}
+                                        isDisabled={Boolean(activeActionLoading)}
+                                        className="w-full justify-center"
+                                    >
+                                        Delete
+                                    </Button>
+                                ) : null
+                            )
                         )}
                     </div>
                 )}
@@ -4027,7 +4627,7 @@ const Inspector = ({
                     <div className="flex flex-col gap-4 py-2">
                         <TextField
                             label="Code"
-                            placeholder="Enter your department code"
+                            placeholder="Enter Code"
                             value={deptFormCode}
                             onChange={(changeEvent) => {
                                 setDeptFormCode(changeEvent.target.value.toUpperCase());
@@ -4038,7 +4638,7 @@ const Inspector = ({
                         />
                         <TextField
                             label="Name"
-                            placeholder="Enter your department name"
+                            placeholder="Enter Name"
                             value={deptFormName}
                             onChange={(changeEvent) => {
                                 setDeptFormName(changeEvent.target.value);
@@ -4160,13 +4760,18 @@ const Inspector = ({
                             {/* EMAIL */}
                             <TextField
                                 label="Email Address"
-                                type="email"
-                                placeholder="name@pamantasan.edu.ph"
+                                placeholder="Enter username"
                                 value={userFormEmail}
+                                suffixButton={constants.INSTITUTIONAL_CONFIGURATION.EMAIL_DOMAIN}
                                 onChange={(e) => {
-                                    setUserFormEmail(e.target.value);
+                                    let val = e.target.value;
+                                    if (val.includes('@')) {
+                                        val = val.replace(/@.*$/, '');
+                                    }
+                                    setUserFormEmail(val);
                                     if (userFormErrors.email) setUserFormErrors((prev) => ({ ...prev, email: undefined }));
                                 }}
+                                helperText={`Domain: ${constants.INSTITUTIONAL_CONFIGURATION.EMAIL_DOMAIN}`}
                                 required
                                 error={userFormErrors.email}
                             />
@@ -4233,6 +4838,35 @@ const Inspector = ({
                 />
             )}
 
+            {/* COORDINATOR REJECT CONFIRMATION MODAL */}
+            {rejectingCoordinatorReq && (
+                <Modal
+                    isOpen={Boolean(rejectingCoordinatorReq)}
+                    onClose={handleCloseRejectCoordinatorModal}
+                    title="Reject Coordinator Request"
+                    description="Please provide a reason for rejecting this coordinator request. This feedback will be recorded in the audit trail and visible to the coordinator."
+                    icon={XCircle}
+                    variant="destructive"
+                    callout="Rejection will notify the department coordinator and terminate the requested operation."
+                    calloutVariant="destructive"
+                    size="sm"
+                    confirmLabel={isSubmittingCoordinatorReject ? 'Rejecting...' : 'Reject Request'}
+                    cancelLabel="Cancel"
+                    isConfirmLoading={isSubmittingCoordinatorReject}
+                    isConfirmDisabled={isSubmittingCoordinatorReject}
+                    onConfirm={handleConfirmRejectCoordinatorReq}
+                >
+                    <div className="flex flex-col gap-3 py-2">
+                        <AreaField
+                            label="Rejection Reason"
+                            placeholder="Enter rejection reason..."
+                            value={coordinatorRejectReason}
+                            onChange={(e) => setCoordinatorRejectReason(e.target.value)}
+                        />
+                    </div>
+                </Modal>
+            )}
+
             {/* VIEW FACULTY PROFILE MODAL */}
             {viewingFacultyMember && (
                 <Account
@@ -4241,6 +4875,152 @@ const Inspector = ({
                     user={viewingFacultyMember}
                     readOnly={viewingFacultyMember.id !== activeUser?.id}
                 />
+            )}
+
+            {/* ACTION CONFIRMATION MODAL */}
+            {Boolean(inspectorConfirmAction) && (
+                <Modal
+                    isOpen={Boolean(inspectorConfirmAction)}
+                    onClose={() => setInspectorConfirmAction(null)}
+                    title={inspectorConfirmAction.title}
+                    description={inspectorConfirmAction.message}
+                    icon={inspectorConfirmAction.actionKey === 'stash' ? Clock : CheckCircle2}
+                    size="sm"
+                    confirmOnClose={false}
+                    primaryAction={{
+                        label: inspectorConfirmAction.primaryLabel,
+                        variant: inspectorConfirmAction.variant || 'primary',
+                        isLoading: activeActionLoading === inspectorConfirmAction.actionKey,
+                        isDisabled: Boolean(activeActionLoading),
+                        onClick: handleConfirmInspectorAction,
+                    }}
+                    secondaryAction={{
+                        label: 'Cancel',
+                        isDisabled: Boolean(activeActionLoading),
+                        onClick: () => setInspectorConfirmAction(null),
+                    }}
+                >
+                    <div className="text-xs text-text-muted leading-relaxed">
+                        Please confirm you wish to perform this action. The status will update immediately across departmental queues.
+                    </div>
+                </Modal>
+            )}
+
+            {/* REJECTION FORM MODAL */}
+            {Boolean(inspectorRejectModal) && (
+                <Modal
+                    isOpen={Boolean(inspectorRejectModal)}
+                    onClose={() => {
+                        setInspectorRejectModal(null);
+                        setInspectorRejectReason('');
+                    }}
+                    title={`Reject ${inspectorRejectModal.targetItem?.isFolder ? 'Folder' : 'Document'}`}
+                    description={`Provide a reason for rejecting "${inspectorRejectModal.targetItem?.name || inspectorRejectModal.targetItem?.title || 'this document'}". The item will remain in the repository as Rejected.`}
+                    icon={AlertTriangle}
+                    size="md"
+                    confirmOnClose={false}
+                    primaryAction={{
+                        label: 'Confirm Rejection',
+                        variant: 'danger',
+                        isLoading: activeActionLoading === 'reject',
+                        isDisabled: Boolean(activeActionLoading) || !inspectorRejectReason.trim(),
+                        onClick: handleConfirmInspectorRejection,
+                    }}
+                    secondaryAction={{
+                        label: 'Cancel',
+                        isDisabled: Boolean(activeActionLoading),
+                        onClick: () => {
+                            setInspectorRejectModal(null);
+                            setInspectorRejectReason('');
+                        },
+                    }}
+                >
+                    <div className="flex flex-col gap-4">
+                        <AreaField
+                            label="Rejection Reason"
+                            required
+                            placeholder="Explain why this document is being rejected so the administrator can take corrective action..."
+                            value={inspectorRejectReason}
+                            onChange={(e) => setInspectorRejectReason(e.target.value)}
+                            rows={4}
+                        />
+                        <p className="text-[11px] text-text-muted">
+                            This reason will be recorded on the version audit log and shown to repository administrators.
+                        </p>
+                    </div>
+                </Modal>
+            )}
+
+            {/* ADMIN RESHARE MODAL (NEW VERSION OR OVERWRITE) */}
+            {Boolean(reshareModal) && (
+                <Modal
+                    isOpen={Boolean(reshareModal)}
+                    onClose={() => {
+                        if (!isSubmittingReshare) {
+                            setReshareModal(null);
+                            setReshareFile(null);
+                            setReshareChangeSummary('');
+                        }
+                    }}
+                    title={reshareModal.mode === 'new_version' ? 'Reshare Document (New Version)' : 'Overwrite File & Reshare'}
+                    description={
+                        reshareModal.mode === 'new_version'
+                            ? `Upload a new revision for ${reshareModal.targetDeptName}. This will create the next version number and reset status to Pending Approval.`
+                            : `Upload a replacement file for ${reshareModal.targetDeptName}. This will overwrite the current version file in-place and reset status to Pending Approval.`
+                    }
+                    icon={reshareModal.mode === 'new_version' ? UploadCloud : FileCheck}
+                    size="md"
+                    confirmOnClose={false}
+                    primaryAction={{
+                        label: isSubmittingReshare ? 'Uploading & Resharing...' : reshareModal.mode === 'new_version' ? 'Upload New Version & Reshare' : 'Overwrite & Reshare',
+                        variant: 'primary',
+                        isLoading: isSubmittingReshare,
+                        isDisabled: isSubmittingReshare || !reshareFile,
+                        onClick: handleConfirmReshare,
+                    }}
+                    secondaryAction={{
+                        label: 'Cancel',
+                        isDisabled: isSubmittingReshare,
+                        onClick: () => {
+                            setReshareModal(null);
+                            setReshareFile(null);
+                            setReshareChangeSummary('');
+                        },
+                    }}
+                >
+                    <div className="flex flex-col gap-4">
+                        <div className="flex flex-col gap-1.5">
+                            <label className="text-xs font-semibold text-text">Replacement File</label>
+                            <input
+                                type="file"
+                                id="reshare-file-input"
+                                onChange={(e) => {
+                                    const file = e.target.files?.[0];
+                                    if (file) setReshareFile(file);
+                                }}
+                                className="block w-full text-xs text-text file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-accent file:text-accent-foreground hover:file:bg-accent/90 cursor-pointer border border-surface-border rounded-lg bg-surface p-2"
+                            />
+                            {reshareFile && (
+                                <div className="text-[11px] text-text-muted">
+                                    Selected: <strong className="text-text">{reshareFile.name}</strong> ({formatBytes(reshareFile.size)})
+                                </div>
+                            )}
+                        </div>
+
+                        {reshareModal.mode === 'new_version' && (
+                            <TextField
+                                label="Change Summary"
+                                placeholder="Describe what changed in this version..."
+                                value={reshareChangeSummary}
+                                onChange={(e) => setReshareChangeSummary(e.target.value)}
+                            />
+                        )}
+
+                        <div className="p-3 rounded-lg border border-accent/20 bg-accent/5 text-xs text-text-muted leading-relaxed">
+                            Submitting will clear the previous rejection reason and place the document back into the Officer&apos;s pending approval queue.
+                        </div>
+                    </div>
+                </Modal>
             )}
         </div>
     );

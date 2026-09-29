@@ -170,6 +170,7 @@ const InsertDocumentRequestSchema = z.object({
     resolverId: z.string().nullable().optional(),
     subject: z.string().min(1),
     status: common.DocumentRequestsStatusSchema.default(constants.DOCUMENT_REQUESTS_STATUS.OPEN),
+    rejectionReason: z.string().nullable().optional(),
     createdAt: common.IsoTimestampSchema.optional(),
     updatedAt: common.IsoTimestampSchema.optional(),
 });
@@ -178,6 +179,7 @@ const UpdateDocumentRequestSchema = z.object({
     resolverId: z.string().nullable().optional(),
     subject: z.string().min(1).optional(),
     status: common.DocumentRequestsStatusSchema.optional(),
+    rejectionReason: z.string().nullable().optional(),
     updatedAt: common.IsoTimestampSchema.optional(),
 });
 
@@ -241,6 +243,7 @@ const UpdateNotificationSchema = z.object({
 // --- AUDIT LOG SCHEMAS ---
 const InsertAuditLogSchema = z.object({
     actorId: z.string().nullable().optional(),
+    actor: z.any().optional(),
     entityType: common.AuditLogsEntityTypeSchema,
     entityId: z.string(),
     action: common.AuditLogsActionSchema,

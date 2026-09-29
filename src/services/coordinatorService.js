@@ -88,13 +88,17 @@ const coordinatorService = {
 
     updateCoordinatorRequest: async (id, payload) => {
         const timestamp = payload.updatedAt || new Date().toISOString();
+        const serializedData = typeof payload.data === 'object' && payload.data !== null
+            ? JSON.stringify(payload.data)
+            : payload.data;
+
         const data = await dataConnectService.executeMutation('UpdateCoordinatorRequest', {
             id: id,
-            reviewerId: payload.reviewerId,
-            action: payload.action,
-            data: payload.data,
-            status: payload.status,
-            rejectionReason: payload.rejectionReason,
+            reviewerId: payload.reviewerId ?? null,
+            action: payload.action ?? null,
+            data: serializedData ?? null,
+            status: payload.status ?? null,
+            rejectionReason: payload.rejectionReason ?? null,
             updatedAt: timestamp,
         });
 

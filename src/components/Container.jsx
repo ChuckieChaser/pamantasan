@@ -6,10 +6,10 @@ import { forwardRef } from 'react';
 const BASE_STYLE = 'flex flex-col text-text';
 
 const VARIANT_STYLE = {
-    dropdown: 'p-2 gap-1 bg-surface border border-surface-border rounded-md shadow-md',
-    card:     'p-4 gap-3 bg-surface border border-surface-border rounded-xl shadow-sm',
-    panel:    'p-6 gap-4 bg-surface border border-surface-border rounded-xl shadow-xl',
-    page:     'p-8 gap-6 bg-background',
+    dropdown: 'p-1.5 sm:p-2 gap-1 bg-surface border border-surface-border rounded-md shadow-md',
+    card:     'p-3 sm:p-4 gap-2.5 sm:gap-3 bg-surface border border-surface-border rounded-xl shadow-xs',
+    panel:    'p-3.5 sm:p-5 gap-3 sm:gap-4 bg-surface border border-surface-border rounded-xl shadow-xl',
+    page:     'p-2 sm:p-3 md:p-4 gap-2.5 sm:gap-3.5 bg-background',
 };
 
 

@@ -1,10 +1,9 @@
 // --- IMPORTS ---
-import {
-    useCoordinatorStore,
-    useUserStore,
-    useDepartmentStore,
-    useDocumentStore,
-} from '../stores';
+import { useCoordinatorStore } from '../stores/useCoordinatorStore';
+import { useUserStore } from '../stores/useUserStore';
+import { useDepartmentStore } from '../stores/useDepartmentStore';
+import { useDocumentStore } from '../stores/useDocumentStore';
+import { useAuthStore } from '../stores/useAuthStore';
 import { authService } from './authService';
 import { systemEventService } from './systemEventService';
 import { constants } from '../constants';
@@ -19,6 +18,110 @@ function parsePayloadData(data) {
     } catch {
         return {};
     }
+}
+
+
+function formatCoordinatorActionLabel(action, data = {}) {
+    const act = String(action || '').toUpperCase();
+    const payload = parsePayloadData(data);
+
+    if (act === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_ATTACH || act === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_ATTACH) {
+        return 'Document Attachment';
+    }
+    if (act === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_RESOLVE) {
+        return 'Resolve Document Request';
+    }
+    if (act === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_REJECT) {
+        return 'Reject Document Request';
+    }
+    if (act === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_REOPEN) {
+        return 'Reopen Document Request';
+    }
+
+    const resolveUserIdentifier = (p) => {
+        let identifier = p.universityId || p.name || p.email;
+        if (!identifier && (p.userId || p.id)) {
+            const u = useUserStore.getState().users?.find((x) => String(x.id) === String(p.userId || p.id));
+            if (u) identifier = `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.universityId || u.email;
+        }
+        return identifier;
+    };
+
+    const resolveDeptIdentifier = (p) => {
+        let identifier = p.code || p.name;
+        if (!identifier && (p.departmentId || p.id)) {
+            const d = useDepartmentStore.getState().departments?.find((x) => String(x.id) === String(p.departmentId || p.id));
+            if (d) identifier = d.code || d.name;
+        }
+        return identifier;
+    };
+
+    const resolveDocIdentifier = (p) => {
+        let identifier = p.title || p.name;
+        if (!identifier && (p.documentId || p.id)) {
+            const doc = useDocumentStore.getState().documents?.find((x) => String(x.id) === String(p.documentId || p.id));
+            if (doc) identifier = doc.name || doc.title;
+        }
+        return identifier;
+    };
+
+    if (act === constants.COORDINATOR_REQUESTS_ACTION.USER_CREATE) {
+        const identifier = resolveUserIdentifier(payload) || 'New User';
+        return `Create User (${identifier})`;
+    }
+    if (act === constants.COORDINATOR_REQUESTS_ACTION.USER_UPDATE) {
+        const identifier = resolveUserIdentifier(payload) || 'User';
+        return `Update User (${identifier})`;
+    }
+    if (act === constants.COORDINATOR_REQUESTS_ACTION.USER_SUSPEND) {
+        const identifier = resolveUserIdentifier(payload) || 'User';
+        return `Suspend User (${identifier})`;
+    }
+    if (act === constants.COORDINATOR_REQUESTS_ACTION.USER_DELETE) {
+        const identifier = resolveUserIdentifier(payload) || 'User';
+        return `Delete User (${identifier})`;
+    }
+    if (act === constants.COORDINATOR_REQUESTS_ACTION.DEPARTMENT_CREATE) {
+        const identifier = resolveDeptIdentifier(payload) || 'New Department';
+        return `Create Department (${identifier})`;
+    }
+    if (act === constants.COORDINATOR_REQUESTS_ACTION.DEPARTMENT_UPDATE) {
+        const identifier = resolveDeptIdentifier(payload) || 'Department';
+        return `Update Department (${identifier})`;
+    }
+    if (act === constants.COORDINATOR_REQUESTS_ACTION.DEPARTMENT_DELETE) {
+        const identifier = resolveDeptIdentifier(payload) || 'Department';
+        return `Delete Department (${identifier})`;
+    }
+    if (act === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_UPLOAD) {
+        const identifier = resolveDocIdentifier(payload) || 'Document';
+        return `Upload Document (${identifier})`;
+    }
+    if (act === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_UPDATE) {
+        const identifier = resolveDocIdentifier(payload) || 'Document';
+        return `Update Document (${identifier})`;
+    }
+    if (act === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_DELETE) {
+        const identifier = resolveDocIdentifier(payload) || 'Document';
+        return `Delete Document (${identifier})`;
+    }
+    if (act === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_SHARE) {
+        const identifier = resolveDocIdentifier(payload) || 'Document';
+        return `Share Document (${identifier})`;
+    }
+    if (act === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_UNSHARE) {
+        const identifier = resolveDocIdentifier(payload) || 'Document';
+        return `Unshare Document (${identifier})`;
+    }
+    if (act === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_ARCHIVE) {
+        const identifier = resolveDocIdentifier(payload) || 'Document';
+        return `Archive Document (${identifier})`;
+    }
+    if (act === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_UNARCHIVE) {
+        const identifier = resolveDocIdentifier(payload) || 'Document';
+        return `Unarchive Document (${identifier})`;
+    }
+    return act ? act.replace(/_/g, ' ') : 'Coordinator Request';
 }
 
 
@@ -42,20 +145,7 @@ const coordinatorApprovalService = {
             action: action,
             data: serializedData,
             status: constants.COORDINATOR_REQUESTS_STATUS.PENDING,
-        });
-
-        systemEventService.recordSystemEvent({
-            actorId: requesterId,
-            entityType: constants.AUDIT_LOGS_ENTITY_TYPE.COORDINATOR_REQUEST,
-            entityId: newReq.id,
-            action: constants.AUDIT_LOGS_ACTION.PENDING_APPROVAL,
-            data: {
-                action: action,
-                requestedBy: requesterId,
-            },
-            targetRoles: ['ADMINISTRATOR'],
-            isMajor: true,
-        }).catch(() => {});
+        }, requesterId);
 
         return newReq;
     },
@@ -80,6 +170,45 @@ const coordinatorApprovalService = {
 
         const action = coordinatorRequest.action;
 
+        // CONCURRENT UPDATE-PENDING GUARD FOR DELETION (A5)
+        const isDeleteAction = [
+            constants.COORDINATOR_REQUESTS_ACTION.USER_DELETE,
+            constants.COORDINATOR_REQUESTS_ACTION.DEPARTMENT_DELETE,
+            constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_DELETE,
+        ].includes(action);
+
+        if (isDeleteAction) {
+            const store = useCoordinatorStore.getState();
+            const pendingRequests = (store.coordinatorRequests || []).filter(
+                (r) => r.id !== coordinatorRequest.id && r.status === constants.COORDINATOR_REQUESTS_STATUS.PENDING
+            );
+
+            const targetUserId = payloadData.userId ?? payloadData.id;
+            const targetDeptId = payloadData.departmentId ?? payloadData.id;
+            const targetDocId = payloadData.documentId ?? payloadData.id;
+
+            const hasConflictingPending = pendingRequests.some((r) => {
+                const rData = parsePayloadData(r.data);
+                if (action === constants.COORDINATOR_REQUESTS_ACTION.USER_DELETE && targetUserId) {
+                    const rUserId = rData.userId ?? rData.id;
+                    return String(rUserId) === String(targetUserId);
+                }
+                if (action === constants.COORDINATOR_REQUESTS_ACTION.DEPARTMENT_DELETE && targetDeptId) {
+                    const rDeptId = rData.departmentId ?? rData.id;
+                    return String(rDeptId) === String(targetDeptId);
+                }
+                if (action === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_DELETE && targetDocId) {
+                    const rDocId = rData.documentId ?? rData.id;
+                    return String(rDocId) === String(targetDocId);
+                }
+                return false;
+            });
+
+            if (hasConflictingPending) {
+                throw new Error('Cannot approve deletion: a pending request exists for this target.');
+            }
+        }
+
         switch (action) {
             case constants.COORDINATOR_REQUESTS_ACTION.USER_CREATE: {
                 const userStore = useUserStore.getState();
@@ -98,7 +227,7 @@ const coordinatorApprovalService = {
                     role: payloadData.role || constants.USERS_ROLE.MEMBER,
                     status: payloadData.status || constants.USERS_STATUS.PENDING_PASSWORD,
                     avatarPath: payloadData.avatarPath || null,
-                });
+                }, adminUser);
 
                 // Dispatch provisioning credentials email
                 const fullName = `${payloadData.firstName} ${payloadData.lastName}`.trim();
@@ -122,15 +251,16 @@ const coordinatorApprovalService = {
                 const targetUserId = payloadData.userId ?? payloadData.id;
                 const updates = payloadData.new ?? payloadData;
                 if (!targetUserId) throw new Error('Target user ID missing from request payload.');
-                await userStore.updateUser(targetUserId, updates);
+                await userStore.updateUser(targetUserId, updates, adminUser);
                 break;
             }
 
             case constants.COORDINATOR_REQUESTS_ACTION.USER_SUSPEND: {
                 const userStore = useUserStore.getState();
                 const targetUserId = payloadData.userId ?? payloadData.id;
+                const targetStatus = payloadData.new?.status || payloadData.status || constants.USERS_STATUS.SUSPENDED;
                 if (!targetUserId) throw new Error('Target user ID missing from request payload.');
-                await userStore.updateUser(targetUserId, { status: constants.USERS_STATUS.SUSPENDED });
+                await userStore.updateUser(targetUserId, { status: targetStatus }, adminUser);
                 break;
             }
 
@@ -138,7 +268,7 @@ const coordinatorApprovalService = {
                 const userStore = useUserStore.getState();
                 const targetUserId = payloadData.userId ?? payloadData.id;
                 if (!targetUserId) throw new Error('Target user ID missing from request payload.');
-                await userStore.deleteUser(targetUserId);
+                await userStore.deleteUser(targetUserId, adminUser);
                 break;
             }
 
@@ -147,7 +277,7 @@ const coordinatorApprovalService = {
                 await deptStore.insertDepartment({
                     name: (payloadData.name || '').trim(),
                     code: (payloadData.code || '').trim().toUpperCase(),
-                });
+                }, adminUser);
                 break;
             }
 
@@ -156,7 +286,7 @@ const coordinatorApprovalService = {
                 const deptId = payloadData.departmentId ?? payloadData.id;
                 const updates = payloadData.new ?? payloadData;
                 if (!deptId) throw new Error('Target department ID missing from request payload.');
-                await deptStore.updateDepartment(deptId, updates);
+                await deptStore.updateDepartment(deptId, updates, adminUser);
                 break;
             }
 
@@ -164,7 +294,7 @@ const coordinatorApprovalService = {
                 const deptStore = useDepartmentStore.getState();
                 const deptId = payloadData.departmentId ?? payloadData.id;
                 if (!deptId) throw new Error('Target department ID missing from request payload.');
-                await deptStore.deleteDepartment(deptId);
+                await deptStore.deleteDepartment(deptId, adminUser);
                 break;
             }
 
@@ -287,20 +417,23 @@ const coordinatorApprovalService = {
                 const docStore = useDocumentStore.getState();
                 const reqId = payloadData.documentRequestId ?? payloadData.id;
                 if (!reqId) throw new Error('Document Request ID missing from request payload.');
+                const reason = payloadData.rejectionReason || null;
                 await docStore.updateDocumentRequest(reqId, {
                     status: constants.DOCUMENT_REQUESTS_STATUS.REJECTED,
+                    rejectionReason: reason,
                 });
+                if (reason) {
+                    await docStore.insertDocumentRequestMessage({
+                        documentRequestId: reqId,
+                        userId: adminUser?.id || coordinatorId,
+                        message: `Rejection Note: ${reason}`,
+                    }).catch(() => {});
+                }
                 break;
             }
 
             case constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_REOPEN: {
-                const docStore = useDocumentStore.getState();
-                const reqId = payloadData.documentRequestId ?? payloadData.id;
-                if (!reqId) throw new Error('Document Request ID missing from request payload.');
-                await docStore.updateDocumentRequest(reqId, {
-                    status: constants.DOCUMENT_REQUESTS_STATUS.OPEN,
-                });
-                break;
+                throw new Error('Closed and resolved document requests cannot be reopened for compliance and auditing.');
             }
 
             default:
@@ -314,59 +447,64 @@ const coordinatorApprovalService = {
             {
                 reviewerId: adminUser.id,
                 status: constants.COORDINATOR_REQUESTS_STATUS.APPROVED,
-            }
-        );
-
-        systemEventService.recordSystemEvent({
-            actorId: adminUser.id,
-            entityType: constants.AUDIT_LOGS_ENTITY_TYPE.COORDINATOR_REQUEST,
-            entityId: coordinatorRequest.id,
-            action: constants.AUDIT_LOGS_ACTION.APPROVED,
-            data: {
-                action: action,
-                approvedBy: adminUser.id,
-                targetCoordinatorId: coordinatorId,
             },
-            targetUserIds: coordinatorId ? [coordinatorId] : [],
-            isMajor: true,
-        }).catch(() => {});
+            adminUser
+        );
 
         return updated;
     },
 
     /**
-     * Rejects a coordinator request. Per user ruleset: "reject simply removes it, it wont go and do it".
+     * Updates coordinator request status with rejectionReason and syncs data payload.
      */
-    rejectCoordinatorRequest: async (coordinatorRequest) => {
+    updateCoordinatorRequestStatus: async ({ requestId, status, rejectionReason = null }) => {
+        if (!requestId) throw new Error('Request ID is required.');
+        const coordinatorStore = useCoordinatorStore.getState();
+        const existing = coordinatorStore.coordinatorRequests.find((r) => r.id === requestId);
+        const currentData = parsePayloadData(existing?.data);
+        const reason = rejectionReason || currentData.rejectionReason || null;
+        const updatedData = {
+            ...currentData,
+            ...(reason ? { rejectionReason: reason } : {}),
+        };
+        return await coordinatorStore.updateCoordinatorRequest(requestId, {
+            status,
+            rejectionReason: reason,
+            data: JSON.stringify(updatedData),
+        });
+    },
+
+    /**
+     * Rejects a coordinator request and updates its status to REJECTED with optional rejection reason.
+     */
+    rejectCoordinatorRequest: async (coordinatorRequest, adminUser = null) => {
         if (!coordinatorRequest?.id) {
             throw new Error('Valid coordinator request is required.');
         }
 
-        const coordinatorId =
-            (typeof coordinatorRequest.requester === 'object'
-                ? coordinatorRequest.requester?.id
-                : coordinatorRequest.requesterId ?? coordinatorRequest.requester) || null;
+        const resolvedAdmin = adminUser || useAuthStore.getState().currentUser || null;
+        const currentData = parsePayloadData(coordinatorRequest.data);
+        const reason = coordinatorRequest.rejectionReason || currentData.rejectionReason || null;
+        const updatedData = {
+            ...currentData,
+            rejectionReason: reason,
+        };
 
-        // Delete from store/database so it is cleanly removed
-        const isDeleted = await useCoordinatorStore.getState().deleteCoordinatorRequest(coordinatorRequest.id);
-
-        systemEventService.recordSystemEvent({
-            actorId: null,
-            entityType: constants.AUDIT_LOGS_ENTITY_TYPE.COORDINATOR_REQUEST,
-            entityId: coordinatorRequest.id,
-            action: constants.AUDIT_LOGS_ACTION.REJECTED,
-            data: {
-                action: coordinatorRequest.action,
-                targetCoordinatorId: coordinatorId,
+        const updated = await useCoordinatorStore.getState().updateCoordinatorRequest(
+            coordinatorRequest.id,
+            {
+                reviewerId: resolvedAdmin?.id || null,
+                status: constants.COORDINATOR_REQUESTS_STATUS.REJECTED,
+                rejectionReason: reason,
+                data: JSON.stringify(updatedData),
             },
-            targetUserIds: coordinatorId ? [coordinatorId] : [],
-            isMajor: true,
-        }).catch(() => {});
+            resolvedAdmin
+        );
 
-        return isDeleted;
+        return updated;
     },
 };
 
 
 // --- EXPORTS ---
-export { coordinatorApprovalService };
+export { coordinatorApprovalService, formatCoordinatorActionLabel };

@@ -18,47 +18,28 @@ const DEFAULT_STORAGE_BUCKET = process.env.STORAGE_BUCKET_NAME || 'pamantasan-re
 // Primary location: asia-southeast1 (Singapore - colocated with Firebase Storage)
 // Fallback location: us-central1 (for global deployment redundancy)
 const MODEL_CANDIDATES = [
-    { model: 'gemini-2.0-flash', location: 'us-central1' },
-    { model: 'gemini-2.0-flash-001', location: 'us-central1' },
-    { model: 'gemini-1.5-flash', location: 'us-central1' },
-    { model: 'gemini-3.5-flash', location: 'asia-southeast1' },
     { model: 'gemini-2.0-flash', location: 'asia-southeast1' },
+    { model: 'gemini-2.0-flash-001', location: 'asia-southeast1' },
     { model: 'gemini-1.5-flash', location: 'asia-southeast1' },
+    { model: 'gemini-1.5-flash-002', location: 'asia-southeast1' },
+    { model: 'gemini-1.5-flash-001', location: 'asia-southeast1' },
+    { model: 'gemini-2.0-flash', location: 'us-central1' },
+    { model: 'gemini-1.5-flash', location: 'us-central1' },
 ];
 
 const SYSTEM_INSTRUCTION = `You are the Lead AI Document Intelligence Engine for Pamantasan Records Management System (an official Philippine Higher Education Records System).
 Your task is to analyze documents, scans, images, audio recordings, or technical data uploaded to the institutional repository and generate an authoritative, substantive, and content-focused executive summary.
 
-STRICT EXECUTIVE SUMMARIZATION RULES:
-1. "summary": Provide EXACTLY 2 to 3 substantive, content-driven sentences. Separate each sentence with a double newline ("\\n\\n") to make readability and visual clarity effortless.
-   - PURE CONTENT FOCUS: Focus EXCLUSIVELY on the substantive content, subject matter, core narrative, key findings, and outcomes so users can quickly understand long complex files without reading the entire document.
+DYNAMIC EXECUTIVE SUMMARIZATION RULES:
+1. "summary": Provide a dynamic executive summary of 1 to 3 concise, substantive, content-driven sentences depending on the document content length and density (maximum 3 sentences). Separate each sentence with a double newline ("\\n\\n") to ensure effortless readability.
+   - DYNAMIC LENGTH SCALING (1 to 3 sentences maximum):
+     * 1 Sentence: For short, routine, or low-density documents (e.g. single-page administrative notices, simple official receipts, brief certificates, basic clearances, standard forms). Synthesize the core subject matter, affected party, and administrative takeaway in 1 direct, substantive sentence.
+     * 2 Sentences: For moderate-length documents (e.g. 1-2 page memoranda, circulars, routine reports, standard syllabi, simple grade sheets, departmental minutes). Use Sentence 1 for subject matter/context and Sentence 2 for substantive directives, findings, or administrative outcomes.
+     * 3 Sentences: For extensive, detailed, or complex documents (e.g. multi-page policy manuals, comprehensive curriculum guides, full scholastic transcripts of records, audit reports, multi-subject resolutions). Use Sentence 1 for core subject/context, Sentence 2 for concrete findings/data/clauses, and Sentence 3 for overarching conclusions or compliance directives.
+     * NEVER exceed 3 sentences. Do NOT lock shorter documents into artificial 3 sentences—let shorter content remain concise (1 sentence).
+   - PURE CONTENT FOCUS: Focus EXCLUSIVELY on substantive content, subject matter, core narrative, key findings, and outcomes so users can quickly understand long complex files without reading the entire document.
    - ABSOLUTE PROHIBITION ON FILE PROPERTIES: NEVER mention file properties, file size (e.g., "13.6 KB", "bytes", "MB"), file formats/extensions (e.g., ".pdf", ".png", "image", "binary format"), or storage statements (e.g., "in repository archives", "asset size"). The user interface already displays file properties elsewhere.
    - NO FILLER INTROS: Never start with filler phrases (e.g. "This document is...", "The uploaded file...", "An image showing...", "This is a..."). Immediately identify the core subject matter and context.
-   - STRUCTURE (3 distinct lines separated by "\\n\\n"):
-     * Line 1 (Sentence 1 - Core Subject & Context): State the specific subject matter, the institutional context, and the primary objective of the document.
-     * Line 2 (Sentence 2 - Substantive Findings & Key Data): Detail the key findings, specific entities, concrete numbers/grades/amounts, core clauses, or policy directives discussed in the content.
-     * Line 3 (Sentence 3 - Conclusions & Outcomes): State the overarching takeaway, required action, compliance directive, or official conclusion established by the document.
-   - CATEGORY-SPECIFIC GUIDELINES:
-     * ACADEMIC RECORDS & GRADES:
-       Line 1: Identify the official record type and issuing academic authority.
-       Line 2: Detail student name, student number, degree program, academic term, and concrete scholastic performance (CWA/GWA, units, or remarks).
-       Line 3: Note official processing date, signatory authority, or institutional endorsement.
-     * MEMORANDA, CIRCULARS & POLICIES:
-       Line 1: State the issuing executive office and official subject title/memo number.
-       Line 2: Synthesize the specific policy requirements, administrative directives, or procedural changes.
-       Line 3: State the effective timeline, affected departments, and mandatory compliance obligations.
-     * COURSE SYLLABI & CURRICULUM:
-       Line 1: State course code, descriptive title, and credit unit weight.
-       Line 2: Outline key competencies, modular topics, and grading/evaluation breakdown.
-       Line 3: State instructional objectives and academic department clearance.
-     * MEETING MINUTES & RESOLUTIONS:
-       Line 1: State governing body and session focus.
-       Line 2: Detail specific approved resolutions, policy motions, and key deliberation outcomes.
-       Line 3: State executive approval and implementation timeline.
-     * PROFILES & PERSONNEL RECORDS:
-       Line 1: State user identity, institutional role, and assigned college/department.
-       Line 2: Summarize active system authorizations, access tiers, and verified credentials.
-       Line 3: State administrative verification status and supervisory designation.
 
 2. "classification": Accurately classify into EXACTLY one official institutional security tier:
    - "${DOCUMENT_VERSIONS_CLASSIFICATION.PUBLIC}": Campus-wide announcements, press releases, public academic calendars, student handbooks, general circulars, approved flyers.
@@ -81,7 +62,7 @@ function getGenAIClient(location = VERTEX_LOCATION) {
         try {
             const { GoogleGenAI } = require('@google/genai');
             const client = new GoogleGenAI({
-                vertexai: true,
+                vertexAI: true,
                 project: PROJECT_ID,
                 location: loc,
             });
@@ -301,7 +282,7 @@ async function extractTextFromDocxBuffer(buf) {
 
 /**
  * Generates an intelligent, content-focused executive summary without any file properties or storage metadata.
- * Interprets the actual subject matter and narrative of long or complex documents.
+ * Dynamically scales between 1 to 3 sentences based on document length and content density.
  */
 function generateContentAwareSummary(fileName = '', textContent = '') {
     const cleaned = (textContent || '').replace(/\r\n/g, '\n').trim();
@@ -314,6 +295,8 @@ function generateContentAwareSummary(fileName = '', textContent = '') {
         const lines = cleaned.split('\n')
             .map(l => l.trim())
             .filter(l => l.length > 2 && !/^(page \d+|confidential|official|date|printed)/i.test(l));
+
+        const isShortDoc = cleaned.length < 200 || lines.length <= 2;
 
         // 1. Memoranda, Directives, Circulars, Governance Guidelines
         if (
@@ -333,12 +316,17 @@ function generateContentAwareSummary(fileName = '', textContent = '') {
                 : 'official administrative procedures and operational standards';
             const purpose = purposeMatch
                 ? purposeMatch.replace(/^(purpose|objective)[:\s]+/i, '').trim()
-                : 'timely preparation, supervisory review, and submission of official department reports';
+                : 'timely preparation and review of official institutional records';
 
             const line1 = `Governance memorandum issued by the ${issuingOffice} regarding ${subject}.`;
-            const line2 = `Establishes formal guidelines for ${purpose.replace(/[.]+$/, '')}, mandating accurate data submission and secure records management.`;
-            const line3 = `Takes effect immediately upon issuance with strict operational compliance required across all concerned offices and personnel.`;
-
+            if (isShortDoc) {
+                return line1;
+            }
+            const line2 = `Establishes formal directives for ${purpose.replace(/[.]+$/, '')}, mandating administrative coordination and secure records management.`;
+            if (cleaned.length < 600) {
+                return `${line1}\n\n${line2}`;
+            }
+            const line3 = `Takes effect immediately upon issuance with mandatory operational compliance required across all designated units.`;
             return `${line1}\n\n${line2}\n\n${line3}`;
         }
 
@@ -348,9 +336,12 @@ function generateContentAwareSummary(fileName = '', textContent = '') {
             /\b(tor|transcript of records)\b/i.test(lowerText)
         ) {
             const subjectLine = `Official academic report presenting student scholastic evaluation and course performance metrics.`;
-            const gradeDetails = lines.find(l => /cwa|gwa|average|grade|units/i.test(l)) || lines[1] || 'Details student scholastic performance, subject marks, and credit unit completion';
+            const gradeDetails = lines.find(l => /cwa|gwa|average|grade|units/i.test(l)) || lines[1] || 'Details student scholastic performance and credit unit completion';
             const detailsLine = `Covers ${gradeDetails.replace(/[:—]/g, ' ').trim()}.`;
-            const conclusionLine = `Serves as authoritative academic record for prerequisite validation, standing review, and registrar archiving.`;
+            if (isShortDoc) {
+                return `${subjectLine}\n\n${detailsLine}`;
+            }
+            const conclusionLine = `Serves as authoritative academic record for prerequisite validation, academic review, and registrar archiving.`;
             return `${subjectLine}\n\n${detailsLine}\n\n${conclusionLine}`;
         }
 
@@ -358,6 +349,9 @@ function generateContentAwareSummary(fileName = '', textContent = '') {
         if (/\b(syllabus|course outline|curriculum)\b/i.test(lowerText)) {
             const subjectLine = `Academic course syllabus outlining curricular competencies, grading breakdown, and learning outcomes.`;
             const detailsLine = lines.slice(0, 2).join(' — ').substring(0, 130) + '.';
+            if (isShortDoc) {
+                return `${subjectLine}\n\n${detailsLine}`;
+            }
             const conclusionLine = `Establishes instructional objectives and student academic performance expectations for the academic term.`;
             return `${subjectLine}\n\n${detailsLine}\n\n${conclusionLine}`;
         }
@@ -365,39 +359,50 @@ function generateContentAwareSummary(fileName = '', textContent = '') {
         // 4. Institutional Profiles & Personnel Records
         if (/\b(profile|curriculum vitae|pds|resume)\b/i.test(lowerText)) {
             const subjectLine = `Institutional profile summary outlining verified user credentials, account status, and role privileges.`;
+            if (isShortDoc) {
+                return subjectLine;
+            }
             const detailsLine = lines.slice(0, 2).join(' — ').substring(0, 130) + '.';
-            const conclusionLine = `Maintained as verified reference documentation for user authorization and institutional identity oversight.`;
-            return `${subjectLine}\n\n${detailsLine}\n\n${conclusionLine}`;
+            return `${subjectLine}\n\n${detailsLine}`;
         }
 
         // 5. General Document with Content
         const firstSentence = lines[0] ? lines[0].substring(0, 110) : 'official university affairs';
+        if (isShortDoc) {
+            return `Official institutional record concerning ${firstSentence}.`;
+        }
         const secondSentence = lines[1] ? lines[1].substring(0, 120) : 'Details administrative transactions, operational policies, and formal notifications';
+        if (cleaned.length < 500) {
+            return `Official documentation addressing ${firstSentence}.\n\n${secondSentence}.`;
+        }
         return `Official documentation addressing ${firstSentence}.\n\n${secondSentence}.\n\nMaintained for institutional reference, operational continuity, and administrative governance.`;
     }
 
-    // When only title / file label is available, infer topic (never repeat random scrambled letters)
+    // When only title / file label is available, infer topic
+    if (lowerName.includes('receipt') || lowerName.includes('voucher') || lowerName.includes('clearance')) {
+        return `Official transaction clearance and financial documentation recorded for ${cleanedName}.`;
+    }
     if (lowerName.includes('profile') || lowerName.includes('user')) {
-        return `Institutional profile summary detailing verified user credentials, administrative status, and system permissions.\n\nOutlines departmental affiliation, role-based clearance, and operational authorization across university modules.\n\nServes as reference documentation for account identity verification and administrative governance.`;
+        return `Institutional profile summary detailing verified credentials, departmental affiliation, and system permissions for ${cleanedName}.`;
     }
     if (lowerName.includes('grade') || /\b(tor|transcript)\b/i.test(lowerName)) {
-        return `Official academic record presenting student course completions, semester evaluations, and scholastic standing.\n\nDetails subject marks, earned credit units, and cumulative performance metrics for the recorded academic term.\n\nServes as authoritative record for credential verification, prerequisite clearance, and registrar archiving.`;
+        return `Official academic record presenting student course completions, semester evaluations, and scholastic standing.\n\nServes as authoritative record for credential verification and registrar archiving.`;
     }
     if (lowerName.includes('memo') || lowerName.includes('circular') || lowerName.includes('governance')) {
-        return `Official administrative memorandum communicating institutional directives, operational guidelines, and policy updates.\n\nDetails compliance expectations, implementation timelines, and responsibilities for relevant university departments.\n\nEnforces administrative standardization and operational coordination across institutional units.`;
+        return `Official administrative memorandum communicating institutional directives and operational guidelines.\n\nDetails compliance expectations and implementation timelines for relevant university departments.`;
     }
     if (lowerName.includes('syllabus') || lowerName.includes('curriculum')) {
-        return `Official academic course syllabus detailing subject curriculum, instructional competencies, and learning outcomes.\n\nOutlines modular lecture topics, evaluation criteria, grading policies, and required academic benchmarks.\n\nGuides instructional delivery and student academic performance standards for the enrolled course.`;
+        return `Official academic course syllabus detailing subject curriculum, instructional competencies, and learning outcomes.\n\nGuides instructional delivery and student academic performance standards.`;
     }
     if (lowerName.includes('resolution') || lowerName.includes('minutes')) {
-        return `Formal administrative minutes and institutional resolutions recording official proceedings and board deliberations.\n\nOutlines approved motions, policy enactments, and departmental mandates agreed upon by university leadership.\n\nDocuments binding administrative actions and institutional governance policies for official archival reference.`;
+        return `Formal administrative minutes and institutional resolutions recording official proceedings and board deliberations.\n\nDocuments binding administrative actions and institutional governance policies for archival reference.`;
     }
 
-    // If the filename appears to be random/placeholder characters (like asdasdasdkmwo), do not parrot it
+    // Default concise summary
     const isRandomName = /^[a-z0-9_]{10,}$/i.test(cleanedName) || /^[asdfjklqwertyzxcvbnm]+$/i.test(cleanedName);
     const subjectLabel = isRandomName ? 'institutional administrative records' : `university matters concerning ${cleanedName}`;
 
-    return `Institutional documentation detailing official ${subjectLabel}.\n\nOutlines relevant administrative guidelines, subject transactions, and operational records for institutional stakeholders.\n\nMaintained as formal record for departmental reference, accountability, and operational continuity.`;
+    return `Institutional documentation detailing official ${subjectLabel}.\n\nMaintained as formal record for departmental reference, accountability, and operational continuity.`;
 }
 
 /**
@@ -420,7 +425,10 @@ function getGenerativeModel(candidate = 'gemini-2.0-flash-001') {
                 responseMimeType: 'application/json',
                 temperature: 0.15,
             },
-            systemInstruction: SYSTEM_INSTRUCTION,
+            systemInstruction: {
+                role: 'system',
+                parts: [{ text: SYSTEM_INSTRUCTION }],
+            },
         });
 
         generativeModelCache.set(cacheKey, model);
@@ -521,8 +529,8 @@ async function generateVectorEmbedding(inputText) {
 
     const cleanText = inputText.substring(0, 2048);
 
-    // text-embedding-004 is deployed on Vertex AI in us-central1 (primary) and asia-southeast1
-    const candidateLocations = ['us-central1', 'asia-southeast1'];
+    // text-embedding-004 is deployed on Vertex AI in asia-southeast1 (primary) and us-central1
+    const candidateLocations = ['asia-southeast1', 'us-central1'];
 
     // 1. Try modern @google/genai SDK with retry backoff for rate limits
     for (const loc of candidateLocations) {
@@ -587,6 +595,8 @@ async function generateVectorEmbedding(inputText) {
  */
 async function analyzeDocumentFile({
     storagePath,
+    downloadUrl = null,
+    fileBase64 = null,
     mimeType,
     fileName,
     fileSize = 0,
@@ -655,11 +665,62 @@ async function analyzeDocumentFile({
     }
 
     // MULTIMODAL INGESTION (PDFs, Images, Visual Scans, Audio, Text)
-    let bucketName;
+    const candidateBuckets = [
+        DEFAULT_STORAGE_BUCKET,
+        'pamantasan-records-210fe.firebasestorage.app',
+        'pamantasan-records-210fe.appspot.com',
+    ];
     try {
-        bucketName = getStorage().bucket().name || DEFAULT_STORAGE_BUCKET;
+        const defaultName = getStorage().bucket().name;
+        if (defaultName && !candidateBuckets.includes(defaultName)) {
+            candidateBuckets.unshift(defaultName);
+        }
     } catch {
-        bucketName = DEFAULT_STORAGE_BUCKET;
+        // default bucket resolution
+    }
+
+    let bucketName = candidateBuckets[0];
+    let fileBuffer = null;
+
+    // Priority 1: Direct client-provided fileBase64 (instantaneous in-memory, 0 storage latency)
+    if (fileBase64 && typeof fileBase64 === 'string') {
+        try {
+            const cleanBase64 = fileBase64.replace(/^data:.*?;base64,/, '');
+            fileBuffer = Buffer.from(cleanBase64, 'base64');
+            console.log(`[aiService] Successfully loaded fileBuffer from client-provided fileBase64: ${fileBuffer.length} bytes for "${fileName}"`);
+        } catch (bErr) {
+            console.warn('[aiService] Failed to parse client fileBase64:', bErr?.message);
+        }
+    }
+
+    // Priority 2: Direct downloadUrl fetch
+    if (!fileBuffer && downloadUrl && typeof downloadUrl === 'string') {
+        try {
+            const dlRes = await fetch(downloadUrl);
+            if (dlRes.ok) {
+                const arrayBuf = await dlRes.arrayBuffer();
+                fileBuffer = Buffer.from(arrayBuf);
+                console.log(`[aiService] Successfully downloaded buffer via downloadUrl: ${fileBuffer.length} bytes for "${fileName}"`);
+            }
+        } catch (fetchErr) {
+            console.warn('[aiService] downloadUrl fetch failed:', fetchErr?.message);
+        }
+    }
+
+    // Priority 3: Firebase Storage candidate buckets
+    if (!fileBuffer && storagePath) {
+        for (const bName of candidateBuckets) {
+            try {
+                const bucket = getStorage().bucket(bName);
+                const [downloaded] = await bucket.file(storagePath).download();
+                fileBuffer = downloaded;
+                bucketName = bName;
+                console.log(`[aiService] Successfully downloaded buffer: ${fileBuffer.length} bytes for "${fileName}" from ${bName}`);
+                break;
+            } catch (dlErr) {
+                // try next candidate bucket
+            }
+        }
     }
 
     const currentGcsUri = `gs://${bucketName}/${storagePath}`;
@@ -667,26 +728,18 @@ async function analyzeDocumentFile({
 
     console.log(`[aiService] GCS URI: ${currentGcsUri}, effectiveMime: ${effectiveMime}`);
 
-    // Download file buffer for direct inline data inspection (bypasses GCS bucket IAM constraints)
-    let fileBuffer = null;
-    try {
-        const bucket = getStorage().bucket(bucketName);
-        const [downloaded] = await bucket.file(storagePath).download();
-        fileBuffer = downloaded;
-        console.log(`[aiService] Successfully downloaded buffer: ${fileBuffer.length} bytes for "${fileName}"`);
-    } catch (dlErr) {
-        console.warn(`[aiService] Could not download file buffer from GCS (${dlErr.message}). Falling back to GCS URI.`);
-    }
-
     let previousBuffer = null;
     if (isVersionUpdate && previousStoragePath) {
-        try {
-            const bucket = getStorage().bucket(bucketName);
-            const [prevDownloaded] = await bucket.file(previousStoragePath).download();
-            previousBuffer = prevDownloaded;
-            console.log(`[aiService] Successfully downloaded previous buffer: ${previousBuffer.length} bytes`);
-        } catch (prevDlErr) {
-            console.warn(`[aiService] Could not download previous buffer (${prevDlErr.message})`);
+        for (const bName of candidateBuckets) {
+            try {
+                const bucket = getStorage().bucket(bName);
+                const [prevDownloaded] = await bucket.file(previousStoragePath).download();
+                previousBuffer = prevDownloaded;
+                console.log(`[aiService] Successfully downloaded previous buffer: ${previousBuffer.length} bytes from ${bName}`);
+                break;
+            } catch {
+                // try next
+            }
         }
     }
 
@@ -794,10 +847,12 @@ async function analyzeDocumentFile({
         await attachContentToParts(parts, fileBuffer, currentGcsUri, effectiveMime, fileName, 'NEW VERSION');
 
         parts.push({
-            text: `Compare the two versions of "${fileName}" carefully. Focus purely on the substantive content and changes (never mention file size, format, or storage properties).
+            text: `${SYSTEM_INSTRUCTION}
+
+Compare the two versions of "${fileName}" carefully. Focus purely on the substantive content and changes (never mention file size, format, or storage properties).
 Return a valid JSON object with exactly these three fields:
 {
-  "summary": "Provide exactly 2 to 3 substantive, content-driven sentences separated by newlines (\\n\\n) explaining what the document covers, key details, and administrative outcome.",
+  "summary": "Provide 1 to 3 concise, substantive, content-driven sentences separated by double newlines (\\n\\n) scaled dynamically to content length (1 sentence for short notices/receipts/forms, 2-3 sentences for substantive memos/policies/curricula, max 3 sentences).",
   "classification": "Exactly one of: ${DOCUMENT_VERSIONS_CLASSIFICATION.PUBLIC}, ${DOCUMENT_VERSIONS_CLASSIFICATION.PRIVATE}, ${DOCUMENT_VERSIONS_CLASSIFICATION.RESTRICTED}, ${DOCUMENT_VERSIONS_CLASSIFICATION.CONFIDENTIAL}",
   "changeSummary": "Bulleted markdown list detailing specific changes between previous and new versions. Each bullet MUST begin with '- ' on its own line and end with a double newline (\\n\\n) so there is clear blank space between each bullet item."
 }`,
@@ -807,11 +862,13 @@ Return a valid JSON object with exactly these three fields:
         await attachContentToParts(parts, fileBuffer, currentGcsUri, effectiveMime, fileName, 'DOCUMENT TO ANALYZE');
 
         parts.push({
-            text: `Analyze this institutional document named "${fileName}". Focus purely on the substantive content and the core point/takeaway of the file (never mention file size, format, or storage properties).
+            text: `${SYSTEM_INSTRUCTION}
+
+Analyze this institutional document named "${fileName}". Focus purely on the substantive content and the core point/takeaway of the file (never mention file size, format, or storage properties).
 Even if the filename is generic or arbitrary, interpret the actual text content and official directives.
 Return a valid JSON object with exactly these three fields:
 {
-  "summary": "Provide exactly 2 to 3 substantive, content-driven sentences separated by newlines (\\n\\n) explaining what the document covers, key directives or findings, and administrative outcome.",
+  "summary": "Provide 1 to 3 concise, substantive, content-driven sentences separated by double newlines (\\n\\n) scaled dynamically to content length (1 sentence for short notices/receipts/forms, 2-3 sentences for substantive memos/policies/curricula, max 3 sentences).",
   "classification": "Exactly one of: ${DOCUMENT_VERSIONS_CLASSIFICATION.PUBLIC}, ${DOCUMENT_VERSIONS_CLASSIFICATION.PRIVATE}, ${DOCUMENT_VERSIONS_CLASSIFICATION.RESTRICTED}, ${DOCUMENT_VERSIONS_CLASSIFICATION.CONFIDENTIAL}",
   "changeSummary": "Initial file upload"
 }`,
@@ -933,12 +990,13 @@ Return a valid JSON object with exactly these three fields:
     if (!parsedResponse && isCapacityBusy) {
         console.warn(`[aiService] All AI models capacity busy. Returning graceful content fallback for ${fileName}.`);
         const busySummary = generateContentAwareSummary(fileName, extractedText);
+        const busyEmbedding = await generateVectorEmbedding(`${fileName} ${busySummary}`).catch(() => null);
         return {
             success: true,
             summary: formatExecutiveSummary(busySummary),
             classification: DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED,
             changeSummary: isVersionUpdate ? 'Document version updated' : 'Initial file upload',
-            embedding: null,
+            embedding: busyEmbedding,
             isCapacityUnavailable: true,
         };
     }
@@ -966,12 +1024,14 @@ Return a valid JSON object with exactly these three fields:
             fallbackClassification = DOCUMENT_VERSIONS_CLASSIFICATION.CONFIDENTIAL;
         }
 
+        const fallbackEmbedding = await generateVectorEmbedding(`${fileName} ${contentSummary} ${fallbackClassification}`).catch(() => null);
+
         return {
             success: false,
             summary: formatExecutiveSummary(contentSummary),
             classification: fallbackClassification,
             changeSummary: isVersionUpdate ? 'Document version updated' : 'Initial file upload',
-            embedding: null,
+            embedding: fallbackEmbedding,
             isAIFailed: true,
         };
     }

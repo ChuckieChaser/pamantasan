@@ -159,8 +159,10 @@ const DocumentViewerModal = ({
         return [...versionsForDoc].sort((a, b) => (b.version || 1) - (a.version || 1))[0];
     }, [targetVersion, resolvedDoc, documentVersions]);
 
-    const fileName = activeVersion?.path?.split('/')?.pop() || resolvedDoc?.name || resolvedDoc?.title || 'Document';
-    const fileExtension = useMemo(() => getFileExtension(fileName), [fileName]);
+    const rawFileName = activeVersion?.path?.split('/')?.pop() || resolvedDoc?.name || resolvedDoc?.title || 'Document';
+    const fileName = rawFileName;
+    const fileExtension = useMemo(() => getFileExtension(rawFileName), [rawFileName]);
+    const cleanDisplayName = (resolvedDoc?.name || resolvedDoc?.title || rawFileName).replace(/\.[^/.]+$/, '').trim() || rawFileName;
     const isEditable = EDITABLE_EXTENSIONS.has(fileExtension);
     const isImage = IMAGE_EXTENSIONS.has(fileExtension);
     const isPdf = fileExtension === 'pdf';
@@ -600,6 +602,13 @@ const DocumentViewerModal = ({
 
             const targetPath = storagePath || resolvedDoc?.path || resolvedDoc?.url || resolvedDoc?.downloadUrl;
             await storageService.downloadDocument(targetPath, effectiveDownloadName);
+            if (resolvedDoc && currentUser?.id) {
+                systemEventService.recordDocumentRead({
+                    document: resolvedDoc,
+                    user: currentUser,
+                    version: activeVersion?.version,
+                }).catch(() => {});
+            }
             showToast({
                 type: 'success',
                 title: 'Download Started',
@@ -748,7 +757,7 @@ const DocumentViewerModal = ({
 
     // RENDER
     return (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 md:p-6 animate-toast-in select-none">
+        <div className="fixed inset-0 z-[50000] bg-black/75 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 md:p-6 animate-toast-in select-none">
             <div
                 className={`bg-surface border border-surface-border rounded-xl shadow-2xl flex flex-col w-full max-w-6xl h-[92vh] max-h-[950px] overflow-hidden ${className}`.trim()}
                 {...props}
@@ -764,9 +773,9 @@ const DocumentViewerModal = ({
                             <div className="flex items-center gap-1.5 min-w-0">
                                 <h2
                                     className="text-sm font-semibold text-text truncate max-w-[140px] sm:max-w-[240px] md:max-w-[320px] lg:max-w-[420px]"
-                                    title={fileName}
+                                    title={cleanDisplayName}
                                 >
-                                    {fileName}
+                                    {cleanDisplayName}
                                 </h2>
                                 <span className="px-1.5 py-0.2 rounded text-[11px] font-mono bg-surface-hover text-text-muted border border-surface-border shrink-0">
                                     v{versionNumber}.0

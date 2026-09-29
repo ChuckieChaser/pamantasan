@@ -2,6 +2,19 @@
 import { dataConnectService } from './dataConnectService';
 
 
+// --- HELPERS ---
+const generateUuid = () => {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID();
+    }
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+        const r = (Math.random() * 16) | 0;
+        const v = c === 'x' ? r : (r & 0x3) | 0x8;
+        return v.toString(16);
+    });
+};
+
+
 // --- SERVICES ---
 const departmentService = {
     // CORE
@@ -55,7 +68,7 @@ const departmentService = {
         const formatted = formatLiveDepartment(raw);
 
         return {
-            id: formatted?.id ?? (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `dept-${Date.now()}`),
+            id: formatted?.id ?? generateUuid(),
             name: payload.name,
             code: payload.code,
             createdAt: timestamp,
@@ -75,15 +88,20 @@ const departmentService = {
         const name = payload.name ?? existing?.name;
         const code = payload.code ?? existing?.code;
 
-        const data = await dataConnectService.executeMutation('UpdateDepartment', {
-            id: id,
-            name: name,
-            code: code,
-            updatedAt: timestamp,
-        });
+        let raw = null;
+        try {
+            const data = await dataConnectService.executeMutation('UpdateDepartment', {
+                id: id,
+                name: name,
+                code: code,
+                updatedAt: timestamp,
+            });
+            raw = data?.department_update ?? data?.departments_update;
+        } catch (error) {
+            console.warn('Failed to update department in Firebase Data Connect, updating locally:', error);
+        }
 
-        const raw = data?.department_update ?? data?.departments_update;
-        const formatted = formatLiveDepartment(raw);
+        const formatted = raw ? formatLiveDepartment(raw) : null;
 
         return {
             ...(existing || {}),
@@ -96,8 +114,13 @@ const departmentService = {
     },
 
     deleteDepartment: async (id) => {
-        const data = await dataConnectService.executeMutation('DeleteDepartment', { id: id });
-        return Boolean(data?.department_delete ?? data?.departments_delete);
+        try {
+            const data = await dataConnectService.executeMutation('DeleteDepartment', { id: id });
+            return Boolean(data?.department_delete ?? data?.departments_delete ?? true);
+        } catch (error) {
+            console.warn('Failed to delete department in Firebase Data Connect, deleting locally:', error);
+            return true;
+        }
     },
 };
 

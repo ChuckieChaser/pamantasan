@@ -12,11 +12,14 @@ import {
     UserCheck,
     UserX,
     Trash2,
+    ArrowDownAZ,
+    ArrowUpAZ,
 } from 'lucide-react';
 import {
     Avatar,
     Browser,
     Container,
+    History,
     Modal,
     SelectField,
     TextField,
@@ -41,10 +44,10 @@ const USER_COLUMNS = [
 ];
 
 const USER_SORT_OPTIONS = [
-    { value: 'name-asc', label: 'Name (A to Z)', icon: Users },
-    { value: 'name-desc', label: 'Name (Z to A)', icon: Users },
-    { value: 'date-desc', label: 'Recently Registered', icon: Clock },
-    { value: 'date-asc', label: 'Oldest Registered', icon: Clock },
+    { value: 'name-asc', label: 'Name (A to Z)', icon: ArrowDownAZ },
+    { value: 'name-desc', label: 'Name (Z to A)', icon: ArrowUpAZ },
+    { value: 'date-desc', label: 'Recently Added', icon: Clock },
+    { value: 'date-asc', label: 'Oldest Added', icon: Clock },
 ];
 
 const ROLE_OPTIONS = [
@@ -55,8 +58,29 @@ const ROLE_OPTIONS = [
     { value: constants.USERS_ROLE.MEMBER, label: constants.USERS_ROLE.MEMBER },
 ];
 
-const RMO_DEPARTMENT_ID = 'd0000001-0000-4000-8000-000000000001';
-const RMO_DEPARTMENT_RAW = 'd0000001000040008000000000000001';
+const RMO_DEPARTMENT_RAW = 'd9c76dc863dc4126a46ba17e55bb73d3';
+
+const isNonRmoRole = (role) =>
+    role === constants.USERS_ROLE.DIRECTOR ||
+    role === constants.USERS_ROLE.OFFICER ||
+    role === constants.USERS_ROLE.MEMBER;
+
+const isRmoDepartment = (dept, resolvedRmoId = RMO_DEPARTMENT_RAW) => {
+    if (!dept) return false;
+    return (
+        dept?.id === resolvedRmoId ||
+        dept?.id === RMO_DEPARTMENT_RAW ||
+        dept?.code?.toUpperCase() === 'RMO' ||
+        dept?.name?.toLowerCase().includes('records management')
+    );
+};
+
+const isRmoDepartmentId = (deptId, departmentsList = [], resolvedRmoId = RMO_DEPARTMENT_RAW) => {
+    if (!deptId) return false;
+    if (deptId === resolvedRmoId || deptId === RMO_DEPARTMENT_RAW) return true;
+    const target = departmentsList?.find((d) => d?.id === deptId);
+    return isRmoDepartment(target, resolvedRmoId);
+};
 
 
 // --- COMPONENTS ---
@@ -111,20 +135,23 @@ const UsersPage = ({
 
     const rmoDepartment = useMemo(() => {
         return departments.find((d) => 
-            d?.id === RMO_DEPARTMENT_ID ||
             d?.id === RMO_DEPARTMENT_RAW ||
             d?.code?.toUpperCase() === 'RMO' ||
             d?.name?.toLowerCase().includes('records management')
         ) ?? null;
     }, [departments]);
 
-    const resolvedRmoId = rmoDepartment?.id ?? RMO_DEPARTMENT_ID;
+    const resolvedRmoId = rmoDepartment?.id ?? RMO_DEPARTMENT_RAW;
     const isRoleLockedToRMO = formRole === constants.USERS_ROLE.ADMINISTRATOR || formRole === constants.USERS_ROLE.COORDINATOR;
 
     const handleRoleChange = (newRole) => {
         setFormRole(newRole);
         if (newRole === constants.USERS_ROLE.ADMINISTRATOR || newRole === constants.USERS_ROLE.COORDINATOR) {
             setFormDepartmentId(resolvedRmoId);
+        } else if (isNonRmoRole(newRole)) {
+            if (isRmoDepartmentId(formDepartmentId, departments, resolvedRmoId)) {
+                setFormDepartmentId('');
+            }
         }
     };
     const { currentUser: authUser } = useAuth();
@@ -158,8 +185,8 @@ const UsersPage = ({
     }, [users]);
 
     // HANDLERS
-    const handleSelectUser = (item, targetTab = 'information') => {
-        const itemWithTab = item ? { ...item, _targetTab: targetTab } : null;
+    const handleSelectUser = (item, targetTab = null) => {
+        const itemWithTab = item ? (targetTab ? { ...item, _targetTab: targetTab } : item) : null;
         setSelectedUser(itemWithTab);
         onSelectUser?.(itemWithTab, targetTab);
     };
@@ -170,7 +197,7 @@ const UsersPage = ({
         setFormMiddleName('');
         setFormLastName('');
         setFormEmail('');
-        setFormDepartmentId(departments[0]?.id ?? '');
+        setFormDepartmentId('');
         setFormRole(constants.USERS_ROLE.MEMBER);
         setFormAvatarPath(null);
         setFormAvatarFile(null);
@@ -188,7 +215,7 @@ const UsersPage = ({
         setFormFirstName(rawUser.firstName ?? '');
         setFormMiddleName(rawUser.middleName ?? '');
         setFormLastName(rawUser.lastName ?? '');
-        setFormEmail(rawUser.email ?? '');
+        setFormEmail(rawUser.email ? rawUser.email.replace(/@.*$/, '') : '');
         setFormRole(rawRole);
         setFormDepartmentId(isLocked ? resolvedRmoId : (rawUser.departmentId ?? departments[0]?.id ?? ''));
         setFormAvatarPath(rawUser.avatarPath ?? null);
@@ -235,7 +262,7 @@ const UsersPage = ({
                 )
             );
 
-            if (actionKey === 'suspend' && isSelfUser && rawUser.status !== constants.USERS_STATUS.SUSPENDED) {
+            if (actionKey === 'suspend' && isSelfUser && String(rawUser.status).toUpperCase() !== constants.USERS_STATUS.SUSPENDED) {
                 showToast({
                     type: 'error',
                     title: 'Action Prohibited',
@@ -244,7 +271,7 @@ const UsersPage = ({
                 return;
             }
 
-            setSuspendingUser(rawUser);
+            setSuspendingUser({ ...rawUser, _isUnsuspending: actionKey === 'unsuspend' });
             return;
         }
 
@@ -270,9 +297,11 @@ const UsersPage = ({
             errors.lastName = 'Last name is required.';
         }
 
-        const cleanEmail = formEmail.trim().toLowerCase();
+        const rawUsername = formEmail.trim().toLowerCase().replace(/@.*$/, '');
+        const cleanEmail = rawUsername ? `${rawUsername}${constants.INSTITUTIONAL_CONFIGURATION.EMAIL_DOMAIN}` : '';
+
         if (!cleanEmail) {
-            errors.email = 'Email is required.';
+            errors.email = 'Email username is required.';
         } else if (!cleanEmail.endsWith(constants.INSTITUTIONAL_CONFIGURATION.EMAIL_DOMAIN)) {
             errors.email = `Must end with ${constants.INSTITUTIONAL_CONFIGURATION.EMAIL_DOMAIN}`;
         } else if (!constants.VALIDATION_PATTERNS.EMAIL.test(cleanEmail)) {
@@ -289,6 +318,8 @@ const UsersPage = ({
 
         if (!finalDepartmentId) {
             errors.departmentId = 'Department is required.';
+        } else if (isNonRmoRole(formRole) && isRmoDepartmentId(finalDepartmentId, departments, resolvedRmoId)) {
+            errors.departmentId = 'Selected role cannot belong to the Records Management Office.';
         }
 
         if (Object.keys(errors).length > 0) {
@@ -307,7 +338,7 @@ const UsersPage = ({
             }
 
             const targetUid = formUniversityId.trim();
-            const targetEmail = formEmail.trim().toLowerCase();
+            const targetEmail = cleanEmail;
             const tempPassword = targetUid;
 
             if (isCoordinator) {
@@ -342,6 +373,7 @@ const UsersPage = ({
                 return;
             }
 
+            const activeActor = currentUser || useAuthStore.getState().currentUser;
             const minTimer = new Promise((resolve) => setTimeout(resolve, 500));
             const [newUser] = await Promise.all([
                 insertUser({
@@ -355,7 +387,7 @@ const UsersPage = ({
                     role: formRole,
                     status: constants.USERS_STATUS.PENDING_PASSWORD,
                     avatarPath: uploadedAvatarPath,
-                }),
+                }, activeActor),
                 minTimer,
             ]);
 
@@ -379,6 +411,36 @@ const UsersPage = ({
                 title: 'User Registered',
                 description: `${fullName} registered. Credentials sent to ${targetEmail}.`,
             });
+
+            // Auto-select and focus the newly created user
+            const dept = departments.find((d) => d.id === finalDepartmentId);
+            const deptCode = dept?.code ?? 'Central';
+            const deptDisplay = dept ? `${dept.name} (${dept.code})` : deptCode;
+            const formattedNewUser = {
+                id: newUser.id,
+                title: fullName,
+                name: fullName,
+                firstName: targetFirstName,
+                middleName: formMiddleName.trim() || null,
+                lastName: targetLastName,
+                universityId: targetUid,
+                email: targetEmail,
+                role: formRole,
+                department: deptDisplay,
+                departmentCode: deptCode,
+                departmentId: finalDepartmentId,
+                status: constants.USERS_STATUS.PENDING_PASSWORD,
+                avatarPath: uploadedAvatarPath,
+                user: newUser,
+                metadata: `${targetUid} · ${deptCode}`,
+                description: `${targetEmail} — ${formRole} in ${deptDisplay}`,
+                createdAt: newUser?.createdAt || new Date().toISOString(),
+                updatedAt: newUser?.updatedAt || newUser?.createdAt || new Date().toISOString(),
+                date: formatDateTime(newUser?.createdAt || new Date().toISOString()),
+            };
+            setSelectedUser(formattedNewUser);
+            onSelectUser?.(formattedNewUser);
+
             handleCloseModals();
         } catch (error) {
             const msg = error?.message ?? 'Failed to register user.';
@@ -407,9 +469,11 @@ const UsersPage = ({
             errors.lastName = 'Last name is required.';
         }
 
-        const cleanEmail = formEmail.trim().toLowerCase();
+        const rawUsername = formEmail.trim().toLowerCase().replace(/@.*$/, '');
+        const cleanEmail = rawUsername ? `${rawUsername}${constants.INSTITUTIONAL_CONFIGURATION.EMAIL_DOMAIN}` : '';
+
         if (!cleanEmail) {
-            errors.email = 'Email is required.';
+            errors.email = 'Email username is required.';
         } else if (!cleanEmail.endsWith(constants.INSTITUTIONAL_CONFIGURATION.EMAIL_DOMAIN)) {
             errors.email = `Must end with ${constants.INSTITUTIONAL_CONFIGURATION.EMAIL_DOMAIN}`;
         } else if (!constants.VALIDATION_PATTERNS.EMAIL.test(cleanEmail)) {
@@ -458,7 +522,7 @@ const UsersPage = ({
                         firstName: formFirstName.trim(),
                         middleName: formMiddleName.trim() || null,
                         lastName: formLastName.trim(),
-                        email: formEmail.trim().toLowerCase(),
+                        email: cleanEmail,
                         departmentId: finalDepartmentId,
                         role: formRole,
                         avatarPath: uploadedAvatarPath,
@@ -482,17 +546,18 @@ const UsersPage = ({
                 return;
             }
 
+            const activeActor = currentUser || useAuthStore.getState().currentUser;
             const minTimer = new Promise((resolve) => setTimeout(resolve, 500));
             const [updated] = await Promise.all([
                 updateUser(editingUser.id, {
                     firstName: formFirstName.trim(),
                     middleName: formMiddleName.trim() || null,
                     lastName: formLastName.trim(),
-                    email: formEmail.trim().toLowerCase(),
+                    email: cleanEmail,
                     departmentId: finalDepartmentId,
                     role: formRole,
                     avatarPath: uploadedAvatarPath,
-                }),
+                }, activeActor),
                 minTimer,
             ]);
 
@@ -538,10 +603,17 @@ const UsersPage = ({
             )
         );
 
+        const isCurrentlySuspended = Boolean(
+            suspendingUser._isUnsuspending ||
+            String(suspendingUser.status || '').toUpperCase() === constants.USERS_STATUS.SUSPENDED
+        );
+
         let newStatus;
-        if (suspendingUser.status === constants.USERS_STATUS.SUSPENDED) {
+        if (isCurrentlySuspended) {
             const restored = useUserStore.getState().getPreviousStatus(suspendingUser.id);
-            newStatus = restored || constants.USERS_STATUS.PENDING_PASSWORD;
+            newStatus = (restored && String(restored).toUpperCase() !== constants.USERS_STATUS.SUSPENDED)
+                ? restored
+                : constants.USERS_STATUS.VERIFIED;
         } else {
             newStatus = constants.USERS_STATUS.SUSPENDED;
         }
@@ -560,12 +632,17 @@ const UsersPage = ({
                 userId: suspendingUser.id,
                 universityId: suspendingUser.universityId,
                 name: `${suspendingUser.firstName} ${suspendingUser.lastName}`.trim(),
-                status: newStatus,
+                old: {
+                    status: suspendingUser.status,
+                },
+                new: {
+                    status: newStatus,
+                },
             };
 
             const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
             await coordinatorApprovalService.submitCoordinatorRequest({
-                action: constants.COORDINATOR_REQUESTS_ACTION.USER_SUSPEND,
+                action: constants.COORDINATOR_REQUESTS_ACTION.USER_UPDATE,
                 requesterId,
                 data: userPayload,
             });
@@ -583,9 +660,10 @@ const UsersPage = ({
         setIsSuspendingLoading(true);
 
         try {
+            const activeActor = currentUser || useAuthStore.getState().currentUser;
             const minTimer = new Promise((resolve) => setTimeout(resolve, 500));
             const [updated] = await Promise.all([
-                updateUser(suspendingUser.id, { status: newStatus }),
+                updateUser(suspendingUser.id, { status: newStatus }, activeActor),
                 minTimer,
             ]);
 
@@ -626,6 +704,17 @@ const UsersPage = ({
                 userId: deletingUser.id,
                 universityId: deletingUser.universityId,
                 name: `${deletingUser.firstName} ${deletingUser.lastName}`.trim(),
+                old: {
+                    universityId: deletingUser.universityId,
+                    name: `${deletingUser.firstName} ${deletingUser.lastName}`.trim(),
+                    email: deletingUser.email,
+                    role: deletingUser.role,
+                    department: deletingUser.department,
+                    status: deletingUser.status,
+                },
+                new: {
+                    status: 'DELETED',
+                },
             };
 
             const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
@@ -647,9 +736,10 @@ const UsersPage = ({
 
         setIsDeletingUserLoading(true);
         try {
+            const activeActor = currentUser || useAuthStore.getState().currentUser;
             const minTimer = new Promise((resolve) => setTimeout(resolve, 500));
             await Promise.all([
-                deleteUser(deletingUser.id),
+                deleteUser(deletingUser.id, activeActor),
                 minTimer,
             ]);
 
@@ -661,7 +751,7 @@ const UsersPage = ({
             showToast({
                 type: 'success',
                 title: 'User Deleted',
-                description: `User ${deletingUser.universityId} has been removed.`,
+                description: `User ${deletingUser.universityId} has been deleted.`,
             });
             handleCloseModals();
         } catch (error) {
@@ -683,6 +773,17 @@ const UsersPage = ({
         }));
     }, [departments]);
 
+    const creationDepartmentOptions = useMemo(() => {
+        const availableDepartments = isNonRmoRole(formRole)
+            ? departments.filter((d) => !isRmoDepartment(d, resolvedRmoId))
+            : departments;
+
+        return availableDepartments.map((department) => ({
+            value: department.id,
+            label: `${department.name} (${department.code})`,
+        }));
+    }, [departments, formRole, resolvedRmoId]);
+
     const userFilterOptions = useMemo(() => {
         const roleFilters = ROLE_OPTIONS.map((option) => ({
             category: 'Role',
@@ -694,7 +795,7 @@ const UsersPage = ({
         const departmentFilters = departments.map((department) => ({
             category: 'Department',
             value: department.code,
-            label: `${department.name} (${department.code})`,
+            label: department.name,
             icon: Building2,
         }));
 
@@ -748,12 +849,32 @@ const UsersPage = ({
         });
     }, [users, departments, currentUser, avatarVersion]);
 
+    const activeUserData = useMemo(() => {
+        return formattedUserData.filter((user) => user.status !== constants.USERS_STATUS.SUSPENDED);
+    }, [formattedUserData]);
+
+    const suspendedUserData = useMemo(() => {
+        return formattedUserData.filter((user) => user.status === constants.USERS_STATUS.SUSPENDED);
+    }, [formattedUserData]);
+
     const activeSelectedUser = useMemo(() => {
         const targetId = selectedItem?.id ?? selectedUser?.id;
         if (!targetId) return null;
         const matched = formattedUserData.find((u) => u.id === targetId);
-        return matched ?? selectedItem ?? selectedUser;
+        return matched ?? null;
     }, [selectedItem, selectedUser, formattedUserData]);
+
+    // Safety cleanup: Ensure deleted user is cleared from store selection
+    useEffect(() => {
+        if (
+            selectedUser?.id &&
+            users.length > 0 &&
+            !users.some((u) => u?.id === selectedUser.id)
+        ) {
+            setSelectedUser(null);
+            onSelectUser?.(null);
+        }
+    }, [users, selectedUser?.id, setSelectedUser, onSelectUser]);
 
     // RENDER
     return (
@@ -761,19 +882,34 @@ const UsersPage = ({
             <Browser
                 resourceName="users"
                 title="Manage Users"
-                description="Manage institutional accounts, academic roles, and departmental access permissions."
-                data={formattedUserData}
+                description="Manage institutional users."
+                data={activeUserData}
                 columns={USER_COLUMNS}
                 sortOptions={USER_SORT_OPTIONS}
                 filterOptions={userFilterOptions}
                 selectedItem={activeSelectedUser}
                 addItemLabel="New User"
                 addItemIcon={Plus}
-                searchPlaceholder="Search by name, ID, or email..."
+                searchPlaceholder="Search user..."
                 onAddItem={handleOpenAddModal}
                 onSelectItem={handleSelectUser}
                 onOpenItem={handleSelectUser}
                 onItemAction={handleItemAction}
+            />
+
+            <hr className="border-t border-surface-border my-2" />
+
+            {/* COMPLIANCE & HISTORICAL SUSPENDED ACCOUNTS */}
+            <History
+                title="Suspended Users"
+                description="Preserved for compliance and auditing."
+                resourceName="users"
+                data={suspendedUserData}
+                selectedId={activeSelectedUser?.id}
+                onItemClick={(item) => handleSelectUser(item)}
+                onItemAction={handleItemAction}
+                emptyMessage="No suspended user accounts on record."
+                searchPlaceholder="Search suspended users..."
             />
 
             {/* REGISTER USER MODAL (SIZE LG, EXACT ORDER: AVATAR -> UNIVERSITY ID -> NAMES -> EMAIL -> DEPARTMENT -> ROLES) */}
@@ -783,9 +919,8 @@ const UsersPage = ({
                     onClose={handleCloseModals}
                     size="lg"
                     title="New User"
-                    description="Create institutional user account with university identification, role, and department assignment."
                     icon={UserPlus}
-                    callout="New users will be provisioned with institutional credentials and assigned department permissions."
+                    callout="Create an institutional user to provision university credentials, assign academic roles, and configure departmental access permissions."
                     calloutVariant="neutral"
                     onConfirm={handleCreateUser}
                     confirmLabel={isCreatingUser ? 'Registering User...' : 'Register User'}
@@ -800,7 +935,7 @@ const UsersPage = ({
                                 src={formAvatarFile ? URL.createObjectURL(formAvatarFile) : formAvatarPath}
                                 alt="New User Avatar"
                                 size="large"
-                                className="h-20 w-20 shadow-md ring-2 ring-surface-border shrink-0 text-xl"
+                                className="h-20 w-20 rounded-full aspect-square shadow-md ring-2 ring-surface-border shrink-0 text-xl"
                             />
                             <div className="flex flex-col justify-center items-center sm:items-start gap-2 flex-1 text-center sm:text-left">
                                 <div>
@@ -843,7 +978,7 @@ const UsersPage = ({
                         {/* 2. UNIVERSITY ID */}
                         <TextField
                             label="University ID"
-                            placeholder="Enter your university id"
+                            placeholder="Enter University ID"
                             value={formUniversityId}
                             onChange={(changeEvent) => {
                                 setFormUniversityId(formatUniversityId(changeEvent.target.value));
@@ -858,7 +993,7 @@ const UsersPage = ({
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                             <TextField
                                 label="First Name"
-                                placeholder="Enter your first name"
+                                placeholder="Enter First Name"
                                 value={formFirstName}
                                 onChange={(changeEvent) => {
                                     setFormFirstName(changeEvent.target.value);
@@ -869,13 +1004,13 @@ const UsersPage = ({
                             />
                             <TextField
                                 label="Middle Name"
-                                placeholder="Enter your middle name"
+                                placeholder="Enter Middle Name"
                                 value={formMiddleName}
                                 onChange={(changeEvent) => setFormMiddleName(changeEvent.target.value)}
                             />
                             <TextField
                                 label="Last Name"
-                                placeholder="Enter your last name"
+                                placeholder="Enter Last Name"
                                 value={formLastName}
                                 onChange={(changeEvent) => {
                                     setFormLastName(changeEvent.target.value);
@@ -889,13 +1024,17 @@ const UsersPage = ({
                         {/* 4. EMAIL */}
                         <TextField
                             label="Email"
-                            placeholder="Enter your email"
+                            placeholder="Enter Email"
                             value={formEmail}
+                            suffixButton={constants.INSTITUTIONAL_CONFIGURATION.EMAIL_DOMAIN}
                             onChange={(changeEvent) => {
-                                setFormEmail(changeEvent.target.value);
+                                let val = changeEvent.target.value;
+                                if (val.includes('@')) {
+                                    val = val.replace(/@.*$/, '');
+                                }
+                                setFormEmail(val);
                                 if (formErrors.email) setFormErrors((prev) => ({ ...prev, email: undefined }));
                             }}
-                            helperText="Must be @plpasig.edu.ph"
                             required
                             error={formErrors.email}
                         />
@@ -909,7 +1048,7 @@ const UsersPage = ({
                                 if (formErrors.role) setFormErrors((prev) => ({ ...prev, role: undefined }));
                             }}
                             options={ROLE_OPTIONS}
-                            placeholder="Select institutional role..."
+                            placeholder="Select Role"
                             required
                             error={formErrors.role}
                         />
@@ -922,8 +1061,8 @@ const UsersPage = ({
                                 setFormDepartmentId(value);
                                 if (formErrors.departmentId) setFormErrors((prev) => ({ ...prev, departmentId: undefined }));
                             }}
-                            options={departmentFormOptions}
-                            placeholder="Select college or administrative unit..."
+                            options={creationDepartmentOptions}
+                            placeholder="Select Department"
                             isDisabled={isRoleLockedToRMO}
                             helperText={isRoleLockedToRMO ? 'Required for this role.' : undefined}
                             required
@@ -957,7 +1096,7 @@ const UsersPage = ({
                                 src={formAvatarFile ? URL.createObjectURL(formAvatarFile) : formAvatarPath}
                                 alt={`${formFirstName} ${formLastName}`}
                                 size="large"
-                                className="h-20 w-20 shadow-md ring-2 ring-surface-border shrink-0 text-xl"
+                                className="h-20 w-20 rounded-full aspect-square shadow-md ring-2 ring-surface-border shrink-0 text-xl"
                             />
                             <div className="flex flex-col justify-center items-center sm:items-start gap-2 flex-1 text-center sm:text-left">
                                 <div>
@@ -1009,7 +1148,7 @@ const UsersPage = ({
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                             <TextField
                                 label="First Name"
-                                placeholder="Enter your first name"
+                                placeholder="Enter First Name"
                                 value={formFirstName}
                                 onChange={(changeEvent) => {
                                     setFormFirstName(changeEvent.target.value);
@@ -1020,13 +1159,13 @@ const UsersPage = ({
                             />
                             <TextField
                                 label="Middle Name"
-                                placeholder="Enter your middle name"
+                                placeholder="Enter Middle Name"
                                 value={formMiddleName}
                                 onChange={(changeEvent) => setFormMiddleName(changeEvent.target.value)}
                             />
                             <TextField
                                 label="Last Name"
-                                placeholder="Enter your last name"
+                                placeholder="Enter Last Name"
                                 value={formLastName}
                                 onChange={(changeEvent) => {
                                     setFormLastName(changeEvent.target.value);
@@ -1040,13 +1179,17 @@ const UsersPage = ({
                         {/* EMAIL */}
                         <TextField
                             label="Email"
-                            placeholder="Enter your email"
+                            placeholder="Enter Email"
                             value={formEmail}
+                            suffixButton={constants.INSTITUTIONAL_CONFIGURATION.EMAIL_DOMAIN}
                             onChange={(changeEvent) => {
-                                setFormEmail(changeEvent.target.value);
+                                let val = changeEvent.target.value;
+                                if (val.includes('@')) {
+                                    val = val.replace(/@.*$/, '');
+                                }
+                                setFormEmail(val);
                                 if (editFormErrors.email) setEditFormErrors((prev) => ({ ...prev, email: undefined }));
                             }}
-                            helperText="Must be @plpasig.edu.ph"
                             required
                             error={editFormErrors.email}
                         />
@@ -1061,6 +1204,7 @@ const UsersPage = ({
                                     if (editFormErrors.role) setEditFormErrors((prev) => ({ ...prev, role: undefined }));
                                 }}
                                 options={ROLE_OPTIONS}
+                                placeholder="Select Role"
                                 required
                                 error={editFormErrors.role}
                             />
@@ -1072,6 +1216,7 @@ const UsersPage = ({
                                     if (editFormErrors.departmentId) setEditFormErrors((prev) => ({ ...prev, departmentId: undefined }));
                                 }}
                                 options={departmentFormOptions}
+                                placeholder="Select Department"
                                 isDisabled={isRoleLockedToRMO}
                                 helperText={isRoleLockedToRMO ? 'Required for this role.' : undefined}
                                 required
@@ -1090,66 +1235,50 @@ const UsersPage = ({
                         (suspendingUser.universityId && currentUser.universityId === suspendingUser.universityId)
                     )
                 );
-                const isSuspending = suspendingUser.status !== constants.USERS_STATUS.SUSPENDED;
-                const isBlocked = isSelf && isSuspending;
+                const isCurrentlySuspended = Boolean(
+                    suspendingUser._isUnsuspending ||
+                    String(suspendingUser.status || '').toUpperCase() === constants.USERS_STATUS.SUSPENDED
+                );
+                const isBlocked = isSelf && !isCurrentlySuspended;
 
                 return (
                     <Modal
                         isOpen={Boolean(suspendingUser)}
                         onClose={handleCloseModals}
                         title={
-                            suspendingUser.status === constants.USERS_STATUS.SUSPENDED
+                            isCurrentlySuspended
                                 ? 'Unsuspend User Account'
                                 : 'Suspend User Account'
                         }
                         description={
-                            suspendingUser.status === constants.USERS_STATUS.SUSPENDED
-                                ? `Are you sure you want to unsuspend ${suspendingUser.firstName} ${suspendingUser.lastName} (${suspendingUser.universityId})? The user will be restored to ${useUserStore.getState().getPreviousStatus(suspendingUser.id) || 'PENDING PASSWORD'}.`
+                            isCurrentlySuspended
+                                ? `Are you sure you want to unsuspend ${suspendingUser.firstName} ${suspendingUser.lastName} (${suspendingUser.universityId})? The user will be restored to ${useUserStore.getState().getPreviousStatus(suspendingUser.id) || 'VERIFIED'}.`
                                 : `Are you sure you want to suspend ${suspendingUser.firstName} ${suspendingUser.lastName} (${suspendingUser.universityId})? The user will be immediately logged out and prohibited from institutional authentication.`
                         }
-                        icon={suspendingUser.status === constants.USERS_STATUS.SUSPENDED ? UserCheck : UserX}
+                        icon={isCurrentlySuspended ? UserCheck : UserX}
                         callout={
                             isBlocked
                                 ? 'Safety Guard: You cannot suspend your own account. Only another system administrator can suspend this account.'
-                                : suspendingUser.status === constants.USERS_STATUS.SUSPENDED
+                                : isCurrentlySuspended
                                 ? 'The user will regain institutional access and credentials upon confirmation.'
                                 : 'The user will be immediately logged out and prohibited from institutional authentication.'
                         }
-                        calloutVariant={isBlocked ? 'destructive' : (suspendingUser.status === constants.USERS_STATUS.SUSPENDED ? 'accent' : 'destructive')}
+                        calloutVariant={isBlocked ? 'destructive' : (isCurrentlySuspended ? 'accent' : 'destructive')}
                         onConfirm={handleToggleSuspendUser}
                         confirmLabel={
                             isSuspendingLoading
                                 ? 'Updating Status...'
                                 : isBlocked
                                 ? 'Self-Suspension Prohibited'
-                                : suspendingUser.status === constants.USERS_STATUS.SUSPENDED
+                                : isCurrentlySuspended
                                 ? 'Unsuspend User'
                                 : 'Suspend User'
                         }
                         cancelLabel="Cancel"
-                        variant={suspendingUser.status === constants.USERS_STATUS.SUSPENDED ? 'primary' : 'destructive'}
+                        variant={isCurrentlySuspended ? 'primary' : 'destructive'}
                         isConfirmLoading={isSuspendingLoading}
                         isConfirmDisabled={isSuspendingLoading || isBlocked}
-                    >
-                        <div className="flex flex-col gap-3 my-2">
-                            <div className="flex items-center gap-3 p-3 rounded-lg bg-surface-hover/50 border border-surface-border">
-                                <Avatar
-                                    src={suspendingUser.avatarPath}
-                                    user={suspendingUser}
-                                    alt={`${suspendingUser.firstName} ${suspendingUser.lastName}`}
-                                    size="medium"
-                                />
-                                <div className="flex flex-col min-w-0 flex-1">
-                                    <span className="font-bold text-sm text-text truncate">
-                                        {suspendingUser.firstName} {suspendingUser.lastName}
-                                    </span>
-                                    <span className="text-xs text-text-muted truncate">
-                                        {suspendingUser.universityId} · {suspendingUser.email}
-                                    </span>
-                                </div>
-                            </div>
-                        </div>
-                    </Modal>
+                    />
                 );
             })()}
 

@@ -497,6 +497,7 @@ query FetchDocumentRequests @auth(level: PUBLIC) {
         }
         subject
         status
+        rejectionReason
         createdAt
         updatedAt
     }
@@ -521,6 +522,7 @@ query FetchDocumentRequestsByRequesterId(
         }
         subject
         status
+        rejectionReason
         createdAt
         updatedAt
     }
@@ -545,6 +547,7 @@ query FetchDocumentRequestById(
         }
         subject
         status
+        rejectionReason
         createdAt
         updatedAt
     }
@@ -690,8 +693,15 @@ query FetchNotifications(
 
 
 # --- AUDIT LOG QUERIES ---
-query FetchAuditLogs @auth(level: PUBLIC) {
-    auditLogs {
+query FetchAuditLogs(
+    $limit: Int = 10000
+    $offset: Int
+) @auth(level: PUBLIC) {
+    auditLogs(
+        limit: $limit
+        offset: $offset
+        orderBy: [{ createdAt: DESC }]
+    ) {
         id
         actor {
             id

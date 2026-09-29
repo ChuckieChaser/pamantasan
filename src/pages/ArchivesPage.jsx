@@ -13,7 +13,7 @@ import {
 import { useToast, useAuth } from '../hooks';
 import { constants } from '../constants';
 import { useDocumentStore, useDepartmentStore, useCoordinatorStore, useAuthStore } from '../stores';
-import { storageService, coordinatorApprovalService } from '../services';
+import { storageService, coordinatorApprovalService, systemEventService } from '../services';
 
 
 // --- CONFIGURATIONS ---
@@ -296,6 +296,13 @@ const ArchivesPage = ({
                         : null;
                     const path = latestVer?.path || item.path || item.url || item.downloadUrl;
                     await storageService.downloadDocument(path, fileName);
+                    if (item && currentUser?.id) {
+                        systemEventService.recordDocumentRead({
+                            document: item,
+                            user: currentUser,
+                            version: latestVer?.version,
+                        }).catch(() => {});
+                    }
                 }
             } catch (err) {
                 showToast({
@@ -360,7 +367,7 @@ const ArchivesPage = ({
             showToast({
                 type: 'success',
                 title: deletingItem.isFolder ? 'Folder Deleted' : 'Document Deleted',
-                description: `"${deletingItem.title || deletingItem.name}" has been permanently removed.`,
+                description: `"${deletingItem.title || deletingItem.name}" has been permanently deleted.`,
             });
             if (selectedDocument?.id === deletingItem.id) {
                 setSelectedDocument(null);

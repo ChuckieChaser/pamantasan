@@ -3,7 +3,10 @@ import { constants, isStaffRole, isAdminRole, isCoordinatorRole, isDirectorRole,
 import { useAuditStore } from '../stores/useAuditStore';
 import { useNotificationStore } from '../stores/useNotificationStore';
 import { useUserStore } from '../stores/useUserStore';
+import { useDepartmentStore } from '../stores/useDepartmentStore';
+import { useAuthStore } from '../stores/useAuthStore';
 import { userService } from './userService';
+import { realtimeSyncService } from './realtimeSyncService';
 
 // --- IN-MEMORY CACHE FOR READ DEBOUNCING ---
 const recentReadCache = new Map(); // key: `${userId}:${documentId}` -> timestamp
@@ -18,11 +21,11 @@ const isMajorAction = (entityType, action) => {
     const act = String(action || '').toUpperCase();
     const ent = String(entityType || '').toUpperCase();
 
-    if (ent.includes('DOCUMENT_REQUEST')) {
-        return ['CREATED', 'RESOLVED', 'REJECTED', 'ATTACHED', 'UPDATED'].includes(act);
+    if (ent.includes('DOCUMENT_REQUEST') || ent.includes('MESSAGE') || ent.includes('ATTACHMENT')) {
+        return ['CREATED', 'RESOLVED', 'REJECTED', 'ATTACHED', 'UPDATED', 'COMMENTED'].includes(act);
     }
     if (ent.includes('COORDINATOR_REQUEST')) {
-        return ['PENDING_APPROVAL', 'APPROVED', 'REJECTED'].includes(act);
+        return ['CREATED', 'UPDATED', 'DELETED', 'PENDING_APPROVAL', 'APPROVED', 'REJECTED'].includes(act);
     }
     if (ent.includes('DOCUMENT_SHARE')) {
         return ['SHARED', 'PUBLISHED', 'APPROVED'].includes(act);
@@ -34,7 +37,7 @@ const isMajorAction = (entityType, action) => {
         return ['CREATED', 'SUSPENDED', 'UNSUSPENDED'].includes(act);
     }
     if (ent.includes('DEPARTMENT')) {
-        return ['CREATED', 'DELETED'].includes(act);
+        return ['CREATED', 'UPDATED', 'DELETED'].includes(act);
     }
     return false;
 };
@@ -67,8 +70,9 @@ const systemEventService = {
         targetUserIds = [],
         actorId = null,
         excludeActor = true,
+        users = null,
     }) => {
-        const allUsers = useUserStore.getState().users || [];
+        const allUsers = users || useUserStore.getState().users || [];
         const recipientSet = new Set();
 
         // 1. Add direct target user IDs
@@ -121,9 +125,17 @@ const systemEventService = {
             });
         }
 
-        // 3. Exclude actor if requested (default true so actors aren't spammed with their own actions)
-        if (excludeActor && actorId) {
-            recipientSet.delete(String(actorId));
+        // 3. Exclude actor / acting user (always exclude so actors never receive notifications for their own actions)
+        const currentAuthUser = useAuthStore.getState().currentUser;
+        const actorIdsToExclude = new Set();
+        if (actorId) actorIdsToExclude.add(String(actorId).toLowerCase());
+        if (currentAuthUser?.id) actorIdsToExclude.add(String(currentAuthUser.id).toLowerCase());
+        if (currentAuthUser?.uid) actorIdsToExclude.add(String(currentAuthUser.uid).toLowerCase());
+
+        for (const id of Array.from(recipientSet)) {
+            if (actorIdsToExclude.has(String(id).toLowerCase())) {
+                recipientSet.delete(id);
+            }
         }
 
         return Array.from(recipientSet);
@@ -145,18 +157,132 @@ const systemEventService = {
         isMajor = null,
         excludeActor = true,
     }) => {
-        const resolvedActorId = actorId || (typeof actor === 'object' ? actor?.id : actor) || null;
-        const stringifiedData = typeof data === 'string' ? data : JSON.stringify(data);
+        const currentAuthUser = useAuthStore.getState().currentUser || null;
+        const actorObj = (actor && typeof actor === 'object')
+            ? actor
+            : currentAuthUser;
+        const resolvedActorId =
+            actorId ||
+            actorObj?.id ||
+            actorObj?.uid ||
+            currentAuthUser?.id ||
+            currentAuthUser?.uid ||
+            (typeof actor === 'string' ? actor : null) ||
+            null;
+        const resolvedActorName = actorObj
+            ? `${actorObj.firstName || ''} ${actorObj.lastName || ''}`.trim() || actorObj.name || actorObj.displayName || null
+            : null;
+        const resolvedActorRole = actorObj?.role || null;
+        const resolvedActorEmail = actorObj?.email || null;
+        const resolvedActorDepartment = actorObj?.department || actorObj?.departmentName || null;
+        const resolvedActorDepartmentId = actorObj?.departmentId || null;
+
+        const baseData = typeof data === 'object' && data !== null
+            ? data
+            : (() => {
+                  try {
+                      return JSON.parse(data);
+                  } catch {
+                      return { raw: data };
+                  }
+              })();
+
+        const enrichedData = {
+            ...baseData,
+            actorId: resolvedActorId,
+            actorName: resolvedActorName,
+            actorRole: resolvedActorRole,
+            actorEmail: resolvedActorEmail,
+            actorDepartment: resolvedActorDepartment,
+            actorDepartmentId: resolvedActorDepartmentId,
+        };
+        const stringifiedData = JSON.stringify(enrichedData);
         const resolvedIsMajor = isMajor !== null ? isMajor : isMajorAction(entityType, action);
+
+        const normalizeAction = (act) => {
+            const a = String(act || '').toUpperCase().trim();
+            if (Object.values(constants.AUDIT_LOGS_ACTION).includes(a)) {
+                return a;
+            }
+            if (a.includes('DELETE') || a.includes('REMOVE')) return 'DELETED';
+            if (a.includes('READ') || a.includes('VIEW')) return 'READ';
+            if (a.includes('CREATE') || a.includes('UPLOAD') || a.includes('ATTACH') || a === 'NEW') return 'CREATED';
+            return 'UPDATED';
+        };
+
+        const mapToCrudAction = (act) => {
+            const a = String(act || '').toUpperCase().trim();
+            if (Object.values(constants.NOTIFICATIONS_ACTION).includes(a)) {
+                return a;
+            }
+            if (
+                a.includes('DELETE') ||
+                a.includes('REMOVE') ||
+                a.includes('PURGE') ||
+                a.includes('ARCHIVE') ||
+                a.includes('UNSHARE') ||
+                a.includes('REVOKE')
+            ) {
+                return 'DELETED';
+            }
+            if (a.includes('READ') || a.includes('VIEW')) {
+                return 'READ';
+            }
+            if (
+                a.includes('CREATE') ||
+                a.includes('UPLOAD') ||
+                a.includes('ATTACH') ||
+                a === 'NEW'
+            ) {
+                return 'CREATED';
+            }
+            return 'UPDATED';
+        };
+
+        const resolveAuditEntityType = (ent) => {
+            const e = String(ent || '').toUpperCase().replace(/\s+/g, '_').trim();
+            if (Object.values(constants.AUDIT_LOGS_ENTITY_TYPE).includes(e)) {
+                return e;
+            }
+            if (e.includes('COORDINATOR')) return constants.AUDIT_LOGS_ENTITY_TYPE.COORDINATOR_REQUEST;
+            if (e.includes('MESSAGE')) return constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_REQUEST_MESSAGE;
+            if (e.includes('ATTACHMENT')) return constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_REQUEST_ATTACHMENT;
+            if (e.includes('REQUEST')) return constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_REQUEST;
+            if (e.includes('SHARE')) return constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_SHARE;
+            if (e.includes('VERSION')) return constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_VERSION;
+            if (e.includes('USER')) return constants.AUDIT_LOGS_ENTITY_TYPE.USER;
+            if (e.includes('DEPT') || e.includes('DEPARTMENT')) return constants.AUDIT_LOGS_ENTITY_TYPE.DEPARTMENT;
+            if (e.includes('DOC')) return constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT;
+            return constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT;
+        };
+
+        const resolveNotificationEntityType = (ent) => {
+            const e = String(ent || '').toUpperCase().replace(/\s+/g, '_').trim();
+            if (Object.values(constants.NOTIFICATIONS_ENTITY_TYPE).includes(e)) {
+                return e;
+            }
+            if (e.includes('COORDINATOR')) return constants.NOTIFICATIONS_ENTITY_TYPE.COORDINATOR_REQUEST;
+            if (e.includes('REQUEST') || e.includes('MESSAGE') || e.includes('ATTACHMENT')) return constants.NOTIFICATIONS_ENTITY_TYPE.DOCUMENT_REQUEST;
+            if (e.includes('USER')) return constants.NOTIFICATIONS_ENTITY_TYPE.USER;
+            if (e.includes('DEPT') || e.includes('DEPARTMENT')) return constants.NOTIFICATIONS_ENTITY_TYPE.DEPARTMENT;
+            if (e.includes('DOC')) return constants.NOTIFICATIONS_ENTITY_TYPE.DOCUMENT;
+            return constants.NOTIFICATIONS_ENTITY_TYPE.DOCUMENT;
+        };
+
+        const canonicalAction = normalizeAction(action);
+        const crudAction = mapToCrudAction(action);
+        const auditEntityType = resolveAuditEntityType(entityType);
+        const notifEntityType = resolveNotificationEntityType(entityType);
 
         // 1. CREATE AUDIT LOG SIMULTANEOUSLY
         let auditLogEntry = null;
         try {
             const auditPayload = {
                 actorId: resolvedActorId,
-                entityType: entityType,
+                actor: actorObj,
+                entityType: auditEntityType,
                 entityId: String(entityId),
-                action: action,
+                action: canonicalAction,
                 data: stringifiedData,
                 createdAt: new Date().toISOString(),
             };
@@ -166,23 +292,55 @@ const systemEventService = {
         }
 
         // 2. RESOLVE RECIPIENTS FOR NOTIFICATION
-        const recipientIds = systemEventService.resolveRecipientIds({
+        let allUsers = useUserStore.getState().users || [];
+        if (allUsers.length === 0 && Array.isArray(targetRoles) && targetRoles.length > 0) {
+            try {
+                allUsers = (await useUserStore.getState().fetchUsers()) || [];
+            } catch {
+                /* ignore */
+            }
+        }
+
+        const rawRecipientIds = systemEventService.resolveRecipientIds({
             targetRoles,
             targetDepartmentId,
             targetUserIds,
             actorId: resolvedActorId,
-            excludeActor,
+            excludeActor: true,
+            users: allUsers,
         });
+
+        // Strictly guarantee the actor or current user never receives a notification for their own actions
+        const actorIdsToExclude = new Set();
+        if (resolvedActorId) actorIdsToExclude.add(String(resolvedActorId).toLowerCase());
+        if (currentAuthUser?.id) actorIdsToExclude.add(String(currentAuthUser.id).toLowerCase());
+        if (currentAuthUser?.uid) actorIdsToExclude.add(String(currentAuthUser.uid).toLowerCase());
+        if (actorObj?.id) actorIdsToExclude.add(String(actorObj.id).toLowerCase());
+
+        const recipientIds = rawRecipientIds.filter(
+            (id) => !actorIdsToExclude.has(String(id).toLowerCase())
+        );
 
         // 3. DISPATCH NOTIFICATIONS TO ALL AFFECTED PARTIES
         const notificationPromises = recipientIds.map(async (recipientId) => {
             try {
+                // Check recipient notification preference from userSettings:
+                // ALL => notifications and email sent
+                // SYSTEM => only notifications (no email)
+                // IMPORTANT => no read notifications (suppress READ actions)
+                const preference = await resolveUserSettingNotification(recipientId);
+
+                // IMPORTANT => no read notifications
+                if (preference === constants.USER_SETTINGS_NOTIFICATION.IMPORTANT && crudAction === 'READ') {
+                    return null;
+                }
+
                 const notifPayload = {
                     recipientId: recipientId,
                     actorId: resolvedActorId,
-                    entityType: entityType,
+                    entityType: notifEntityType,
                     entityId: String(entityId),
-                    action: action,
+                    action: crudAction,
                     isRead: false,
                     isEmailed: false,
                     createdAt: new Date().toISOString(),
@@ -190,14 +348,11 @@ const systemEventService = {
 
                 const inserted = await useNotificationStore.getState().insertNotification(notifPayload);
 
-                // Check recipient email preference:
-                // ALL => email & system notification
-                // SYSTEM => system only notification
-                // IMPORTANT => email on major events only
-                const preference = await resolveUserSettingNotification(recipientId);
+                // Suppress email dispatch for READ actions (align with CRUD: Created, Updated, Deleted)
                 const shouldSendEmail =
-                    preference === constants.USER_SETTINGS_NOTIFICATION.ALL ||
-                    (preference === constants.USER_SETTINGS_NOTIFICATION.IMPORTANT && resolvedIsMajor);
+                    crudAction !== 'READ' &&
+                    (preference === constants.USER_SETTINGS_NOTIFICATION.ALL ||
+                        (preference === constants.USER_SETTINGS_NOTIFICATION.IMPORTANT && resolvedIsMajor));
 
                 if (shouldSendEmail) {
                     const parsedData = typeof data === 'object' ? data : {};
@@ -220,8 +375,47 @@ const systemEventService = {
                         const recipientName = recipientUser
                             ? `${recipientUser.firstName || ''} ${recipientUser.lastName || ''}`.trim() || recipientUser.name || 'User'
                             : 'User';
-                        const title = parsedData.title || parsedData.subject || `${action.replace(/_/g, ' ')}: ${entityType}`;
-                        const message = parsedData.description || parsedData.message || parsedData.reason || `Event ${action} on ${entityType}`;
+                        const targetName =
+                            parsedData.targetName ||
+                            parsedData.documentName ||
+                            parsedData.fileName ||
+                            parsedData.name ||
+                            (parsedData.title && parsedData.title !== `${action.replace(/_/g, ' ')}: ${auditEntityType}` ? parsedData.title : '') ||
+                            '';
+                        let title = parsedData.title || parsedData.subject || `${crudAction}: ${auditEntityType}`;
+                        let message = parsedData.description || parsedData.message || parsedData.reason || `Event ${crudAction} on ${auditEntityType}`;
+
+                        if (crudAction === 'DELETED') {
+                            title = title
+                                .replace(/\bDomain Removed\b/gi, 'Department Deleted')
+                                .replace(/\bDepartment Removed\b/gi, 'Department Deleted')
+                                .replace(/\bRemoved\b/gi, 'Deleted');
+                            message = message
+                                .replace(/\bdomain removed\b/gi, 'department deleted')
+                                .replace(/\bdepartment removed\b/gi, 'department deleted')
+                                .replace(/\bwas removed\b/gi, 'was deleted')
+                                .replace(/\bremoved\b/gi, 'deleted');
+                        } else if (crudAction === 'CREATED') {
+                            title = title.replace(/\bUploaded\b/gi, 'Created').replace(/\bAttached\b/gi, 'Created');
+                        }
+
+                        const defaultBaseUrl = 'https://pamantasan-records-210fe.web.app';
+                        let actionUrl = parsedData.actionUrl;
+                        if (!actionUrl) {
+                            if (notifEntityType === 'DOCUMENTS') {
+                                actionUrl = `${defaultBaseUrl}/documents`;
+                            } else if (notifEntityType === 'DEPARTMENTS') {
+                                actionUrl = `${defaultBaseUrl}/departments`;
+                            } else if (notifEntityType === 'USERS') {
+                                actionUrl = `${defaultBaseUrl}/users`;
+                            } else if (notifEntityType === 'COORDINATOR REQUESTS' || notifEntityType === 'COORDINATOR_REQUEST') {
+                                actionUrl = `${defaultBaseUrl}/coordinator`;
+                            } else if (notifEntityType === 'DOCUMENT REQUESTS' || notifEntityType === 'DOCUMENT_REQUEST') {
+                                actionUrl = `${defaultBaseUrl}/requests`;
+                            } else {
+                                actionUrl = defaultBaseUrl;
+                            }
+                        }
 
                         useNotificationStore.getState().dispatchNotificationEmail({
                             toEmail,
@@ -229,12 +423,15 @@ const systemEventService = {
                             recipientName,
                             actorId: resolvedActorId,
                             actorName,
-                            entityType,
-                            entityId,
-                            action,
+                            entityType: notifEntityType,
+                            entityId: String(entityId),
+                            targetName,
+                            action: canonicalAction,
                             title,
                             message,
                             description: message,
+                            actionUrl,
+                            actionLabel: 'View in Pamantasan Records',
                         }).catch(() => {});
                     }
                 }
@@ -248,6 +445,13 @@ const systemEventService = {
 
         const notifications = await Promise.allSettled(notificationPromises);
 
+        // Realtime cross-browser broadcast
+        try {
+            realtimeSyncService.broadcast(auditEntityType, canonicalAction, { entityId, ...data });
+        } catch {
+            /* ignore */
+        }
+
         return {
             auditLog: auditLogEntry,
             recipientCount: recipientIds.length,
@@ -257,7 +461,7 @@ const systemEventService = {
 
     /**
      * Records a document read / view event.
-     * Uses session debouncing (10-min window per user:doc) to prevent database spam.
+     * Enforces once-per-user recording to accurately feed readership analytics without duplication.
      */
     recordDocumentRead: async ({ document, user, version = null }) => {
         if (!document?.id || !user?.id) return null;
@@ -272,23 +476,55 @@ const systemEventService = {
             return null;
         }
 
+        // Check if user has already read this document previously (once per user only)
+        const loadedLogs = useAuditStore.getState().auditLogs || [];
+        const hasExistingRead = loadedLogs.some((l) => {
+            const act = String(l?.action || '').toUpperCase();
+            const isReadAct = ['READ', 'VIEW', 'VIEWED', 'DOWNLOAD', 'DOWNLOADED', 'ACCESS', 'ACCESSED'].includes(act);
+            const isDoc = String(l?.entityType || '').toUpperCase() === 'DOCUMENT';
+            const matchDoc = String(l?.entityId || l?.documentId) === docId;
+            const matchActor = String(l?.actorId || l?.actor?.id) === userId;
+            return isReadAct && isDoc && matchDoc && matchActor;
+        });
+
+        if (hasExistingRead) {
+            recentReadCache.set(cacheKey, Date.now());
+            return null;
+        }
+
         recentReadCache.set(cacheKey, Date.now());
 
         const docTitle = document.name || document.title || 'Institutional Document';
         const departmentId = user.departmentId || document.departmentId || null;
+        const deptObj = useDepartmentStore.getState().departments?.find((d) => String(d.id) === String(departmentId));
+        const departmentName = deptObj?.name || user.departmentName || document.departmentName || null;
+        const actorName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.name || user.displayName || user.email || 'User';
 
         try {
             const auditPayload = {
                 actorId: userId,
+                actor: user,
                 entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT,
                 entityId: docId,
                 action: 'READ',
                 data: JSON.stringify({
-                    title: docTitle,
-                    departmentId: departmentId,
-                    role: user.role || constants.USERS_ROLE.MEMBER,
-                    version: version || document.currentVersion || 1,
-                    timestamp: new Date().toISOString(),
+                    old: null,
+                    new: {
+                        title: docTitle,
+                        documentName: docTitle,
+                        departmentName: departmentName,
+                        _departmentId: departmentId,
+                        role: user.role || constants.USERS_ROLE.MEMBER,
+                        version: version || document.currentVersion || 1,
+                        timestamp: new Date().toISOString(),
+                    },
+                    actorId: userId,
+                    actorName: actorName,
+                    actorRole: user.role || constants.USERS_ROLE.MEMBER,
+                    actorEmail: user.email || '',
+                    actorDepartment: departmentName,
+                    _actorDepartmentId: departmentId,
+                    targetName: docTitle,
                 }),
                 createdAt: new Date().toISOString(),
             };

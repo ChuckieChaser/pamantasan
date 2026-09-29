@@ -14,6 +14,8 @@ async function handleAnalyzeDocumentFile(data) {
     const payload = data?.data || data || {};
     const {
         storagePath,
+        downloadUrl,
+        fileBase64,
         mimeType,
         fileName,
         fileSize,
@@ -24,8 +26,8 @@ async function handleAnalyzeDocumentFile(data) {
         extractedText,
     } = payload;
 
-    if (!storagePath) {
-        throw new HttpsError('invalid-argument', 'File storagePath is required for AI analysis.');
+    if (!storagePath && !downloadUrl && !fileBase64) {
+        throw new HttpsError('invalid-argument', 'File storagePath, downloadUrl, or fileBase64 is required for AI analysis.');
     }
 
     if (!fileName) {
@@ -35,6 +37,8 @@ async function handleAnalyzeDocumentFile(data) {
     try {
         const result = await analyzeDocumentFile({
             storagePath,
+            downloadUrl: downloadUrl || null,
+            fileBase64: fileBase64 || null,
             mimeType,
             fileName,
             fileSize: Number(fileSize) || 0,

@@ -4,7 +4,7 @@ import { storageService } from '../services';
 
 
 // --- CONFIGURATIONS ---
-const BASE_STYLE = 'rounded-full object-cover bg-surface border border-surface-border shrink-0 overflow-hidden select-none';
+const BASE_STYLE = 'rounded-full aspect-square object-cover bg-surface border border-surface-border shrink-0 overflow-hidden select-none';
 
 const SIZE_STYLE = {
     small:      'h-5 w-5 text-xs',
