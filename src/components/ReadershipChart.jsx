@@ -1,5 +1,6 @@
+/* eslint-disable react-refresh/only-export-components */
 // --- IMPORTS ---
-import { useMemo, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import { Eye } from 'lucide-react';
 
 // --- HELPERS: CURRENT WEEK SLOTS (SUN TO SAT) ---
@@ -184,10 +185,8 @@ export const ReadershipChart = ({
         return `${linePathD} L ${last.x},${baselineY} L ${first.x},${baselineY} Z`;
     }, [linePathD, points, baselineY]);
 
-    const gradientId = useMemo(
-        () => `read-grad-${Math.random().toString(36).substring(2, 8)}`,
-        []
-    );
+    const rawId = useId();
+    const gradientId = `read-grad-${rawId.replace(/[^a-zA-Z0-9_-]/g, '')}`;
 
     const activeSlot = activeHoverIndex !== null ? slots[activeHoverIndex] : null;
 

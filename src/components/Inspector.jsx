@@ -150,6 +150,114 @@ const normalizeTab = (tab) => {
     return tab;
 };
 
+const formatDocumentSummary = (rawSummary) => {
+    if (!rawSummary || typeof rawSummary !== 'string') return '';
+
+    let text = rawSummary.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+    text = text.replace(/^["']|["']$/g, '').trim();
+
+    // 1. Separate squished keywords where no space exists, e.g. "CommunityFROM:" or "AffairsSUBJECT:"
+    text = text.replace(/([A-Za-z0-9_.,])(MEMORANDUM|OFFICE\s+ORDER|SPECIAL\s+ORDER|ADMINISTRATIVE\s+ORDER|CIRCULAR|DATE|DATED|TO|MEMORANDUM\s+FOR|FOR|ATTENTION|FROM|ISSUED\s+BY|SUBJECT)\s*[:;\u2014-]/gi, '$1\n$2:');
+    
+    // 2. Separate when there are spaces but no newline: "... Community FROM: ..."
+    text = text.replace(/([^\n])\s+\b(DATE|DATED|TO|MEMORANDUM\s+FOR|FOR|ATTENTION|FROM|ISSUED\s+BY|SUBJECT|\bRE\b)\s*[:;\u2014-]/gi, '$1\n$2:');
+
+    const rawLines = text.split('\n').map(l => l.trim()).filter(Boolean);
+
+    let docNo = null;
+    let docDate = null;
+    let recipient = null;
+    let sender = null;
+    let subject = null;
+
+    const bodyLines = [];
+
+    for (let i = 0; i < rawLines.length; i++) {
+        const l = rawLines[i];
+
+        if (!docNo && /^(MEMORANDUM(?:\s+CIRCULAR)?|OFFICE\s+ORDER|SPECIAL\s+ORDER|ADMINISTRATIVE\s+ORDER|CIRCULAR|DOCUMENT|REF|MEMO)\s*NO\.?\s*[:\u2014-]?\s*[-A-Za-z0-9_/.,\s]+/i.test(l)) {
+            docNo = l;
+            continue;
+        }
+
+        if (!docDate && /^(?:DATE|DATED)\s*[:;\u2014.-]?\s*[-A-Za-z0-9\s,/]+$/i.test(l)) {
+            docDate = l.replace(/^(?:DATE|DATED)\s*[:;\u2014.-]?\s*/i, 'Date: ');
+            continue;
+        }
+
+        if (!recipient && /^(?:TO|MEMORANDUM\s+FOR|FOR|ATTENTION)\s*[:;\u2014.-]?\s*(.+)/i.test(l)) {
+            const m = l.match(/^(?:TO|MEMORANDUM\s+FOR|FOR|ATTENTION)\s*[:;\u2014.-]?\s*(.+)/i);
+            recipient = m[1].trim();
+            continue;
+        }
+
+        if (!sender && /^(?:FROM|ISSUED\s+BY|OFFICE\s+OF\s+THE)\s*[:;\u2014.-]?\s*(.+)/i.test(l)) {
+            const m = l.match(/^(?:FROM|ISSUED\s+BY|OFFICE\s+OF\s+THE)\s*[:;\u2014.-]?\s*(.+)/i);
+            sender = m[1].trim();
+            continue;
+        }
+
+        if (!subject && /^(?:SUBJECT|TITLE|\bRE\b)\s*[:;\u2014.-]?\s*(.+)/i.test(l)) {
+            const m = l.match(/^(?:SUBJECT|TITLE|\bRE\b)\s*[:;\u2014.-]?\s*(.+)/i);
+            const subCandidate = m[1].trim();
+            // If it's a mangled word like "gistration for participating...", fix to "Registration for participating..." and put into body!
+            if (/^gistration\b/i.test(subCandidate)) {
+                bodyLines.push(`Re${subCandidate}`);
+                continue;
+            }
+            subject = subCandidate;
+            continue;
+        }
+
+        // Secondary check: if there is another line starting with SUBJECT: gistration..., fix it
+        if (/^(?:SUBJECT|TITLE|\bRE\b)\s*[:;\u2014.-]?\s*(.+)/i.test(l)) {
+            const m = l.match(/^(?:SUBJECT|TITLE|\bRE\b)\s*[:;\u2014.-]?\s*(.+)/i);
+            const extra = m[1].trim();
+            if (/^gistration\b/i.test(extra)) {
+                bodyLines.push(`Re${extra}`);
+            } else {
+                bodyLines.push(extra);
+            }
+            continue;
+        }
+
+        bodyLines.push(l);
+    }
+
+    const topSection = [];
+    if (docNo) topSection.push(docNo);
+    if (docDate) topSection.push(docDate);
+
+    const partySection = [];
+    if (recipient) partySection.push(`TO: ${recipient}`);
+    if (sender) partySection.push(`FROM: ${sender}`);
+    if (subject) partySection.push(`SUBJECT: ${subject}`);
+
+    const headerParts = [];
+    if (topSection.length > 0) headerParts.push(topSection.join('\n'));
+    if (partySection.length > 0) headerParts.push(partySection.join('\n'));
+
+    const formattedHeader = headerParts.join('\n\n');
+
+    // Filter and format body paragraphs (max 3 substantive paragraphs)
+    const cleanedBody = bodyLines
+        .filter(l => !/^(asset size|file size|preserved in repository|in institutional repository|format:|file format|asset format)/i.test(l))
+        .map(l => {
+            let s = l.trim();
+            if (!/[.!?]$/.test(s)) s += '.';
+            return s;
+        });
+
+    const formattedBody = cleanedBody.slice(0, 3).join('\n\n');
+
+    if (formattedHeader && formattedBody) {
+        return `${formattedHeader}\n\n${formattedBody}`;
+    } else if (formattedHeader) {
+        return formattedHeader;
+    }
+    return formattedBody;
+};
+
 const formatChangeSummary = (rawChangeSummary) => {
     if (!rawChangeSummary || typeof rawChangeSummary !== 'string') return '';
     let text = rawChangeSummary.replace(/\r\n/g, '\n').trim();
@@ -255,22 +363,24 @@ const Inspector = ({
 
     useEffect(() => {
         if (item?.id !== previousItemId) {
-            setPreviousItemId(item?.id);
-            const explicitTab = targetTab || item?._targetTab;
-            if (explicitTab) {
-                const resolvedTab = normalizeTab(explicitTab);
-                const target = isMember && resolvedTab === 'share' ? 'information' : resolvedTab;
-                setActiveTab(target);
-                onTabChange?.(target);
-            }
-            setChatInputText('');
-            setStagedAttachments([]);
-            setIsAttachModalOpen(false);
-            setIsEditDepartmentModalOpen(false);
-            setIsEditUserModalOpen(false);
-            setViewingFacultyMember(null);
-            setExpandedFolderIds(new Set());
-            setSelectedTreeItemId(null);
+            queueMicrotask(() => {
+                setPreviousItemId(item?.id);
+                const explicitTab = targetTab || item?._targetTab;
+                if (explicitTab) {
+                    const resolvedTab = normalizeTab(explicitTab);
+                    const target = isMember && resolvedTab === 'share' ? 'information' : resolvedTab;
+                    setActiveTab(target);
+                    onTabChange?.(target);
+                }
+                setChatInputText('');
+                setStagedAttachments([]);
+                setIsAttachModalOpen(false);
+                setIsEditDepartmentModalOpen(false);
+                setIsEditUserModalOpen(false);
+                setViewingFacultyMember(null);
+                setExpandedFolderIds(new Set());
+                setSelectedTreeItemId(null);
+            });
         }
     }, [item?.id, previousItemId, targetTab, item?._targetTab, isMember, onTabChange]);
 
@@ -1799,7 +1909,7 @@ const Inspector = ({
                                             <span className={SECTION_TITLE_STYLE}>Summary</span>
                                             <div className={`${CALLOUT_BOX_STYLE} flex items-start gap-2.5`}>
                                                 <Sparkles className="h-4 w-4 text-text-muted shrink-0 mt-0.5" />
-                                                <span className="leading-relaxed whitespace-pre-line">{activeItem.summary}</span>
+                                                <span className="leading-relaxed whitespace-pre-line">{formatDocumentSummary(activeItem.summary)}</span>
                                             </div>
                                         </div>
                                     )}
@@ -2005,7 +2115,9 @@ const Inspector = ({
                                                         try {
                                                             const parsed = JSON.parse(log.data);
                                                             actorUser = { id: actorId, role: parsed.role, departmentId: parsed.departmentId };
-                                                        } catch {}
+                                                        } catch {
+                                                            // ignore malformed log data
+                                                        }
                                                     }
                                                     if (!isRmoUser(actorUser, allDepartments)) {
                                                         if (!childDocReadersMap.has(docId)) {
@@ -2050,7 +2162,9 @@ const Inspector = ({
                                                     try {
                                                         const parsed = JSON.parse(log.data);
                                                         actorUser = { id: actorId, role: parsed.role, departmentId: parsed.departmentId };
-                                                    } catch {}
+                                                    } catch {
+                                                        // ignore malformed log data
+                                                    }
                                                 }
                                                 if (!isRmoUser(actorUser, allDepartments)) {
                                                     nonRmoReaders.add(String(actorId));
@@ -2702,9 +2816,9 @@ const Inspector = ({
                                                     const isFold = Boolean(item?.isFolder || item?.mimeType === 'folder');
                                                     const userMap = new Map((allUsers || []).map((u) => [String(u.id), u]));
 
-                                                    let deptReadCount = 0;
-                                                    let deptAuditLogs = [];
-                                                    let uniqueReadersCount = 0;
+                                                    let deptReadCount;
+                                                    let deptAuditLogs;
+                                                    let uniqueReadersCount;
 
                                                     if (isFold) {
                                                         const descendantIds = new Set(getRecursiveDescendantDocIds(item?.id, allDocuments));
@@ -2726,7 +2840,9 @@ const Inspector = ({
                                                                 try {
                                                                     const parsed = JSON.parse(log.data);
                                                                     actorUser = { id: actorId, role: parsed.role, departmentId: parsed.departmentId };
-                                                                } catch {}
+                                                                } catch {
+                                                                    // ignore malformed log data
+                                                                }
                                                             }
                                                             if (isRmoUser(actorUser, allDepartments)) return;
 
@@ -2735,7 +2851,9 @@ const Inspector = ({
                                                                 try {
                                                                     const parsed = JSON.parse(log.data);
                                                                     logDeptId = parsed.departmentId;
-                                                                } catch {}
+                                                                } catch {
+                                                                    // ignore malformed log data
+                                                                }
                                                             }
 
                                                             if (deptId && logDeptId && String(logDeptId) === String(deptId)) {
@@ -2773,7 +2891,9 @@ const Inspector = ({
                                                                 try {
                                                                     const parsed = JSON.parse(log.data);
                                                                     actorUser = { id: actorId, role: parsed.role, departmentId: parsed.departmentId };
-                                                                } catch {}
+                                                                } catch {
+                                                                    // ignore malformed log data
+                                                                }
                                                             }
                                                             if (isRmoUser(actorUser, allDepartments)) return;
 
@@ -2782,7 +2902,9 @@ const Inspector = ({
                                                                 try {
                                                                     const parsed = JSON.parse(log.data);
                                                                     logDeptId = parsed.departmentId;
-                                                                } catch {}
+                                                                } catch {
+                                                                    // ignore malformed log data
+                                                                }
                                                             }
 
                                                             if (deptId && logDeptId && String(logDeptId) === String(deptId)) {
@@ -3141,7 +3263,7 @@ const Inspector = ({
                                     {selectedTreeItem.summary && (
                                         <div className={`${CALLOUT_BOX_STYLE} flex items-start gap-2 py-1.5 px-2 text-[11px]`}>
                                             <Sparkles className="h-3.5 w-3.5 text-text-muted shrink-0 mt-0.5" />
-                                            <span className="break-words leading-relaxed whitespace-pre-line">{selectedTreeItem.summary}</span>
+                                            <span className="break-words leading-relaxed whitespace-pre-line">{formatDocumentSummary(selectedTreeItem.summary)}</span>
                                         </div>
                                     )}
 

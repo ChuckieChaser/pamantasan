@@ -125,16 +125,18 @@ const systemEventService = {
             });
         }
 
-        // 3. Exclude actor / acting user (always exclude so actors never receive notifications for their own actions)
-        const currentAuthUser = useAuthStore.getState().currentUser;
-        const actorIdsToExclude = new Set();
-        if (actorId) actorIdsToExclude.add(String(actorId).toLowerCase());
-        if (currentAuthUser?.id) actorIdsToExclude.add(String(currentAuthUser.id).toLowerCase());
-        if (currentAuthUser?.uid) actorIdsToExclude.add(String(currentAuthUser.uid).toLowerCase());
+        // 3. Exclude actor / acting user if excludeActor is true
+        if (excludeActor) {
+            const currentAuthUser = useAuthStore.getState().currentUser;
+            const actorIdsToExclude = new Set();
+            if (actorId) actorIdsToExclude.add(String(actorId).toLowerCase());
+            if (currentAuthUser?.id) actorIdsToExclude.add(String(currentAuthUser.id).toLowerCase());
+            if (currentAuthUser?.uid) actorIdsToExclude.add(String(currentAuthUser.uid).toLowerCase());
 
-        for (const id of Array.from(recipientSet)) {
-            if (actorIdsToExclude.has(String(id).toLowerCase())) {
-                recipientSet.delete(id);
+            for (const id of Array.from(recipientSet)) {
+                if (actorIdsToExclude.has(String(id).toLowerCase())) {
+                    recipientSet.delete(id);
+                }
             }
         }
 
@@ -306,20 +308,22 @@ const systemEventService = {
             targetDepartmentId,
             targetUserIds,
             actorId: resolvedActorId,
-            excludeActor: true,
+            excludeActor,
             users: allUsers,
         });
 
-        // Strictly guarantee the actor or current user never receives a notification for their own actions
+        // Strictly guarantee the actor or current user never receives a notification for their own actions if excludeActor is true
         const actorIdsToExclude = new Set();
-        if (resolvedActorId) actorIdsToExclude.add(String(resolvedActorId).toLowerCase());
-        if (currentAuthUser?.id) actorIdsToExclude.add(String(currentAuthUser.id).toLowerCase());
-        if (currentAuthUser?.uid) actorIdsToExclude.add(String(currentAuthUser.uid).toLowerCase());
-        if (actorObj?.id) actorIdsToExclude.add(String(actorObj.id).toLowerCase());
+        if (excludeActor) {
+            if (resolvedActorId) actorIdsToExclude.add(String(resolvedActorId).toLowerCase());
+            if (currentAuthUser?.id) actorIdsToExclude.add(String(currentAuthUser.id).toLowerCase());
+            if (currentAuthUser?.uid) actorIdsToExclude.add(String(currentAuthUser.uid).toLowerCase());
+            if (actorObj?.id) actorIdsToExclude.add(String(actorObj.id).toLowerCase());
+        }
 
-        const recipientIds = rawRecipientIds.filter(
-            (id) => !actorIdsToExclude.has(String(id).toLowerCase())
-        );
+        const recipientIds = excludeActor
+            ? rawRecipientIds.filter((id) => !actorIdsToExclude.has(String(id).toLowerCase()))
+            : rawRecipientIds;
 
         // 3. DISPATCH NOTIFICATIONS TO ALL AFFECTED PARTIES
         const notificationPromises = recipientIds.map(async (recipientId) => {

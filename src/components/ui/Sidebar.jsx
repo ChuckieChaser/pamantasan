@@ -166,6 +166,7 @@ const Sidebar = ({
                         <div className="flex flex-col items-center text-center gap-2 p-2.5 rounded-lg bg-surface-hover/60 border border-surface-border/80">
                             <div className="relative">
                                 <Avatar
+                                    key={`flyout-${avatarVersion}`}
                                     src={userAvatar}
                                     user={currentUser}
                                     alt={userName}
@@ -360,6 +361,7 @@ const Sidebar = ({
                                 title="Account profile & settings"
                             >
                                 <Avatar
+                                    key={`mobile-${avatarVersion}`}
                                     src={userAvatar}
                                     user={currentUser}
                                     alt={userName}
@@ -527,6 +529,7 @@ const Sidebar = ({
                         title={!isDesktopExpanded ? `${userName} (${userUniversityId || 'Account'})` : 'Account profile & settings'}
                     >
                         <Avatar
+                            key={`desktop-${avatarVersion}`}
                             src={userAvatar}
                             user={currentUser}
                             alt={userName}

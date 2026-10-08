@@ -53,6 +53,7 @@ const TopBar = ({
     // RENDER
     return (
         <header
+            aria-label={pageTitle}
             className={composedClassName}
             {...props}
         >
@@ -69,7 +70,7 @@ const TopBar = ({
                     </button>
                 )}
 
-                {hasSearch && (
+                {hasSearch ? (
                     <div
                         ref={searchContainerRef}
                         className="flex-1 relative min-w-0"
@@ -85,6 +86,12 @@ const TopBar = ({
 
                         {searchContent}
                     </div>
+                ) : (
+                    pageTitle && (
+                        <h1 className="text-sm font-semibold text-text truncate font-serif">
+                            {pageTitle}
+                        </h1>
+                    )
                 )}
             </div>
 

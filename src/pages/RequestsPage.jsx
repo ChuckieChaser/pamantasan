@@ -1,7 +1,6 @@
 // --- IMPORTS ---
 import { useState, useMemo, useEffect } from 'react';
 import {
-    Inbox,
     Check,
     CheckCircle2,
     XCircle,
@@ -14,7 +13,6 @@ import {
     Search,
     ShieldCheck,
     Lock,
-    RotateCcw,
     X,
     Plus,
     Trash2,
@@ -225,7 +223,7 @@ const RequestsPage = ({
             window.removeEventListener('pamantasan:resolve-document-request', handleResolveDocRequestEvent);
             window.removeEventListener('pamantasan:reject-document-request', handleRejectDocRequestEvent);
         };
-    }, [documentRequests, isAdmin, activeUser]);
+    }, [documentRequests, isAdmin, activeUser, showToast]);
 
     // KEEP VIEWING DOCUMENT REQUEST IN SYNC WITH STORE UPDATES
     useEffect(() => {
@@ -249,7 +247,7 @@ const RequestsPage = ({
             const reqId = typeof req.requester === 'object' ? req.requester?.id : (req.requesterId ?? req.requester);
             return String(reqId) === String(activeUser.id);
         });
-    }, [documentRequests, isAdmin, isCoordinator, activeUser?.id]);
+    }, [documentRequests, isAdmin, isCoordinator, activeUser]);
 
     const formattedDocumentData = useMemo(() => {
         return (scopedDocumentRequests || []).map((request) => {

@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 // --- IMPORTS ---
 import { useEffect, useState } from 'react';
 import { storageService } from '../services';
@@ -83,7 +84,7 @@ const Avatar = ({
         effectiveTargetSrc === 'avatars/defaultAvatar.png' ||
         effectiveTargetSrc === '/avatars/defaultAvatar.png';
 
-    const [resolvedUrl, setResolvedUrl] = useState(isDirectUrl ? effectiveTargetSrc : null);
+    const [resolvedUrl, setResolvedUrl] = useState(null);
     const [hasLoadError, setHasLoadError] = useState(false);
 
     // HOOKS
@@ -91,8 +92,6 @@ const Avatar = ({
         let isCancelled = false;
 
         if (isDirectUrl) {
-            setResolvedUrl(effectiveTargetSrc);
-            setHasLoadError(false);
             return;
         }
 
@@ -157,7 +156,8 @@ const Avatar = ({
     const sizeStyle = SIZE_STYLE[size] ?? SIZE_STYLE.medium;
     const composedClassName = `${BASE_STYLE} ${sizeStyle} ${className ?? ''}`.trim();
     const effectiveAlt = alt || 'User avatar';
-    const effectiveSource = (!hasLoadError && resolvedUrl) ? resolvedUrl : FALLBACK_AVATAR;
+    const activeResolved = isDirectUrl ? effectiveTargetSrc : resolvedUrl;
+    const effectiveSource = (!hasLoadError && activeResolved) ? activeResolved : FALLBACK_AVATAR;
 
     // RENDER
     return (

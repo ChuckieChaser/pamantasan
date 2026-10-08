@@ -4,8 +4,10 @@ const {
     analyzeDocumentFile,
     synthesizeFolderSummary,
     generateVectorEmbedding,
+    determineDocumentClassification,
+    generateContentAwareSummary,
+    generateVersionChangeSummary,
 } = require('../services/aiService');
-const { DOCUMENT_VERSIONS_CLASSIFICATION } = require('../constants');
 
 /**
  * Callable handler to analyze an uploaded document file or revision using Vertex AI.
@@ -22,6 +24,8 @@ async function handleAnalyzeDocumentFile(data) {
         isVersionUpdate,
         previousStoragePath,
         previousMimeType,
+        previousSummary,
+        previousClassification,
         nextVersion,
         extractedText,
     } = payload;
@@ -45,6 +49,8 @@ async function handleAnalyzeDocumentFile(data) {
             isVersionUpdate: Boolean(isVersionUpdate),
             previousStoragePath: previousStoragePath || null,
             previousMimeType: previousMimeType || null,
+            previousSummary: previousSummary || null,
+            previousClassification: previousClassification || null,
             nextVersion: nextVersion || null,
             extractedText: extractedText || null,
         });
@@ -52,13 +58,26 @@ async function handleAnalyzeDocumentFile(data) {
         return result;
     } catch (error) {
         console.error('[handleAnalyzeDocumentFile] Error analyzing document:', error);
-        // Resilient fallback so client upload never fails
+        // Resilient dynamic content-driven fallback so client upload never fails
+        const resolvedClassification = determineDocumentClassification(extractedText, fileName);
+        const resolvedSummary = generateContentAwareSummary(fileName, extractedText);
+        const resolvedChangeSummary = isVersionUpdate
+            ? generateVersionChangeSummary({
+                newText: extractedText || '',
+                newClassification: resolvedClassification,
+                previousSummary: previousSummary || '',
+                previousClassification: previousClassification || '',
+                fileName,
+                nextVersion: nextVersion || 2,
+            })
+            : 'Initial file upload';
+
         return {
             success: false,
             error: error?.message || 'AI document analysis failed.',
-            summary: `Institutional document: ${fileName}.`,
-            classification: DOCUMENT_VERSIONS_CLASSIFICATION.PRIVATE,
-            changeSummary: isVersionUpdate ? 'Document version updated.' : 'Initial file upload',
+            summary: resolvedSummary,
+            classification: resolvedClassification,
+            changeSummary: resolvedChangeSummary,
             embedding: null,
         };
     }

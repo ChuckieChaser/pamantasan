@@ -5,7 +5,6 @@ import { useDepartmentStore } from '../stores/useDepartmentStore';
 import { useDocumentStore } from '../stores/useDocumentStore';
 import { useAuthStore } from '../stores/useAuthStore';
 import { authService } from './authService';
-import { systemEventService } from './systemEventService';
 import { constants } from '../constants';
 
 

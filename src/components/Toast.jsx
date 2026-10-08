@@ -141,7 +141,9 @@ const AutoDismissToast = ({
             document.body.removeChild(textarea);
             setHasCopied(true);
             setTimeout(() => setHasCopied(false), 2000);
-        } catch {}
+        } catch {
+            /* ignore fallback error */
+        }
     };
 
     // HOOKS: Independent toast dismissal timer that is unaffected by parent re-renders

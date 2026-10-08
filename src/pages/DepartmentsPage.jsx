@@ -3,7 +3,6 @@ import { useState, useMemo, useEffect } from 'react';
 import {
     Building2,
     Plus,
-    CheckCircle2,
     Trash2,
     ArrowDownAZ,
     ArrowUpAZ,
@@ -422,8 +421,11 @@ const DepartmentsPage = ({
             departments.length > 0 &&
             !departments.some((d) => d?.id === selectedDepartment.id)
         ) {
-            setSelectedDepartment(null);
-            onSelectDepartment?.(null);
+            const timer = setTimeout(() => {
+                setSelectedDepartment(null);
+                onSelectDepartment?.(null);
+            }, 0);
+            return () => clearTimeout(timer);
         }
     }, [departments, selectedDepartment?.id, setSelectedDepartment, onSelectDepartment]);
 

@@ -1,5 +1,6 @@
 // --- IMPORTS ---
 import { useState, useEffect, useRef, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import {
     X,
     Download,
@@ -687,7 +688,11 @@ const DocumentViewerModal = ({
                     isVersionUpdate: true,
                     previousStoragePath: storagePath,
                     previousMimeType: activeVersion?.mimeType,
+                    previousSummary: activeVersion?.summary || null,
+                    previousClassification: activeVersion?.classification || classification,
+                    previousText: activeVersion?.summary || initialTextContent || null,
                     nextVersion: nextVersionNumber,
+                    extractedText: textContent || null,
                 });
             } catch (aiErr) {
                 console.warn('AI analysis error on in-app revision save:', aiErr);
@@ -701,7 +706,7 @@ const DocumentViewerModal = ({
                 path: storageResult.path,
                 sizeBytes: storageResult.sizeBytes,
                 mimeType: storageResult.mimeType || effectiveMime,
-                classification: classification,
+                classification: aiResult?.classification || classification,
                 changeSummary: changeSummary.trim() || aiResult?.changeSummary || `In-app revision v${nextVersionNumber}.0`,
                 summary: aiResult?.summary || activeVersion?.summary || null,
                 embedding: aiResult?.embedding || null,
@@ -756,7 +761,7 @@ const DocumentViewerModal = ({
             : 'neutral';
 
     // RENDER
-    return (
+    const modalContent = (
         <div className="fixed inset-0 z-[50000] bg-black/75 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 md:p-6 animate-toast-in select-none">
             <div
                 className={`bg-surface border border-surface-border rounded-xl shadow-2xl flex flex-col w-full max-w-6xl h-[92vh] max-h-[950px] overflow-hidden ${className}`.trim()}
@@ -1385,6 +1390,12 @@ const DocumentViewerModal = ({
             )}
         </div>
     );
+
+    if (typeof document !== 'undefined') {
+        return createPortal(modalContent, document.body);
+    }
+
+    return modalContent;
 };
 
 

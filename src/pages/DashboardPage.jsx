@@ -16,16 +16,13 @@ import {
     ChevronRight,
     Filter,
     Folder,
-    FolderTree,
     Shield,
     Users,
     ArrowUpRight,
     ArrowRight,
     FileUp,
     Plus,
-    Archive,
     Search,
-    Lock,
     Zap,
     Check,
     Copy,
@@ -33,10 +30,8 @@ import {
 } from 'lucide-react';
 import {
     Avatar,
-    Badge,
     Button,
     ComboField,
-    Container,
     Modal,
     ReadershipChart,
     SearchField,
@@ -520,7 +515,7 @@ const DashboardPage = ({
     const [auditSearch, setAuditSearch] = useState('');
     const [auditSort, setAuditSort] = useState('date-desc');
     const [auditPage, setAuditPage] = useState(1);
-    const [auditPageSize, setAuditPageSize] = useState(DEFAULT_AUDIT_PAGE_SIZE);
+    const [auditPageSize] = useState(DEFAULT_AUDIT_PAGE_SIZE);
     const [viewingAuditLog, setViewingAuditLog] = useState(null);
     const [showRawJson, setShowRawJson] = useState(false);
     const [hasCopiedJson, setHasCopiedJson] = useState(false);
@@ -534,7 +529,7 @@ const DashboardPage = ({
     const [bannerRef, bannerTier] = useContainerTier({ full: 960, half: 520, quarter: 520 });
     const [pendingCardRef, pendingTier] = useContainerTier({ full: 620, half: 480, quarter: 360 });
     const [analysisCardRef, analysisTier] = useContainerTier({ full: 620, half: 480, quarter: 360 });
-    const [auditCardRef, auditTier, auditWidth] = useContainerTier({ full: 1040, half: 720, quarter: 500 });
+    const [auditCardRef, auditTier] = useContainerTier({ full: 1040, half: 720, quarter: 500 });
     const [specializedCardRef, specializedTier] = useContainerTier({ full: 620, half: 480, quarter: 360 });
 
     // DERIVED VALUES
@@ -574,6 +569,12 @@ const DashboardPage = ({
         activeUser,
         departments,
         syncAllDocumentShares,
+        auditLogs,
+        coordinatorRequests,
+        documentVersions,
+        documents,
+        requests,
+        users,
     ]);
 
     // DEPARTMENT FACULTY COUNT
@@ -764,7 +765,7 @@ const DashboardPage = ({
     }, [documents, documentShares, documentVersions, isStaff, isMember, userDeptId, activeUser?.id]);
 
     const activeSpecializedList = useMemo(() => {
-        let sourceList = [];
+        let sourceList;
         if (isOfficer) sourceList = officerPendingDocs;
         else if (isDirector) sourceList = directorPendingDocs;
         else sourceList = memberPublishedDocs;
@@ -943,7 +944,9 @@ const DashboardPage = ({
                     try {
                         const parsed = JSON.parse(log.data);
                         actorUser = { id: actorId, role: parsed.role, departmentId: parsed.departmentId };
-                    } catch {}
+                    } catch {
+                        /* ignore */
+                    }
                 }
                 return !isRmoUser(actorUser, safeDepts);
             });
@@ -1014,7 +1017,9 @@ const DashboardPage = ({
                     try {
                         const parsed = JSON.parse(l.data);
                         deptId = parsed.departmentId;
-                    } catch {}
+                    } catch {
+                        /* ignore */
+                    }
                 }
                 if (deptId) {
                     deptCounts[deptId] = (deptCounts[deptId] || 0) + 1;
@@ -1348,7 +1353,7 @@ const DashboardPage = ({
 
             const subjectOrTitle = parsedData.title || parsedData.subject || parsedData.name || null;
 
-            let humanDescription = '';
+            let humanDescription;
             if (subjectOrTitle) {
                 humanDescription = `"${subjectOrTitle}"`;
             } else {
@@ -1425,7 +1430,7 @@ const DashboardPage = ({
             auditSafePage: safePage,
             auditStartIndex: startIndex,
         };
-    }, [auditLogs, users, departments, auditFilters, auditSearch, auditSort, auditPage, auditPageSize]);
+    }, [auditLogs, users, departments, auditFilters, auditSearch, auditSort, auditPage, auditPageSize, activeUser]);
 
     // HANDLERS (AUDIT TRAIL SELECTION OPENS COMPLIANCE PAYLOAD MODAL, DECOUPLED FROM INSPECTOR)
     const handleActivityClick = (activity) => {
@@ -1935,11 +1940,11 @@ const DashboardPage = ({
                 <div ref={specializedCardRef} className="p-4 sm:p-5 rounded-2xl bg-surface border border-surface-border flex flex-col gap-3.5 shadow-xs">
                     {/* SPECIALIZED HEADER & CONTROLS */}
                     {(() => {
-                        let iconNode = null;
-                        let titleText = '';
-                        let countBadge = 0;
-                        let badgeColorClass = '';
-                        let searchPlaceholder = '';
+                        let iconNode;
+                        let titleText;
+                        let countBadge;
+                        let badgeColorClass;
+                        let searchPlaceholder;
 
                         if (isOfficer) {
                             iconNode = (

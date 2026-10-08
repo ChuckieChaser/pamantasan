@@ -16,6 +16,7 @@
     "mammoth": "^1.12.3",
     "nodemailer": "^10.0.9",
     "pdf-lib": "^1.17.1",
-    "sharp": "^0.35.4"
+    "sharp": "^0.35.4",
+    "tesseract.js": "^7.0.0"
   }
 }

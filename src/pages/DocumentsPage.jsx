@@ -1905,7 +1905,7 @@ const DocumentsPage = ({
                         });
 
                         if (ocrResult.extractedText) {
-                            ocrSummary = ocrResult.extractedText.slice(0, 2000);
+                            ocrSummary = aiService.generateContentDrivenSummary(ocrResult.extractedText, item.fileName) || aiService.formatExecutiveSummary(ocrResult.extractedText.slice(0, 2000));
                         }
 
                         item = {
@@ -1967,43 +1967,20 @@ const DocumentsPage = ({
                     }
                 }
 
-                // Extract client text snippet for text-based formats and DOCX if OCR was not run
+                // Extract client text snippet for text-based formats, DOCX, and images (via Google Vision OCR)
                 let textContentSnippet = null;
                 if (!ocrSummary && item.file) {
-                    const lowerName = finalFileName.toLowerCase();
-                    const isDocx = lowerName.endsWith('.docx') || (item.file.type || '').includes('wordprocessingml');
-                    if (isDocx && typeof item.file.arrayBuffer === 'function') {
-                        try {
-                            const mammothModule = await import('mammoth');
-                            const mammoth = mammothModule.default || mammothModule;
-                            if (typeof mammoth?.extractRawText === 'function') {
-                                const arrayBuffer = await item.file.arrayBuffer();
-                                const res = await mammoth.extractRawText({ arrayBuffer });
-                                if (res?.value && res.value.trim()) {
-                                    textContentSnippet = res.value.trim().slice(0, 30000);
-                                }
-                            }
-                        } catch (mErr) {
-                            console.warn('[DocumentsPage] Client docx extraction failed:', mErr);
-                        }
-                    } else if (typeof item.file.text === 'function') {
-                        const isTextual = (item.file.type || '').startsWith('text/') ||
-                            item.file.type === 'application/json' ||
-                            item.file.type === 'application/javascript' ||
-                            item.file.type === 'application/x-httpd-php' ||
-                            lowerName.endsWith('.txt') || lowerName.endsWith('.csv') ||
-                            lowerName.endsWith('.md') || lowerName.endsWith('.json') ||
-                            lowerName.endsWith('.js') || lowerName.endsWith('.html') ||
-                            lowerName.endsWith('.py') || lowerName.endsWith('.sql') ||
-                            lowerName.endsWith('.php');
-                        if (isTextual) {
-                            try {
-                                const raw = await item.file.text();
-                                textContentSnippet = raw ? raw.slice(0, 30000) : null;
-                            } catch {
-                                // Text reading error ignored for non-text formats
-                            }
-                        }
+                    const isImg = ocrService.isImageFile(item.file);
+                    if (isImg) {
+                        toastProcess.updateItem(item.id, {
+                            progress: 20,
+                            statusText: 'Extracting text from image via Google Vision OCR...',
+                        });
+                    }
+                    try {
+                        textContentSnippet = await aiService.extractDocumentText(item.file, finalFileName);
+                    } catch (txtErr) {
+                        console.warn('[DocumentsPage] Text extraction failed:', txtErr);
                     }
                 }
                 const activeExtractedText = ocrSummary || textContentSnippet || item.summary || null;
@@ -2053,6 +2030,9 @@ const DocumentsPage = ({
                             isVersionUpdate: true,
                             previousStoragePath: latestPriorVer?.path || null,
                             previousMimeType: latestPriorVer?.mimeType || null,
+                            previousSummary: latestPriorVer?.summary || null,
+                            previousClassification: latestPriorVer?.classification || null,
+                            previousText: latestPriorVer?.summary || null,
                             nextVersion: nextVersionNum,
                             extractedText: activeExtractedText,
                         });
@@ -2079,7 +2059,7 @@ const DocumentsPage = ({
                             mimeType: storageResult.mimeType || item.file.type || getMimeTypeFromFilename(finalFileName),
                             classification: finalClassification,
                             changeSummary: aiResult?.changeSummary || `Version ${nextVersionNum}.0 update`,
-                            summary: aiResult?.summary || (activeExtractedText ? activeExtractedText.slice(0, 500) : null),
+                            summary: aiService.formatExecutiveSummary(aiResult?.summary || (activeExtractedText ? aiService.generateContentDrivenSummary(activeExtractedText, finalFileName) : null)),
                             embedding: aiResult?.embedding || null,
                         });
 
@@ -2191,7 +2171,7 @@ const DocumentsPage = ({
                                 mimeType: storageResult.mimeType || item.file.type || getMimeTypeFromFilename(finalFileName),
                                 classification: finalClassification,
                                 changeSummary: aiResult?.changeSummary || 'Initial file upload',
-                                summary: aiResult?.summary || (activeExtractedText ? activeExtractedText.slice(0, 500) : null),
+                                summary: aiService.formatExecutiveSummary(aiResult?.summary || (activeExtractedText ? aiService.generateContentDrivenSummary(activeExtractedText, finalFileName) : null)),
                                 embedding: aiResult?.embedding || null,
                             });
 
@@ -2721,9 +2701,11 @@ const DocumentsPage = ({
         const sharedDeptIds = new Set(
             activeSharesForModalDoc.map((s) => cleanId(s.department?.id ?? s.departmentId))
         );
-        const userDeptClean = cleanId(currentUser?.departmentId || (typeof currentUser?.department === 'object' ? currentUser?.department?.id : null));
+        const rawUserDept = currentUser?.department;
+        const userDeptClean = cleanId(currentUser?.departmentId || (typeof rawUserDept === 'object' ? rawUserDept?.id : null));
         const docDeptClean = cleanId(shareModalDocument?.departmentId || shareModalDocument?.department?.id);
-        const userDeptNameLower = (typeof currentUser?.department === 'string' ? currentUser?.department : currentUser?.department?.name || '').toLowerCase().trim();
+        const userDeptName = typeof rawUserDept === 'string' ? rawUserDept : (rawUserDept?.name || '');
+        const userDeptNameLower = userDeptName.toLowerCase().trim();
 
         return (departments || []).filter((d) => {
             const dClean = cleanId(d.id);

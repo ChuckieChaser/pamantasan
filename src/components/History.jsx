@@ -1,14 +1,11 @@
 // --- IMPORTS ---
 import { useState, useMemo } from 'react';
 import {
-    CheckCircle2,
     Clock,
     Eye,
     FileText,
     RotateCcw,
-    Search,
     UserCheck,
-    XCircle,
 } from 'lucide-react';
 import { Avatar } from './Avatar';
 import { Button } from './Button';

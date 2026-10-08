@@ -85,7 +85,7 @@ const useDarkMode = () => {
                 }
             }
         },
-        [currentUser?.id, updateUserSetting],
+        [currentUser, updateUserSetting],
     );
 
     const toggleTheme = useCallback(() => {

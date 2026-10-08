@@ -1,7 +1,6 @@
 // --- IMPORTS ---
 import { useState, useMemo, useRef, useEffect } from 'react';
 import {
-    Users,
     Plus,
     Shield,
     Building2,
@@ -871,8 +870,11 @@ const UsersPage = ({
             users.length > 0 &&
             !users.some((u) => u?.id === selectedUser.id)
         ) {
-            setSelectedUser(null);
-            onSelectUser?.(null);
+            const timer = setTimeout(() => {
+                setSelectedUser(null);
+                onSelectUser?.(null);
+            }, 0);
+            return () => clearTimeout(timer);
         }
     }, [users, selectedUser?.id, setSelectedUser, onSelectUser]);
 

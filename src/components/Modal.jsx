@@ -120,7 +120,6 @@ const Modal = ({
     // EFFECTS: CAPTURE INITIAL VALUES FOR DIRTY TRACKING & DISMISS DANGLING DROPDOWNS
     useEffect(() => {
         if (!isOpen) {
-            setIsConfirmCloseOpen(false);
             return;
         }
 
@@ -159,21 +158,43 @@ const Modal = ({
         }
     };
 
-    // DERIVED DIRTY CHECK
-    const isFormDirty = () => {
-        if (confirmOnClose === false) return false;
-        if (isDirty !== undefined) return Boolean(isDirty);
-        return checkHasDirtyFields(modalRef.current);
+    const getModalContainer = (event) => {
+        if (event?.target && typeof event.target.closest === 'function') {
+            const dialog = event.target.closest('[role="dialog"]');
+            if (dialog) return dialog;
+        }
+        return typeof document !== 'undefined' ? document.querySelector('[role="dialog"]') : null;
     };
 
     // HANDLER: SAFE CLOSE CHECK
     const handleAttemptClose = (event) => {
-        if (isFormDirty()) {
+        const container = getModalContainer(event);
+        const dirty = confirmOnClose !== false && (
+            isDirty !== undefined ? Boolean(isDirty) : checkHasDirtyFields(container)
+        );
+        if (dirty) {
             setIsConfirmCloseOpen(true);
             return;
         }
         setIsConfirmCloseOpen(false);
         onClose?.(event);
+    };
+
+    const handleAttemptCancel = (event) => {
+        const container = getModalContainer(event);
+        const dirty = confirmOnClose !== false && (
+            isDirty !== undefined ? Boolean(isDirty) : checkHasDirtyFields(container)
+        );
+        if (dirty) {
+            setIsConfirmCloseOpen(true);
+            return;
+        }
+        setIsConfirmCloseOpen(false);
+        if (onCancel) {
+            onCancel(event);
+        } else {
+            onClose?.(event);
+        }
     };
 
     // HOOKS
@@ -230,11 +251,7 @@ const Modal = ({
         label:   cancelLabel,
         onClick: (event) => {
             if (onCancel) {
-                if (isFormDirty()) {
-                    setIsConfirmCloseOpen(true);
-                    return;
-                }
-                onCancel(event);
+                handleAttemptCancel(event);
             } else {
                 handleAttemptClose(event);
             }

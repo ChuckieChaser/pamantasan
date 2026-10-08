@@ -1,5 +1,5 @@
 // --- IMPORTS ---
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
     X,
     Sliders,
@@ -191,6 +191,7 @@ const Settings = ({
         }
     };
 
+    const [prevUserId, setPrevUserId] = useState(currentUser?.id);
     const [dontShowSSOOnLogin, setDontShowSSOOnLogin] = useState(() => {
         if (typeof localStorage !== 'undefined' && currentUser?.id) {
             return localStorage.getItem(`${DONT_SHOW_SSO_KEY_PREFIX}${currentUser.id}`) === 'true';
@@ -198,13 +199,13 @@ const Settings = ({
         return false;
     });
 
-    useEffect(() => {
-        if (typeof localStorage !== 'undefined' && currentUser?.id) {
-            setDontShowSSOOnLogin(
-                localStorage.getItem(`${DONT_SHOW_SSO_KEY_PREFIX}${currentUser.id}`) === 'true'
-            );
-        }
-    }, [currentUser?.id]);
+    if (currentUser?.id !== prevUserId) {
+        setPrevUserId(currentUser?.id);
+        const storedVal = typeof localStorage !== 'undefined' && currentUser?.id
+            ? localStorage.getItem(`${DONT_SHOW_SSO_KEY_PREFIX}${currentUser.id}`) === 'true'
+            : false;
+        setDontShowSSOOnLogin(storedVal);
+    }
 
     const handleToggleDontShowSSO = (e) => {
         const checked = e.target.checked;
@@ -235,7 +236,7 @@ const Settings = ({
     const { showToast } = useToast();
 
     // LOAD ACTIVE SESSIONS
-    const loadSessions = async () => {
+    const loadSessions = useCallback(async () => {
         if (!currentUser?.id) return;
         setIsLoadingSessions(true);
         try {
@@ -248,10 +249,10 @@ const Settings = ({
         } finally {
             setIsLoadingSessions(false);
         }
-    };
+    }, [currentUser]);
 
     // LOAD USER CREDENTIALS FOR GOOGLE SSO
-    const loadUserCredentials = async () => {
+    const loadUserCredentials = useCallback(async () => {
         if (!currentUser?.id) return;
         setIsLoadingGoogleCreds(true);
         try {
@@ -262,19 +263,25 @@ const Settings = ({
         } finally {
             setIsLoadingGoogleCreds(false);
         }
-    };
+    }, [currentUser]);
 
     useEffect(() => {
         if (isOpen && currentUser?.id) {
-            loadUserCredentials();
+            const timer = setTimeout(() => {
+                loadUserCredentials();
+            }, 0);
+            return () => clearTimeout(timer);
         }
-    }, [isOpen, currentUser?.id]);
+    }, [isOpen, currentUser, loadUserCredentials]);
 
     useEffect(() => {
         if (isOpen && activeSection === 'security') {
-            loadSessions();
+            const timer = setTimeout(() => {
+                loadSessions();
+            }, 0);
+            return () => clearTimeout(timer);
         }
-    }, [isOpen, activeSection, currentUser?.id]);
+    }, [isOpen, activeSection, loadSessions]);
 
     // HANDLERS
     const handleCloseModal = () => {
@@ -478,7 +485,7 @@ const Settings = ({
     // RENDER
     return (
         <div
-            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[50000] flex items-center justify-center p-4"
+            className={`fixed inset-0 bg-black/60 backdrop-blur-sm z-[50000] flex items-center justify-center p-4 ${className ?? ''}`.trim()}
             onClick={(event) => {
                 if (event.target === event.currentTarget) {
                     handleCloseModal();

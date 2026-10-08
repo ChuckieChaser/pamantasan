@@ -289,6 +289,8 @@ const resolveGroupActorsText = (rawItems) => {
     return `by ${list[0]} and ${list.length - 1} others`;
 };
 
+const EMPTY_LIST = [];
+
 // --- COMPONENT ---
 const Notifications = ({
     isOpen = false,
@@ -309,12 +311,18 @@ const Notifications = ({
     const [visibleLimit, setVisibleLimit] = useState(INITIAL_NOTIFICATION_LIMIT);
 
     // STORE SUBSCRIPTIONS FOR TARGET RESOLUTION
-    const documents = useDocumentStore((state) => state.documents) || [];
-    const departments = useDepartmentStore((state) => state.departments) || [];
-    const users = useUserStore((state) => state.users) || [];
-    const coordinatorRequests = useCoordinatorStore((state) => state.coordinatorRequests) || [];
-    const documentRequests = useDocumentStore((state) => state.documentRequests) || [];
-    const auditLogs = useAuditStore((state) => state.auditLogs) || [];
+    const rawDocuments = useDocumentStore((state) => state.documents);
+    const documents = rawDocuments ?? EMPTY_LIST;
+    const rawDepartments = useDepartmentStore((state) => state.departments);
+    const departments = rawDepartments ?? EMPTY_LIST;
+    const rawUsers = useUserStore((state) => state.users);
+    const users = rawUsers ?? EMPTY_LIST;
+    const rawCoordinatorRequests = useCoordinatorStore((state) => state.coordinatorRequests);
+    const coordinatorRequests = rawCoordinatorRequests ?? EMPTY_LIST;
+    const rawDocumentRequests = useDocumentStore((state) => state.documentRequests);
+    const documentRequests = rawDocumentRequests ?? EMPTY_LIST;
+    const rawAuditLogs = useAuditStore((state) => state.auditLogs);
+    const auditLogs = rawAuditLogs ?? EMPTY_LIST;
     const currentAuthUser = useAuthStore((state) => state.currentUser);
 
     // 1. FILTER: ONLY GIVE NOTIFICATIONS TO AFFECTED USERS AND NOT YOURSELF (THE ACTOR)
@@ -550,7 +558,9 @@ const Notifications = ({
                 if (Array.isArray(refreshed)) {
                     activeDocs = refreshed;
                 }
-            } catch (e) {}
+            } catch {
+                /* ignore */
+            }
             const doc = activeDocs.find(
                 (d) => cleanId(d.id) === targetClean || cleanId(d.uuid) === targetClean
             );
@@ -578,7 +588,9 @@ const Notifications = ({
                 if (Array.isArray(refreshed)) {
                     activeDepts = refreshed;
                 }
-            } catch (e) {}
+            } catch {
+                /* ignore */
+            }
             const dept = activeDepts.find(
                 (d) => cleanId(d.id) === targetClean || cleanId(d.uuid) === targetClean
             );
@@ -601,7 +613,9 @@ const Notifications = ({
                 if (Array.isArray(refreshed)) {
                     activeUsers = refreshed;
                 }
-            } catch (e) {}
+            } catch {
+                /* ignore */
+            }
             const user = activeUsers.find(
                 (u) => cleanId(u.id) === targetClean || cleanId(u.uuid) === targetClean
             );
@@ -624,7 +638,9 @@ const Notifications = ({
                 if (Array.isArray(refreshed)) {
                     activeReqs = refreshed;
                 }
-            } catch (e) {}
+            } catch {
+                /* ignore */
+            }
             const req = activeReqs.find(
                 (r) => cleanId(r.id) === targetClean || cleanId(r.uuid) === targetClean
             );
@@ -647,7 +663,9 @@ const Notifications = ({
                 if (Array.isArray(refreshed)) {
                     activeReqs = refreshed;
                 }
-            } catch (e) {}
+            } catch {
+                /* ignore */
+            }
             const req = activeReqs.find(
                 (r) => cleanId(r.id) === targetClean || cleanId(r.uuid) === targetClean
             );
@@ -667,7 +685,9 @@ const Notifications = ({
     };
 
     // DERIVED VALUES
-    const unreadTotalCount = displayNotifications.filter((n) => !n.isRead).length;
+    const unreadTotalCount = (typeof unreadCount === 'number' && unreadCount > 0)
+        ? unreadCount
+        : displayNotifications.filter((n) => !n.isRead).length;
     const composedClassName = `${BASE_STYLE} ${className ?? ''}`.trim();
 
     return (

@@ -1,7 +1,6 @@
 // --- IMPORTS ---
 import { useState, useMemo, useEffect } from 'react';
 import {
-    UserCheck,
     CheckCircle2,
     XCircle,
     Clock,
@@ -89,13 +88,21 @@ const CoordinatorPage = ({
     // STORES
     const coordinatorRequests = useCoordinatorStore((state) => state.coordinatorRequests);
     const fetchCoordinatorRequests = useCoordinatorStore((state) => state.fetchCoordinatorRequests);
-    const updateCoordinatorRequest = useCoordinatorStore((state) => state.updateCoordinatorRequest);
     const deleteCoordinatorRequest = useCoordinatorStore((state) => state.deleteCoordinatorRequest);
 
     const users = useUserStore((state) => state.users);
     const fetchUsers = useUserStore((state) => state.fetchUsers);
     const departments = useDepartmentStore((state) => state.departments);
     const fetchDepartments = useDepartmentStore((state) => state.fetchDepartments);
+
+    const handleStartCoordinatorApproval = (requestItem) => {
+        setApprovingCoordinatorRequest(requestItem);
+    };
+
+    const handleStartCoordinatorRejection = (requestItem) => {
+        setRejectingCoordinatorRequest(requestItem);
+        setRejectionReason('');
+    };
 
     // EFFECTS
     useEffect(() => {
@@ -217,7 +224,7 @@ const CoordinatorPage = ({
                 badge: request.status,
             };
         });
-    }, [coordinatorRequests, users, departments, isAdmin, activeUser?.id]);
+    }, [coordinatorRequests, users, departments, isAdmin, activeUser?.id, currentUser?.id]);
 
     const pendingCoordinatorData = useMemo(() => {
         return formattedCoordinatorData.filter(
@@ -245,7 +252,7 @@ const CoordinatorPage = ({
             };
         }
         return null;
-    }, [selectedItem, selectedRequestItem, formattedCoordinatorData, isAdmin]);
+    }, [selectedItem, selectedRequestItem, formattedCoordinatorData]);
 
     // HANDLERS
     const handleSelectRequest = (item, targetTab = 'information') => {
@@ -256,10 +263,6 @@ const CoordinatorPage = ({
 
     const handleOpenCoordinatorReview = (requestItem) => {
         setViewingCoordinatorRequest(requestItem);
-    };
-
-    const handleStartCoordinatorApproval = (requestItem) => {
-        setApprovingCoordinatorRequest(requestItem);
     };
 
     const handleConfirmApproveRequest = async () => {
@@ -303,11 +306,6 @@ const CoordinatorPage = ({
         } finally {
             setIsApprovingRequest(false);
         }
-    };
-
-    const handleStartCoordinatorRejection = (requestItem) => {
-        setRejectingCoordinatorRequest(requestItem);
-        setRejectionReason('');
     };
 
     const handleConfirmCoordinatorRejection = async () => {

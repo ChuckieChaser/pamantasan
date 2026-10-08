@@ -8,9 +8,6 @@ import {
     ChevronRight,
     Clock,
     Filter,
-    Folder,
-    HardDrive,
-    History,
     Home,
     LayoutGrid,
     List as ListIcon,
@@ -28,7 +25,6 @@ import { List } from './browser/List';
 import { Grid } from './browser/Grid';
 import { Menu } from './browser/Menu';
 import {
-    ICON_STYLE,
     getResourceTitle,
     renderItemIcon,
 } from './browser/common';
@@ -339,7 +335,7 @@ const Browser = ({
             const nameB = itemB.title ?? itemB.name ?? itemB.subject ?? '';
             return nameA.localeCompare(nameB);
         });
-    }, [data, searchQuery, selectedFilters, filterOptions, activeSortBy]);
+    }, [data, searchQuery, selectedFilters, filterOptions, activeSortBy, resourceName]);
 
     const totalCount = filteredData.length;
 

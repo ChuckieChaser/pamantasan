@@ -1,5 +1,6 @@
 // --- IMPORTS ---
 import { useState, useEffect, useRef, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import {
     Smartphone,
@@ -167,9 +168,15 @@ export const MobileScanModal = ({
 
     if (!isOpen) return null;
 
-    return (
-        <div className="fixed inset-0 z-[50000] flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
-            <div className="relative w-full max-w-md rounded-2xl bg-surface border border-surface-border shadow-2xl overflow-hidden flex flex-col">
+    const modalContent = (
+        <div
+            onClick={onClose}
+            className="fixed inset-0 z-[55000] flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200"
+        >
+            <div
+                onClick={(e) => e.stopPropagation()}
+                className="relative w-full max-w-md rounded-2xl bg-surface border border-surface-border shadow-2xl overflow-hidden flex flex-col"
+            >
                 {/* Header */}
                 <div className="flex items-center justify-between px-6 py-4 border-b border-surface-border bg-surface-hover/30">
                     <div className="flex items-center gap-2.5">
@@ -333,6 +340,12 @@ export const MobileScanModal = ({
             </div>
         </div>
     );
+
+    if (typeof document !== 'undefined') {
+        return createPortal(modalContent, document.body);
+    }
+
+    return modalContent;
 };
 
 export default MobileScanModal;

@@ -123,7 +123,7 @@ const ProtectedRoute = ({
 
     // GUARD CLAUSES
     if (isLoading && !currentUser) {
-        return null;
+        return <RouteLoader />;
     }
 
     if (!currentUser) {
@@ -169,6 +169,10 @@ const PublicRoute = ({
 }) => {
     // HOOKS
     const location = useLocation();
+
+    if (isLoading) {
+        return <RouteLoader />;
+    }
 
     if (currentUser) {
         let destination = location.state?.from?.pathname ?? '/dashboard';

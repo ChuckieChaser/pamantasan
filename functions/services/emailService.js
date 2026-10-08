@@ -276,7 +276,7 @@ async function sendOtpEmail(toEmail, otpCode) {
     }
 
     const transport = getTransporter();
-    let result = null;
+    let result;
     if (!transport) {
         console.log(`[SIMULATED EMAIL] To: ${toEmail} | Code: ${otpCode} | MsgId: ${messageId}`);
         result = { simulated: true, code: otpCode, messageId };
@@ -476,7 +476,7 @@ async function sendNotificationEmail({
     }
 
     const transport = getTransporter();
-    let result = null;
+    let result;
     if (!transport) {
         console.log(`[SIMULATED NOTIFICATION] To: ${toEmail} | Subject: ${subject} | MsgId: ${messageId}`);
         result = { simulated: true, title, subject, messageId };

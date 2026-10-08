@@ -1,5 +1,5 @@
 // --- IMPORTS ---
-import { constants } from '../constants';
+
 
 const CHANNEL_NAME = 'pamantasan_realtime_sync';
 const STORAGE_KEY = 'pamantasan_sync_event';

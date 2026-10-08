@@ -180,11 +180,14 @@ async function processImageOcr(imageBuffer, autoWhiten = true) {
     }
 
     // ATTEMPT 2: Vertex AI Gemini 2.0 Flash (Dual-engine fallback)
+    // @google/genai v2.x requires lowercase 'vertexai' key (NOT 'vertexAI')
     if (lineItems.length === 0) {
         try {
-            console.log(`[CloudOCR] Using Vertex AI Gemini 2.0 Flash for OCR extraction...`);
+            console.log(`[CloudOCR] Using Vertex AI Gemini for OCR extraction (fallback)...`);
+            // NOTE: Only Vertex AI is used here for RA 10173 Data Privacy Act compliance.
+            // Google AI Studio API key mode is disabled as it may train on submitted data.
             const ai = new GoogleGenAI({
-                vertexAI: true,
+                vertexai: true,
                 project: PROJECT_ID,
                 location: VERTEX_LOCATION,
             });
@@ -194,18 +197,28 @@ Transcribe all text exactly as shown, preserving lines and paragraphs.
 Do not add conversational comments, headers, or markdown formatting. Only output the transcribed text.`;
 
             const mimeType = format === 'png' ? 'image/png' : 'image/jpeg';
-            const response = await ai.models.generateContent({
-                model: 'gemini-2.0-flash',
-                contents: [
-                    {
-                        inlineData: {
-                            data: processedBuffer.toString('base64'),
-                            mimeType,
-                        },
-                    },
-                    { text: prompt },
-                ],
-            });
+            let response = null;
+            // Vertex AI model cascade for OCR fallback (Vertex AI only — RA 10173 compliant)
+            const ocrModels = ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-2.0-flash-001'];
+            for (const m of ocrModels) {
+                try {
+                    response = await ai.models.generateContent({
+                        model: m,
+                        contents: [
+                            {
+                                inlineData: {
+                                    data: processedBuffer.toString('base64'),
+                                    mimeType,
+                                },
+                            },
+                            { text: prompt },
+                        ],
+                    });
+                    if (response?.text) break;
+                } catch (mErr) {
+                    console.warn(`[CloudOCR] Vertex AI model ${m} failed:`, mErr?.message?.slice(0, 100));
+                }
+            }
 
             const text = response?.text ? response.text.trim() : '';
             if (text) {
@@ -234,13 +247,21 @@ Do not add conversational comments, headers, or markdown formatting. Only output
 
     const avgConf = lineItems.length > 0 ? totalConfidence / lineItems.length : 0.90;
 
+    let normalizedFullText = fullText || '';
+    if (normalizedFullText) {
+        normalizedFullText = normalizedFullText
+            .replace(/([A-Za-z0-9_.,])(MEMORANDUM|OFFICE\s+ORDER|SPECIAL\s+ORDER|ADMINISTRATIVE\s+ORDER|CIRCULAR|DATE|DATED|TO|MEMORANDUM\s+FOR|FOR|ATTENTION|FROM|ISSUED\s+BY|SUBJECT)\s*[:;\u2014-]/gi, '$1\n$2:')
+            .replace(/([^\n])\s+\b(DATE|DATED|TO|MEMORANDUM\s+FOR|FOR|ATTENTION|FROM|ISSUED\s+BY|SUBJECT|\bRE\b)\s*[:;\u2014-]/gi, '$1\n$2:')
+            .trim();
+    }
+
     return {
         imageBuffer: processedBuffer,
         width,
         height,
         format,
         lines: lineItems,
-        fullText,
+        fullText: normalizedFullText,
         averageConfidence: Math.round(avgConf * 100) / 100,
         linesCount: lineItems.length,
         engine: usedEngine,
@@ -382,9 +403,27 @@ async function convertImageToSearchablePdf({
     };
 }
 
+/**
+ * Lightweight OCR extraction: returns the raw text string from an image buffer.
+ * Used as a pre-pass inside aiService to extract text from images/scans before
+ * feeding into Gemini for summarization and classification.
+ * Primary: Google Cloud Vision API. Fallback: Vertex AI Gemini multimodal.
+ */
+async function extractTextFromImageBuffer(imageBuffer, autoWhiten = true) {
+    if (!imageBuffer || imageBuffer.length === 0) return null;
+    try {
+        const ocrResult = await processImageOcr(imageBuffer, autoWhiten);
+        return (ocrResult.fullText && ocrResult.fullText.trim()) ? ocrResult.fullText.trim() : null;
+    } catch (err) {
+        console.warn('[CloudOCR] extractTextFromImageBuffer failed:', err?.message);
+        return null;
+    }
+}
+
 module.exports = {
     enhanceDocumentWhitening,
     processImageOcr,
     createSearchablePdf,
     convertImageToSearchablePdf,
+    extractTextFromImageBuffer,
 };

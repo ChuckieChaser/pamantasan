@@ -494,44 +494,44 @@ const SelectField = ({
     // STATES
     const [isOpen, setIsOpen] = useState(false);
     const [dropdownCoords, setDropdownCoords] = useState({ top: 0, bottom: 0, left: 0, width: 0, openUpward: false, isPositioned: false });
+    const effectiveIsOpen = isOpen && !isDisabled;
 
     // REFS
     const containerRef = useRef(null);
     const triggerRef = useRef(null);
     const dropdownRef = useRef(null);
 
-    // POSITION CALCULATION
-    const updatePosition = () => {
-        if (!triggerRef.current) return;
-        const rect = triggerRef.current.getBoundingClientRect();
-        const spaceBelow = window.innerHeight - rect.bottom;
-        const spaceAbove = rect.top;
-        const estimatedDropdownHeight = Math.min(options.length * 36 + 16, 260);
-
-        const openUpward = dropdownAlign === 'top' || (dropdownAlign === 'auto' && spaceBelow < estimatedDropdownHeight && spaceAbove > spaceBelow);
-
-        const top = rect.bottom + 4;
-        const bottom = Math.max(8, window.innerHeight - rect.top + 4);
-
-        let left = rect.left;
-        const dropdownWidth = Math.max(rect.width, 180);
-
-        if (dropdownAlign === 'right' || (left + dropdownWidth > window.innerWidth - 16)) {
-            left = Math.max(16, rect.right - dropdownWidth);
-        }
-
-        setDropdownCoords({
-            top,
-            bottom,
-            left: Math.max(16, Math.min(left, window.innerWidth - dropdownWidth - 16)),
-            width: dropdownWidth,
-            openUpward,
-            isPositioned: true,
-        });
-    };
-
     useLayoutEffect(() => {
-        if (!isOpen) return;
+        if (!effectiveIsOpen) return;
+
+        const updatePosition = () => {
+            if (!triggerRef.current) return;
+            const rect = triggerRef.current.getBoundingClientRect();
+            const spaceBelow = window.innerHeight - rect.bottom;
+            const spaceAbove = rect.top;
+            const estimatedDropdownHeight = Math.min(options.length * 36 + 16, 260);
+
+            const openUpward = dropdownAlign === 'top' || (dropdownAlign === 'auto' && spaceBelow < estimatedDropdownHeight && spaceAbove > spaceBelow);
+
+            const top = rect.bottom + 4;
+            const bottom = Math.max(8, window.innerHeight - rect.top + 4);
+
+            let left = rect.left;
+            const dropdownWidth = Math.max(rect.width, 180);
+
+            if (dropdownAlign === 'right' || (left + dropdownWidth > window.innerWidth - 16)) {
+                left = Math.max(16, rect.right - dropdownWidth);
+            }
+
+            setDropdownCoords({
+                top,
+                bottom,
+                left: Math.max(16, Math.min(left, window.innerWidth - dropdownWidth - 16)),
+                width: dropdownWidth,
+                openUpward,
+                isPositioned: true,
+            });
+        };
 
         updatePosition();
         window.addEventListener('resize', updatePosition);
@@ -541,18 +541,11 @@ const SelectField = ({
             window.removeEventListener('resize', updatePosition);
             window.removeEventListener('scroll', updatePosition, true);
         };
-    }, [isOpen, dropdownAlign, options.length]);
-
-    // CLOSE IMMEDIATELY IF DISABLED
-    useEffect(() => {
-        if (isDisabled && isOpen) {
-            setIsOpen(false);
-        }
-    }, [isDisabled, isOpen]);
+    }, [effectiveIsOpen, dropdownAlign, options.length]);
 
     // OUTSIDE CLICK (CHECK CONTAINER AND PORTAL DROPDOWN)
     useEffect(() => {
-        if (!isOpen) return;
+        if (!effectiveIsOpen) return;
 
         const handleClickOutside = (event) => {
             if (
@@ -571,7 +564,7 @@ const SelectField = ({
             document.removeEventListener('mousedown', handleClickOutside);
             document.removeEventListener('touchstart', handleClickOutside);
         };
-    }, [isOpen]);
+    }, [effectiveIsOpen]);
 
     // HANDLERS
     const handleToggleOpen = () => {
@@ -579,12 +572,7 @@ const SelectField = ({
             return;
         }
 
-        if (!isOpen) {
-            updatePosition();
-            setIsOpen(true);
-        } else {
-            setIsOpen(false);
-        }
+        setIsOpen((prev) => !prev);
     };
 
     const handleSelectOption = (optionValue) => {
@@ -654,13 +642,13 @@ const SelectField = ({
                         renderedTrailingIcon
                     ) : (
                         <ChevronDown
-                            className={`${ICON_STYLE} transition-transform ${isOpen ? 'rotate-180' : ''}`}
+                            className={`${ICON_STYLE} transition-transform ${effectiveIsOpen ? 'rotate-180' : ''}`}
                         />
                     )}
                 </span>
             </button>
 
-            {isOpen && dropdownCoords.isPositioned && typeof document !== 'undefined' && createPortal(
+            {effectiveIsOpen && dropdownCoords.isPositioned && typeof document !== 'undefined' && createPortal(
                 <div
                     ref={dropdownRef}
                     style={dropdownStyle}

@@ -7,7 +7,6 @@ import {
     Mail,
     Shield,
     CheckCircle2,
-    Sparkles,
 } from 'lucide-react';
 import { Avatar, resolveUserAvatar } from '../Avatar';
 import { Badge } from '../Badge';
@@ -83,6 +82,7 @@ const Account = ({
                 <div className="relative shrink-0">
                     <div className="p-1 rounded-full bg-surface border border-surface-border shadow-sm">
                         <Avatar
+                            key={avatarVersion}
                             src={userAvatar}
                             user={activeTargetUser}
                             alt={userName}

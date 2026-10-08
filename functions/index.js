@@ -56,7 +56,7 @@ exports.sendUserProvisionEmail = onCall({ cors: true }, async (request) => {
 /**
  * Analyzes uploaded documents, scans, images, audio, or binaries using Google Cloud Vertex AI (Gemini 2.0 Flash + text-embedding-004).
  */
-exports.analyzeDocumentFile = onCall({ cors: true, timeoutSeconds: 300, memory: '512MiB' }, async (request) => {
+exports.analyzeDocumentFile = onCall({ cors: true, timeoutSeconds: 540, memory: '1GiB' }, async (request) => {
     return await getAiHandlers().handleAnalyzeDocumentFile(request.data);
 });
 

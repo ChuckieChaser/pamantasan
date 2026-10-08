@@ -1893,7 +1893,9 @@ const useDocumentStore = create((set, get) => ({
                     if (fetchedVers && fetchedVers.length > 0) {
                         docVersions = fetchedVers;
                     }
-                } catch {}
+                } catch {
+                    /* ignore */
+                }
             }
             const latestVer = [...docVersions].sort((a, b) => (b.version || 0) - (a.version || 0))[0];
 
@@ -1991,7 +1993,9 @@ const useDocumentStore = create((set, get) => ({
                     if (fetchedVers && fetchedVers.length > 0) {
                         docVersions = fetchedVers;
                     }
-                } catch {}
+                } catch {
+                    /* ignore */
+                }
             }
             const latestVer = [...docVersions].sort((a, b) => (b.version || 0) - (a.version || 0))[0];
 
@@ -2065,7 +2069,9 @@ const useDocumentStore = create((set, get) => ({
                 try {
                     const fetchedVers = await get().fetchDocumentVersions(docId);
                     if (fetchedVers && fetchedVers.length > 0) docVersions = fetchedVers;
-                } catch {}
+                } catch {
+                    /* ignore */
+                }
             }
             const latestVer = [...docVersions].sort((a, b) => (b.version || 0) - (a.version || 0))[0];
             const nextVersionNumber = (latestVer?.version || 1) + 1;
@@ -2150,7 +2156,9 @@ const useDocumentStore = create((set, get) => ({
                 try {
                     const fetchedVers = await get().fetchDocumentVersions(docId);
                     if (fetchedVers && fetchedVers.length > 0) docVersions = fetchedVers;
-                } catch {}
+                } catch {
+                    /* ignore */
+                }
             }
             const latestVer = [...docVersions].sort((a, b) => (b.version || 0) - (a.version || 0))[0];
             const currentVersionNumber = latestVer?.version || 1;
@@ -2198,6 +2206,7 @@ const useDocumentStore = create((set, get) => ({
             }));
 
             systemEventService.recordSystemEvent({
+                actorId: uploaderId || null,
                 entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_SHARE,
                 entityId: shareId,
                 action: constants.AUDIT_LOGS_ACTION.SHARED,
@@ -2671,6 +2680,9 @@ const useDocumentStore = create((set, get) => ({
 
             if (isClosed && !isAdmin) {
                 throw new Error('Closed and resolved document requests cannot be deleted for compliance and auditing.');
+            }
+            if (!isAdmin && !isOwner) {
+                throw new Error('You do not have permission to delete this document request.');
             }
 
             const isDeleted = await documentService.deleteDocumentRequest(id);
