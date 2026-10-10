@@ -1,7 +1,7 @@
 // --- IMPORTS ---
 import { useState, useRef, useEffect } from 'react';
 import { Outlet, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, PanelRight, X } from 'lucide-react';
+import { LayoutDashboard, PanelRight, X, ChevronUp, ChevronDown } from 'lucide-react';
 import {
     Account,
     GlobalSearchDropdown,
@@ -393,6 +393,67 @@ const MainLayout = ({
         ? isDetailPanelOpen
         : internalDetailPanelOpen;
 
+    // MOBILE INSPECTOR 3-SNAP POINTS: 'low' | 'mid' | 'high'
+    const [mobileSheetSnap, setMobileSheetSnap] = useState('low');
+    const [isDraggingSheet, setIsDraggingSheet] = useState(false);
+    const [dragOffsetY, setDragOffsetY] = useState(0);
+
+    const touchStartYRef = useRef(0);
+    const currentSnapRef = useRef('low');
+    useEffect(() => {
+        currentSnapRef.current = mobileSheetSnap;
+    }, [mobileSheetSnap]);
+
+    // Whenever inspector opens or re-opens, always default to 'low' snap level
+    useEffect(() => {
+        if (effectiveIsDetailPanelOpen) {
+            setMobileSheetSnap('low');
+        }
+    }, [effectiveIsDetailPanelOpen]);
+
+    const handleSheetTouchStart = (event) => {
+        if (event.touches?.length) {
+            touchStartYRef.current = event.touches[0].clientY;
+            setIsDraggingSheet(true);
+            setDragOffsetY(0);
+        }
+    };
+
+    const handleSheetTouchMove = (event) => {
+        if (!isDraggingSheet || !event.touches?.length) return;
+        const currentY = event.touches[0].clientY;
+        const delta = currentY - touchStartYRef.current;
+        setDragOffsetY(delta);
+    };
+
+    const handleSheetTouchEnd = () => {
+        if (!isDraggingSheet) return;
+        setIsDraggingSheet(false);
+        const delta = dragOffsetY;
+        setDragOffsetY(0);
+
+        const currentSnap = currentSnapRef.current;
+        if (currentSnap === 'low') {
+            if (delta < -140) {
+                setMobileSheetSnap('high');
+            } else if (delta < -25) {
+                setMobileSheetSnap('mid');
+            }
+        } else if (currentSnap === 'mid') {
+            if (delta < -45) {
+                setMobileSheetSnap('high');
+            } else if (delta > 45) {
+                setMobileSheetSnap('low');
+            }
+        } else if (currentSnap === 'high') {
+            if (delta > 150) {
+                setMobileSheetSnap('low');
+            } else if (delta > 45) {
+                setMobileSheetSnap('mid');
+            }
+        }
+    };
+
     const storeUnreadCount = notifications.filter((item) => !item.isRead).length;
     const unreadNotificationsCount = notificationCount > 0 ? notificationCount : storeUnreadCount;
     const hasUnread = hasUnreadNotifications || unreadNotificationsCount > 0;
@@ -520,36 +581,164 @@ const MainLayout = ({
                 </aside>
             )}
 
-            {/* MOBILE & TABLET DETAIL PANEL BOTTOM SHEET OVERLAY */}
+            {/* MOBILE & TABLET DETAIL PANEL BOTTOM SHEET OVERLAY (3 SNAP POINTS: LOW, MID, HIGH) */}
             {shouldRenderDetailPanel && effectiveIsDetailPanelOpen && (
-                <div className="fixed inset-0 z-50 lg:hidden bg-background/70 backdrop-blur-xs flex flex-col justify-end animate-fade-in">
-                    <div className="w-full max-h-[85vh] bg-surface border-t border-surface-border rounded-t-2xl shadow-2xl flex flex-col overflow-hidden animate-slide-up">
-                        {/* DRAG HANDLE BAR */}
-                        <div className="w-full flex items-center justify-center pt-2.5 pb-1 shrink-0">
-                            <div className="w-10 h-1 rounded-full bg-surface-border" />
+                <div
+                    className={`fixed inset-0 z-50 lg:hidden flex flex-col justify-end transition-colors duration-300 ${
+                        mobileSheetSnap === 'low'
+                            ? 'pointer-events-none bg-transparent'
+                            : mobileSheetSnap === 'mid'
+                            ? 'pointer-events-auto bg-black/35'
+                            : 'pointer-events-auto bg-black/60'
+                    }`}
+                    onClick={(e) => {
+                        // Tapping the backdrop above the sheet in mid/high smoothly docks back down to low
+                        if (e.target === e.currentTarget && mobileSheetSnap !== 'low') {
+                            setMobileSheetSnap('low');
+                        }
+                    }}
+                >
+                    <div
+                        className={`w-full bg-surface border-t border-surface-border rounded-t-2xl shadow-2xl flex flex-col overflow-hidden pointer-events-auto transition-all ${
+                            isDraggingSheet ? 'duration-0' : 'duration-300 ease-out'
+                        } ${
+                            mobileSheetSnap === 'low'
+                                ? 'h-[74px] min-h-[74px]'
+                                : mobileSheetSnap === 'mid'
+                                ? 'h-[50vh] max-h-[500px]'
+                                : 'h-[92vh]'
+                        }`}
+                        style={
+                            isDraggingSheet && dragOffsetY !== 0
+                                ? { transform: `translateY(${Math.max(-180, Math.min(180, dragOffsetY))}px)` }
+                                : undefined
+                        }
+                    >
+                        {/* DRAG HANDLE BAR (TOUCH GRAB ZONE) */}
+                        <div
+                            className="w-full flex flex-col items-center justify-center pt-2 pb-1 shrink-0 cursor-grab active:cursor-grabbing select-none touch-none bg-surface"
+                            onTouchStart={handleSheetTouchStart}
+                            onTouchMove={handleSheetTouchMove}
+                            onTouchEnd={handleSheetTouchEnd}
+                            onClick={() => {
+                                // Tapping the handle cycles snap: low -> mid -> high -> low
+                                setMobileSheetSnap((prev) => (prev === 'low' ? 'mid' : prev === 'mid' ? 'high' : 'low'));
+                            }}
+                            title="Drag or tap to snap (Low, Mid, High)"
+                        >
+                            <div className="w-12 h-1.5 rounded-full bg-surface-border hover:bg-text-muted active:scale-95 transition-all" />
                         </div>
 
                         {/* HEADER */}
-                        <div className="h-12 px-4 border-b border-surface-border flex items-center justify-between shrink-0 bg-surface">
-                            <div className="flex items-center gap-2">
-                                <PanelRight className="h-4 w-4 text-accent" />
-                                <h2 className="text-sm font-bold text-text truncate">
+                        <div
+                            className="h-12 px-3 sm:px-4 border-b border-surface-border flex items-center justify-between shrink-0 bg-surface select-none touch-none"
+                            onTouchStart={handleSheetTouchStart}
+                            onTouchMove={handleSheetTouchMove}
+                            onTouchEnd={handleSheetTouchEnd}
+                        >
+                            <div
+                                className="flex items-center gap-2 min-w-0 flex-1 cursor-pointer"
+                                onClick={() => {
+                                    if (mobileSheetSnap === 'low') setMobileSheetSnap('mid');
+                                }}
+                            >
+                                <PanelRight className="h-4 w-4 text-accent shrink-0" />
+                                <h2 className="text-xs sm:text-sm font-bold text-text truncate">
                                     {detailPanelTitle}
                                 </h2>
                             </div>
 
-                            <button
-                                type="button"
-                                onClick={handleCloseDetailPanel}
-                                className="h-8 w-8 rounded-md flex items-center justify-center text-text-muted hover:text-text hover:bg-surface-hover transition-colors cursor-pointer"
-                                title="Close details"
-                            >
-                                <X className="h-4 w-4" />
-                            </button>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                                {/* 3-SNAP POINTS INDICATOR */}
+                                <div className="flex items-center p-0.5 rounded-lg bg-surface-hover border border-surface-border text-[10px] font-semibold">
+                                    <button
+                                        type="button"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            setMobileSheetSnap('low');
+                                        }}
+                                        className={`px-2 py-0.5 rounded transition-all cursor-pointer ${
+                                            mobileSheetSnap === 'low'
+                                                ? 'bg-accent text-text-inverted shadow-2xs font-bold'
+                                                : 'text-text-muted hover:text-text'
+                                        }`}
+                                        title="Dock to bottom (Low)"
+                                    >
+                                        Low
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            setMobileSheetSnap('mid');
+                                        }}
+                                        className={`px-2 py-0.5 rounded transition-all cursor-pointer ${
+                                            mobileSheetSnap === 'mid'
+                                                ? 'bg-accent text-text-inverted shadow-2xs font-bold'
+                                                : 'text-text-muted hover:text-text'
+                                        }`}
+                                        title="Half screen (Mid)"
+                                    >
+                                        Mid
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            setMobileSheetSnap('high');
+                                        }}
+                                        className={`px-2 py-0.5 rounded transition-all cursor-pointer ${
+                                            mobileSheetSnap === 'high'
+                                                ? 'bg-accent text-text-inverted shadow-2xs font-bold'
+                                                : 'text-text-muted hover:text-text'
+                                        }`}
+                                        title="Full screen (High)"
+                                    >
+                                        High
+                                    </button>
+                                </div>
+
+                                {/* TOGGLE EXPAND / COLLAPSE */}
+                                {mobileSheetSnap === 'low' ? (
+                                    <button
+                                        type="button"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            setMobileSheetSnap('mid');
+                                        }}
+                                        className="h-7 w-7 rounded-md flex items-center justify-center text-text-muted hover:text-text hover:bg-surface-hover transition-colors cursor-pointer"
+                                        title="Expand inspector"
+                                    >
+                                        <ChevronUp className="h-4 w-4" />
+                                    </button>
+                                ) : (
+                                    <button
+                                        type="button"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            setMobileSheetSnap('low');
+                                        }}
+                                        className="h-7 w-7 rounded-md flex items-center justify-center text-text-muted hover:text-text hover:bg-surface-hover transition-colors cursor-pointer"
+                                        title="Minimize to bottom (Low)"
+                                    >
+                                        <ChevronDown className="h-4 w-4" />
+                                    </button>
+                                )}
+
+                                {/* CLOSE / DESELECT */}
+                                <button
+                                    type="button"
+                                    onClick={handleCloseDetailPanel}
+                                    className="h-7 w-7 rounded-md flex items-center justify-center text-text-muted hover:text-text hover:bg-surface-hover transition-colors cursor-pointer"
+                                    title="Close details"
+                                >
+                                    <X className="h-4 w-4" />
+                                </button>
+                            </div>
                         </div>
 
-                        {/* CONTENT */}
-                        <div className="flex-1 overflow-y-auto p-3.5 flex flex-col gap-3">
+                        {/* CONTENT (VISIBLE IN MID & HIGH, CLIPPED SMOOTHLY IN LOW) */}
+                        <div className="flex-1 overflow-y-auto p-3.5 flex flex-col gap-3 min-h-0">
                             {detailPanelContent ?? (
                                 <div className="flex-1 flex flex-col items-center justify-center text-center p-6 text-text-muted gap-2">
                                     <PanelRight className="h-8 w-8 text-surface-border stroke-1" />

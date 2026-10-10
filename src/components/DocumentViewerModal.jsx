@@ -19,6 +19,7 @@ import {
     Check,
     Copy,
     Plus,
+    ExternalLink,
 } from 'lucide-react';
 import { Button } from './Button';
 import { Badge } from './Badge';
@@ -172,6 +173,11 @@ const DocumentViewerModal = ({
     const isVideo = VIDEO_EXTENSIONS.has(fileExtension);
     const isAudio = AUDIO_EXTENSIONS.has(fileExtension);
     const isArchived = Boolean(resolvedDoc?.isArchived);
+
+    const isMobileDevice = useMemo(() => {
+        if (typeof window === 'undefined') return false;
+        return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
+    }, []);
 
     const classification = activeVersion?.classification ?? resolvedDoc?.classification ?? constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED;
     const versionNumber = activeVersion?.version ?? 1;
@@ -867,6 +873,20 @@ const DocumentViewerModal = ({
                             )
                         )}
 
+                        {/* OPEN RAW FILE IN NEW TAB (CRITICAL FOR MOBILE PREVIEW STABILITY) */}
+                        {downloadUrl && !isLoading && (
+                            <a
+                                href={downloadUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center justify-center h-9 px-2.5 sm:px-3 rounded-md text-xs sm:text-sm font-medium bg-surface hover:bg-surface-hover text-text border border-surface-border transition-colors gap-1.5 shrink-0"
+                                title="Open file in separate tab / native viewer"
+                            >
+                                <ExternalLink className="h-4 w-4 shrink-0 text-text-muted" />
+                                <span className="hidden sm:inline">Open in Tab</span>
+                            </a>
+                        )}
+
                         {/* DOWNLOAD ACTION: UNIVERSAL */}
                         <Button
                             variant="secondary"
@@ -987,11 +1007,33 @@ const DocumentViewerModal = ({
                         <>
                             {/* A. PDF EMBED */}
                             {isPdf && downloadUrl && (
-                                <iframe
-                                    src={`${downloadUrl}#toolbar=1&navpanes=0`}
-                                    title={fileName}
-                                    className="w-full h-full border-none rounded-lg bg-zinc-800 shadow-inner"
-                                />
+                                <div className="w-full h-full flex flex-col relative rounded-lg overflow-hidden bg-zinc-900">
+                                    {/* MOBILE PDF HELPER BAR */}
+                                    {isMobileDevice && (
+                                        <div className="flex items-center justify-between px-3 py-2 bg-surface-hover border-b border-surface-border text-xs shrink-0 select-none">
+                                            <span className="text-text-muted truncate">Mobile PDF Preview</span>
+                                            <a
+                                                href={downloadUrl}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-accent text-text-inverted text-xs font-semibold shrink-0 shadow-xs"
+                                            >
+                                                <ExternalLink className="h-3.5 w-3.5" />
+                                                Open Native Viewer
+                                            </a>
+                                        </div>
+                                    )}
+
+                                    <iframe
+                                        src={
+                                            isMobileDevice
+                                                ? `https://docs.google.com/viewer?embedded=true&url=${encodeURIComponent(downloadUrl)}`
+                                                : `${downloadUrl}#toolbar=1&navpanes=0`
+                                        }
+                                        title={fileName}
+                                        className="w-full flex-1 border-none bg-zinc-800 shadow-inner"
+                                    />
+                                </div>
                             )}
 
                             {/* B. DOCX WORD PROCESSOR PREVIEW (AUTHENTIC PAPER LIGHT MODE) */}

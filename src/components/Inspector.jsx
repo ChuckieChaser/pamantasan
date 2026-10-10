@@ -2801,6 +2801,20 @@ const Inspector = ({
                     {primaryTitle}
                 </h2>
 
+                {/* QUICK PREVIEW BUTTON FOR DOCUMENTS */}
+                {!isFolder && isDocument && (
+                    <Button
+                        variant="secondary"
+                        leadingIcon={Eye}
+                        onClick={() => {
+                            window.dispatchEvent(new CustomEvent('pamantasan:open-file', { detail: activeItem ?? item }));
+                        }}
+                        className="w-full justify-center text-xs py-1.5 font-medium shadow-2xs"
+                    >
+                        Preview Document
+                    </Button>
+                )}
+
                 <div className="overflow-x-auto scrollbar-none pb-0.5 mt-1">
                     <SegmentSelection
                         value={activeTab}
