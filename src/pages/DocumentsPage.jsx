@@ -1400,12 +1400,12 @@ const DocumentsPage = ({
             return;
         }
 
-        if (actionKey === 'share') {
+        if (actionKey === 'share' || actionKey === 're_share') {
             setShareModalDocument(item);
             return;
         }
 
-        if (actionKey === 'publish') {
+        if (actionKey === 'publish' || actionKey === 're_publish') {
             setPublishModalDocument(item);
             return;
         }

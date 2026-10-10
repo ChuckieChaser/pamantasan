@@ -1,7 +1,7 @@
 // --- IMPORTS ---
 import { useState, useRef, useEffect } from 'react';
 import { Outlet, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, PanelRight, X, ChevronUp, ChevronDown } from 'lucide-react';
+import { LayoutDashboard, PanelRight, X, ChevronUp, ChevronDown, MoreVertical } from 'lucide-react';
 import {
     Account,
     GlobalSearchDropdown,
@@ -10,6 +10,7 @@ import {
     Sidebar,
     TopBar,
 } from '../components/ui';
+import { Menu } from '../components/browser/Menu';
 import { useClickOutside, useToast } from '../hooks';
 import {
     useNotificationStore,
@@ -46,6 +47,7 @@ const MainLayout = ({
     searchPlaceholder = 'Search documents, records...',
     hasSearch = true,
     showSearch = true,
+    selectedItem = null,
     isDetailPanelOpen = undefined,
     detailPanelTitle = 'Details',
     detailPanelContent = null,
@@ -66,6 +68,7 @@ const MainLayout = ({
     onCloseDetailPanel,
     onSelectRecord,
     onSignOut,
+    onDetailAction,
     className,
     children,
     ...props
@@ -81,6 +84,7 @@ const MainLayout = ({
     const [internalSearchQuery, setInternalSearchQuery] = useState('');
     const [isSearchDropdownOpen, setIsSearchDropdownOpen] = useState(false);
     const [internalDetailPanelOpen, setInternalDetailPanelOpen] = useState(false);
+    const [inspectorActionMenu, setInspectorActionMenu] = useState(null);
     const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
     const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
     const [isNotificationPanelOpen, setIsNotificationPanelOpen] = useState(false);
@@ -133,6 +137,32 @@ const MainLayout = ({
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, []);
+
+    useEffect(() => {
+        if (!inspectorActionMenu) return;
+
+        const handleDismiss = () => {
+            setInspectorActionMenu(null);
+        };
+
+        const handleKeyDown = (e) => {
+            if (e.key === 'Escape') {
+                setInspectorActionMenu(null);
+            }
+        };
+
+        window.addEventListener('click', handleDismiss);
+        window.addEventListener('scroll', handleDismiss, true);
+        window.addEventListener('resize', handleDismiss);
+        window.addEventListener('keydown', handleKeyDown);
+
+        return () => {
+            window.removeEventListener('click', handleDismiss);
+            window.removeEventListener('scroll', handleDismiss, true);
+            window.removeEventListener('resize', handleDismiss);
+            window.removeEventListener('keydown', handleKeyDown);
+        };
+    }, [inspectorActionMenu]);
 
     useEffect(() => {
         const rootElement = document.documentElement;
@@ -358,6 +388,8 @@ const MainLayout = ({
     };
 
     const handleCloseDetailPanel = (event) => {
+        setMobileSheetSnap('low');
+        setInspectorActionMenu(null);
         if (onCloseDetailPanel) {
             onCloseDetailPanel(event);
             return;
@@ -400,20 +432,49 @@ const MainLayout = ({
 
     const touchStartYRef = useRef(0);
     const currentSnapRef = useRef('low');
+    const hasDraggedRef = useRef(false);
+    const isFirstMountOpenRef = useRef(true);
+
     useEffect(() => {
         currentSnapRef.current = mobileSheetSnap;
     }, [mobileSheetSnap]);
 
-    // Whenever inspector opens or re-opens, always default to 'low' snap level
+    // Whenever inspector opens or re-opens, always default to 'low' snap level with transition suppression
     useEffect(() => {
-        if (effectiveIsDetailPanelOpen) {
+        if (!effectiveIsDetailPanelOpen) {
             setMobileSheetSnap('low');
+            isFirstMountOpenRef.current = true;
+        } else {
+            setMobileSheetSnap('low');
+            const timer = setTimeout(() => {
+                isFirstMountOpenRef.current = false;
+            }, 60);
+            return () => clearTimeout(timer);
         }
     }, [effectiveIsDetailPanelOpen]);
+
+    const LOW_HEIGHT = 74;
+    const getMidHeight = () => (typeof window !== 'undefined' ? Math.round(window.innerHeight * 0.5) : 400);
+    const getHighHeight = () => (typeof window !== 'undefined' ? Math.round(window.innerHeight * 0.92) : 750);
+
+    const getDynamicSheetHeight = () => {
+        if (!isDraggingSheet) {
+            if (mobileSheetSnap === 'low') return `${LOW_HEIGHT}px`;
+            if (mobileSheetSnap === 'mid') return '50vh';
+            return '92vh';
+        }
+        let base = LOW_HEIGHT;
+        if (mobileSheetSnap === 'mid') base = getMidHeight();
+        if (mobileSheetSnap === 'high') base = getHighHeight();
+        const targetH = base - dragOffsetY;
+        const clampedH = Math.max(LOW_HEIGHT, Math.min(getHighHeight(), targetH));
+        return `${clampedH}px`;
+    };
 
     const handleSheetTouchStart = (event) => {
         if (event.touches?.length) {
             touchStartYRef.current = event.touches[0].clientY;
+            hasDraggedRef.current = false;
             setIsDraggingSheet(true);
             setDragOffsetY(0);
         }
@@ -423,6 +484,9 @@ const MainLayout = ({
         if (!isDraggingSheet || !event.touches?.length) return;
         const currentY = event.touches[0].clientY;
         const delta = currentY - touchStartYRef.current;
+        if (Math.abs(delta) > 5) {
+            hasDraggedRef.current = true;
+        }
         setDragOffsetY(delta);
     };
 
@@ -433,24 +497,94 @@ const MainLayout = ({
         setDragOffsetY(0);
 
         const currentSnap = currentSnapRef.current;
-        if (currentSnap === 'low') {
-            if (delta < -140) {
-                setMobileSheetSnap('high');
-            } else if (delta < -25) {
-                setMobileSheetSnap('mid');
-            }
-        } else if (currentSnap === 'mid') {
-            if (delta < -45) {
-                setMobileSheetSnap('high');
-            } else if (delta > 45) {
-                setMobileSheetSnap('low');
-            }
+        let baseHeight = LOW_HEIGHT;
+        if (currentSnap === 'mid') {
+            baseHeight = getMidHeight();
         } else if (currentSnap === 'high') {
-            if (delta > 150) {
-                setMobileSheetSnap('low');
-            } else if (delta > 45) {
-                setMobileSheetSnap('mid');
+            baseHeight = getHighHeight();
+        }
+
+        // Dragging up makes delta negative, so current height increases
+        const currentHeight = baseHeight - delta;
+
+        const hLow = LOW_HEIGHT;
+        const hMid = getMidHeight();
+        const hHigh = getHighHeight();
+
+        const distLow = Math.abs(currentHeight - hLow);
+        const distMid = Math.abs(currentHeight - hMid);
+        const distHigh = Math.abs(currentHeight - hHigh);
+
+        const minDist = Math.min(distLow, distMid, distHigh);
+        if (minDist === distLow) {
+            setMobileSheetSnap('low');
+        } else if (minDist === distMid) {
+            setMobileSheetSnap('mid');
+        } else {
+            setMobileSheetSnap('high');
+        }
+
+        setTimeout(() => {
+            hasDraggedRef.current = false;
+        }, 120);
+    };
+
+    const getEffectiveResourceName = (it) => {
+        const path = typeof window !== 'undefined' ? window.location.pathname.toLowerCase() : '';
+        if (path.includes('/departments') || it?.isDepartment || (it?.code && it?.head)) {
+            return 'departments';
+        }
+        if (path.includes('/users') || it?.isUser || it?.universityId || it?.email || it?.firstName) {
+            return 'users';
+        }
+        if (path.includes('/coordinator') || it?.isCoordinatorRequest || (it?.coordinator && it?.action)) {
+            return 'coordinator_requests';
+        }
+        if (path.includes('/requests') || it?.isDocumentRequest || it?.requester || it?.urgency) {
+            return 'document_requests';
+        }
+        if (path.includes('/archives') || it?.isArchived) {
+            return 'archives';
+        }
+        return 'documents';
+    };
+
+    const handleToggleInspectorMenu = (e) => {
+        e?.stopPropagation?.();
+        if (inspectorActionMenu) {
+            setInspectorActionMenu(null);
+        } else if (selectedItem) {
+            const rect = e.currentTarget.getBoundingClientRect();
+            setInspectorActionMenu({ item: selectedItem, anchorRect: rect });
+        }
+    };
+
+    const handleInspectorActionClick = async (event, actionKey, it) => {
+        event?.stopPropagation?.();
+        setInspectorActionMenu(null);
+        const targetItem = it || selectedItem;
+        if (!targetItem) return;
+
+        if (onDetailAction) {
+            await onDetailAction(actionKey, targetItem);
+            return;
+        }
+
+        if (actionKey === 'open' || actionKey === 'open_folder') {
+            if (targetItem.isFolder) {
+                window.dispatchEvent(new CustomEvent('pamantasan:open-folder', { detail: targetItem }));
+            } else {
+                window.dispatchEvent(new CustomEvent('pamantasan:open-file', { detail: targetItem }));
             }
+            return;
+        }
+        if (actionKey === 'archive') {
+            window.dispatchEvent(new CustomEvent('pamantasan:archive-document', { detail: targetItem }));
+            return;
+        }
+        if (actionKey === 'delete') {
+            window.dispatchEvent(new CustomEvent('pamantasan:delete-document', { detail: targetItem }));
+            return;
         }
     };
 
@@ -467,7 +601,7 @@ const MainLayout = ({
     // RENDER
     return (
         <div
-            className={`h-screen overflow-hidden bg-background text-text flex w-full relative ${className ?? ''}`.trim()}
+            className={`h-screen h-[100dvh] overflow-hidden bg-background text-text flex w-full relative ${className ?? ''}`.trim()}
             {...props}
         >
             {/* SIDEBAR NAVIGATION */}
@@ -490,7 +624,7 @@ const MainLayout = ({
             )}
 
             {/* MAIN CONTENT AREA */}
-            <div className="flex-1 flex flex-col min-w-0 h-screen overflow-hidden relative">
+            <div className="flex-1 flex flex-col min-w-0 h-screen h-[100dvh] overflow-hidden relative">
                 {shouldRenderTopBar && (
                     <TopBar
                         pageTitle={pageTitle}
@@ -599,20 +733,13 @@ const MainLayout = ({
                     }}
                 >
                     <div
-                        className={`w-full bg-surface border-t border-surface-border rounded-t-2xl shadow-2xl flex flex-col overflow-hidden pointer-events-auto transition-all ${
-                            isDraggingSheet ? 'duration-0' : 'duration-300 ease-out'
-                        } ${
-                            mobileSheetSnap === 'low'
-                                ? 'h-[74px] min-h-[74px]'
-                                : mobileSheetSnap === 'mid'
-                                ? 'h-[50vh] max-h-[500px]'
-                                : 'h-[92vh]'
+                        className={`w-full bg-surface border-t border-surface-border rounded-t-2xl shadow-2xl flex flex-col overflow-hidden pointer-events-auto ${
+                            isDraggingSheet || isFirstMountOpenRef.current ? 'transition-none' : 'transition-[height] duration-300 ease-out'
                         }`}
-                        style={
-                            isDraggingSheet && dragOffsetY !== 0
-                                ? { transform: `translateY(${Math.max(-180, Math.min(180, dragOffsetY))}px)` }
-                                : undefined
-                        }
+                        style={{ height: getDynamicSheetHeight() }}
+                        onTouchStart={handleSheetTouchStart}
+                        onTouchMove={handleSheetTouchMove}
+                        onTouchEnd={handleSheetTouchEnd}
                     >
                         {/* DRAG HANDLE BAR (TOUCH GRAB ZONE) */}
                         <div
@@ -621,6 +748,7 @@ const MainLayout = ({
                             onTouchMove={handleSheetTouchMove}
                             onTouchEnd={handleSheetTouchEnd}
                             onClick={() => {
+                                if (hasDraggedRef.current) return;
                                 // Tapping the handle cycles snap: low -> mid -> high -> low
                                 setMobileSheetSnap((prev) => (prev === 'low' ? 'mid' : prev === 'mid' ? 'high' : 'low'));
                             }}
@@ -639,6 +767,7 @@ const MainLayout = ({
                             <div
                                 className="flex items-center gap-2 min-w-0 flex-1 cursor-pointer"
                                 onClick={() => {
+                                    if (hasDraggedRef.current) return;
                                     if (mobileSheetSnap === 'low') setMobileSheetSnap('mid');
                                 }}
                             >
@@ -649,54 +778,18 @@ const MainLayout = ({
                             </div>
 
                             <div className="flex items-center gap-1.5 shrink-0">
-                                {/* 3-SNAP POINTS INDICATOR */}
-                                <div className="flex items-center p-0.5 rounded-lg bg-surface-hover border border-surface-border text-[10px] font-semibold">
+                                {/* CONTEXTUAL ACTION MENU TRIGGER (3-DOT) */}
+                                {selectedItem && (
                                     <button
                                         type="button"
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            setMobileSheetSnap('low');
-                                        }}
-                                        className={`px-2 py-0.5 rounded transition-all cursor-pointer ${
-                                            mobileSheetSnap === 'low'
-                                                ? 'bg-accent text-text-inverted shadow-2xs font-bold'
-                                                : 'text-text-muted hover:text-text'
-                                        }`}
-                                        title="Dock to bottom (Low)"
+                                        onClick={handleToggleInspectorMenu}
+                                        className="h-7 w-7 rounded-md flex items-center justify-center text-text-muted hover:text-text hover:bg-surface-hover active:scale-95 transition-all cursor-pointer"
+                                        title="Actions"
+                                        aria-label="Actions"
                                     >
-                                        Low
+                                        <MoreVertical className="h-4 w-4" />
                                     </button>
-                                    <button
-                                        type="button"
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            setMobileSheetSnap('mid');
-                                        }}
-                                        className={`px-2 py-0.5 rounded transition-all cursor-pointer ${
-                                            mobileSheetSnap === 'mid'
-                                                ? 'bg-accent text-text-inverted shadow-2xs font-bold'
-                                                : 'text-text-muted hover:text-text'
-                                        }`}
-                                        title="Half screen (Mid)"
-                                    >
-                                        Mid
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            setMobileSheetSnap('high');
-                                        }}
-                                        className={`px-2 py-0.5 rounded transition-all cursor-pointer ${
-                                            mobileSheetSnap === 'high'
-                                                ? 'bg-accent text-text-inverted shadow-2xs font-bold'
-                                                : 'text-text-muted hover:text-text'
-                                        }`}
-                                        title="Full screen (High)"
-                                    >
-                                        High
-                                    </button>
-                                </div>
+                                )}
 
                                 {/* TOGGLE EXPAND / COLLAPSE */}
                                 {mobileSheetSnap === 'low' ? (
@@ -738,7 +831,12 @@ const MainLayout = ({
                         </div>
 
                         {/* CONTENT (VISIBLE IN MID & HIGH, CLIPPED SMOOTHLY IN LOW) */}
-                        <div className="flex-1 overflow-y-auto p-3.5 flex flex-col gap-3 min-h-0">
+                        <div
+                            className="flex-1 overflow-y-auto p-3.5 flex flex-col gap-3 min-h-0"
+                            onTouchStart={(e) => e.stopPropagation()}
+                            onTouchMove={(e) => e.stopPropagation()}
+                            onTouchEnd={(e) => e.stopPropagation()}
+                        >
                             {detailPanelContent ?? (
                                 <div className="flex-1 flex flex-col items-center justify-center text-center p-6 text-text-muted gap-2">
                                     <PanelRight className="h-8 w-8 text-surface-border stroke-1" />
@@ -773,6 +871,16 @@ const MainLayout = ({
                 currentUser={currentUser}
                 onSignOut={onSignOut}
             />
+
+            {/* PORTAL-MOUNTED CONTEXTUAL ACTION MENU FOR INSPECTOR */}
+            {inspectorActionMenu && (
+                <Menu
+                    item={inspectorActionMenu.item}
+                    resourceName={getEffectiveResourceName(inspectorActionMenu.item)}
+                    anchorRect={inspectorActionMenu.anchorRect}
+                    onActionClick={handleInspectorActionClick}
+                />
+            )}
         </div>
     );
 };

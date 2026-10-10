@@ -532,8 +532,8 @@ const DashboardPage = ({
 
     // RESPONSIVE CONTAINER TIERS FOR CARDS (CONTAINER-QUERY BEHAVIOR LIKE BROWSER)
     const [bannerRef, bannerTier] = useContainerTier({ full: 960, half: 520, quarter: 520 });
-    const [pendingCardRef, pendingTier] = useContainerTier({ full: 620, half: 480, quarter: 360 });
-    const [analysisCardRef, analysisTier] = useContainerTier({ full: 620, half: 480, quarter: 360 });
+    const [pendingCardRef, pendingTier] = useContainerTier({ full: 680, half: 540, quarter: 440 });
+    const [analysisCardRef, analysisTier] = useContainerTier({ full: 680, half: 540, quarter: 440 });
     const [auditCardRef, auditTier] = useContainerTier({ full: 1040, half: 720, quarter: 500 });
     const [specializedCardRef, specializedTier] = useContainerTier({ full: 620, half: 480, quarter: 360 });
 
@@ -2270,9 +2270,10 @@ const DashboardPage = ({
                             />
                         );
 
+                        const isStacked = pendingTier === 'mobile' || pendingTier === 'quarter';
                         const toggleNode = (
                             <div className={`flex items-center bg-surface-hover/70 p-0.5 rounded-lg border border-surface-border shrink-0 ${
-                                pendingTier === 'mobile' ? 'w-full grid grid-cols-2' : ''
+                                isStacked ? 'w-full grid grid-cols-2' : ''
                             }`}>
                                 <button
                                     type="button"
@@ -2331,32 +2332,20 @@ const DashboardPage = ({
 
                         if (pendingTier === 'half') {
                             return (
-                                <div className="flex items-center gap-2.5 border-b border-surface-border pb-3 w-full">
-                                    {headerNode}
-                                    <div className="flex-1 min-w-[120px]">{searchNode}</div>
-                                    {toggleNode}
-                                </div>
-                            );
-                        }
-
-                        if (pendingTier === 'quarter') {
-                            return (
                                 <div className="flex flex-col gap-2.5 border-b border-surface-border pb-3 w-full">
-                                    <div className="w-full flex items-center justify-between">
+                                    <div className="flex items-center justify-between w-full">
                                         {headerNode}
+                                        <div className="shrink-0">{toggleNode}</div>
                                     </div>
-                                    <div className="flex items-center gap-2 w-full">
-                                        <div className="flex-1 min-w-0">{searchNode}</div>
-                                        {toggleNode}
-                                    </div>
+                                    <div className="w-full">{searchNode}</div>
                                 </div>
                             );
                         }
 
-                        // Mobile tier
+                        // Quarter & Mobile tier: stack drop down identically to audit logs
                         return (
                             <div className="flex flex-col gap-2 border-b border-surface-border pb-3 w-full">
-                                <div className="w-full flex items-center">
+                                <div className="w-full flex items-center justify-between">
                                     {headerNode}
                                 </div>
                                 <div className="w-full">{searchNode}</div>
@@ -2462,9 +2451,10 @@ const DashboardPage = ({
                             />
                         );
 
+                        const isStacked = analysisTier === 'mobile' || analysisTier === 'quarter';
                         const toggleNode = (
                             <div className={`flex items-center bg-surface-hover/70 p-0.5 rounded-lg border border-surface-border shrink-0 ${
-                                analysisTier === 'mobile' ? 'w-full grid grid-cols-2' : ''
+                                isStacked ? 'w-full grid grid-cols-2' : ''
                             }`}>
                                 <button
                                     type="button"
@@ -2505,32 +2495,20 @@ const DashboardPage = ({
 
                         if (analysisTier === 'half') {
                             return (
-                                <div className="flex items-center gap-2.5 border-b border-surface-border pb-3 w-full">
-                                    {headerNode}
-                                    <div className="flex-1 min-w-[120px]">{searchNode}</div>
-                                    {toggleNode}
-                                </div>
-                            );
-                        }
-
-                        if (analysisTier === 'quarter') {
-                            return (
                                 <div className="flex flex-col gap-2.5 border-b border-surface-border pb-3 w-full">
-                                    <div className="w-full flex items-center justify-between">
+                                    <div className="flex items-center justify-between w-full">
                                         {headerNode}
+                                        <div className="shrink-0">{toggleNode}</div>
                                     </div>
-                                    <div className="flex items-center gap-2 w-full">
-                                        <div className="flex-1 min-w-0">{searchNode}</div>
-                                        {toggleNode}
-                                    </div>
+                                    <div className="w-full">{searchNode}</div>
                                 </div>
                             );
                         }
 
-                        // Mobile tier
+                        // Quarter & Mobile tier: stack drop down identically to audit logs
                         return (
                             <div className="flex flex-col gap-2 border-b border-surface-border pb-3 w-full">
-                                <div className="w-full flex items-center">
+                                <div className="w-full flex items-center justify-between">
                                     {headerNode}
                                 </div>
                                 <div className="w-full">{searchNode}</div>

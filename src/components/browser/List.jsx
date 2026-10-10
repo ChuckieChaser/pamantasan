@@ -17,6 +17,7 @@ const List = ({
     onItemClick,
     onToggleActionMenu,
     onToggleSelect,
+    onContextMenu,
     className,
     ...props
 }) => {
@@ -38,6 +39,10 @@ const List = ({
                             } else {
                                 onItemClick?.(item);
                             }
+                        }}
+                        onContextMenu={(event) => {
+                            event.preventDefault();
+                            onContextMenu?.(event, item);
                         }}
                         className={`group flex items-center justify-between p-3 sm:p-3.5 rounded-xl border transition-all duration-150 cursor-pointer select-none gap-3 min-w-0 ${isChecked
                             ? 'bg-accent/15 border-accent/60 shadow-2xs'

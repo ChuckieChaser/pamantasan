@@ -131,6 +131,7 @@ const DocumentViewerModal = ({
     const [initialSpreadsheetSheets, setInitialSpreadsheetSheets] = useState([]);
     const [renamingSheet, setRenamingSheet] = useState(null);
     const [renameInputVal, setRenameInputVal] = useState('');
+    const [useGoogleViewerFallback, setUseGoogleViewerFallback] = useState(false);
 
     // IMAGE CONTROLS
     const [imageZoom, setImageZoom] = useState(1);
@@ -201,6 +202,7 @@ const DocumentViewerModal = ({
                 setIsLoading(false);
                 setLoadError(null);
                 setIsEditing(false);
+                setUseGoogleViewerFallback(false);
             });
             return;
         }
@@ -245,6 +247,33 @@ const DocumentViewerModal = ({
                         } catch (fetchErr) {
                             console.warn('Network fetch fallback failed:', fetchErr?.message);
                         }
+                    }
+
+                    // Fallback to direct raw text fetch for editable/markdown files
+                    if (!blob && isEditable && url) {
+                        try {
+                            const rawResp = await fetch(url);
+                            if (rawResp.ok) {
+                                const text = await rawResp.text();
+                                if (isMounted) {
+                                    setTextContent(text);
+                                    setInitialTextContent(text);
+                                    setIsLoading(false);
+                                    return;
+                                }
+                            }
+                        } catch (rawErr) {
+                            console.warn('Direct text fetch failed:', rawErr?.message);
+                        }
+                    }
+
+                    // Mobile fallback to Google Docs Viewer if in-memory blob resolution fails
+                    if (!blob && url) {
+                        setUseGoogleViewerFallback(true);
+                        if (isMounted) {
+                            setIsLoading(false);
+                        }
+                        return;
                     }
 
                     if (!blob) {
@@ -326,6 +355,9 @@ const DocumentViewerModal = ({
                 }
             } catch (err) {
                 console.warn('docx-preview rendering issue:', err);
+                if (downloadUrl) {
+                    setUseGoogleViewerFallback(true);
+                }
             }
         }
 
@@ -1005,8 +1037,31 @@ const DocumentViewerModal = ({
                     {/* CONTENT RENDERERS */}
                     {!isLoading && !loadError && (
                         <>
+                            {/* GOOGLE DOCS VIEWER / MOBILE PREVIEW FALLBACK */}
+                            {useGoogleViewerFallback && downloadUrl && (
+                                <div className="w-full h-full flex flex-col relative rounded-lg overflow-hidden bg-zinc-900">
+                                    <div className="flex items-center justify-between px-3 py-2 bg-surface-hover border-b border-surface-border text-xs shrink-0 select-none">
+                                        <span className="text-text-muted truncate">Mobile Preview ({fileExtension.toUpperCase() || 'Document'})</span>
+                                        <a
+                                            href={downloadUrl}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-accent text-text-inverted text-xs font-semibold shrink-0 shadow-xs cursor-pointer"
+                                        >
+                                            <ExternalLink className="h-3.5 w-3.5" />
+                                            Open Raw File
+                                        </a>
+                                    </div>
+                                    <iframe
+                                        src={`https://docs.google.com/viewer?embedded=true&url=${encodeURIComponent(downloadUrl)}`}
+                                        title={fileName}
+                                        className="w-full flex-1 border-none bg-zinc-800 shadow-inner"
+                                    />
+                                </div>
+                            )}
+
                             {/* A. PDF EMBED */}
-                            {isPdf && downloadUrl && (
+                            {!useGoogleViewerFallback && isPdf && downloadUrl && (
                                 <div className="w-full h-full flex flex-col relative rounded-lg overflow-hidden bg-zinc-900">
                                     {/* MOBILE PDF HELPER BAR */}
                                     {isMobileDevice && (
@@ -1037,7 +1092,7 @@ const DocumentViewerModal = ({
                             )}
 
                             {/* B. DOCX WORD PROCESSOR PREVIEW (AUTHENTIC PAPER LIGHT MODE) */}
-                            {isDocx && (
+                            {!useGoogleViewerFallback && isDocx && (
                                 <div className="w-full h-full overflow-y-auto overflow-x-auto p-4 sm:p-8 bg-zinc-200/90 dark:bg-zinc-900 rounded-lg select-text">
                                     <style>{`
                                         .docx-render-host .docx-wrapper {
@@ -1067,7 +1122,7 @@ const DocumentViewerModal = ({
                             )}
 
                             {/* C. SPREADSHEET TABLE PREVIEW & EDITOR (AUTHENTIC EXCEL CANVAS & CONTROLS) */}
-                            {isSpreadsheet && (
+                            {!useGoogleViewerFallback && isSpreadsheet && (
                                 <div className="w-full h-full flex flex-col bg-white text-zinc-900 rounded-lg border border-zinc-300 overflow-hidden shadow-xs">
                                     {/* EXCEL GRID VIEWPORT */}
                                     <div className="flex-1 overflow-auto bg-white">
@@ -1257,7 +1312,7 @@ const DocumentViewerModal = ({
                             )}
 
                             {/* D. TEXT & CODE: VIEW OR EDIT */}
-                            {isEditable && (
+                            {!useGoogleViewerFallback && isEditable && (
                                 !isEditing ? (
                                     <div className="w-full h-full overflow-auto bg-surface rounded-lg border border-surface-border p-4">
                                         <pre className="font-mono text-xs text-text whitespace-pre-wrap leading-relaxed">
@@ -1326,7 +1381,7 @@ const DocumentViewerModal = ({
                             )}
 
                             {/* H. UNSUPPORTED / BINARY FALLBACK (PPTX, ZIP, ETC.) */}
-                            {!isPdf && !isDocx && !isSpreadsheet && !isEditable && !isImage && !isVideo && !isAudio && (
+                            {!useGoogleViewerFallback && !isPdf && !isDocx && !isSpreadsheet && !isEditable && !isImage && !isVideo && !isAudio && (
                                 <div className="w-full h-full flex items-center justify-center p-4">
                                     <div className="flex flex-col items-center justify-center gap-5 p-8 text-center max-w-md bg-surface rounded-xl border border-surface-border shadow-md">
                                         <div className="p-4 rounded-full bg-surface-hover text-text-muted">

@@ -479,8 +479,11 @@ const AppContent = () => {
             setSelectedItem(safeItems[0]);
             setIsDetailPanelOpen(true);
         } else {
-            setSelectedItem(null);
-            setIsDetailPanelOpen(false);
+            setSelectedItem((prev) => {
+                if (prev) return prev;
+                setIsDetailPanelOpen(false);
+                return null;
+            });
         }
     };
 
@@ -504,6 +507,11 @@ const AppContent = () => {
     };
 
     const handleDetailAction = async (actionKey, item) => {
+        if (actionKey === 'select_item') {
+            handleSelectActivity(item);
+            return;
+        }
+
         const targetItem = item || selectedItem;
         const isCoordinatorReq = Array.isArray(targetItem)
             ? targetItem.some((i) => i.action && typeof i.action === 'string')
@@ -752,7 +760,7 @@ const AppContent = () => {
             return;
         }
 
-        if (actionKey === 'share') {
+        if (actionKey === 'share' || actionKey === 're_share') {
             const target = item || selectedItem;
             if (target) {
                 useDocumentStore.getState().setShareModalDocument(target);
@@ -760,7 +768,7 @@ const AppContent = () => {
             return;
         }
 
-        if (actionKey === 'publish') {
+        if (actionKey === 'publish' || actionKey === 're_publish') {
             const target = item || selectedItem;
             if (target) {
                 useDocumentStore.getState().setPublishModalDocument(target);
@@ -1574,10 +1582,13 @@ const AppContent = () => {
                             pageTitle={pageTitle}
                             notificationCount={unreadNotificationCount}
                             hasUnreadNotifications={unreadNotificationCount > 0}
+                            selectedItem={selectedItem}
                             isDetailPanelOpen={isDetailPanelOpen}
                             detailPanelTitle={
                                 selectedItems.length > 1
                                     ? `You select multiple files (${selectedItems.length})`
+                                    : selectedItems.length === 1
+                                    ? `Selected item (${selectedItems.length})`
                                     : selectedItem
                                     ? 'Record Inspector'
                                     : 'Inspector'
@@ -1600,6 +1611,7 @@ const AppContent = () => {
                             onCloseDetailPanel={handleCloseDetailPanel}
                             onSelectRecord={handleSelectActivity}
                             onSignOut={handleSignOut}
+                            onDetailAction={handleDetailAction}
                         />
                     </ProtectedRoute>
                 }

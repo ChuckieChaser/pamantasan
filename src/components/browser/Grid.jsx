@@ -20,6 +20,7 @@ const Grid = ({
     onItemClick,
     onToggleActionMenu,
     onToggleSelect,
+    onContextMenu,
     className,
     ...props
 }) => {
@@ -42,6 +43,10 @@ const Grid = ({
                             } else {
                                 onItemClick?.(item);
                             }
+                        }}
+                        onContextMenu={(event) => {
+                            event.preventDefault();
+                            onContextMenu?.(event, item);
                         }}
                         className={`p-3.5 sm:p-4 gap-3 justify-between transition-all duration-150 cursor-pointer group select-none min-w-0 rounded-xl ${isChecked
                             ? 'bg-accent/15 border-accent/60 shadow-2xs'

@@ -270,10 +270,10 @@ const Sidebar = ({
                                 />
                                 <div className="flex flex-col min-w-0 overflow-hidden">
                                     <span className="font-serif font-bold text-sm text-text leading-tight truncate whitespace-nowrap select-none">
-                                        Pamantasan
+                                        Pamantasan Records
                                     </span>
-                                    <span className="text-[10px] text-text-muted font-mono leading-none truncate whitespace-nowrap select-none">
-                                        Records System
+                                    <span className="text-[10px] text-text-muted font-sans leading-none truncate whitespace-nowrap select-none">
+                                        Document Management System
                                     </span>
                                 </div>
                             </div>
@@ -405,10 +405,10 @@ const Sidebar = ({
                             </button>
                             <div className="flex flex-col min-w-0 overflow-hidden">
                                 <span className="font-serif font-bold text-sm text-text leading-tight truncate whitespace-nowrap select-none">
-                                    Pamantasan
+                                    Pamantasan Records
                                 </span>
-                                <span className="text-[10px] text-text-muted font-mono leading-none truncate whitespace-nowrap select-none">
-                                    Records System
+                                <span className="text-[10px] text-text-muted font-sans leading-none truncate whitespace-nowrap select-none">
+                                    Document Management System
                                 </span>
                             </div>
                         </div>

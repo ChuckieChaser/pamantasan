@@ -203,9 +203,16 @@ const Menu = ({
     const unsharedDocs = targetSelection.filter((it) => !isDocShared(it));
 
     // Users
+    const isSelfUserCheck = (u) => Boolean(
+        currentUser && (
+            u.id === currentUser.id ||
+            (u.universityId && currentUser.universityId === u.universityId)
+        )
+    );
     const activeUsers = targetSelection.filter(
         (u) => String(u.status || '').toUpperCase() !== constants.USERS_STATUS.SUSPENDED
     );
+    const activeUsersWithoutSelf = activeUsers.filter((u) => !isSelfUserCheck(u));
     const suspendedUsers = targetSelection.filter(
         (u) => String(u.status || '').toUpperCase() === constants.USERS_STATUS.SUSPENDED
     );
@@ -268,923 +275,736 @@ const Menu = ({
                         </span>
                     </div>
                 )}
+
+                {/* 1. DEPARTMENTS */}
                 {resourceName === 'departments' && (
-                <>
-                    {!isMultipleSelected && (
-                        <>
-                            <button
-                                type="button"
-                                onClick={(event) => onActionClick?.(event, 'view_information', item)}
-                                className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                            >
-                                <Eye className={ICON_STYLE} />
-                                <span>View Information</span>
-                            </button>
-                            <button
-                                type="button"
-                                onClick={(event) => onActionClick?.(event, 'view_faculty', item)}
-                                className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                            >
-                                <Users className={ICON_STYLE} />
-                                <span>View User</span>
-                            </button>
-                            <button
-                                type="button"
-                                onClick={(event) => onActionClick?.(event, 'edit', item)}
-                                className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                            >
-                                <Edit3 className={ICON_STYLE} />
-                                <span>Edit</span>
-                            </button>
-                            <div className="h-px bg-surface-border my-1" />
-                        </>
-                    )}
-                    <button
-                        type="button"
-                        onClick={(event) => onActionClick?.(event, 'delete', item)}
-                        className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
-                    >
-                        <Trash2 className={ICON_STYLE} />
-                        <span>{isMultipleSelected ? `Delete (${selectedCount})` : 'Delete'}</span>
-                    </button>
-                </>
-            )}
-
-            {resourceName === 'users' && (
-                <>
-                    {!isMultipleSelected && (
-                        <>
-                            <button
-                                type="button"
-                                onClick={(event) => onActionClick?.(event, 'view_profile', item)}
-                                className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                            >
-                                <User className={ICON_STYLE} />
-                                <span>View Information</span>
-                            </button>
-                            <button
-                                type="button"
-                                onClick={(event) => onActionClick?.(event, 'view_activity', item)}
-                                className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                            >
-                                <Activity className={ICON_STYLE} />
-                                <span>View Activity</span>
-                            </button>
-                            <button
-                                type="button"
-                                onClick={(event) => onActionClick?.(event, 'edit', item)}
-                                className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                            >
-                                <Edit3 className={ICON_STYLE} />
-                                <span>Edit</span>
-                            </button>
-                            <div className="h-px bg-surface-border my-1" />
-                        </>
-                    )}
-                    {isMultipleSelected ? (
-                        activeUsers.length > 0 && suspendedUsers.length > 0 ? (
-                            <>
-                                <button
-                                    type="button"
-                                    onClick={(event) => onActionClick?.(event, 'suspend', activeUsers)}
-                                    className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
-                                >
-                                    <UserX className={ICON_STYLE} />
-                                    <span>{`Suspend (${activeUsers.length})`}</span>
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={(event) => onActionClick?.(event, 'unsuspend', suspendedUsers)}
-                                    className="flex items-center gap-2 px-3 py-2 rounded text-success hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                >
-                                    <UserCheck className={ICON_STYLE} />
-                                    <span>{`Unsuspend (${suspendedUsers.length})`}</span>
-                                </button>
-                            </>
-                        ) : suspendedUsers.length > 0 ? (
-                            <button
-                                type="button"
-                                onClick={(event) => onActionClick?.(event, 'unsuspend', suspendedUsers)}
-                                className="flex items-center gap-2 px-3 py-2 rounded text-success hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                            >
-                                <UserCheck className={ICON_STYLE} />
-                                <span>{`Unsuspend (${selectedCount})`}</span>
-                            </button>
-                        ) : (
-                            <button
-                                type="button"
-                                onClick={(event) => onActionClick?.(event, 'suspend', activeUsers)}
-                                className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
-                            >
-                                <UserX className={ICON_STYLE} />
-                                <span>{`Suspend (${selectedCount})`}</span>
-                            </button>
-                        )
-                    ) : item.status === constants.USERS_STATUS.SUSPENDED ? (
-                        <button
-                            type="button"
-                            onClick={(event) => onActionClick?.(event, 'unsuspend', item)}
-                            className="flex items-center gap-2 px-3 py-2 rounded text-success hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                        >
-                            <UserCheck className={ICON_STYLE} />
-                            <span>Unsuspend</span>
-                        </button>
-                    ) : isSelfUser ? (
-                        <div
-                            className="flex items-center gap-2 px-3 py-2 rounded text-text-muted opacity-40 cursor-not-allowed w-full text-left font-medium select-none"
-                            title="Administrators cannot suspend their own account"
-                        >
-                            <UserX className={ICON_STYLE} />
-                            <span>Suspend (Self)</span>
-                        </div>
-                    ) : (
-                        <button
-                            type="button"
-                            onClick={(event) => onActionClick?.(event, 'suspend', item)}
-                            className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
-                        >
-                            <UserX className={ICON_STYLE} />
-                            <span>Suspend</span>
-                        </button>
-                    )}
-                </>
-            )}
-
-            {resourceName === 'document_requests' && (
-                <>
-                    {isStaff ? (
-                        isMultipleSelected ? (
-                            openDocRequests.length > 0 ? (
-                                <>
-                                    <button
-                                        type="button"
-                                        onClick={(event) => onActionClick?.(event, 'resolve', openDocRequests)}
-                                        className="flex items-center gap-2 px-3 py-2 rounded text-accent hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                    >
-                                        <CheckCircle2 className={ICON_STYLE} />
-                                        <span>{`Resolve (${openDocRequests.length})`}</span>
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={(event) => onActionClick?.(event, 'reject', openDocRequests)}
-                                        className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
-                                    >
-                                        <XCircle className={ICON_STYLE} />
-                                        <span>{`Reject (${openDocRequests.length})`}</span>
-                                    </button>
-                                </>
-                            ) : null
-                        ) : item.status === constants.DOCUMENT_REQUESTS_STATUS.OPEN ? (
-                            <>
-                                <button
-                                    type="button"
-                                    onClick={(event) => onActionClick?.(event, 'resolve', item)}
-                                    className="flex items-center gap-2 px-3 py-2 rounded text-accent hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                >
-                                    <CheckCircle2 className={ICON_STYLE} />
-                                    <span>Resolve Request</span>
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={(event) => onActionClick?.(event, 'reject', item)}
-                                    className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
-                                >
-                                    <XCircle className={ICON_STYLE} />
-                                    <span>Reject Request</span>
-                                </button>
-                            </>
-                        ) : null
-                    ) : null}
-
-                    {isStaff && !isMultipleSelected && <div className="h-px bg-surface-border my-1" />}
-
-                    {!isMultipleSelected && (
-                        <>
-                            <button
-                                type="button"
-                                onClick={(event) => onActionClick?.(event, 'view_information', item)}
-                                className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                            >
-                                <Info className={ICON_STYLE} />
-                                <span>View Information</span>
-                            </button>
-                            <button
-                                type="button"
-                                onClick={(event) => onActionClick?.(event, 'view_message', item)}
-                                className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                            >
-                                <MessageSquare className={ICON_STYLE} />
-                                <span>View Message</span>
-                            </button>
-                            <button
-                                type="button"
-                                onClick={(event) => onActionClick?.(event, 'view_attachment', item)}
-                                className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                            >
-                                <Paperclip className={ICON_STYLE} />
-                                <span>View Attachment</span>
-                            </button>
-                        </>
-                    )}
-
-                    {(!isStaff || isMultipleSelected) && item.status === constants.DOCUMENT_REQUESTS_STATUS.OPEN && (
-                        <>
-                            {!isMultipleSelected && <div className="h-px bg-surface-border my-1" />}
-                            <button
-                                type="button"
-                                onClick={(event) => onActionClick?.(event, 'delete', item)}
-                                className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
-                            >
-                                <Trash2 className={ICON_STYLE} />
-                                <span>{isMultipleSelected ? `Delete (${selectedCount})` : 'Delete Request'}</span>
-                            </button>
-                        </>
-                    )}
-                </>
-            )}
-
-            {resourceName === 'coordinator_requests' && (
-                <>
-                    {isAdmin && (
-                        isMultipleSelected ? (
-                            pendingCoordRequests.length > 0 ? (
-                                <>
-                                    <button
-                                        type="button"
-                                        onClick={(event) => onActionClick?.(event, 'approve', pendingCoordRequests)}
-                                        className="flex items-center gap-2 px-3 py-2 rounded text-accent hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                    >
-                                        <CheckCircle2 className={ICON_STYLE} />
-                                        <span>{`Approve (${pendingCoordRequests.length})`}</span>
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={(event) => onActionClick?.(event, 'reject', pendingCoordRequests)}
-                                        className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
-                                    >
-                                        <XCircle className={ICON_STYLE} />
-                                        <span>{`Reject (${pendingCoordRequests.length})`}</span>
-                                    </button>
-                                </>
-                            ) : null
-                        ) : item.status === constants.COORDINATOR_REQUESTS_STATUS.PENDING ? (
-                            <>
-                                <button
-                                    type="button"
-                                    onClick={(event) => onActionClick?.(event, 'approve', item)}
-                                    className="flex items-center gap-2 px-3 py-2 rounded text-accent hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                >
-                                    <CheckCircle2 className={ICON_STYLE} />
-                                    <span>Approve</span>
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={(event) => onActionClick?.(event, 'reject', item)}
-                                    className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
-                                >
-                                    <XCircle className={ICON_STYLE} />
-                                    <span>Reject</span>
-                                </button>
-                                <div className="h-px bg-surface-border my-1" />
-                            </>
-                        ) : null
-                    )}
-
-                    {!isMultipleSelected && (
-                        <button
-                            type="button"
-                            onClick={(event) => onActionClick?.(event, 'view_payload', item)}
-                            className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                        >
-                            <Eye className={ICON_STYLE} />
-                            <span>View Payload</span>
-                        </button>
-                    )}
-
-                    {!isAdmin && item.status === constants.COORDINATOR_REQUESTS_STATUS.PENDING && (
-                        <>
-                            {!isMultipleSelected && <div className="h-px bg-surface-border my-1" />}
-                            <button
-                                type="button"
-                                onClick={(event) => onActionClick?.(event, 'delete', item)}
-                                className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
-                            >
-                                <Trash2 className={ICON_STYLE} />
-                                <span>{isMultipleSelected ? `Delete (${selectedCount})` : 'Delete Request'}</span>
-                            </button>
-                        </>
-                    )}
-                </>
-            )}
-
-            {(resourceName === 'documents' || resourceName === 'archives' || resourceName === 'my_requests') && (() => {
-                const targetType = isFolder ? 'Folder' : 'File';
-
-                // MEMBER ROLE: Open, View Info, View Version, Download
-                if (isMember) {
-                    return (
-                        <>
-                            {!isMultipleSelected && (
-                                <>
-                                    {!isArchived && (
-                                        <button
-                                            type="button"
-                                            onClick={(event) => onActionClick?.(event, 'open', item)}
-                                            className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                        >
-                                            {isFolder ? <Folder className={ICON_STYLE} /> : <FileText className={ICON_STYLE} />}
-                                            <span>{`Open ${targetType}`}</span>
-                                        </button>
-                                    )}
-
-                                    <button
-                                        type="button"
-                                        onClick={(event) => onActionClick?.(event, 'view_information', item)}
-                                        className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                    >
-                                        <Info className={ICON_STYLE} />
-                                        <span>View Information</span>
-                                    </button>
-
-                                    {!isFolder && (
-                                        <button
-                                            type="button"
-                                            onClick={(event) => onActionClick?.(event, 'view_version', item)}
-                                            className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                        >
-                                            <Layers className={ICON_STYLE} />
-                                            <span>View Version</span>
-                                        </button>
-                                    )}
-
-                                    <div className="h-px bg-surface-border my-1" />
-                                </>
-                            )}
-
-                            <button
-                                type="button"
-                                onClick={(event) => onActionClick?.(event, 'download', isMultipleSelected ? targetSelection : item)}
-                                className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                            >
-                                <Download className={ICON_STYLE} />
-                                <span>{isMultipleSelected ? `Download All (${selectedCount})` : `Download ${targetType}`}</span>
-                            </button>
-                        </>
-                    );
-                }
-
-                // OFFICER ROLE: Approve/Unapprove + Reject, View Info, View Version/Content, Download
-                if (isOfficer) {
-                    const isPending = item.status === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL;
-                    return (
-                        <>
-                            {!isMultipleSelected && !isArchived && (
-                                <button
-                                    type="button"
-                                    onClick={(event) => onActionClick?.(event, 'open', item)}
-                                    className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                >
-                                    {isFolder ? <Folder className={ICON_STYLE} /> : <FileText className={ICON_STYLE} />}
-                                    <span>{`Open ${targetType}`}</span>
-                                </button>
-                            )}
-
-                            {isMultipleSelected ? (
-                                approvedDocs.length === targetSelection.length ? (
-                                    <button
-                                        type="button"
-                                        onClick={(event) => onActionClick?.(event, 'unapprove', approvedDocs)}
-                                        className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                    >
-                                        <RotateCcw className={ICON_STYLE} />
-                                        <span>{`Unapprove (${selectedCount})`}</span>
-                                    </button>
-                                ) : rejectedDocs.length === targetSelection.length ? (
-                                    <button
-                                        type="button"
-                                        onClick={(event) => onActionClick?.(event, 'unreject', rejectedDocs)}
-                                        className="flex items-center gap-2 px-3 py-2 rounded text-accent hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                    >
-                                        <RotateCcw className={ICON_STYLE} />
-                                        <span>{`Unreject (${selectedCount})`}</span>
-                                    </button>
-                                ) : pendingDocs.length === targetSelection.length ? (
-                                    <>
-                                        <button
-                                            type="button"
-                                            onClick={(event) => onActionClick?.(event, 'approve', pendingDocs)}
-                                            className="flex items-center gap-2 px-3 py-2 rounded text-accent hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                        >
-                                            <Check className={ICON_STYLE} />
-                                            <span>{`Approve (${selectedCount})`}</span>
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={(event) => onActionClick?.(event, 'reject', pendingDocs)}
-                                            className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
-                                        >
-                                            <XCircle className={ICON_STYLE} />
-                                            <span>{`Reject (${selectedCount})`}</span>
-                                        </button>
-                                    </>
-                                ) : (
-                                    <>
-                                        {pendingDocs.length > 0 && (
-                                            <>
-                                                <button
-                                                    type="button"
-                                                    onClick={(event) => onActionClick?.(event, 'approve', pendingDocs)}
-                                                    className="flex items-center gap-2 px-3 py-2 rounded text-accent hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                                >
-                                                    <Check className={ICON_STYLE} />
-                                                    <span>{`Approve Pending (${pendingDocs.length})`}</span>
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    onClick={(event) => onActionClick?.(event, 'reject', pendingDocs)}
-                                                    className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
-                                                >
-                                                    <XCircle className={ICON_STYLE} />
-                                                    <span>{`Reject Pending (${pendingDocs.length})`}</span>
-                                                </button>
-                                            </>
-                                        )}
-                                        {approvedDocs.length > 0 && (
-                                            <button
-                                                type="button"
-                                                onClick={(event) => onActionClick?.(event, 'unapprove', approvedDocs)}
-                                                className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                            >
-                                                <RotateCcw className={ICON_STYLE} />
-                                                <span>{`Unapprove Approved (${approvedDocs.length})`}</span>
-                                            </button>
-                                        )}
-                                        {rejectedDocs.length > 0 && (
-                                            <button
-                                                type="button"
-                                                onClick={(event) => onActionClick?.(event, 'unreject', rejectedDocs)}
-                                                className="flex items-center gap-2 px-3 py-2 rounded text-accent hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                            >
-                                                <RotateCcw className={ICON_STYLE} />
-                                                <span>{`Unreject Rejected (${rejectedDocs.length})`}</span>
-                                            </button>
-                                        )}
-                                    </>
-                                )
-                            ) : (() => {
-                                const effStatus = getItemEffectiveStatus(item);
-                                if (effStatus === constants.DOCUMENT_SHARES_STATUS.PUBLISHED || effStatus === constants.DOCUMENT_SHARES_STATUS.STASHED) {
-                                    return null;
-                                }
-                                if (effStatus === constants.DOCUMENT_SHARES_STATUS.REJECTED) {
-                                    return (
-                                        <button
-                                            type="button"
-                                            onClick={(event) => onActionClick?.(event, 'unreject', item)}
-                                            className="flex items-center gap-2 px-3 py-2 rounded text-accent hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                        >
-                                            <RotateCcw className={ICON_STYLE} />
-                                            <span>{`Unreject ${targetType}`}</span>
-                                        </button>
-                                    );
-                                }
-                                if (effStatus === constants.DOCUMENT_SHARES_STATUS.APPROVED) {
-                                    return (
-                                        <button
-                                            type="button"
-                                            onClick={(event) => onActionClick?.(event, 'unapprove', item)}
-                                            className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                        >
-                                            <RotateCcw className={ICON_STYLE} />
-                                            <span>{`Unapprove ${targetType}`}</span>
-                                        </button>
-                                    );
-                                }
-                                return (
-                                    <>
-                                        <button
-                                            type="button"
-                                            onClick={(event) => onActionClick?.(event, 'approve', item)}
-                                            className="flex items-center gap-2 px-3 py-2 rounded text-accent hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                        >
-                                            <Check className={ICON_STYLE} />
-                                            <span>{`Approve ${targetType}`}</span>
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={(event) => onActionClick?.(event, 'reject', item)}
-                                            className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
-                                        >
-                                            <XCircle className={ICON_STYLE} />
-                                            <span>{`Reject ${targetType}`}</span>
-                                        </button>
-                                    </>
-                                );
-                            })()}
-
-                            {!isMultipleSelected && (
-                                <>
-                                    <div className="h-px bg-surface-border my-1" />
-
-                                    <button
-                                        type="button"
-                                        onClick={(event) => onActionClick?.(event, 'view_information', item)}
-                                        className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                    >
-                                        <Info className={ICON_STYLE} />
-                                        <span>View Information</span>
-                                    </button>
-
-                                    <button
-                                        type="button"
-                                        onClick={(event) => onActionClick?.(event, isFolder ? 'view_content' : 'view_version', item)}
-                                        className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                    >
-                                        {isFolder ? <Folder className={ICON_STYLE} /> : <Layers className={ICON_STYLE} />}
-                                        <span>{isFolder ? 'View Content' : 'View Version'}</span>
-                                    </button>
-                                </>
-                            )}
-
-                            <div className="h-px bg-surface-border my-1" />
-
-                            <button
-                                type="button"
-                                onClick={(event) => onActionClick?.(event, 'download', isMultipleSelected ? targetSelection : item)}
-                                className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                            >
-                                <Download className={ICON_STYLE} />
-                                <span>{isMultipleSelected ? `Download All (${selectedCount})` : `Download ${targetType}`}</span>
-                            </button>
-                        </>
-                    );
-                }
-
-                // DIRECTOR ROLE: Publish/Unpublish + Stash/Unstash, View Info, View Version/Content, Download
-                if (isDirector) {
-                    const isStashed = item.status === constants.DOCUMENT_SHARES_STATUS.STASHED;
-                    const isPublished = item.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED;
-
-                    return (
-                        <>
-                            {!isMultipleSelected && !isArchived && (
-                                <button
-                                    type="button"
-                                    onClick={(event) => onActionClick?.(event, 'open', item)}
-                                    className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                >
-                                    {isFolder ? <Folder className={ICON_STYLE} /> : <FileText className={ICON_STYLE} />}
-                                    <span>{`Open ${targetType}`}</span>
-                                </button>
-                            )}
-
-                            {isMultipleSelected ? (
-                                publishedDocs.length === targetSelection.length ? (
-                                    <button
-                                        type="button"
-                                        onClick={(event) => onActionClick?.(event, 'unpublish', publishedDocs)}
-                                        className="flex items-center gap-2 px-3 py-2 rounded text-warning hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                    >
-                                        <EyeOff className={ICON_STYLE} />
-                                        <span>{`Unpublish (${selectedCount})`}</span>
-                                    </button>
-                                ) : stashedDocs.length === targetSelection.length ? (
-                                    <button
-                                        type="button"
-                                        onClick={(event) => onActionClick?.(event, 'unstash', stashedDocs)}
-                                        className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                    >
-                                        <RotateCcw className={ICON_STYLE} />
-                                        <span>{`Unstash (${selectedCount})`}</span>
-                                    </button>
-                                ) : unpublishedDocs.length === targetSelection.length ? (
-                                    <>
-                                        <button
-                                            type="button"
-                                            onClick={(event) => onActionClick?.(event, 'publish', unpublishedDocs)}
-                                            className="flex items-center gap-2 px-3 py-2 rounded text-accent hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                        >
-                                            <Globe className={ICON_STYLE} />
-                                            <span>{`Publish (${selectedCount})`}</span>
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={(event) => onActionClick?.(event, 'stash', unpublishedDocs)}
-                                            className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                        >
-                                            <Layers className={ICON_STYLE} />
-                                            <span>{`Stash (${selectedCount})`}</span>
-                                        </button>
-                                    </>
-                                ) : (
-                                    <>
-                                        {publishedDocs.length > 0 && (
-                                            <button
-                                                type="button"
-                                                onClick={(event) => onActionClick?.(event, 'unpublish', publishedDocs)}
-                                                className="flex items-center gap-2 px-3 py-2 rounded text-warning hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                            >
-                                                <EyeOff className={ICON_STYLE} />
-                                                <span>{`Unpublish Published (${publishedDocs.length})`}</span>
-                                            </button>
-                                        )}
-                                        {unpublishedDocs.length > 0 && (
-                                            <>
-                                                <button
-                                                    type="button"
-                                                    onClick={(event) => onActionClick?.(event, 'publish', unpublishedDocs)}
-                                                    className="flex items-center gap-2 px-3 py-2 rounded text-accent hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                                >
-                                                    <Globe className={ICON_STYLE} />
-                                                    <span>{`Publish (${unpublishedDocs.length})`}</span>
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    onClick={(event) => onActionClick?.(event, 'stash', unpublishedDocs)}
-                                                    className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                                >
-                                                    <Layers className={ICON_STYLE} />
-                                                    <span>{`Stash (${unpublishedDocs.length})`}</span>
-                                                </button>
-                                            </>
-                                        )}
-                                        {stashedDocs.length > 0 && (
-                                            <button
-                                                type="button"
-                                                onClick={(event) => onActionClick?.(event, 'unstash', stashedDocs)}
-                                                className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                            >
-                                                <RotateCcw className={ICON_STYLE} />
-                                                <span>{`Unstash Stashed (${stashedDocs.length})`}</span>
-                                            </button>
-                                        )}
-                                    </>
-                                )
-                            ) : isPublished ? (
-                                <button
-                                    type="button"
-                                    onClick={(event) => onActionClick?.(event, 'unpublish', item)}
-                                    className="flex items-center gap-2 px-3 py-2 rounded text-warning hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                >
-                                    <EyeOff className={ICON_STYLE} />
-                                    <span>{`Unpublish ${targetType}`}</span>
-                                </button>
-                            ) : (
-                                <>
-                                    <button
-                                        type="button"
-                                        onClick={(event) => onActionClick?.(event, 'publish', item)}
-                                        className="flex items-center gap-2 px-3 py-2 rounded text-accent hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                    >
-                                        <Globe className={ICON_STYLE} />
-                                        <span>{`Publish ${targetType}`}</span>
-                                    </button>
-                                    {isStashed ? (
-                                        <button
-                                            type="button"
-                                            onClick={(event) => onActionClick?.(event, 'unstash', item)}
-                                            className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                        >
-                                            <RotateCcw className={ICON_STYLE} />
-                                            <span>{`Unstash ${targetType}`}</span>
-                                        </button>
-                                    ) : (
-                                        <button
-                                            type="button"
-                                            onClick={(event) => onActionClick?.(event, 'stash', item)}
-                                            className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                        >
-                                            <Layers className={ICON_STYLE} />
-                                            <span>{`Stash ${targetType}`}</span>
-                                        </button>
-                                    )}
-                                </>
-                            )}
-
-                            {!isMultipleSelected && (
-                                <>
-                                    <div className="h-px bg-surface-border my-1" />
-
-                                    <button
-                                        type="button"
-                                        onClick={(event) => onActionClick?.(event, 'view_information', item)}
-                                        className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                    >
-                                        <Info className={ICON_STYLE} />
-                                        <span>View Information</span>
-                                    </button>
-
-                                    <button
-                                        type="button"
-                                        onClick={(event) => onActionClick?.(event, isFolder ? 'view_content' : 'view_version', item)}
-                                        className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                    >
-                                        {isFolder ? <Folder className={ICON_STYLE} /> : <Layers className={ICON_STYLE} />}
-                                        <span>{isFolder ? 'View Content' : 'View Version'}</span>
-                                    </button>
-                                </>
-                            )}
-
-                            <div className="h-px bg-surface-border my-1" />
-
-                            <button
-                                type="button"
-                                onClick={(event) => onActionClick?.(event, 'download', isMultipleSelected ? targetSelection : item)}
-                                className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                            >
-                                <Download className={ICON_STYLE} />
-                                <span>{isMultipleSelected ? `Download All (${selectedCount})` : `Download ${targetType}`}</span>
-                            </button>
-                        </>
-                    );
-                }
-
-                // ADMIN & COORDINATOR (STAFF): Open, Share, View Info, View Content/Version, View Share, Edit, Archive/Unarchive, Delete
-                return (
                     <>
-                        {!isMultipleSelected && !isArchived && (
-                            <button
-                                type="button"
-                                onClick={(event) => onActionClick?.(event, 'open', item)}
-                                className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                            >
-                                {isFolder ? <Folder className={ICON_STYLE} /> : <FileText className={ICON_STYLE} />}
-                                <span>{`Open ${targetType}`}</span>
-                            </button>
-                        )}
-
-                        {!isArchived && (
-                            isMultipleSelected ? (
-                                unsharedDocs.length > 0 && sharedDocs.length > 0 ? (
-                                    <>
-                                        <button
-                                            type="button"
-                                            onClick={(event) => onActionClick?.(event, 'share', unsharedDocs)}
-                                            className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                        >
-                                            <Share2 className={ICON_STYLE} />
-                                            <span>{`Share (${unsharedDocs.length})`}</span>
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={(event) => onActionClick?.(event, 'unshare', sharedDocs)}
-                                            className="flex items-center gap-2 px-3 py-2 rounded text-warning hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                        >
-                                            <RotateCcw className={ICON_STYLE} />
-                                            <span>{`Unshare (${sharedDocs.length})`}</span>
-                                        </button>
-                                    </>
-                                ) : sharedDocs.length > 0 ? (
-                                    <>
-                                        <button
-                                            type="button"
-                                            onClick={(event) => onActionClick?.(event, 'unshare', sharedDocs)}
-                                            className="flex items-center gap-2 px-3 py-2 rounded text-warning hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                        >
-                                            <RotateCcw className={ICON_STYLE} />
-                                            <span>{`Unshare (${selectedCount})`}</span>
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={(event) => onActionClick?.(event, 'share', sharedDocs)}
-                                            className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                        >
-                                            <Share2 className={ICON_STYLE} />
-                                            <span>{`Share (${selectedCount})`}</span>
-                                        </button>
-                                    </>
-                                ) : (
-                                    <button
-                                        type="button"
-                                        onClick={(event) => onActionClick?.(event, 'share', unsharedDocs)}
-                                        className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                    >
-                                        <Share2 className={ICON_STYLE} />
-                                        <span>{`Share (${selectedCount})`}</span>
-                                    </button>
-                                )
-                            ) : (
-                                <>
-                                    <button
-                                        type="button"
-                                        onClick={(event) => onActionClick?.(event, 'share', item)}
-                                        className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                    >
-                                        <Share2 className={ICON_STYLE} />
-                                        <span>{`Share ${targetType}`}</span>
-                                    </button>
-                                    {isDocShared(item) && (
-                                        <button
-                                            type="button"
-                                            onClick={(event) => onActionClick?.(event, 'unshare', isMultipleSelected ? targetSelection : item)}
-                                            className="flex items-center gap-2 px-3 py-2 rounded text-warning hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                        >
-                                            <RotateCcw className={ICON_STYLE} />
-                                            <span>{isMultipleSelected ? `Unshare (${selectedCount})` : `Unshare ${targetType}`}</span>
-                                        </button>
-                                    )}
-                                </>
-                            )
-                        )}
-
+                        {/* Minor Actions (Flow action at top) */}
                         {!isMultipleSelected && (
                             <>
-                                {!isArchived && <div className="h-px bg-surface-border my-1" />}
-
-                                <button
-                                    type="button"
-                                    onClick={(event) => onActionClick?.(event, 'view_information', item)}
-                                    className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                >
-                                    <Info className={ICON_STYLE} />
-                                    <span>View Information</span>
-                                </button>
-
-                                <button
-                                    type="button"
-                                    onClick={(event) => onActionClick?.(event, isFolder ? 'view_content' : 'view_version', item)}
-                                    className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                >
-                                    {isFolder ? <Folder className={ICON_STYLE} /> : <Layers className={ICON_STYLE} />}
-                                    <span>{isFolder ? 'View Content' : 'View Version'}</span>
-                                </button>
-
-                                <button
-                                    type="button"
-                                    onClick={(event) => onActionClick?.(event, 'view_share', item)}
-                                    className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                >
-                                    <Share2 className={ICON_STYLE} />
-                                    <span>View Share</span>
-                                </button>
-
                                 <button
                                     type="button"
                                     onClick={(event) => onActionClick?.(event, 'edit', item)}
                                     className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
                                 >
                                     <Edit3 className={ICON_STYLE} />
-                                    <span>{`Edit ${targetType}`}</span>
+                                    <span>Edit Department</span>
                                 </button>
+                                <button
+                                    type="button"
+                                    onClick={(event) => onActionClick?.(event, 'view_information', item)}
+                                    className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                >
+                                    <Eye className={ICON_STYLE} />
+                                    <span>View Information</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={(event) => onActionClick?.(event, 'view_faculty', item)}
+                                    className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                >
+                                    <Users className={ICON_STYLE} />
+                                    <span>View User</span>
+                                </button>
+                                <div className="h-px bg-surface-border my-1" />
                             </>
                         )}
 
+                        {/* Destructive Action */}
                         <button
                             type="button"
-                            onClick={(event) => onActionClick?.(event, 'download', isMultipleSelected ? targetSelection : item)}
-                            className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                            onClick={(event) => onActionClick?.(event, 'delete', item)}
+                            className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
                         >
-                            <Download className={ICON_STYLE} />
-                            <span>{isMultipleSelected ? `Download All (${selectedCount})` : `Download ${targetType}`}</span>
+                            <Trash2 className={ICON_STYLE} />
+                            <span>{isMultipleSelected ? `Delete (${selectedCount})` : 'Delete Department'}</span>
                         </button>
+                    </>
+                )}
 
-                        <div className="h-px bg-surface-border my-1" />
+                {/* 2. USERS */}
+                {resourceName === 'users' && (() => {
+                    const hasPrimaryUnsuspend = isMultipleSelected
+                        ? suspendedUsers.length > 0
+                        : item.status === constants.USERS_STATUS.SUSPENDED;
 
-                        {isArchived ? (
+                    const canSuspend = isMultipleSelected
+                        ? activeUsersWithoutSelf.length > 0
+                        : (!isSelfUser && item.status !== constants.USERS_STATUS.SUSPENDED);
+
+                    return (
+                        <>
+                            {/* Primary Action (Top): Unsuspend */}
+                            {hasPrimaryUnsuspend && (
+                                <button
+                                    type="button"
+                                    onClick={(event) => onActionClick?.(event, 'unsuspend', isMultipleSelected ? suspendedUsers : item)}
+                                    className="flex items-center gap-2 px-3 py-2 rounded text-success hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                >
+                                    <UserCheck className={ICON_STYLE} />
+                                    <span>{isMultipleSelected ? `Unsuspend (${suspendedUsers.length})` : 'Unsuspend'}</span>
+                                </button>
+                            )}
+
+                            {hasPrimaryUnsuspend && <div className="h-px bg-surface-border my-1" />}
+
+                            {/* Minor Actions: Flow at top, then utilities */}
+                            {!isMultipleSelected && (
+                                <>
+                                    <button
+                                        type="button"
+                                        onClick={(event) => onActionClick?.(event, 'edit', item)}
+                                        className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                    >
+                                        <Edit3 className={ICON_STYLE} />
+                                        <span>Edit</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={(event) => onActionClick?.(event, 'view_profile', item)}
+                                        className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                    >
+                                        <User className={ICON_STYLE} />
+                                        <span>View Information</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={(event) => onActionClick?.(event, 'view_activity', item)}
+                                        className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                    >
+                                        <Activity className={ICON_STYLE} />
+                                        <span>View Activity</span>
+                                    </button>
+                                </>
+                            )}
+
+                            {/* Destructive Action (Bottom): Suspend (HIDDEN for self or unavailable) */}
+                            {canSuspend && (
+                                <>
+                                    <div className="h-px bg-surface-border my-1" />
+                                    <button
+                                        type="button"
+                                        onClick={(event) => onActionClick?.(event, 'suspend', isMultipleSelected ? activeUsersWithoutSelf : item)}
+                                        className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
+                                    >
+                                        <UserX className={ICON_STYLE} />
+                                        <span>{isMultipleSelected ? `Suspend (${activeUsersWithoutSelf.length})` : 'Suspend'}</span>
+                                    </button>
+                                </>
+                            )}
+                        </>
+                    );
+                })()}
+
+                {/* 3. DOCUMENT REQUESTS */}
+                {resourceName === 'document_requests' && (() => {
+                    const hasPrimaryResolve = isStaff && (isMultipleSelected ? openDocRequests.length > 0 : item.status === constants.DOCUMENT_REQUESTS_STATUS.OPEN);
+                    const canDelete = isMultipleSelected
+                        ? (openDocRequests.length > 0 && (!isStaff || isAdmin))
+                        : (item.status === constants.DOCUMENT_REQUESTS_STATUS.OPEN && (!isStaff || isAdmin));
+                    const canReject = isStaff && (isMultipleSelected ? openDocRequests.length > 0 : item.status === constants.DOCUMENT_REQUESTS_STATUS.OPEN);
+
+                    return (
+                        <>
+                            {/* Primary Action (Top): Resolve Request */}
+                            {hasPrimaryResolve && (
+                                <button
+                                    type="button"
+                                    onClick={(event) => onActionClick?.(event, 'resolve', isMultipleSelected ? openDocRequests : item)}
+                                    className="flex items-center gap-2 px-3 py-2 rounded text-accent hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                >
+                                    <CheckCircle2 className={ICON_STYLE} />
+                                    <span>{isMultipleSelected ? `Resolve (${openDocRequests.length})` : 'Resolve Request'}</span>
+                                </button>
+                            )}
+
+                            {hasPrimaryResolve && <div className="h-px bg-surface-border my-1" />}
+
+                            {/* Minor Actions: Flow at top, then utilities */}
+                            {!isMultipleSelected && (
+                                <>
+                                    <button
+                                        type="button"
+                                        onClick={(event) => onActionClick?.(event, 'view_request', item)}
+                                        className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                    >
+                                        <Eye className={ICON_STYLE} />
+                                        <span>Open Request</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={(event) => onActionClick?.(event, 'view_information', item)}
+                                        className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                    >
+                                        <Info className={ICON_STYLE} />
+                                        <span>View Information</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={(event) => onActionClick?.(event, 'view_message', item)}
+                                        className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                    >
+                                        <MessageSquare className={ICON_STYLE} />
+                                        <span>View Message</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={(event) => onActionClick?.(event, 'view_attachment', item)}
+                                        className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                    >
+                                        <Paperclip className={ICON_STYLE} />
+                                        <span>View Attachment</span>
+                                    </button>
+                                </>
+                            )}
+
+                            {/* Destructive Actions (Bottom): Reject & Delete */}
+                            {(canReject || canDelete) && (
+                                <>
+                                    <div className="h-px bg-surface-border my-1" />
+                                    {canReject && (
+                                        <button
+                                            type="button"
+                                            onClick={(event) => onActionClick?.(event, 'reject', isMultipleSelected ? openDocRequests : item)}
+                                            className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
+                                        >
+                                            <XCircle className={ICON_STYLE} />
+                                            <span>{isMultipleSelected ? `Reject (${openDocRequests.length})` : 'Reject Request'}</span>
+                                        </button>
+                                    )}
+                                    {canDelete && (
+                                        <button
+                                            type="button"
+                                            onClick={(event) => onActionClick?.(event, 'delete', isMultipleSelected ? openDocRequests : item)}
+                                            className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
+                                        >
+                                            <Trash2 className={ICON_STYLE} />
+                                            <span>{isMultipleSelected ? `Delete (${openDocRequests.length})` : 'Delete Request'}</span>
+                                        </button>
+                                    )}
+                                </>
+                            )}
+                        </>
+                    );
+                })()}
+
+                {/* 4. COORDINATOR REQUESTS */}
+                {resourceName === 'coordinator_requests' && (() => {
+                    const hasPrimaryApprove = isAdmin && (isMultipleSelected ? pendingCoordRequests.length > 0 : item.status === constants.COORDINATOR_REQUESTS_STATUS.PENDING);
+                    const canReject = isAdmin && (isMultipleSelected ? pendingCoordRequests.length > 0 : item.status === constants.COORDINATOR_REQUESTS_STATUS.PENDING);
+                    const canDelete = !isAdmin && (isMultipleSelected ? pendingCoordRequests.length > 0 : item.status === constants.COORDINATOR_REQUESTS_STATUS.PENDING);
+
+                    return (
+                        <>
+                            {/* Primary Action (Top): Approve */}
+                            {hasPrimaryApprove && (
+                                <button
+                                    type="button"
+                                    onClick={(event) => onActionClick?.(event, 'approve', isMultipleSelected ? pendingCoordRequests : item)}
+                                    className="flex items-center gap-2 px-3 py-2 rounded text-accent hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                >
+                                    <CheckCircle2 className={ICON_STYLE} />
+                                    <span>{isMultipleSelected ? `Approve (${pendingCoordRequests.length})` : 'Approve'}</span>
+                                </button>
+                            )}
+
+                            {hasPrimaryApprove && <div className="h-px bg-surface-border my-1" />}
+
+                            {/* Minor Action: View Payload */}
+                            {!isMultipleSelected && (
+                                <button
+                                    type="button"
+                                    onClick={(event) => onActionClick?.(event, 'view_payload', item)}
+                                    className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                >
+                                    <Eye className={ICON_STYLE} />
+                                    <span>View Payload</span>
+                                </button>
+                            )}
+
+                            {/* Destructive Actions (Bottom): Reject (Admin) or Delete (Coordinator) */}
+                            {(canReject || canDelete) && (
+                                <>
+                                    <div className="h-px bg-surface-border my-1" />
+                                    {canReject && (
+                                        <button
+                                            type="button"
+                                            onClick={(event) => onActionClick?.(event, 'reject', isMultipleSelected ? pendingCoordRequests : item)}
+                                            className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
+                                        >
+                                            <XCircle className={ICON_STYLE} />
+                                            <span>{isMultipleSelected ? `Reject (${pendingCoordRequests.length})` : 'Reject'}</span>
+                                        </button>
+                                    )}
+                                    {canDelete && (
+                                        <button
+                                            type="button"
+                                            onClick={(event) => onActionClick?.(event, 'delete', isMultipleSelected ? pendingCoordRequests : item)}
+                                            className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
+                                        >
+                                            <Trash2 className={ICON_STYLE} />
+                                            <span>{isMultipleSelected ? `Delete (${pendingCoordRequests.length})` : 'Delete Request'}</span>
+                                        </button>
+                                    )}
+                                </>
+                            )}
+                        </>
+                    );
+                })()}
+
+                {/* 5. DOCUMENTS, ARCHIVES, MY_REQUESTS */}
+                {(resourceName === 'documents' || resourceName === 'archives' || resourceName === 'my_requests') && (() => {
+                    const targetType = isFolder ? 'Folder' : 'File';
+                    const effStatus = getItemEffectiveStatus(item);
+                    const isShared = isDocShared(item);
+                    const isPublished = effStatus === constants.DOCUMENT_SHARES_STATUS.PUBLISHED;
+                    const isStashed = effStatus === constants.DOCUMENT_SHARES_STATUS.STASHED;
+                    const isApproved = effStatus === constants.DOCUMENT_SHARES_STATUS.APPROVED;
+                    const isRejected = effStatus === constants.DOCUMENT_SHARES_STATUS.REJECTED;
+                    const isPending = !effStatus || effStatus === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL || effStatus === 'PENDING';
+
+                    // MEMBER ROLE: Open, Download, View Info, View Version
+                    if (isMember) {
+                        return (
                             <>
+                                {!isMultipleSelected && !isArchived && (
+                                    <button
+                                        type="button"
+                                        onClick={(event) => onActionClick?.(event, 'open', item)}
+                                        className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                    >
+                                        {isFolder ? <Folder className={ICON_STYLE} /> : <FileText className={ICON_STYLE} />}
+                                        <span>{`Open ${targetType}`}</span>
+                                    </button>
+                                )}
+
+                                <button
+                                    type="button"
+                                    onClick={(event) => onActionClick?.(event, 'download', isMultipleSelected ? targetSelection : item)}
+                                    className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                >
+                                    <Download className={ICON_STYLE} />
+                                    <span>{isMultipleSelected ? `Download All (${selectedCount})` : `Download ${targetType}`}</span>
+                                </button>
+
+                                {!isMultipleSelected && (
+                                    <>
+                                        <div className="h-px bg-surface-border my-1" />
+                                        <button
+                                            type="button"
+                                            onClick={(event) => onActionClick?.(event, 'view_information', item)}
+                                            className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                        >
+                                            <Info className={ICON_STYLE} />
+                                            <span>View Information</span>
+                                        </button>
+                                        {!isFolder && (
+                                            <button
+                                                type="button"
+                                                onClick={(event) => onActionClick?.(event, 'view_version', item)}
+                                                className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                            >
+                                                <Layers className={ICON_STYLE} />
+                                                <span>View Version</span>
+                                            </button>
+                                        )}
+                                    </>
+                                )}
+                            </>
+                        );
+                    }
+
+                    // OFFICER ROLE:
+                    // Primary: Approve
+                    // Minor: Open, Unapprove, Unreject, Download, View Info, View Version
+                    // Destructive: Reject
+                    // Note: If published or stashed, Officer approval actions are hidden!
+                    if (isOfficer) {
+                        const canOfficerApprove = isMultipleSelected ? pendingDocs.length > 0 : (isPending && !isPublished && !isStashed);
+                        const canOfficerReject = isMultipleSelected ? pendingDocs.length > 0 : (isPending && !isPublished && !isStashed);
+                        const canOfficerUnapprove = isMultipleSelected ? approvedDocs.length > 0 : (isApproved && !isPublished && !isStashed);
+                        const canOfficerUnreject = isMultipleSelected ? rejectedDocs.length > 0 : (isRejected && !isPublished && !isStashed);
+
+                        return (
+                            <>
+                                {/* Primary Action (Top): Approve */}
+                                {canOfficerApprove && (
+                                    <button
+                                        type="button"
+                                        onClick={(event) => onActionClick?.(event, 'approve', isMultipleSelected ? pendingDocs : item)}
+                                        className="flex items-center gap-2 px-3 py-2 rounded text-accent hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                    >
+                                        <Check className={ICON_STYLE} />
+                                        <span>{isMultipleSelected ? `Approve (${pendingDocs.length})` : `Approve ${targetType}`}</span>
+                                    </button>
+                                )}
+
+                                {canOfficerApprove && <div className="h-px bg-surface-border my-1" />}
+
+                                {/* Minor Actions: Flow at top */}
+                                {!isMultipleSelected && !isArchived && (
+                                    <button
+                                        type="button"
+                                        onClick={(event) => onActionClick?.(event, 'open', item)}
+                                        className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                    >
+                                        {isFolder ? <Folder className={ICON_STYLE} /> : <FileText className={ICON_STYLE} />}
+                                        <span>{`Open ${targetType}`}</span>
+                                    </button>
+                                )}
+
+                                {canOfficerUnapprove && (
+                                    <button
+                                        type="button"
+                                        onClick={(event) => onActionClick?.(event, 'unapprove', isMultipleSelected ? approvedDocs : item)}
+                                        className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                    >
+                                        <RotateCcw className={ICON_STYLE} />
+                                        <span>{isMultipleSelected ? `Unapprove (${approvedDocs.length})` : `Unapprove ${targetType}`}</span>
+                                    </button>
+                                )}
+
+                                {canOfficerUnreject && (
+                                    <button
+                                        type="button"
+                                        onClick={(event) => onActionClick?.(event, 'unreject', isMultipleSelected ? rejectedDocs : item)}
+                                        className="flex items-center gap-2 px-3 py-2 rounded text-accent hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                    >
+                                        <RotateCcw className={ICON_STYLE} />
+                                        <span>{isMultipleSelected ? `Unreject (${rejectedDocs.length})` : `Unreject ${targetType}`}</span>
+                                    </button>
+                                )}
+
+                                {/* Utilities */}
+                                <button
+                                    type="button"
+                                    onClick={(event) => onActionClick?.(event, 'download', isMultipleSelected ? targetSelection : item)}
+                                    className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                >
+                                    <Download className={ICON_STYLE} />
+                                    <span>{isMultipleSelected ? `Download All (${selectedCount})` : `Download ${targetType}`}</span>
+                                </button>
+
+                                {!isMultipleSelected && (
+                                    <>
+                                        <div className="h-px bg-surface-border my-1" />
+                                        <button
+                                            type="button"
+                                            onClick={(event) => onActionClick?.(event, 'view_information', item)}
+                                            className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                        >
+                                            <Info className={ICON_STYLE} />
+                                            <span>View Information</span>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={(event) => onActionClick?.(event, isFolder ? 'view_content' : 'view_version', item)}
+                                            className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                        >
+                                            {isFolder ? <Folder className={ICON_STYLE} /> : <Layers className={ICON_STYLE} />}
+                                            <span>{isFolder ? 'View Content' : 'View Version'}</span>
+                                        </button>
+                                    </>
+                                )}
+
+                                {/* Destructive Action (Bottom): Reject */}
+                                {canOfficerReject && (
+                                    <>
+                                        <div className="h-px bg-surface-border my-1" />
+                                        <button
+                                            type="button"
+                                            onClick={(event) => onActionClick?.(event, 'reject', isMultipleSelected ? pendingDocs : item)}
+                                            className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
+                                        >
+                                            <XCircle className={ICON_STYLE} />
+                                            <span>{isMultipleSelected ? `Reject (${pendingDocs.length})` : `Reject ${targetType}`}</span>
+                                        </button>
+                                    </>
+                                )}
+                            </>
+                        );
+                    }
+
+                    // DIRECTOR ROLE:
+                    // Primary: Publish / Re-Publish (Prerequisite: Must be approved by Officer!)
+                    // Minor: Open, Unpublish (Neutral styling!), Stash (Prerequisite: Approved & Unpublished!), Unstash, Download, View Info, View Version
+                    if (isDirector) {
+                        const approvedUnpublishedDocs = approvedDocs.filter((d) => getItemEffectiveStatus(d) !== constants.DOCUMENT_SHARES_STATUS.PUBLISHED);
+                        const canDirectorPublish = isMultipleSelected ? approvedUnpublishedDocs.length > 0 : (isApproved && !isPublished);
+                        const canDirectorRePublish = isMultipleSelected ? publishedDocs.length > 0 : isPublished;
+                        const canDirectorUnpublish = isMultipleSelected ? publishedDocs.length > 0 : isPublished;
+                        const approvedNonStashedDocs = approvedDocs.filter((d) => {
+                            const s = getItemEffectiveStatus(d);
+                            return s !== constants.DOCUMENT_SHARES_STATUS.PUBLISHED && s !== constants.DOCUMENT_SHARES_STATUS.STASHED;
+                        });
+                        const canDirectorStash = isMultipleSelected ? approvedNonStashedDocs.length > 0 : (isApproved && !isPublished && !isStashed);
+                        const canDirectorUnstash = isMultipleSelected ? stashedDocs.length > 0 : isStashed;
+
+                        return (
+                            <>
+                                {/* Primary Action (Top): Publish or Re-Publish */}
+                                {canDirectorPublish && (
+                                    <button
+                                        type="button"
+                                        onClick={(event) => onActionClick?.(event, 'publish', isMultipleSelected ? approvedUnpublishedDocs : item)}
+                                        className="flex items-center gap-2 px-3 py-2 rounded text-accent hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                    >
+                                        <Globe className={ICON_STYLE} />
+                                        <span>{isMultipleSelected ? `Publish (${approvedUnpublishedDocs.length})` : `Publish ${targetType}`}</span>
+                                    </button>
+                                )}
+
+                                {canDirectorRePublish && !canDirectorPublish && (
+                                    <button
+                                        type="button"
+                                        onClick={(event) => onActionClick?.(event, 're_publish', isMultipleSelected ? publishedDocs : item)}
+                                        className="flex items-center gap-2 px-3 py-2 rounded text-accent hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                    >
+                                        <Globe className={ICON_STYLE} />
+                                        <span>{isMultipleSelected ? `Re-Publish (${publishedDocs.length})` : `Re-Publish ${targetType}`}</span>
+                                    </button>
+                                )}
+
+                                {(canDirectorPublish || canDirectorRePublish) && <div className="h-px bg-surface-border my-1" />}
+
+                                {/* Minor Actions: Flow at top */}
+                                {!isMultipleSelected && !isArchived && (
+                                    <button
+                                        type="button"
+                                        onClick={(event) => onActionClick?.(event, 'open', item)}
+                                        className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                    >
+                                        {isFolder ? <Folder className={ICON_STYLE} /> : <FileText className={ICON_STYLE} />}
+                                        <span>{`Open ${targetType}`}</span>
+                                    </button>
+                                )}
+
+                                {/* Unpublish is NEUTRAL secondary styling, NOT warning/red */}
+                                {canDirectorUnpublish && (
+                                    <button
+                                        type="button"
+                                        onClick={(event) => onActionClick?.(event, 'unpublish', isMultipleSelected ? publishedDocs : item)}
+                                        className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                    >
+                                        <EyeOff className={ICON_STYLE} />
+                                        <span>{isMultipleSelected ? `Unpublish (${publishedDocs.length})` : `Unpublish ${targetType}`}</span>
+                                    </button>
+                                )}
+
+                                {/* Stash: Only if approved and NOT published */}
+                                {canDirectorStash && (
+                                    <button
+                                        type="button"
+                                        onClick={(event) => onActionClick?.(event, 'stash', isMultipleSelected ? approvedNonStashedDocs : item)}
+                                        className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                    >
+                                        <Layers className={ICON_STYLE} />
+                                        <span>{isMultipleSelected ? `Stash (${approvedNonStashedDocs.length})` : `Stash ${targetType}`}</span>
+                                    </button>
+                                )}
+
+                                {canDirectorUnstash && (
+                                    <button
+                                        type="button"
+                                        onClick={(event) => onActionClick?.(event, 'unstash', isMultipleSelected ? stashedDocs : item)}
+                                        className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                    >
+                                        <RotateCcw className={ICON_STYLE} />
+                                        <span>{isMultipleSelected ? `Unstash (${stashedDocs.length})` : `Unstash ${targetType}`}</span>
+                                    </button>
+                                )}
+
+                                {/* Utilities */}
+                                <button
+                                    type="button"
+                                    onClick={(event) => onActionClick?.(event, 'download', isMultipleSelected ? targetSelection : item)}
+                                    className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                >
+                                    <Download className={ICON_STYLE} />
+                                    <span>{isMultipleSelected ? `Download All (${selectedCount})` : `Download ${targetType}`}</span>
+                                </button>
+
+                                {!isMultipleSelected && (
+                                    <>
+                                        <div className="h-px bg-surface-border my-1" />
+                                        <button
+                                            type="button"
+                                            onClick={(event) => onActionClick?.(event, 'view_information', item)}
+                                            className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                        >
+                                            <Info className={ICON_STYLE} />
+                                            <span>View Information</span>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={(event) => onActionClick?.(event, isFolder ? 'view_content' : 'view_version', item)}
+                                            className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                        >
+                                            {isFolder ? <Folder className={ICON_STYLE} /> : <Layers className={ICON_STYLE} />}
+                                            <span>{isFolder ? 'View Content' : 'View Version'}</span>
+                                        </button>
+                                    </>
+                                )}
+                            </>
+                        );
+                    }
+
+                    // ADMIN & COORDINATOR (STAFF):
+                    // Primary: Restore (if archived) OR Share / Re-Share (if unarchived)
+                    // Minor: Open, Edit, Unshare (only if shared!), Download, View Info, View Version, View Share
+                    // Destructive: Archive (only if unshared!), Delete (only if unshared or archived!)
+                    const canAdminShare = !isArchived && (isMultipleSelected ? unsharedDocs.length > 0 : !isShared);
+                    const canAdminReShare = !isArchived && (isMultipleSelected ? sharedDocs.length > 0 : isShared);
+                    const canAdminUnshare = !isArchived && (isMultipleSelected ? sharedDocs.length > 0 : isShared);
+                    const canAdminArchive = !isArchived && (isMultipleSelected ? unsharedDocs.length > 0 : !isShared);
+                    const canAdminDelete = isArchived
+                        ? true
+                        : (isMultipleSelected ? unsharedDocs.length > 0 : !isShared);
+
+                    return (
+                        <>
+                            {/* Primary Action (Top): Restore or Share / Re-Share */}
+                            {isArchived ? (
                                 <button
                                     type="button"
                                     onClick={(event) => onActionClick?.(event, 'restore', isMultipleSelected ? targetSelection : item)}
-                                    className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                    className="flex items-center gap-2 px-3 py-2 rounded text-accent hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
                                 >
                                     <Archive className={ICON_STYLE} />
                                     <span>{isMultipleSelected ? `Unarchive (${selectedCount})` : `Unarchive ${targetType}`}</span>
                                 </button>
+                            ) : (
+                                <>
+                                    {canAdminShare && (
+                                        <button
+                                            type="button"
+                                            onClick={(event) => onActionClick?.(event, 'share', isMultipleSelected ? unsharedDocs : item)}
+                                            className="flex items-center gap-2 px-3 py-2 rounded text-accent hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                        >
+                                            <Share2 className={ICON_STYLE} />
+                                            <span>{isMultipleSelected ? `Share (${unsharedDocs.length})` : `Share ${targetType}`}</span>
+                                        </button>
+                                    )}
+                                    {canAdminReShare && !canAdminShare && (
+                                        <button
+                                            type="button"
+                                            onClick={(event) => onActionClick?.(event, 're_share', isMultipleSelected ? sharedDocs : item)}
+                                            className="flex items-center gap-2 px-3 py-2 rounded text-accent hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                        >
+                                            <Share2 className={ICON_STYLE} />
+                                            <span>{isMultipleSelected ? `Re-Share (${sharedDocs.length})` : `Re-Share ${targetType}`}</span>
+                                        </button>
+                                    )}
+                                </>
+                            )}
 
-                                <button
-                                    type="button"
-                                    onClick={(event) => onActionClick?.(event, 'delete', isMultipleSelected ? targetSelection : item)}
-                                    className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
-                                >
-                                    <Trash2 className={ICON_STYLE} />
-                                    <span>{isMultipleSelected ? `Delete (${selectedCount})` : `Delete ${targetType}`}</span>
-                                </button>
-                            </>
-                        ) : (
-                            <>
-                                <button
-                                    type="button"
-                                    onClick={(event) => onActionClick?.(event, 'archive', isMultipleSelected ? targetSelection : item)}
-                                    className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
-                                >
-                                    <Archive className={ICON_STYLE} />
-                                    <span>{isMultipleSelected ? `Archive (${selectedCount})` : `Archive ${targetType}`}</span>
-                                </button>
+                            <div className="h-px bg-surface-border my-1" />
 
+                            {/* Minor Actions: Flow at top, then utilities */}
+                            {!isMultipleSelected && !isArchived && (
+                                <>
+                                    <button
+                                        type="button"
+                                        onClick={(event) => onActionClick?.(event, 'open', item)}
+                                        className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                    >
+                                        {isFolder ? <Folder className={ICON_STYLE} /> : <FileText className={ICON_STYLE} />}
+                                        <span>{`Open ${targetType}`}</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={(event) => onActionClick?.(event, 'edit', item)}
+                                        className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                    >
+                                        <Edit3 className={ICON_STYLE} />
+                                        <span>{`Edit ${targetType}`}</span>
+                                    </button>
+                                </>
+                            )}
+
+                            {/* Unshare: Only if shared */}
+                            {canAdminUnshare && (
                                 <button
                                     type="button"
-                                    onClick={(event) => onActionClick?.(event, 'delete', isMultipleSelected ? targetSelection : item)}
-                                    className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
+                                    onClick={(event) => onActionClick?.(event, 'unshare', isMultipleSelected ? sharedDocs : item)}
+                                    className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
                                 >
-                                    <Trash2 className={ICON_STYLE} />
-                                    <span>{isMultipleSelected ? `Delete (${selectedCount})` : `Delete ${targetType}`}</span>
+                                    <RotateCcw className={ICON_STYLE} />
+                                    <span>{isMultipleSelected ? `Unshare (${sharedDocs.length})` : `Unshare ${targetType}`}</span>
                                 </button>
-                            </>
-                        )}
-                    </>
-                );
-            })()}
-        </Container>
+                            )}
+
+                            {/* Utilities */}
+                            <button
+                                type="button"
+                                onClick={(event) => onActionClick?.(event, 'download', isMultipleSelected ? targetSelection : item)}
+                                className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                            >
+                                <Download className={ICON_STYLE} />
+                                <span>{isMultipleSelected ? `Download All (${selectedCount})` : `Download ${targetType}`}</span>
+                            </button>
+
+                            {!isMultipleSelected && (
+                                <>
+                                    <button
+                                        type="button"
+                                        onClick={(event) => onActionClick?.(event, 'view_information', item)}
+                                        className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                    >
+                                        <Info className={ICON_STYLE} />
+                                        <span>View Information</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={(event) => onActionClick?.(event, isFolder ? 'view_content' : 'view_version', item)}
+                                        className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                    >
+                                        {isFolder ? <Folder className={ICON_STYLE} /> : <Layers className={ICON_STYLE} />}
+                                        <span>{isFolder ? 'View Content' : 'View Version'}</span>
+                                    </button>
+                                    {!isArchived && isShared && (
+                                        <button
+                                            type="button"
+                                            onClick={(event) => onActionClick?.(event, 'view_share', item)}
+                                            className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                        >
+                                            <Share2 className={ICON_STYLE} />
+                                            <span>View Share</span>
+                                        </button>
+                                    )}
+                                </>
+                            )}
+
+                            {/* Destructive Actions (Bottom): Archive & Delete (Gated: Shared files must be unshared first!) */}
+                            {(canAdminArchive || canAdminDelete) && (
+                                <>
+                                    <div className="h-px bg-surface-border my-1" />
+                                    {canAdminArchive && (
+                                        <button
+                                            type="button"
+                                            onClick={(event) => onActionClick?.(event, 'archive', isMultipleSelected ? unsharedDocs : item)}
+                                            className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
+                                        >
+                                            <Archive className={ICON_STYLE} />
+                                            <span>{isMultipleSelected ? `Archive (${unsharedDocs.length})` : `Archive ${targetType}`}</span>
+                                        </button>
+                                    )}
+                                    {canAdminDelete && (
+                                        <button
+                                            type="button"
+                                            onClick={(event) => onActionClick?.(event, 'delete', isMultipleSelected ? (isArchived ? targetSelection : unsharedDocs) : item)}
+                                            className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
+                                        >
+                                            <Trash2 className={ICON_STYLE} />
+                                            <span>{isMultipleSelected ? `Delete (${isArchived ? selectedCount : unsharedDocs.length})` : `Delete ${targetType}`}</span>
+                                        </button>
+                                    )}
+                                </>
+                            )}
+                        </>
+                    );
+                })()}
+            </Container>
         </>,
         document.body
     );
@@ -1193,3 +1013,4 @@ const Menu = ({
 
 // --- EXPORTS ---
 export { Menu };
+

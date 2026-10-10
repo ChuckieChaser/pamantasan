@@ -337,6 +337,7 @@ const Inspector = ({
     const [userFormAvatarFile, setUserFormAvatarFile] = useState(null);
     const [userFormErrors, setUserFormErrors] = useState({});
     const [activeActionLoading, setActiveActionLoading] = useState(null);
+    const [hoveredActionFilter, setHoveredActionFilter] = useState(null);
 
     // DIRECTORY TREE STATES
     const [expandedFolderIds, setExpandedFolderIds] = useState(() => new Set());
@@ -1754,7 +1755,7 @@ const Inspector = ({
     };
 
     // MULTI-RECORD SELECTION STAGING PANEL
-    if (selectedItems && selectedItems.length > 1) {
+    if (selectedItems && selectedItems.length > 0) {
         const isUsersResource = selectedItems.some((i) => i.universityId || (i.email && i.role));
         const isCoordResource = selectedItems.some((i) => i.action && typeof i.action === 'string');
         const isDocReqResource = selectedItems.some((i) => i.subject || i.requestNumber);
@@ -1805,15 +1806,20 @@ const Inspector = ({
         const stashedDocs = selectedItems.filter(
             (it) => getItemEffectiveStatus(it) === constants.DOCUMENT_SHARES_STATUS.STASHED
         );
-        const unpublishedDocs = selectedItems.filter((it) => {
-            const s = getItemEffectiveStatus(it);
-            return s !== constants.DOCUMENT_SHARES_STATUS.PUBLISHED && s !== constants.DOCUMENT_SHARES_STATUS.STASHED;
-        });
+        // Director can publish/stash only approved documents
+        const publishableDocs = approvedDocs;
+        const stashableDocs = approvedDocs;
+
         const sharedDocs = selectedItems.filter(isDocShared);
         const unsharedDocs = selectedItems.filter((it) => !isDocShared(it));
 
+        const isSelfUserCheck = (u) => {
+            const uClean = cleanId(u?.id);
+            const activeClean = cleanId(activeUser?.id);
+            return Boolean(uClean && activeClean && uClean === activeClean);
+        };
         const activeUsers = selectedItems.filter(
-            (u) => String(u.status || '').toUpperCase() !== constants.USERS_STATUS.SUSPENDED
+            (u) => String(u.status || '').toUpperCase() !== constants.USERS_STATUS.SUSPENDED && !isSelfUserCheck(u)
         );
         const suspendedUsers = selectedItems.filter(
             (u) => String(u.status || '').toUpperCase() === constants.USERS_STATUS.SUSPENDED
@@ -1843,7 +1849,7 @@ const Inspector = ({
                 return;
             }
 
-            if (['approve', 'unapprove', 'unreject', 'unpublish', 'stash', 'unstash', 'unshare', 'suspend', 'unsuspend', 'resolve'].includes(actionKey)) {
+            if (['approve', 'unapprove', 'unreject', 'unpublish', 'stash', 'unstash', 'unshare', 'suspend', 'unsuspend', 'resolve', 'archive', 'delete'].includes(actionKey)) {
                 const count = targetList.length;
                 const titles = {
                     approve: `Approve Files (${count})`,
@@ -1897,7 +1903,7 @@ const Inspector = ({
                     unapprove: 'warning',
                     unreject: 'primary',
                     publish: 'primary',
-                    unpublish: 'destructive',
+                    unpublish: 'secondary',
                     stash: 'secondary',
                     unstash: 'primary',
                     unshare: 'destructive',
@@ -1941,10 +1947,12 @@ const Inspector = ({
                             </div>
                             <div className="flex flex-col min-w-0">
                                 <h2 className="text-sm font-bold text-text truncate">
-                                    {`You select multiple files (${selectedItems.length})`}
+                                    {selectedItems.length > 1
+                                        ? `You select multiple files (${selectedItems.length})`
+                                        : `Selected item (${selectedItems.length})`}
                                 </h2>
                                 <span className="text-xs text-text-muted">
-                                    {`Staging ${selectedItems.length} records for simultaneous actions`}
+                                    {`Staging ${selectedItems.length} ${selectedItems.length === 1 ? 'record' : 'records'} for simultaneous actions`}
                                 </span>
                             </div>
                         </div>
@@ -1977,12 +1985,25 @@ const Inspector = ({
                             ? staged.department
                             : staged.role ?? 'Record';
 
+                        const isHighlighted = hoveredActionFilter ? Boolean(hoveredActionFilter(staged)) : false;
+                        const isDimmed = hoveredActionFilter ? !isHighlighted : false;
+
                         return (
                             <div
                                 key={staged.id}
-                                className="group flex items-center justify-between p-2.5 rounded-xl border border-surface-border bg-surface hover:bg-surface-hover/70 transition-all gap-2.5 min-w-0 shadow-2xs"
+                                className={`group flex items-center justify-between p-2.5 rounded-xl border transition-all gap-2.5 min-w-0 shadow-2xs ${
+                                    isHighlighted
+                                        ? 'border-accent ring-2 ring-accent/40 bg-accent/15'
+                                        : isDimmed
+                                        ? 'opacity-35 border-surface-border bg-surface'
+                                        : 'border-surface-border bg-surface hover:bg-surface-hover/70'
+                                }`}
                             >
-                                <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                                <div
+                                    className="flex items-center gap-2.5 min-w-0 flex-1 cursor-pointer"
+                                    onClick={() => onAction?.('select_item', staged)}
+                                    title={`Click to inspect "${title}"`}
+                                >
                                     <div className="p-1.5 rounded-lg bg-surface-hover text-accent border border-surface-border/60 shrink-0">
                                         {staged.isFolder ? (
                                             <Folder className="h-4 w-4" />
@@ -2000,7 +2021,7 @@ const Inspector = ({
                                     </div>
 
                                     <div className="flex flex-col min-w-0 flex-1">
-                                        <span className="text-xs font-semibold text-text truncate" title={title}>
+                                        <span className="text-xs font-semibold text-text truncate hover:text-accent transition-colors" title={title}>
                                             {title}
                                         </span>
                                         <div className="flex items-center gap-2 text-[11px] text-text-muted">
@@ -2046,46 +2067,58 @@ const Inspector = ({
                                     isLoading={activeActionLoading === 'suspend'}
                                     isDisabled={Boolean(activeActionLoading)}
                                     onClick={() => handleBatchActionClick('suspend', activeUsers)}
+                                    onMouseEnter={() => setHoveredActionFilter(() => (it) => activeUsers.some((u) => u.id === it.id))}
+                                    onMouseLeave={() => setHoveredActionFilter(null)}
                                     className="justify-center truncate text-xs"
                                 >
-                                    {`Suspend (${activeUsers.length})`}
+                                    {`Suspend all (${activeUsers.length})`}
                                 </Button>
                                 <Button
-                                    variant="primary"
+                                    variant="secondary"
                                     leadingIcon={UserCheck}
                                     isLoading={activeActionLoading === 'unsuspend'}
                                     isDisabled={Boolean(activeActionLoading)}
                                     onClick={() => handleBatchActionClick('unsuspend', suspendedUsers)}
+                                    onMouseEnter={() => setHoveredActionFilter(() => (it) => suspendedUsers.some((u) => u.id === it.id))}
+                                    onMouseLeave={() => setHoveredActionFilter(null)}
                                     className="justify-center truncate text-xs"
                                 >
-                                    {`Unsuspend (${suspendedUsers.length})`}
+                                    {`Unsuspend all (${suspendedUsers.length})`}
                                 </Button>
                             </div>
                         ) : suspendedUsers.length > 0 ? (
                             <div className="w-full">
                                 <Button
-                                    variant="primary"
+                                    variant="secondary"
                                     leadingIcon={UserCheck}
                                     isLoading={activeActionLoading === 'unsuspend'}
                                     isDisabled={Boolean(activeActionLoading)}
                                     onClick={() => handleBatchActionClick('unsuspend', suspendedUsers)}
+                                    onMouseEnter={() => setHoveredActionFilter(() => (it) => suspendedUsers.some((u) => u.id === it.id))}
+                                    onMouseLeave={() => setHoveredActionFilter(null)}
                                     className="w-full justify-center truncate text-xs"
                                 >
-                                    {`Unsuspend All (${suspendedUsers.length})`}
+                                    {`Unsuspend all (${suspendedUsers.length})`}
                                 </Button>
                             </div>
-                        ) : (
+                        ) : activeUsers.length > 0 ? (
                             <div className="w-full">
                                 <Button
-                                    variant="secondary"
+                                    variant="destructive"
                                     leadingIcon={UserX}
                                     isLoading={activeActionLoading === 'suspend'}
                                     isDisabled={Boolean(activeActionLoading)}
                                     onClick={() => handleBatchActionClick('suspend', activeUsers)}
+                                    onMouseEnter={() => setHoveredActionFilter(() => (it) => activeUsers.some((u) => u.id === it.id))}
+                                    onMouseLeave={() => setHoveredActionFilter(null)}
                                     className="w-full justify-center truncate text-xs"
                                 >
-                                    {`Suspend All (${activeUsers.length})`}
+                                    {`Suspend all (${activeUsers.length})`}
                                 </Button>
+                            </div>
+                        ) : (
+                            <div className="p-2 rounded-lg bg-surface-hover/80 text-center text-xs text-text-muted border border-surface-border">
+                                No eligible actions for selected user accounts.
                             </div>
                         )
                     )}
@@ -2101,9 +2134,11 @@ const Inspector = ({
                                         isLoading={activeActionLoading === 'approve'}
                                         isDisabled={Boolean(activeActionLoading)}
                                         onClick={() => handleBatchActionClick('approve', pendingCoordRequests)}
+                                        onMouseEnter={() => setHoveredActionFilter(() => (it) => pendingCoordRequests.some((r) => r.id === it.id))}
+                                        onMouseLeave={() => setHoveredActionFilter(null)}
                                         className="justify-center truncate text-xs"
                                     >
-                                        {`Approve (${pendingCoordRequests.length})`}
+                                        {`Approve all (${pendingCoordRequests.length})`}
                                     </Button>
                                     <Button
                                         variant="destructive"
@@ -2111,9 +2146,11 @@ const Inspector = ({
                                         isLoading={activeActionLoading === 'reject'}
                                         isDisabled={Boolean(activeActionLoading)}
                                         onClick={() => handleBatchActionClick('reject', pendingCoordRequests)}
+                                        onMouseEnter={() => setHoveredActionFilter(() => (it) => pendingCoordRequests.some((r) => r.id === it.id))}
+                                        onMouseLeave={() => setHoveredActionFilter(null)}
                                         className="justify-center truncate text-xs"
                                     >
-                                        {`Reject (${pendingCoordRequests.length})`}
+                                        {`Reject all (${pendingCoordRequests.length})`}
                                     </Button>
                                 </div>
                             ) : (
@@ -2122,16 +2159,9 @@ const Inspector = ({
                                 </div>
                             )
                         ) : (
-                            <Button
-                                variant="destructive"
-                                leadingIcon={Trash2}
-                                isLoading={activeActionLoading === 'delete'}
-                                isDisabled={Boolean(activeActionLoading)}
-                                onClick={() => handleBatchActionClick('delete')}
-                                className="w-full justify-center truncate text-xs"
-                            >
-                                Delete All
-                            </Button>
+                            <div className="p-2 rounded-lg bg-surface-hover/80 text-center text-xs text-text-muted border border-surface-border">
+                                Coordinator requests are managed by Administrators.
+                            </div>
                         )
                     )}
 
@@ -2146,9 +2176,11 @@ const Inspector = ({
                                         isLoading={activeActionLoading === 'resolve'}
                                         isDisabled={Boolean(activeActionLoading)}
                                         onClick={() => handleBatchActionClick('resolve', openDocRequests)}
+                                        onMouseEnter={() => setHoveredActionFilter(() => (it) => openDocRequests.some((r) => r.id === it.id))}
+                                        onMouseLeave={() => setHoveredActionFilter(null)}
                                         className="justify-center truncate text-xs"
                                     >
-                                        {`Resolve (${openDocRequests.length})`}
+                                        {`Resolve all (${openDocRequests.length})`}
                                     </Button>
                                     <Button
                                         variant="destructive"
@@ -2156,9 +2188,11 @@ const Inspector = ({
                                         isLoading={activeActionLoading === 'reject'}
                                         isDisabled={Boolean(activeActionLoading)}
                                         onClick={() => handleBatchActionClick('reject', openDocRequests)}
+                                        onMouseEnter={() => setHoveredActionFilter(() => (it) => openDocRequests.some((r) => r.id === it.id))}
+                                        onMouseLeave={() => setHoveredActionFilter(null)}
                                         className="justify-center truncate text-xs"
                                     >
-                                        {`Reject (${openDocRequests.length})`}
+                                        {`Reject all (${openDocRequests.length})`}
                                     </Button>
                                 </div>
                             ) : (
@@ -2167,24 +2201,17 @@ const Inspector = ({
                                 </div>
                             )
                         ) : (
-                            <Button
-                                variant="destructive"
-                                leadingIcon={Trash2}
-                                isLoading={activeActionLoading === 'delete'}
-                                isDisabled={Boolean(activeActionLoading)}
-                                onClick={() => handleBatchActionClick('delete')}
-                                className="w-full justify-center truncate text-xs"
-                            >
-                                Delete All
-                            </Button>
+                            <div className="p-2 rounded-lg bg-surface-hover/80 text-center text-xs text-text-muted border border-surface-border">
+                                Document requests are managed by Staff.
+                            </div>
                         )
                     )}
 
                     {/* 4. DOCUMENTS & ARCHIVES RESOURCE */}
                     {!isUsersResource && !isCoordResource && !isDocReqResource && !isDeptResource && (
                         isOfficer ? (
-                            // Officer role: Approve, Reject, Unapprove, Unreject, Batch Download
-                            <div className="grid grid-cols-2 gap-2 w-full">
+                            // Officer role: Approve all, Reject all, Unapprove all, Unreject all
+                            <div className="w-full flex flex-col gap-2">
                                 {approvedDocs.length === selectedItems.length ? (
                                     <Button
                                         variant="secondary"
@@ -2192,9 +2219,11 @@ const Inspector = ({
                                         isLoading={activeActionLoading === 'unapprove'}
                                         isDisabled={Boolean(activeActionLoading)}
                                         onClick={() => handleBatchActionClick('unapprove', approvedDocs)}
-                                        className="col-span-2 justify-center truncate text-xs"
+                                        onMouseEnter={() => setHoveredActionFilter(() => (it) => approvedDocs.some((d) => d.id === it.id))}
+                                        onMouseLeave={() => setHoveredActionFilter(null)}
+                                        className="w-full justify-center truncate text-xs"
                                     >
-                                        {`Unapprove All (${approvedDocs.length})`}
+                                        {`Unapprove all (${approvedDocs.length})`}
                                     </Button>
                                 ) : rejectedDocs.length === selectedItems.length ? (
                                     <Button
@@ -2203,21 +2232,25 @@ const Inspector = ({
                                         isLoading={activeActionLoading === 'unreject'}
                                         isDisabled={Boolean(activeActionLoading)}
                                         onClick={() => handleBatchActionClick('unreject', rejectedDocs)}
-                                        className="col-span-2 justify-center truncate text-xs"
+                                        onMouseEnter={() => setHoveredActionFilter(() => (it) => rejectedDocs.some((d) => d.id === it.id))}
+                                        onMouseLeave={() => setHoveredActionFilter(null)}
+                                        className="w-full justify-center truncate text-xs"
                                     >
-                                        {`Unreject All (${rejectedDocs.length})`}
+                                        {`Unreject all (${rejectedDocs.length})`}
                                     </Button>
                                 ) : pendingDocs.length === selectedItems.length ? (
-                                    <>
+                                    <div className="grid grid-cols-2 gap-2 w-full">
                                         <Button
                                             variant="primary"
                                             leadingIcon={Check}
                                             isLoading={activeActionLoading === 'approve'}
                                             isDisabled={Boolean(activeActionLoading)}
                                             onClick={() => handleBatchActionClick('approve', pendingDocs)}
+                                            onMouseEnter={() => setHoveredActionFilter(() => (it) => pendingDocs.some((d) => d.id === it.id))}
+                                            onMouseLeave={() => setHoveredActionFilter(null)}
                                             className="justify-center truncate text-xs"
                                         >
-                                            {`Approve All (${pendingDocs.length})`}
+                                            {`Approve all (${pendingDocs.length})`}
                                         </Button>
                                         <Button
                                             variant="destructive"
@@ -2225,18 +2258,15 @@ const Inspector = ({
                                             isLoading={activeActionLoading === 'reject'}
                                             isDisabled={Boolean(activeActionLoading)}
                                             onClick={() => handleBatchActionClick('reject', pendingDocs)}
+                                            onMouseEnter={() => setHoveredActionFilter(() => (it) => pendingDocs.some((d) => d.id === it.id))}
+                                            onMouseLeave={() => setHoveredActionFilter(null)}
                                             className="justify-center truncate text-xs"
                                         >
-                                            {`Reject All (${pendingDocs.length})`}
+                                            {`Reject all (${pendingDocs.length})`}
                                         </Button>
-                                    </>
+                                    </div>
                                 ) : (
-                                    <div className="col-span-2 flex flex-col gap-1.5 w-full">
-                                        {pendingDocs.length === 0 && approvedDocs.length === 0 && rejectedDocs.length === 0 && (
-                                            <div className="p-2 rounded-lg bg-surface-hover/80 text-center text-xs text-text-muted border border-surface-border">
-                                                Selected files are finalized or managed by the Director.
-                                            </div>
-                                        )}
+                                    <div className="flex flex-col gap-2 w-full">
                                         {pendingDocs.length > 0 && (
                                             <div className="grid grid-cols-2 gap-2 w-full">
                                                 <Button
@@ -2245,9 +2275,11 @@ const Inspector = ({
                                                     isLoading={activeActionLoading === 'approve'}
                                                     isDisabled={Boolean(activeActionLoading)}
                                                     onClick={() => handleBatchActionClick('approve', pendingDocs)}
+                                                    onMouseEnter={() => setHoveredActionFilter(() => (it) => pendingDocs.some((d) => d.id === it.id))}
+                                                    onMouseLeave={() => setHoveredActionFilter(null)}
                                                     className="justify-center truncate text-xs"
                                                 >
-                                                    {`Approve Pending (${pendingDocs.length})`}
+                                                    {`Approve all (${pendingDocs.length})`}
                                                 </Button>
                                                 <Button
                                                     variant="destructive"
@@ -2255,63 +2287,106 @@ const Inspector = ({
                                                     isLoading={activeActionLoading === 'reject'}
                                                     isDisabled={Boolean(activeActionLoading)}
                                                     onClick={() => handleBatchActionClick('reject', pendingDocs)}
+                                                    onMouseEnter={() => setHoveredActionFilter(() => (it) => pendingDocs.some((d) => d.id === it.id))}
+                                                    onMouseLeave={() => setHoveredActionFilter(null)}
                                                     className="justify-center truncate text-xs"
                                                 >
-                                                    {`Reject Pending (${pendingDocs.length})`}
+                                                    {`Reject all (${pendingDocs.length})`}
                                                 </Button>
                                             </div>
                                         )}
-                                        {approvedDocs.length > 0 && (
+                                        {approvedDocs.length > 0 && rejectedDocs.length > 0 ? (
+                                            <div className="grid grid-cols-2 gap-2 w-full">
+                                                <Button
+                                                    variant="secondary"
+                                                    leadingIcon={RotateCcw}
+                                                    isLoading={activeActionLoading === 'unapprove'}
+                                                    isDisabled={Boolean(activeActionLoading)}
+                                                    onClick={() => handleBatchActionClick('unapprove', approvedDocs)}
+                                                    onMouseEnter={() => setHoveredActionFilter(() => (it) => approvedDocs.some((d) => d.id === it.id))}
+                                                    onMouseLeave={() => setHoveredActionFilter(null)}
+                                                    className="justify-center truncate text-xs"
+                                                >
+                                                    {`Unapprove all (${approvedDocs.length})`}
+                                                </Button>
+                                                <Button
+                                                    variant="secondary"
+                                                    leadingIcon={RotateCcw}
+                                                    isLoading={activeActionLoading === 'unreject'}
+                                                    isDisabled={Boolean(activeActionLoading)}
+                                                    onClick={() => handleBatchActionClick('unreject', rejectedDocs)}
+                                                    onMouseEnter={() => setHoveredActionFilter(() => (it) => rejectedDocs.some((d) => d.id === it.id))}
+                                                    onMouseLeave={() => setHoveredActionFilter(null)}
+                                                    className="justify-center truncate text-xs"
+                                                >
+                                                    {`Unreject all (${rejectedDocs.length})`}
+                                                </Button>
+                                            </div>
+                                        ) : approvedDocs.length > 0 ? (
                                             <Button
                                                 variant="secondary"
                                                 leadingIcon={RotateCcw}
                                                 isLoading={activeActionLoading === 'unapprove'}
                                                 isDisabled={Boolean(activeActionLoading)}
                                                 onClick={() => handleBatchActionClick('unapprove', approvedDocs)}
+                                                onMouseEnter={() => setHoveredActionFilter(() => (it) => approvedDocs.some((d) => d.id === it.id))}
+                                                onMouseLeave={() => setHoveredActionFilter(null)}
                                                 className="w-full justify-center truncate text-xs"
                                             >
-                                                {`Unapprove Approved (${approvedDocs.length})`}
+                                                {`Unapprove all (${approvedDocs.length})`}
                                             </Button>
-                                        )}
-                                        {rejectedDocs.length > 0 && (
+                                        ) : rejectedDocs.length > 0 ? (
                                             <Button
                                                 variant="secondary"
                                                 leadingIcon={RotateCcw}
                                                 isLoading={activeActionLoading === 'unreject'}
                                                 isDisabled={Boolean(activeActionLoading)}
                                                 onClick={() => handleBatchActionClick('unreject', rejectedDocs)}
+                                                onMouseEnter={() => setHoveredActionFilter(() => (it) => rejectedDocs.some((d) => d.id === it.id))}
+                                                onMouseLeave={() => setHoveredActionFilter(null)}
                                                 className="w-full justify-center truncate text-xs"
                                             >
-                                                {`Unreject Rejected (${rejectedDocs.length})`}
+                                                {`Unreject all (${rejectedDocs.length})`}
                                             </Button>
+                                        ) : null}
+                                        {pendingDocs.length === 0 && approvedDocs.length === 0 && rejectedDocs.length === 0 && (
+                                            <div className="p-2 rounded-lg bg-surface-hover/80 text-center text-xs text-text-muted border border-surface-border">
+                                                Selected files are finalized or managed by the Director.
+                                            </div>
                                         )}
                                     </div>
                                 )}
-                                <Button
-                                    variant="secondary"
-                                    leadingIcon={Download}
-                                    isLoading={activeActionLoading === 'download'}
-                                    isDisabled={Boolean(activeActionLoading)}
-                                    onClick={() => handleBatchActionClick('download')}
-                                    className="col-span-2 justify-center truncate text-xs"
-                                >
-                                    Batch Download
-                                </Button>
                             </div>
                         ) : isDirector ? (
-                            // Director role: Publish/Unpublish, Stash/Unstash, Batch Download
-                            <div className="grid grid-cols-2 gap-2 w-full">
+                            // Director role: Publish all, Stash all, Re-Publish all, Unpublish all, Unstash all
+                            <div className="w-full flex flex-col gap-2">
                                 {publishedDocs.length === selectedItems.length ? (
-                                    <Button
-                                        variant="destructive"
-                                        leadingIcon={EyeOff}
-                                        isLoading={activeActionLoading === 'unpublish'}
-                                        isDisabled={Boolean(activeActionLoading)}
-                                        onClick={() => handleBatchActionClick('unpublish', publishedDocs)}
-                                        className="col-span-2 justify-center truncate text-xs"
-                                    >
-                                        {`Unpublish All (${publishedDocs.length})`}
-                                    </Button>
+                                    <div className="grid grid-cols-2 gap-2 w-full">
+                                        <Button
+                                            variant="primary"
+                                            leadingIcon={Globe}
+                                            isLoading={activeActionLoading === 'publish'}
+                                            isDisabled={Boolean(activeActionLoading)}
+                                            onClick={() => handleBatchActionClick('publish', publishedDocs)}
+                                            onMouseEnter={() => setHoveredActionFilter(() => (it) => publishedDocs.some((p) => p.id === it.id))}
+                                            onMouseLeave={() => setHoveredActionFilter(null)}
+                                            className="justify-center truncate text-xs"
+                                        >
+                                            {`Re-Publish all (${publishedDocs.length})`}
+                                        </Button>
+                                        <Button
+                                            variant="secondary"
+                                            leadingIcon={EyeOff}
+                                            isLoading={activeActionLoading === 'unpublish'}
+                                            isDisabled={Boolean(activeActionLoading)}
+                                            onClick={() => handleBatchActionClick('unpublish', publishedDocs)}
+                                            onMouseEnter={() => setHoveredActionFilter(() => (it) => publishedDocs.some((p) => p.id === it.id))}
+                                            onMouseLeave={() => setHoveredActionFilter(null)}
+                                            className="justify-center truncate text-xs"
+                                        >
+                                            {`Unpublish all (${publishedDocs.length})`}
+                                        </Button>
+                                    </div>
                                 ) : stashedDocs.length === selectedItems.length ? (
                                     <Button
                                         variant="secondary"
@@ -2319,122 +2394,176 @@ const Inspector = ({
                                         isLoading={activeActionLoading === 'unstash'}
                                         isDisabled={Boolean(activeActionLoading)}
                                         onClick={() => handleBatchActionClick('unstash', stashedDocs)}
-                                        className="col-span-2 justify-center truncate text-xs"
+                                        onMouseEnter={() => setHoveredActionFilter(() => (it) => stashedDocs.some((s) => s.id === it.id))}
+                                        onMouseLeave={() => setHoveredActionFilter(null)}
+                                        className="w-full justify-center truncate text-xs"
                                     >
-                                        {`Unstash All (${stashedDocs.length})`}
+                                        {`Unstash all (${stashedDocs.length})`}
                                     </Button>
-                                ) : unpublishedDocs.length === selectedItems.length ? (
-                                    <>
+                                ) : publishableDocs.length === selectedItems.length ? (
+                                    <div className="grid grid-cols-2 gap-2 w-full">
                                         <Button
                                             variant="primary"
                                             leadingIcon={Globe}
                                             isLoading={activeActionLoading === 'publish'}
                                             isDisabled={Boolean(activeActionLoading)}
-                                            onClick={() => handleBatchActionClick('publish', unpublishedDocs)}
+                                            onClick={() => handleBatchActionClick('publish', publishableDocs)}
+                                            onMouseEnter={() => setHoveredActionFilter(() => (it) => publishableDocs.some((p) => p.id === it.id))}
+                                            onMouseLeave={() => setHoveredActionFilter(null)}
                                             className="justify-center truncate text-xs"
                                         >
-                                            {`Publish All (${unpublishedDocs.length})`}
+                                            {`Publish all (${publishableDocs.length})`}
                                         </Button>
                                         <Button
                                             variant="secondary"
                                             leadingIcon={Layers}
                                             isLoading={activeActionLoading === 'stash'}
                                             isDisabled={Boolean(activeActionLoading)}
-                                            onClick={() => handleBatchActionClick('stash', unpublishedDocs)}
+                                            onClick={() => handleBatchActionClick('stash', stashableDocs)}
+                                            onMouseEnter={() => setHoveredActionFilter(() => (it) => stashableDocs.some((s) => s.id === it.id))}
+                                            onMouseLeave={() => setHoveredActionFilter(null)}
                                             className="justify-center truncate text-xs"
                                         >
-                                            {`Stash All (${unpublishedDocs.length})`}
+                                            {`Stash all (${stashableDocs.length})`}
                                         </Button>
-                                    </>
+                                    </div>
                                 ) : (
-                                    <div className="col-span-2 flex flex-col gap-1.5 w-full">
-                                        {publishedDocs.length > 0 && (
+                                    <div className="flex flex-col gap-2 w-full">
+                                        {/* Mixed states for Director */}
+                                        {publishableDocs.length > 0 && (
                                             <Button
-                                                variant="destructive"
-                                                leadingIcon={EyeOff}
-                                                isLoading={activeActionLoading === 'unpublish'}
+                                                variant="primary"
+                                                leadingIcon={Globe}
+                                                isLoading={activeActionLoading === 'publish'}
                                                 isDisabled={Boolean(activeActionLoading)}
-                                                onClick={() => handleBatchActionClick('unpublish', publishedDocs)}
+                                                onClick={() => handleBatchActionClick('publish', publishableDocs)}
+                                                onMouseEnter={() => setHoveredActionFilter(() => (it) => publishableDocs.some((p) => p.id === it.id))}
+                                                onMouseLeave={() => setHoveredActionFilter(null)}
                                                 className="w-full justify-center truncate text-xs"
                                             >
-                                                {`Unpublish Published (${publishedDocs.length})`}
+                                                {`Publish all (${publishableDocs.length})`}
                                             </Button>
                                         )}
-                                        {unpublishedDocs.length > 0 && (
+                                        {publishedDocs.length > 0 && (
                                             <div className="grid grid-cols-2 gap-2 w-full">
                                                 <Button
                                                     variant="primary"
                                                     leadingIcon={Globe}
                                                     isLoading={activeActionLoading === 'publish'}
                                                     isDisabled={Boolean(activeActionLoading)}
-                                                    onClick={() => handleBatchActionClick('publish', unpublishedDocs)}
+                                                    onClick={() => handleBatchActionClick('publish', publishedDocs)}
+                                                    onMouseEnter={() => setHoveredActionFilter(() => (it) => publishedDocs.some((p) => p.id === it.id))}
+                                                    onMouseLeave={() => setHoveredActionFilter(null)}
                                                     className="justify-center truncate text-xs"
                                                 >
-                                                    {`Publish (${unpublishedDocs.length})`}
+                                                    {`Re-Publish all (${publishedDocs.length})`}
                                                 </Button>
+                                                <Button
+                                                    variant="secondary"
+                                                    leadingIcon={EyeOff}
+                                                    isLoading={activeActionLoading === 'unpublish'}
+                                                    isDisabled={Boolean(activeActionLoading)}
+                                                    onClick={() => handleBatchActionClick('unpublish', publishedDocs)}
+                                                    onMouseEnter={() => setHoveredActionFilter(() => (it) => publishedDocs.some((p) => p.id === it.id))}
+                                                    onMouseLeave={() => setHoveredActionFilter(null)}
+                                                    className="justify-center truncate text-xs"
+                                                >
+                                                    {`Unpublish all (${publishedDocs.length})`}
+                                                </Button>
+                                            </div>
+                                        )}
+                                        {stashableDocs.length > 0 && stashedDocs.length > 0 ? (
+                                            <div className="grid grid-cols-2 gap-2 w-full">
                                                 <Button
                                                     variant="secondary"
                                                     leadingIcon={Layers}
                                                     isLoading={activeActionLoading === 'stash'}
                                                     isDisabled={Boolean(activeActionLoading)}
-                                                    onClick={() => handleBatchActionClick('stash', unpublishedDocs)}
+                                                    onClick={() => handleBatchActionClick('stash', stashableDocs)}
+                                                    onMouseEnter={() => setHoveredActionFilter(() => (it) => stashableDocs.some((s) => s.id === it.id))}
+                                                    onMouseLeave={() => setHoveredActionFilter(null)}
                                                     className="justify-center truncate text-xs"
                                                 >
-                                                    {`Stash (${unpublishedDocs.length})`}
+                                                    {`Stash all (${stashableDocs.length})`}
+                                                </Button>
+                                                <Button
+                                                    variant="secondary"
+                                                    leadingIcon={RotateCcw}
+                                                    isLoading={activeActionLoading === 'unstash'}
+                                                    isDisabled={Boolean(activeActionLoading)}
+                                                    onClick={() => handleBatchActionClick('unstash', stashedDocs)}
+                                                    onMouseEnter={() => setHoveredActionFilter(() => (it) => stashedDocs.some((s) => s.id === it.id))}
+                                                    onMouseLeave={() => setHoveredActionFilter(null)}
+                                                    className="justify-center truncate text-xs"
+                                                >
+                                                    {`Unstash all (${stashedDocs.length})`}
                                                 </Button>
                                             </div>
-                                        )}
-                                        {stashedDocs.length > 0 && (
+                                        ) : stashableDocs.length > 0 ? (
+                                            <Button
+                                                variant="secondary"
+                                                leadingIcon={Layers}
+                                                isLoading={activeActionLoading === 'stash'}
+                                                isDisabled={Boolean(activeActionLoading)}
+                                                onClick={() => handleBatchActionClick('stash', stashableDocs)}
+                                                onMouseEnter={() => setHoveredActionFilter(() => (it) => stashableDocs.some((s) => s.id === it.id))}
+                                                onMouseLeave={() => setHoveredActionFilter(null)}
+                                                className="w-full justify-center truncate text-xs"
+                                            >
+                                                {`Stash all (${stashableDocs.length})`}
+                                            </Button>
+                                        ) : stashedDocs.length > 0 ? (
                                             <Button
                                                 variant="secondary"
                                                 leadingIcon={RotateCcw}
                                                 isLoading={activeActionLoading === 'unstash'}
                                                 isDisabled={Boolean(activeActionLoading)}
                                                 onClick={() => handleBatchActionClick('unstash', stashedDocs)}
+                                                onMouseEnter={() => setHoveredActionFilter(() => (it) => stashedDocs.some((s) => s.id === it.id))}
+                                                onMouseLeave={() => setHoveredActionFilter(null)}
                                                 className="w-full justify-center truncate text-xs"
                                             >
-                                                {`Unstash Stashed (${stashedDocs.length})`}
+                                                {`Unstash all (${stashedDocs.length})`}
                                             </Button>
+                                        ) : null}
+                                        {publishedDocs.length === 0 && publishableDocs.length === 0 && stashedDocs.length === 0 && (
+                                            <div className="p-2 rounded-lg bg-surface-hover/80 text-center text-xs text-text-muted border border-surface-border">
+                                                Selected files require Officer approval before publishing or stashing.
+                                            </div>
                                         )}
                                     </div>
                                 )}
-                                <Button
-                                    variant="secondary"
-                                    leadingIcon={Download}
-                                    isLoading={activeActionLoading === 'download'}
-                                    isDisabled={Boolean(activeActionLoading)}
-                                    onClick={() => handleBatchActionClick('download')}
-                                    className="col-span-2 justify-center truncate text-xs"
-                                >
-                                    Batch Download
-                                </Button>
                             </div>
                         ) : isMember ? (
-                            // Member role: Download only
+                            // Member role: Download all ({n})
                             <Button
-                                variant="primary"
+                                variant="secondary"
                                 leadingIcon={Download}
                                 isLoading={activeActionLoading === 'download'}
                                 isDisabled={Boolean(activeActionLoading)}
                                 onClick={() => handleBatchActionClick('download')}
+                                onMouseEnter={() => setHoveredActionFilter(() => (it) => !it.isFolder)}
+                                onMouseLeave={() => setHoveredActionFilter(null)}
                                 className="w-full justify-center truncate text-xs"
                             >
-                                Batch Download
+                                {`Download all (${selectedItems.length})`}
                             </Button>
                         ) : (
-                            // Admin & Coordinator role: Share/Unshare, Archive/Unarchive, Batch Download, Delete (NO Approve!)
-                            <div className="grid grid-cols-2 gap-2 w-full">
+                            // Admin & Coordinator role: Restore all | Delete all, Share all | Archive all, Re-Share all | Unshare all, or mixed
+                            <div className="w-full">
                                 {isArchivedSelection ? (
-                                    <>
+                                    <div className="grid grid-cols-2 gap-2 w-full">
                                         <Button
-                                            variant="secondary"
-                                            leadingIcon={Archive}
+                                            variant="primary"
+                                            leadingIcon={RotateCcw}
                                             isLoading={activeActionLoading === 'archive'}
                                             isDisabled={Boolean(activeActionLoading)}
                                             onClick={() => handleBatchActionClick('archive')}
+                                            onMouseEnter={() => setHoveredActionFilter(() => () => true)}
+                                            onMouseLeave={() => setHoveredActionFilter(null)}
                                             className="justify-center truncate text-xs"
                                         >
-                                            Unarchive All
+                                            {`Restore all (${selectedItems.length})`}
                                         </Button>
                                         <Button
                                             variant="destructive"
@@ -2442,112 +2571,111 @@ const Inspector = ({
                                             isLoading={activeActionLoading === 'delete'}
                                             isDisabled={Boolean(activeActionLoading)}
                                             onClick={() => handleBatchActionClick('delete')}
+                                            onMouseEnter={() => setHoveredActionFilter(() => () => true)}
+                                            onMouseLeave={() => setHoveredActionFilter(null)}
                                             className="justify-center truncate text-xs"
                                         >
-                                            Delete All
+                                            {`Delete all (${selectedItems.length})`}
+                                        </Button>
+                                    </div>
+                                ) : sharedDocs.length === 0 ? (
+                                    // Multiple (Same: all unshared): Share all | Archive all
+                                    <div className="grid grid-cols-2 gap-2 w-full">
+                                        <Button
+                                            variant="primary"
+                                            leadingIcon={Share2}
+                                            isLoading={activeActionLoading === 'share'}
+                                            isDisabled={Boolean(activeActionLoading)}
+                                            onClick={() => handleBatchActionClick('share', unsharedDocs)}
+                                            onMouseEnter={() => setHoveredActionFilter(() => (it) => !isDocShared(it))}
+                                            onMouseLeave={() => setHoveredActionFilter(null)}
+                                            className="justify-center truncate text-xs"
+                                        >
+                                            {`Share all (${unsharedDocs.length})`}
+                                        </Button>
+                                        <Button
+                                            variant="destructive"
+                                            leadingIcon={Archive}
+                                            isLoading={activeActionLoading === 'archive'}
+                                            isDisabled={Boolean(activeActionLoading)}
+                                            onClick={() => handleBatchActionClick('archive', unsharedDocs)}
+                                            onMouseEnter={() => setHoveredActionFilter(() => (it) => !isDocShared(it))}
+                                            onMouseLeave={() => setHoveredActionFilter(null)}
+                                            className="justify-center truncate text-xs"
+                                        >
+                                            {`Archive all (${unsharedDocs.length})`}
+                                        </Button>
+                                    </div>
+                                ) : unsharedDocs.length === 0 ? (
+                                    // Multiple (Same: all shared): Re-Share all | Unshare all
+                                    <div className="grid grid-cols-2 gap-2 w-full">
+                                        <Button
+                                            variant="primary"
+                                            leadingIcon={Share2}
+                                            isLoading={activeActionLoading === 'share'}
+                                            isDisabled={Boolean(activeActionLoading)}
+                                            onClick={() => handleBatchActionClick('share', sharedDocs)}
+                                            onMouseEnter={() => setHoveredActionFilter(() => (it) => isDocShared(it))}
+                                            onMouseLeave={() => setHoveredActionFilter(null)}
+                                            className="justify-center truncate text-xs"
+                                        >
+                                            {`Re-Share all (${sharedDocs.length})`}
                                         </Button>
                                         <Button
                                             variant="secondary"
-                                            leadingIcon={Download}
-                                            isLoading={activeActionLoading === 'download'}
+                                            leadingIcon={Share2}
+                                            isLoading={activeActionLoading === 'unshare'}
                                             isDisabled={Boolean(activeActionLoading)}
-                                            onClick={() => handleBatchActionClick('download')}
-                                            className="col-span-2 justify-center truncate text-xs"
+                                            onClick={() => handleBatchActionClick('unshare', sharedDocs)}
+                                            onMouseEnter={() => setHoveredActionFilter(() => (it) => isDocShared(it))}
+                                            onMouseLeave={() => setHoveredActionFilter(null)}
+                                            className="justify-center truncate text-xs"
                                         >
-                                            Download All
+                                            {`Unshare all (${sharedDocs.length})`}
                                         </Button>
-                                    </>
+                                    </div>
                                 ) : (
-                                    <>
-                                        {sharedDocs.length > 0 && unsharedDocs.length > 0 ? (
-                                            <>
-                                                <Button
-                                                    variant="primary"
-                                                    leadingIcon={Share2}
-                                                    isLoading={activeActionLoading === 'share'}
-                                                    isDisabled={Boolean(activeActionLoading)}
-                                                    onClick={() => handleBatchActionClick('share', unsharedDocs)}
-                                                    className="justify-center truncate text-xs"
-                                                >
-                                                    {`Share (${unsharedDocs.length})`}
-                                                </Button>
-                                                <Button
-                                                    variant="destructive"
-                                                    leadingIcon={Share2}
-                                                    isLoading={activeActionLoading === 'unshare'}
-                                                    isDisabled={Boolean(activeActionLoading)}
-                                                    onClick={() => handleBatchActionClick('unshare', sharedDocs)}
-                                                    className="justify-center truncate text-xs"
-                                                >
-                                                    {`Unshare (${sharedDocs.length})`}
-                                                </Button>
-                                            </>
-                                        ) : sharedDocs.length === selectedItems.length ? (
-                                            <>
-                                                <Button
-                                                    variant="primary"
-                                                    leadingIcon={Share2}
-                                                    isLoading={activeActionLoading === 'share'}
-                                                    isDisabled={Boolean(activeActionLoading)}
-                                                    onClick={() => handleBatchActionClick('share', selectedItems)}
-                                                    className="justify-center truncate text-xs"
-                                                >
-                                                    Share New
-                                                </Button>
-                                                <Button
-                                                    variant="destructive"
-                                                    leadingIcon={Share2}
-                                                    isLoading={activeActionLoading === 'unshare'}
-                                                    isDisabled={Boolean(activeActionLoading)}
-                                                    onClick={() => handleBatchActionClick('unshare', sharedDocs)}
-                                                    className="justify-center truncate text-xs"
-                                                >
-                                                    {`Unshare All (${sharedDocs.length})`}
-                                                </Button>
-                                            </>
-                                        ) : (
+                                    // Multiple (Mixed shared/unshared): Row 1: Share all ({n}), Row 2: Unshare all ({n}) | Archive all ({n})
+                                    <div className="flex flex-col gap-2 w-full">
+                                        <Button
+                                            variant="primary"
+                                            leadingIcon={Share2}
+                                            isLoading={activeActionLoading === 'share'}
+                                            isDisabled={Boolean(activeActionLoading)}
+                                            onClick={() => handleBatchActionClick('share', unsharedDocs)}
+                                            onMouseEnter={() => setHoveredActionFilter(() => (it) => !isDocShared(it))}
+                                            onMouseLeave={() => setHoveredActionFilter(null)}
+                                            className="w-full justify-center truncate text-xs"
+                                        >
+                                            {`Share all (${unsharedDocs.length})`}
+                                        </Button>
+                                        <div className="grid grid-cols-2 gap-2 w-full">
                                             <Button
-                                                variant="primary"
+                                                variant="secondary"
                                                 leadingIcon={Share2}
-                                                isLoading={activeActionLoading === 'share'}
+                                                isLoading={activeActionLoading === 'unshare'}
                                                 isDisabled={Boolean(activeActionLoading)}
-                                                onClick={() => handleBatchActionClick('share', selectedItems)}
+                                                onClick={() => handleBatchActionClick('unshare', sharedDocs)}
+                                                onMouseEnter={() => setHoveredActionFilter(() => (it) => isDocShared(it))}
+                                                onMouseLeave={() => setHoveredActionFilter(null)}
                                                 className="justify-center truncate text-xs"
                                             >
-                                                {`Share All (${selectedItems.length})`}
+                                                {`Unshare all (${sharedDocs.length})`}
                                             </Button>
-                                        )}
-                                        <Button
-                                            variant="secondary"
-                                            leadingIcon={Archive}
-                                            isLoading={activeActionLoading === 'archive'}
-                                            isDisabled={Boolean(activeActionLoading)}
-                                            onClick={() => handleBatchActionClick('archive')}
-                                            className="justify-center truncate text-xs"
-                                        >
-                                            Archive All
-                                        </Button>
-                                        <Button
-                                            variant="destructive"
-                                            leadingIcon={Trash2}
-                                            isLoading={activeActionLoading === 'delete'}
-                                            isDisabled={Boolean(activeActionLoading)}
-                                            onClick={() => handleBatchActionClick('delete')}
-                                            className="justify-center truncate text-xs"
-                                        >
-                                            Delete All
-                                        </Button>
-                                        <Button
-                                            variant="secondary"
-                                            leadingIcon={Download}
-                                            isLoading={activeActionLoading === 'download'}
-                                            isDisabled={Boolean(activeActionLoading)}
-                                            onClick={() => handleBatchActionClick('download')}
-                                            className={`justify-center truncate text-xs ${sharedDocs.length > 0 ? 'col-span-2' : ''}`}
-                                        >
-                                            Download All
-                                        </Button>
-                                    </>
+                                            <Button
+                                                variant="destructive"
+                                                leadingIcon={Archive}
+                                                isLoading={activeActionLoading === 'archive'}
+                                                isDisabled={Boolean(activeActionLoading)}
+                                                onClick={() => handleBatchActionClick('archive', unsharedDocs)}
+                                                onMouseEnter={() => setHoveredActionFilter(() => (it) => !isDocShared(it))}
+                                                onMouseLeave={() => setHoveredActionFilter(null)}
+                                                className="justify-center truncate text-xs"
+                                            >
+                                                {`Archive all (${unsharedDocs.length})`}
+                                            </Button>
+                                        </div>
+                                    </div>
                                 )}
                             </div>
                         )
@@ -2561,6 +2689,8 @@ const Inspector = ({
                             isLoading={activeActionLoading === 'delete'}
                             isDisabled={Boolean(activeActionLoading)}
                             onClick={() => handleBatchActionClick('delete')}
+                            onMouseEnter={() => setHoveredActionFilter(() => () => true)}
+                            onMouseLeave={() => setHoveredActionFilter(null)}
                             className="w-full justify-center truncate text-xs"
                         >
                             Delete All
@@ -2800,20 +2930,6 @@ const Inspector = ({
                 >
                     {primaryTitle}
                 </h2>
-
-                {/* QUICK PREVIEW BUTTON FOR DOCUMENTS */}
-                {!isFolder && isDocument && (
-                    <Button
-                        variant="secondary"
-                        leadingIcon={Eye}
-                        onClick={() => {
-                            window.dispatchEvent(new CustomEvent('pamantasan:open-file', { detail: activeItem ?? item }));
-                        }}
-                        className="w-full justify-center text-xs py-1.5 font-medium shadow-2xs"
-                    >
-                        Preview Document
-                    </Button>
-                )}
 
                 <div className="overflow-x-auto scrollbar-none pb-0.5 mt-1">
                     <SegmentSelection
@@ -5323,6 +5439,7 @@ const Inspector = ({
                             : '';
                         const isPublished = effectiveDirectorStatus === constants.DOCUMENT_SHARES_STATUS.PUBLISHED;
                         const isStashed = effectiveDirectorStatus === constants.DOCUMENT_SHARES_STATUS.STASHED;
+                        const isApproved = effectiveDirectorStatus === constants.DOCUMENT_SHARES_STATUS.APPROVED;
 
                         const targetWithShare = {
                             ...item,
@@ -5330,11 +5447,21 @@ const Inspector = ({
                             status: effectiveDirectorStatus,
                         };
 
-                        return (
-                            <div className="grid grid-cols-2 gap-2 w-full">
-                                {isPublished ? (
+                        if (isPublished) {
+                            return (
+                                <div className="grid grid-cols-2 gap-2 w-full">
                                     <Button
-                                        variant="destructive"
+                                        variant="primary"
+                                        leadingIcon={Globe}
+                                        isLoading={activeActionLoading === 'publish'}
+                                        isDisabled={Boolean(activeActionLoading)}
+                                        onClick={() => handleActionClick('re_publish', targetWithShare)}
+                                        className="justify-center truncate px-2"
+                                    >
+                                        Re-Publish
+                                    </Button>
+                                    <Button
+                                        variant="secondary"
                                         leadingIcon={EyeOff}
                                         isLoading={activeActionLoading === 'unpublish'}
                                         isDisabled={Boolean(activeActionLoading)}
@@ -5344,25 +5471,19 @@ const Inspector = ({
                                             title: `Unpublish ${item.isFolder ? 'Folder' : 'Document'}`,
                                             message: `Are you sure you want to unpublish "${item.name || item.title || 'this document'}" from faculty and department members?`,
                                             primaryLabel: 'Unpublish',
-                                            variant: 'destructive',
+                                            variant: 'secondary',
                                         })}
                                         className="justify-center truncate px-2"
                                     >
                                         Unpublish
                                     </Button>
-                                ) : (
-                                    <Button
-                                        variant="primary"
-                                        leadingIcon={Globe}
-                                        isLoading={activeActionLoading === 'publish'}
-                                        isDisabled={Boolean(activeActionLoading)}
-                                        onClick={() => handleActionClick('publish', targetWithShare)}
-                                        className="justify-center truncate px-2"
-                                    >
-                                        Publish
-                                    </Button>
-                                )}
-                                {isStashed ? (
+                                </div>
+                            );
+                        }
+
+                        if (isStashed) {
+                            return (
+                                <div className="w-full">
                                     <Button
                                         variant="secondary"
                                         leadingIcon={RotateCcw}
@@ -5376,11 +5497,27 @@ const Inspector = ({
                                             primaryLabel: 'Unstash Item',
                                             variant: 'primary',
                                         })}
-                                        className="justify-center truncate px-2"
+                                        className="w-full justify-center truncate px-2"
                                     >
                                         Unstash
                                     </Button>
-                                ) : (
+                                </div>
+                            );
+                        }
+
+                        if (isApproved) {
+                            return (
+                                <div className="grid grid-cols-2 gap-2 w-full">
+                                    <Button
+                                        variant="primary"
+                                        leadingIcon={Globe}
+                                        isLoading={activeActionLoading === 'publish'}
+                                        isDisabled={Boolean(activeActionLoading)}
+                                        onClick={() => handleActionClick('publish', targetWithShare)}
+                                        className="justify-center truncate px-2"
+                                    >
+                                        Publish
+                                    </Button>
                                     <Button
                                         variant="secondary"
                                         leadingIcon={Layers}
@@ -5398,42 +5535,118 @@ const Inspector = ({
                                     >
                                         Stash
                                     </Button>
-                                )}
+                                </div>
+                            );
+                        }
+
+                        // When document is pending or rejected, Director cannot publish or stash until Officer approves
+                        return (
+                            <div className="p-2 rounded-lg bg-surface-hover/80 text-center text-xs text-text-muted border border-surface-border w-full">
+                                Awaiting Officer approval before publishing or stashing.
                             </div>
                         );
                     }
 
-                    // 4. ADMIN & COORDINATOR (STAFF): Share + Delete (no Download)
-                    return (
-                        <div className="grid grid-cols-2 gap-2 w-full">
-                            {!item.isArchived && (
+                    // 4. ADMIN & COORDINATOR (STAFF): RESTORE | DELETE, RE-SHARE | unshare, or SHARE | ARCHIVE
+                    const cleanDocId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
+                    const isDocItemShared = Boolean(
+                        item.share ||
+                        item.departmentId ||
+                        (Array.isArray(item.shares) && item.shares.length > 0) ||
+                        (allDocumentShares || []).some((s) => {
+                            const sDocId = cleanDocId(s.document?.id ?? s.documentId);
+                            const status = String(s.status || '').toUpperCase();
+                            return sDocId === cleanDocId(item.id) && status !== 'UNSHARED' && status !== 'REVOKED';
+                        })
+                    );
+
+                    if (item.isArchived) {
+                        return (
+                            <div className="grid grid-cols-2 gap-2 w-full">
+                                <Button
+                                    variant="primary"
+                                    leadingIcon={RotateCcw}
+                                    isLoading={activeActionLoading === 'restore'}
+                                    isDisabled={Boolean(activeActionLoading)}
+                                    onClick={() => handleActionClick('restore')}
+                                    className="justify-center truncate px-2"
+                                >
+                                    Restore
+                                </Button>
+                                <Button
+                                    variant="destructive"
+                                    leadingIcon={Trash2}
+                                    isLoading={activeActionLoading === 'delete'}
+                                    isDisabled={Boolean(activeActionLoading)}
+                                    onClick={() => handleActionClick('delete')}
+                                    className="justify-center truncate px-2"
+                                >
+                                    Delete
+                                </Button>
+                            </div>
+                        );
+                    }
+
+                    if (isDocItemShared) {
+                        return (
+                            <div className="grid grid-cols-2 gap-2 w-full">
                                 <Button
                                     variant="primary"
                                     leadingIcon={Share2}
-                                    onClick={() => handleActionClick('share')}
+                                    onClick={() => handleActionClick('re_share')}
                                     className="justify-center truncate px-2"
                                 >
-                                    Share
+                                    Re-Share
                                 </Button>
-                            )}
+                                <Button
+                                    variant="secondary"
+                                    leadingIcon={Share2}
+                                    isLoading={activeActionLoading === 'unshare'}
+                                    isDisabled={Boolean(activeActionLoading)}
+                                    onClick={() => setInspectorConfirmAction({
+                                        actionKey: 'unshare',
+                                        targetItem: item,
+                                        title: `Unshare ${item.isFolder ? 'Folder' : 'Document'}`,
+                                        message: `Are you sure you want to remove departmental sharing for "${item.name || item.title || 'this item'}"?`,
+                                        primaryLabel: 'Unshare Item',
+                                        variant: 'secondary',
+                                    })}
+                                    className="justify-center truncate px-2"
+                                >
+                                    Unshare
+                                </Button>
+                            </div>
+                        );
+                    }
+
+                    return (
+                        <div className="grid grid-cols-2 gap-2 w-full">
+                            <Button
+                                variant="primary"
+                                leadingIcon={Share2}
+                                onClick={() => handleActionClick('share')}
+                                className="justify-center truncate px-2"
+                            >
+                                Share
+                            </Button>
                             <Button
                                 variant="destructive"
-                                leadingIcon={Trash2}
-                                isLoading={activeActionLoading === 'delete'}
+                                leadingIcon={Archive}
+                                isLoading={activeActionLoading === 'archive'}
                                 isDisabled={Boolean(activeActionLoading)}
-                                onClick={() => handleActionClick('delete')}
-                                className={`justify-center truncate px-2 ${item.isArchived ? 'col-span-2' : ''}`}
+                                onClick={() => handleActionClick('archive')}
+                                className="justify-center truncate px-2"
                             >
-                                Delete
+                                Archive
                             </Button>
                         </div>
                     );
                 })()}
 
                 {isUser && (
-                    <div className="grid grid-cols-2 gap-2 w-full">
+                    <div className={`grid ${isSelfUser && (activeUserRecord?.status ?? item.status) !== constants.USERS_STATUS.SUSPENDED ? 'grid-cols-1' : 'grid-cols-2'} gap-2 w-full`}>
                         <Button
-                            variant="primary"
+                            variant="secondary"
                             leadingIcon={Edit3}
                             onClick={handleOpenEditUser}
                             className="justify-center truncate"
@@ -5442,32 +5655,30 @@ const Inspector = ({
                         </Button>
                         {(activeUserRecord?.status ?? item.status) === constants.USERS_STATUS.SUSPENDED ? (
                             <Button
-                                variant="secondary"
+                                variant="primary"
                                 leadingIcon={UserCheck}
                                 onClick={handleOpenSuspendUser}
                                 className="justify-center truncate"
                             >
                                 Unsuspend
                             </Button>
-                        ) : (
+                        ) : !isSelfUser ? (
                             <Button
                                 variant="destructive"
                                 leadingIcon={UserX}
-                                onClick={isSelfUser ? undefined : handleOpenSuspendUser}
-                                isDisabled={isSelfUser}
-                                title={isSelfUser ? 'Administrators cannot suspend their own account' : 'Suspend'}
-                                className={`justify-center truncate ${isSelfUser ? 'opacity-40 cursor-not-allowed' : ''}`}
+                                onClick={handleOpenSuspendUser}
+                                className="justify-center truncate"
                             >
-                                {isSelfUser ? 'Suspend (Self)' : 'Suspend'}
+                                Suspend
                             </Button>
-                        )}
+                        ) : null}
                     </div>
                 )}
 
                 {isDepartment && (
                     <div className="grid grid-cols-2 gap-2 w-full">
                         <Button
-                            variant="primary"
+                            variant="secondary"
                             leadingIcon={Edit3}
                             onClick={handleOpenEditDepartment}
                             className="justify-center truncate"
@@ -5487,37 +5698,42 @@ const Inspector = ({
 
                 {isCoordinatorRequest && (
                     <div className="w-full">
-                        {isAdmin ? (
-                            <div className="grid grid-cols-2 gap-2 w-full">
-                                <Button
-                                    variant="primary"
-                                    leadingIcon={CheckCircle2}
-                                    onClick={() => handleActionClick('approve')}
-                                    className="justify-center truncate"
-                                    isDisabled={item.status !== constants.COORDINATOR_REQUESTS_STATUS.PENDING}
-                                >
-                                    Approve
-                                </Button>
+                        {item.status === constants.COORDINATOR_REQUESTS_STATUS.PENDING ? (
+                            isAdmin ? (
+                                <div className="grid grid-cols-2 gap-2 w-full">
+                                    <Button
+                                        variant="primary"
+                                        leadingIcon={CheckCircle2}
+                                        onClick={() => handleActionClick('approve')}
+                                        className="justify-center truncate"
+                                    >
+                                        Approve
+                                    </Button>
+                                    <Button
+                                        variant="destructive"
+                                        leadingIcon={XCircle}
+                                        onClick={() => handleOpenRejectCoordinatorModal(activeItem ?? item)}
+                                        className="justify-center truncate"
+                                    >
+                                        Reject
+                                    </Button>
+                                </div>
+                            ) : (
                                 <Button
                                     variant="destructive"
-                                    leadingIcon={XCircle}
-                                    onClick={() => handleOpenRejectCoordinatorModal(activeItem ?? item)}
-                                    className="justify-center truncate"
-                                    isDisabled={item.status !== constants.COORDINATOR_REQUESTS_STATUS.PENDING}
+                                    leadingIcon={Trash2}
+                                    onClick={() => handleActionClick('delete')}
+                                    className="w-full justify-center truncate"
                                 >
-                                    Reject
+                                    Delete
                                 </Button>
+                            )
+                        ) : (
+                            <div className="p-2.5 rounded-lg bg-surface-hover/80 text-center text-xs text-text-muted border border-surface-border w-full flex items-center justify-center gap-1.5 font-medium">
+                                <Lock className="w-3.5 h-3.5 text-text-muted shrink-0" />
+                                <span>Request finalized ({item.status?.toLowerCase()}) · Locked</span>
                             </div>
-                        ) : item.status === constants.COORDINATOR_REQUESTS_STATUS.PENDING ? (
-                            <Button
-                                variant="destructive"
-                                leadingIcon={Trash2}
-                                onClick={() => handleActionClick('delete')}
-                                className="w-full justify-center truncate"
-                            >
-                                Delete
-                            </Button>
-                        ) : null}
+                        )}
                     </div>
                 )}
 
@@ -5566,8 +5782,8 @@ const Inspector = ({
                             </div>
                         )}
 
-                        {isStaff ? (
-                            activeItem.status === constants.DOCUMENT_REQUESTS_STATUS.OPEN ? (
+                        {activeItem.status === constants.DOCUMENT_REQUESTS_STATUS.OPEN ? (
+                            isStaff ? (
                                 <div className="grid grid-cols-2 gap-2 w-full">
                                     <Button
                                         variant="primary"
@@ -5591,21 +5807,6 @@ const Inspector = ({
                                     </Button>
                                 </div>
                             ) : (
-                                isAdmin ? (
-                                    <Button
-                                        variant="destructive"
-                                        leadingIcon={Trash2}
-                                        onClick={() => handleActionClick('delete')}
-                                        isLoading={activeActionLoading === 'delete'}
-                                        isDisabled={Boolean(activeActionLoading)}
-                                        className="w-full justify-center"
-                                    >
-                                        Delete
-                                    </Button>
-                                ) : null
-                            )
-                        ) : (
-                            activeItem.status === constants.DOCUMENT_REQUESTS_STATUS.OPEN ? (
                                 <Button
                                     variant="destructive"
                                     leadingIcon={Trash2}
@@ -5616,20 +5817,12 @@ const Inspector = ({
                                 >
                                     Delete
                                 </Button>
-                            ) : (
-                                isAdmin ? (
-                                    <Button
-                                        variant="destructive"
-                                        leadingIcon={Trash2}
-                                        onClick={() => handleActionClick('delete')}
-                                        isLoading={activeActionLoading === 'delete'}
-                                        isDisabled={Boolean(activeActionLoading)}
-                                        className="w-full justify-center"
-                                    >
-                                        Delete
-                                    </Button>
-                                ) : null
                             )
+                        ) : (
+                            <div className="p-2.5 rounded-lg bg-surface-hover/80 text-center text-xs text-text-muted border border-surface-border w-full flex items-center justify-center gap-1.5 font-medium">
+                                <Lock className="w-3.5 h-3.5 text-text-muted shrink-0" />
+                                <span>Request finalized ({activeItem.status?.toLowerCase()}) · Locked</span>
+                            </div>
                         )}
                     </div>
                 )}

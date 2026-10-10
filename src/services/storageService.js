@@ -48,7 +48,7 @@ const storageService = {
                 if (downloadUrl) {
                     const targetUrl = toProxiedUrl(downloadUrl);
                     const controller = new AbortController();
-                    const timeoutId = setTimeout(() => controller.abort(), 6000);
+                    const timeoutId = setTimeout(() => controller.abort(), 15000);
                     try {
                         const response = await fetch(targetUrl, { signal: controller.signal });
                         clearTimeout(timeoutId);
@@ -63,12 +63,13 @@ const storageService = {
                 console.warn(`Failed to resolve download URL for "${cleanPath}":`, urlErr?.message);
             }
 
-            // Strategy B: Fallback attempt with Firebase SDK getBlob (capped at 3s timeout to avoid 120s retry loop)
+            // Strategy B: Fallback attempt with Firebase SDK getBlob (capped at 20s timeout to accommodate mobile networks)
             try {
+                onProgress?.({ progress: 60, statusText: 'Downloading from storage SDK...' });
                 const fileReference = ref(storage, cleanPath);
                 const blobPromise = getBlob(fileReference, 100 * 1024 * 1024);
                 const timeoutPromise = new Promise((_, reject) =>
-                    setTimeout(() => reject(new Error('Firebase SDK timeout')), 3000)
+                    setTimeout(() => reject(new Error('Firebase SDK timeout')), 20000)
                 );
                 const blob = await Promise.race([blobPromise, timeoutPromise]);
                 if (blob) {
@@ -76,6 +77,19 @@ const storageService = {
                 }
             } catch (error) {
                 console.warn(`Firebase getBlob failed for "${cleanPath}":`, error?.message);
+            }
+
+            // Strategy C: Direct fetch fallback using resolved download URL
+            try {
+                const directUrl = await storageService.fetchDocument(cleanPath);
+                if (directUrl) {
+                    const response = await fetch(directUrl);
+                    if (response.ok) {
+                        return await response.blob();
+                    }
+                }
+            } catch (fetchErr) {
+                console.warn(`Direct fetch failed for "${cleanPath}":`, fetchErr?.message);
             }
         }
 
@@ -556,6 +570,10 @@ const storageService = {
 
     triggerBrowserDownload: async (blob, fileName) => {
         return triggerBrowserDownload(blob, fileName);
+    },
+
+    toProxiedUrl: (url) => {
+        return toProxiedUrl(url);
     },
 };
 

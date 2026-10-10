@@ -238,14 +238,9 @@ const Browser = ({
                 handleToggleSelect(item);
                 return;
             }
-            const activeSelectedId = selectedItem?.id ?? internalSelectedId;
-            if (activeSelectedId === item.id) {
-                setInternalSelectedId(null);
-                onSelectItem?.(null);
-                return;
-            }
 
             setInternalSelectedId(item.id);
+            setInternalSelectedIds(new Set());
             onSelectItem?.(item);
         },
         onDoubleClick: (item) => {
@@ -310,7 +305,65 @@ const Browser = ({
             id: item.id,
             item,
             anchorRect: buttonRect,
+            isBatch: false,
         });
+    };
+
+    const handleContextMenu = (event, item) => {
+        event?.preventDefault();
+        event?.stopPropagation();
+
+        const isBannerActive = activeSelectedIds.size > 0;
+
+        if (isBannerActive) {
+            let nextIds = activeSelectedIds;
+            if (!activeSelectedIds.has(item.id)) {
+                nextIds = new Set(activeSelectedIds);
+                nextIds.add(item.id);
+                setInternalSelectedIds(nextIds);
+                onToggleSelectProp?.(item);
+                const selectedList = data.filter((d) => nextIds.has(d.id));
+                setInternalSelectedId(null);
+                onSelectItem?.(null);
+                onSelectMultipleItems?.(selectedList);
+            }
+
+            const cursorRect = {
+                top: event.clientY,
+                bottom: event.clientY,
+                left: event.clientX,
+                right: event.clientX,
+                width: 0,
+                height: 0,
+            };
+
+            setActiveActionMenu({
+                id: item.id,
+                item,
+                anchorRect: cursorRect,
+                isBatch: true,
+            });
+        } else {
+            setInternalSelectedId(item.id);
+            onSelectItem?.(item);
+            onSelectMultipleItems?.([]);
+
+            const cursorRect = {
+                top: event.clientY,
+                bottom: event.clientY,
+                left: event.clientX,
+                right: event.clientX,
+                width: 0,
+                height: 0,
+            };
+
+            setActiveActionMenu({
+                id: item.id,
+                item,
+                anchorRect: cursorRect,
+                isBatch: false,
+            });
+        }
     };
 
     const handleActionClick = (event, actionKey, item) => {
@@ -698,11 +751,11 @@ const Browser = ({
                             return (
                                 <div className="flex flex-col gap-2 w-full">
                                     <div className="w-full">{searchNode}</div>
-                                    <div className="flex items-center gap-2 sm:gap-2.5 w-full">
-                                        <div className="flex-1 min-w-0">{sortNode}</div>
+                                    <div className="w-full">{sortNode}</div>
+                                    <div className="flex items-center gap-2 w-full">
                                         <div className="flex-1 min-w-0">{filterNode}</div>
+                                        <div className="shrink-0">{viewControlsNode}</div>
                                     </div>
-                                    <div className="shrink-0">{viewControlsNode}</div>
                                 </div>
                             );
                         }
@@ -712,8 +765,10 @@ const Browser = ({
                             <div className="flex flex-col gap-2 w-full">
                                 <div className="w-full">{searchNode}</div>
                                 <div className="w-full">{sortNode}</div>
-                                <div className="w-full">{filterNode}</div>
-                                <div className="shrink-0">{viewControlsNode}</div>
+                                <div className="flex items-center gap-2 w-full">
+                                    <div className="flex-1 min-w-0">{filterNode}</div>
+                                    <div className="shrink-0">{viewControlsNode}</div>
+                                </div>
                             </div>
                         );
                     }
@@ -735,19 +790,7 @@ const Browser = ({
                             );
                         }
 
-                        if (layoutTier === 'half') {
-                            return (
-                                <div className="flex flex-col gap-2 w-full">
-                                    <div className="flex items-center gap-2 sm:gap-2.5 w-full">
-                                        <div className="flex-1 min-w-0">{searchNode}</div>
-                                        <div className="flex-1 min-w-0">{singleFilterNode}</div>
-                                    </div>
-                                    <div className="shrink-0">{viewControlsNode}</div>
-                                </div>
-                            );
-                        }
-
-                        if (layoutTier === 'quarter') {
+                        if (layoutTier === 'half' || layoutTier === 'quarter') {
                             return (
                                 <div className="flex flex-col gap-2 w-full">
                                     <div className="w-full">{searchNode}</div>
@@ -762,8 +805,10 @@ const Browser = ({
                         return (
                             <div className="flex flex-col gap-2 w-full">
                                 <div className="w-full">{searchNode}</div>
-                                <div className="w-full">{singleFilterNode}</div>
-                                <div className="shrink-0">{viewControlsNode}</div>
+                                <div className="flex items-center gap-2 w-full">
+                                    <div className="flex-1 min-w-0">{singleFilterNode}</div>
+                                    <div className="shrink-0">{viewControlsNode}</div>
+                                </div>
                             </div>
                         );
                     }
@@ -783,8 +828,8 @@ const Browser = ({
                     }
 
                     return (
-                        <div className="flex flex-col gap-2 w-full">
-                            <div className="w-full">{searchNode}</div>
+                        <div className="flex items-center gap-2 w-full">
+                            <div className="flex-1 min-w-0">{searchNode}</div>
                             <div className="shrink-0">{viewControlsNode}</div>
                         </div>
                     );
@@ -895,6 +940,7 @@ const Browser = ({
                     onItemClick={handleItemInteraction}
                     onToggleActionMenu={handleToggleActionMenu}
                     onToggleSelect={handleToggleSelect}
+                    onContextMenu={handleContextMenu}
                 />
             ) : currentView === 'list' ? (
                 <List
@@ -905,6 +951,7 @@ const Browser = ({
                     onItemClick={handleItemInteraction}
                     onToggleActionMenu={handleToggleActionMenu}
                     onToggleSelect={handleToggleSelect}
+                    onContextMenu={handleContextMenu}
                 />
             ) : (
                 <Table
@@ -918,6 +965,7 @@ const Browser = ({
                     onToggleActionMenu={handleToggleActionMenu}
                     onToggleSelect={handleToggleSelect}
                     onToggleSelectAll={handleToggleSelectAll}
+                    onContextMenu={handleContextMenu}
                 />
             )}
 
@@ -928,8 +976,8 @@ const Browser = ({
                     resourceName={resourceName}
                     anchorRect={activeActionMenu.anchorRect}
                     onActionClick={handleActionClick}
-                    isMultipleSelected={activeSelectedIds.size > 1}
-                    selectedCount={activeSelectedIds.size}
+                    isMultipleSelected={activeActionMenu.isBatch ?? activeSelectedIds.size > 0}
+                    selectedCount={activeSelectedIds.size > 0 ? activeSelectedIds.size : 1}
                     selectedItems={data.filter((d) => activeSelectedIds.has(d.id))}
                 />
             )}
