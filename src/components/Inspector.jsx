@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
     AlertCircle,
     AlertTriangle,
+    Archive,
     Building2,
     Calendar,
     Check,
@@ -282,10 +283,13 @@ const formatChangeSummary = (rawChangeSummary) => {
 // --- COMPONENTS ---
 const Inspector = ({
     item = null,
+    selectedItems = [],
     currentUser = null,
     targetTab = null,
     onTabChange = null,
     onAction,
+    onUnstageItem = null,
+    onClearSelection = null,
     className,
     ...props
 }) => {
@@ -739,12 +743,26 @@ const Inspector = ({
     }, [item, isDocument, isFolder, allDocumentShares, allDocuments, userDepartmentDisplay]);
 
     const departmentShares = useMemo(() => {
-        return documentShares.filter((s) => !s.recipientId && !s.recipient?.id && !s.recipient);
-    }, [documentShares]);
+        const list = documentShares.filter((s) => !s.recipientId && !s.recipient?.id && !s.recipient);
+        if (isAdmin) return list;
+        const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
+        const userDeptClean = cleanId(activeUser?.departmentId ?? activeUser?.department?.id ?? activeUser?.department);
+        return list.filter((s) => {
+            const sDeptClean = cleanId(s.department?.id ?? s.departmentId);
+            return userDeptClean && sDeptClean === userDeptClean;
+        });
+    }, [documentShares, isAdmin, activeUser]);
 
     const userShares = useMemo(() => {
-        return documentShares.filter((s) => Boolean(s.recipientId || s.recipient?.id || s.recipient));
-    }, [documentShares]);
+        const list = documentShares.filter((s) => Boolean(s.recipientId || s.recipient?.id || s.recipient));
+        if (isAdmin) return list;
+        const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
+        const userDeptClean = cleanId(activeUser?.departmentId ?? activeUser?.department?.id ?? activeUser?.department);
+        return list.filter((s) => {
+            const sDeptClean = cleanId(s.department?.id ?? s.departmentId);
+            return userDeptClean && sDeptClean === userDeptClean;
+        });
+    }, [documentShares, isAdmin, activeUser]);
 
     const pendingStatusRequest = useMemo(() => {
         if (!activeItem || !isDocumentRequest) return null;
@@ -1042,11 +1060,13 @@ const Inspector = ({
             ];
         }
 
+        const visibleSharesCount = departmentShares.length + userShares.length;
+
         if (isDocument) {
             return [
                 { value: 'information', label: 'Information', icon: Info },
                 { value: 'version',     label: `Version (${documentVersions.length})`, icon: Layers },
-                ...(!isMember ? [{ value: 'share', label: `Share (${documentShares.length})`, icon: Share2 }] : []),
+                ...(!isMember ? [{ value: 'share', label: `Shares (${visibleSharesCount})`, icon: Share2 }] : []),
             ];
         }
 
@@ -1054,7 +1074,7 @@ const Inspector = ({
             return [
                 { value: 'information', label: 'Information', icon: Info },
                 { value: 'content',     label: `Content (${folderContents.length})`, icon: Folder },
-                ...(!isMember ? [{ value: 'share', label: `Share (${documentShares.length})`, icon: Share2 }] : []),
+                ...(!isMember ? [{ value: 'share', label: `Shares (${visibleSharesCount})`, icon: Share2 }] : []),
             ];
         }
 
@@ -1084,7 +1104,8 @@ const Inspector = ({
         requestMessages.length,
         requestAttachments.length,
         documentVersions.length,
-        documentShares.length,
+        departmentShares.length,
+        userShares.length,
         folderContents.length,
         userActivities.length,
         departmentFaculty.length,
@@ -1169,11 +1190,12 @@ const Inspector = ({
     };
 
     const handleActionClick = async (actionKey, actionItem = null) => {
-        if (!item || activeActionLoading) {
+        const target = actionItem ?? (Array.isArray(selectedItems) && selectedItems.length > 0 ? selectedItems : (activeItem ?? item));
+        if (!target || activeActionLoading) {
             return;
         }
 
-        const targetItem = actionItem ?? activeItem ?? item;
+        const targetItem = target;
         const shouldSkipLoading = actionKey === 'archive' && targetItem?.isFolder;
 
         if (!shouldSkipLoading) {
@@ -1248,10 +1270,11 @@ const Inspector = ({
             return;
         }
         try {
-            await handleActionClick('reject', {
-                ...(inspectorRejectModal.targetItem || item),
-                rejectionReason: reason,
-            });
+            const target = inspectorRejectModal.targetItem || item;
+            const targetWithReason = Array.isArray(target)
+                ? target.map((it) => ({ ...it, rejectionReason: reason }))
+                : { ...target, rejectionReason: reason };
+            await handleActionClick('reject', targetWithReason);
             setInspectorRejectModal(null);
             setInspectorRejectReason('');
         } catch (err) {
@@ -1730,6 +1753,902 @@ const Inspector = ({
         }
     };
 
+    // MULTI-RECORD SELECTION STAGING PANEL
+    if (selectedItems && selectedItems.length > 1) {
+        const isUsersResource = selectedItems.some((i) => i.universityId || (i.email && i.role));
+        const isCoordResource = selectedItems.some((i) => i.action && typeof i.action === 'string');
+        const isDocReqResource = selectedItems.some((i) => i.subject || i.requestNumber);
+        const isDeptResource = selectedItems.some((i) => i.code && !i.size && !i.universityId);
+        const isArchivedSelection = selectedItems.every((i) => Boolean(i.isArchived));
+
+        const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
+        const userDeptClean = cleanId(activeUser?.departmentId ?? activeUser?.department?.id ?? activeUser?.department);
+
+        const getItemEffectiveStatus = (it) => {
+            const matchedShare = (allDocumentShares || []).find((s) => {
+                const sDocId = cleanId(s.document?.id ?? s.documentId);
+                const sDeptId = cleanId(s.department?.id ?? s.departmentId);
+                return cleanId(it?.id) === sDocId && userDeptClean && sDeptId === userDeptClean;
+            }) || it.share || null;
+            const rawStatus = matchedShare?.status ?? it.status ?? it.share?.status;
+            return (rawStatus && rawStatus !== '—') ? String(rawStatus).toUpperCase() : '';
+        };
+
+        const isDocShared = (it) => {
+            const itCleanId = cleanId(it?.id);
+            return Boolean(
+                it?.share ||
+                it?.departmentId ||
+                (Array.isArray(it?.shares) && it.shares.length > 0) ||
+                (allDocumentShares || []).some((s) => {
+                    const sDocId = cleanId(s.document?.id ?? s.documentId);
+                    const status = String(s.status || '').toUpperCase();
+                    return sDocId === itCleanId && status !== 'UNSHARED' && status !== 'REVOKED';
+                })
+            );
+        };
+
+        // Filtered subsets across various browser domains
+        const pendingDocs = selectedItems.filter((it) => {
+            const s = getItemEffectiveStatus(it);
+            return !s || s === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL || s === 'PENDING';
+        });
+        const approvedDocs = selectedItems.filter(
+            (it) => getItemEffectiveStatus(it) === constants.DOCUMENT_SHARES_STATUS.APPROVED
+        );
+        const rejectedDocs = selectedItems.filter(
+            (it) => getItemEffectiveStatus(it) === constants.DOCUMENT_SHARES_STATUS.REJECTED
+        );
+        const publishedDocs = selectedItems.filter(
+            (it) => getItemEffectiveStatus(it) === constants.DOCUMENT_SHARES_STATUS.PUBLISHED
+        );
+        const stashedDocs = selectedItems.filter(
+            (it) => getItemEffectiveStatus(it) === constants.DOCUMENT_SHARES_STATUS.STASHED
+        );
+        const unpublishedDocs = selectedItems.filter((it) => {
+            const s = getItemEffectiveStatus(it);
+            return s !== constants.DOCUMENT_SHARES_STATUS.PUBLISHED && s !== constants.DOCUMENT_SHARES_STATUS.STASHED;
+        });
+        const sharedDocs = selectedItems.filter(isDocShared);
+        const unsharedDocs = selectedItems.filter((it) => !isDocShared(it));
+
+        const activeUsers = selectedItems.filter(
+            (u) => String(u.status || '').toUpperCase() !== constants.USERS_STATUS.SUSPENDED
+        );
+        const suspendedUsers = selectedItems.filter(
+            (u) => String(u.status || '').toUpperCase() === constants.USERS_STATUS.SUSPENDED
+        );
+
+        const openDocRequests = selectedItems.filter((r) => {
+            const s = String(r.status || '').toUpperCase();
+            return s !== constants.DOCUMENT_REQUESTS_STATUS.RESOLVED && s !== constants.DOCUMENT_REQUESTS_STATUS.REJECTED;
+        });
+        const pendingCoordRequests = selectedItems.filter((r) => {
+            const s = String(r.status || '').toUpperCase();
+            return !s || s === constants.COORDINATOR_REQUESTS_STATUS.PENDING;
+        });
+
+        const handleBatchActionClick = async (actionKey, customTargets = null) => {
+            if (activeActionLoading) return;
+            const targetList = Array.isArray(customTargets) && customTargets.length > 0 ? customTargets : selectedItems;
+
+            if (actionKey === 'publish') {
+                useDocumentStore.getState().setPublishModalDocument(targetList);
+                return;
+            }
+
+            if (actionKey === 'reject') {
+                setInspectorRejectReason('');
+                setInspectorRejectModal({ targetItem: targetList });
+                return;
+            }
+
+            if (['approve', 'unapprove', 'unreject', 'unpublish', 'stash', 'unstash', 'unshare', 'suspend', 'unsuspend', 'resolve'].includes(actionKey)) {
+                const count = targetList.length;
+                const titles = {
+                    approve: `Approve Files (${count})`,
+                    unapprove: `Revoke Approval (${count})`,
+                    unreject: `Unreject Files (${count})`,
+                    publish: `Publish Files (${count})`,
+                    unpublish: `Unpublish Files (${count})`,
+                    stash: `Stash Files (${count})`,
+                    unstash: `Unstash Files (${count})`,
+                    unshare: `Unshare Files (${count})`,
+                    archive: isArchivedSelection ? `Unarchive Files (${count})` : `Archive Files (${count})`,
+                    delete: `Delete Items (${count})`,
+                    suspend: `Suspend User Accounts (${count})`,
+                    unsuspend: `Unsuspend User Accounts (${count})`,
+                    resolve: `Resolve Requests (${count})`,
+                };
+                const messages = {
+                    approve: `Are you sure you want to approve ${count} selected file(s) for department director review?`,
+                    unapprove: `Are you sure you want to revoke approval for ${count} selected file(s) and return them to pending approval?`,
+                    unreject: `Are you sure you want to unreject ${count} selected file(s) and return them to pending approval?`,
+                    publish: `Are you sure you want to publish ${count} selected file(s) to all department members?`,
+                    unpublish: `Are you sure you want to unpublish ${count} selected file(s) from faculty and department members?`,
+                    stash: `Are you sure you want to stash ${count} selected file(s)? They will be held at upper management level.`,
+                    unstash: `Are you sure you want to unstash ${count} selected file(s) and restore them to approved status?`,
+                    unshare: `Are you sure you want to remove departmental shares for ${count} selected file(s)?`,
+                    archive: isArchivedSelection
+                        ? `Are you sure you want to restore ${count} selected file(s) from the archive?`
+                        : `Are you sure you want to move ${count} selected file(s) to the archive?`,
+                    delete: `Are you sure you want to permanently delete ${count} selected item(s)? This action cannot be undone.`,
+                    suspend: `Are you sure you want to suspend ${count} selected user account(s)? The users will be prohibited from authentication.`,
+                    unsuspend: `Are you sure you want to re-activate ${count} selected user account(s)? The users will regain institutional access.`,
+                    resolve: `Are you sure you want to mark ${count} selected request(s) as resolved?`,
+                };
+                const primaryLabels = {
+                    approve: count > 1 ? `Approve (${count})` : 'Approve',
+                    unapprove: count > 1 ? `Revoke Approval (${count})` : 'Revoke Approval',
+                    unreject: count > 1 ? `Unreject (${count})` : 'Unreject',
+                    publish: count > 1 ? `Publish (${count})` : 'Publish',
+                    unpublish: count > 1 ? `Unpublish (${count})` : 'Unpublish',
+                    stash: count > 1 ? `Stash (${count})` : 'Stash',
+                    unstash: count > 1 ? `Unstash (${count})` : 'Unstash',
+                    unshare: count > 1 ? `Unshare (${count})` : 'Unshare',
+                    archive: isArchivedSelection ? (count > 1 ? `Unarchive (${count})` : 'Unarchive') : (count > 1 ? `Archive (${count})` : 'Archive'),
+                    delete: count > 1 ? `Delete (${count})` : 'Delete',
+                    suspend: count > 1 ? `Suspend (${count})` : 'Suspend',
+                    unsuspend: count > 1 ? `Unsuspend (${count})` : 'Unsuspend',
+                    resolve: count > 1 ? `Resolve (${count})` : 'Resolve',
+                };
+                const variants = {
+                    approve: 'primary',
+                    unapprove: 'warning',
+                    unreject: 'primary',
+                    publish: 'primary',
+                    unpublish: 'destructive',
+                    stash: 'secondary',
+                    unstash: 'primary',
+                    unshare: 'destructive',
+                    archive: 'secondary',
+                    delete: 'destructive',
+                    suspend: 'destructive',
+                    unsuspend: 'primary',
+                    resolve: 'primary',
+                };
+
+                setInspectorConfirmAction({
+                    actionKey,
+                    targetItem: targetList,
+                    title: titles[actionKey] || `Confirm ${actionKey}`,
+                    message: messages[actionKey] || `Are you sure you want to proceed with this action on ${count} items?`,
+                    primaryLabel: primaryLabels[actionKey] || 'Confirm',
+                    variant: variants[actionKey] || 'primary',
+                });
+                return;
+            }
+
+            setActiveActionLoading(actionKey);
+            try {
+                await onAction?.(actionKey, targetList);
+            } finally {
+                setActiveActionLoading(null);
+            }
+        };
+
+        return (
+            <div
+                className={`flex flex-col h-full text-text select-text ${className ?? ''}`.trim()}
+                {...props}
+            >
+                {/* HEADER AREA */}
+                <div className="flex flex-col gap-2 pb-3 border-b border-surface-border shrink-0">
+                    <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                            <div className="p-2 rounded-lg bg-accent/15 text-accent shrink-0 border border-accent/25">
+                                <Layers className="h-4 w-4" />
+                            </div>
+                            <div className="flex flex-col min-w-0">
+                                <h2 className="text-sm font-bold text-text truncate">
+                                    {`You select multiple files (${selectedItems.length})`}
+                                </h2>
+                                <span className="text-xs text-text-muted">
+                                    {`Staging ${selectedItems.length} records for simultaneous actions`}
+                                </span>
+                            </div>
+                        </div>
+
+                        {onClearSelection && (
+                            <button
+                                type="button"
+                                onClick={onClearSelection}
+                                className="text-xs font-semibold text-accent hover:underline px-2 py-1 rounded-md hover:bg-accent/10 transition-colors cursor-pointer shrink-0"
+                            >
+                                Clear all
+                            </button>
+                        )}
+                    </div>
+                </div>
+
+                {/* STAGING TRAY LIST */}
+                <div className="flex-1 overflow-y-auto py-3 pr-1 flex flex-col gap-2 min-h-0">
+                    <span className={SECTION_TITLE_STYLE}>
+                        Staged Items ({selectedItems.length})
+                    </span>
+
+                    {selectedItems.map((staged) => {
+                        const title = staged.title ?? staged.name ?? staged.subject ?? 'Untitled Item';
+                        const subtitle = staged.isFolder
+                            ? 'Folder'
+                            : staged.size
+                            ? staged.size
+                            : staged.department
+                            ? staged.department
+                            : staged.role ?? 'Record';
+
+                        return (
+                            <div
+                                key={staged.id}
+                                className="group flex items-center justify-between p-2.5 rounded-xl border border-surface-border bg-surface hover:bg-surface-hover/70 transition-all gap-2.5 min-w-0 shadow-2xs"
+                            >
+                                <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                                    <div className="p-1.5 rounded-lg bg-surface-hover text-accent border border-surface-border/60 shrink-0">
+                                        {staged.isFolder ? (
+                                            <Folder className="h-4 w-4" />
+                                        ) : staged.universityId || (staged.email && staged.role) ? (
+                                            <User className="h-4 w-4" />
+                                        ) : staged.code && !staged.size ? (
+                                            <Building2 className="h-4 w-4" />
+                                        ) : staged.action ? (
+                                            <UserCheck className="h-4 w-4" />
+                                        ) : staged.subject ? (
+                                            <Inbox className="h-4 w-4" />
+                                        ) : (
+                                            <FileText className="h-4 w-4" />
+                                        )}
+                                    </div>
+
+                                    <div className="flex flex-col min-w-0 flex-1">
+                                        <span className="text-xs font-semibold text-text truncate" title={title}>
+                                            {title}
+                                        </span>
+                                        <div className="flex items-center gap-2 text-[11px] text-text-muted">
+                                            <span className="truncate">{subtitle}</span>
+                                            {staged.classification && staged.classification !== '—' && (
+                                                <span className="px-1.5 py-0.2 rounded bg-surface-hover border border-surface-border text-[10px] font-medium text-text-muted">
+                                                    {staged.classification}
+                                                </span>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {onUnstageItem && (
+                                    <button
+                                        type="button"
+                                        onClick={() => onUnstageItem(staged)}
+                                        className="p-1 rounded-lg text-text-muted hover:text-error hover:bg-error-background transition-colors cursor-pointer shrink-0 opacity-70 group-hover:opacity-100"
+                                        title={`Remove "${title}" from selection`}
+                                        aria-label="Remove from selection"
+                                    >
+                                        <X className="h-3.5 w-3.5" />
+                                    </button>
+                                )}
+                            </div>
+                        );
+                    })}
+                </div>
+
+                {/* ROLE-DELEGATED QUICK ACTIONS FOOTER */}
+                <div className="pt-3 border-t border-surface-border shrink-0 flex flex-col gap-2">
+                    <span className={SECTION_TITLE_STYLE}>
+                        Simultaneous Quick Actions
+                    </span>
+
+                    {/* 1. USERS RESOURCE */}
+                    {isUsersResource && (
+                        activeUsers.length > 0 && suspendedUsers.length > 0 ? (
+                            <div className="grid grid-cols-2 gap-2 w-full">
+                                <Button
+                                    variant="destructive"
+                                    leadingIcon={UserX}
+                                    isLoading={activeActionLoading === 'suspend'}
+                                    isDisabled={Boolean(activeActionLoading)}
+                                    onClick={() => handleBatchActionClick('suspend', activeUsers)}
+                                    className="justify-center truncate text-xs"
+                                >
+                                    {`Suspend (${activeUsers.length})`}
+                                </Button>
+                                <Button
+                                    variant="primary"
+                                    leadingIcon={UserCheck}
+                                    isLoading={activeActionLoading === 'unsuspend'}
+                                    isDisabled={Boolean(activeActionLoading)}
+                                    onClick={() => handleBatchActionClick('unsuspend', suspendedUsers)}
+                                    className="justify-center truncate text-xs"
+                                >
+                                    {`Unsuspend (${suspendedUsers.length})`}
+                                </Button>
+                            </div>
+                        ) : suspendedUsers.length > 0 ? (
+                            <div className="w-full">
+                                <Button
+                                    variant="primary"
+                                    leadingIcon={UserCheck}
+                                    isLoading={activeActionLoading === 'unsuspend'}
+                                    isDisabled={Boolean(activeActionLoading)}
+                                    onClick={() => handleBatchActionClick('unsuspend', suspendedUsers)}
+                                    className="w-full justify-center truncate text-xs"
+                                >
+                                    {`Unsuspend All (${suspendedUsers.length})`}
+                                </Button>
+                            </div>
+                        ) : (
+                            <div className="w-full">
+                                <Button
+                                    variant="secondary"
+                                    leadingIcon={UserX}
+                                    isLoading={activeActionLoading === 'suspend'}
+                                    isDisabled={Boolean(activeActionLoading)}
+                                    onClick={() => handleBatchActionClick('suspend', activeUsers)}
+                                    className="w-full justify-center truncate text-xs"
+                                >
+                                    {`Suspend All (${activeUsers.length})`}
+                                </Button>
+                            </div>
+                        )
+                    )}
+
+                    {/* 2. COORDINATOR REQUESTS RESOURCE */}
+                    {isCoordResource && (
+                        isAdmin ? (
+                            pendingCoordRequests.length > 0 ? (
+                                <div className="grid grid-cols-2 gap-2 w-full">
+                                    <Button
+                                        variant="primary"
+                                        leadingIcon={CheckCircle2}
+                                        isLoading={activeActionLoading === 'approve'}
+                                        isDisabled={Boolean(activeActionLoading)}
+                                        onClick={() => handleBatchActionClick('approve', pendingCoordRequests)}
+                                        className="justify-center truncate text-xs"
+                                    >
+                                        {`Approve (${pendingCoordRequests.length})`}
+                                    </Button>
+                                    <Button
+                                        variant="destructive"
+                                        leadingIcon={XCircle}
+                                        isLoading={activeActionLoading === 'reject'}
+                                        isDisabled={Boolean(activeActionLoading)}
+                                        onClick={() => handleBatchActionClick('reject', pendingCoordRequests)}
+                                        className="justify-center truncate text-xs"
+                                    >
+                                        {`Reject (${pendingCoordRequests.length})`}
+                                    </Button>
+                                </div>
+                            ) : (
+                                <div className="p-2 rounded-lg bg-surface-hover/80 text-center text-xs text-text-muted border border-surface-border">
+                                    Selected coordinator requests are finalized.
+                                </div>
+                            )
+                        ) : (
+                            <Button
+                                variant="destructive"
+                                leadingIcon={Trash2}
+                                isLoading={activeActionLoading === 'delete'}
+                                isDisabled={Boolean(activeActionLoading)}
+                                onClick={() => handleBatchActionClick('delete')}
+                                className="w-full justify-center truncate text-xs"
+                            >
+                                Delete All
+                            </Button>
+                        )
+                    )}
+
+                    {/* 3. DOCUMENT REQUESTS RESOURCE */}
+                    {isDocReqResource && (
+                        isStaff ? (
+                            openDocRequests.length > 0 ? (
+                                <div className="grid grid-cols-2 gap-2 w-full">
+                                    <Button
+                                        variant="primary"
+                                        leadingIcon={CheckCircle2}
+                                        isLoading={activeActionLoading === 'resolve'}
+                                        isDisabled={Boolean(activeActionLoading)}
+                                        onClick={() => handleBatchActionClick('resolve', openDocRequests)}
+                                        className="justify-center truncate text-xs"
+                                    >
+                                        {`Resolve (${openDocRequests.length})`}
+                                    </Button>
+                                    <Button
+                                        variant="destructive"
+                                        leadingIcon={XCircle}
+                                        isLoading={activeActionLoading === 'reject'}
+                                        isDisabled={Boolean(activeActionLoading)}
+                                        onClick={() => handleBatchActionClick('reject', openDocRequests)}
+                                        className="justify-center truncate text-xs"
+                                    >
+                                        {`Reject (${openDocRequests.length})`}
+                                    </Button>
+                                </div>
+                            ) : (
+                                <div className="p-2 rounded-lg bg-surface-hover/80 text-center text-xs text-text-muted border border-surface-border">
+                                    Selected document requests are closed.
+                                </div>
+                            )
+                        ) : (
+                            <Button
+                                variant="destructive"
+                                leadingIcon={Trash2}
+                                isLoading={activeActionLoading === 'delete'}
+                                isDisabled={Boolean(activeActionLoading)}
+                                onClick={() => handleBatchActionClick('delete')}
+                                className="w-full justify-center truncate text-xs"
+                            >
+                                Delete All
+                            </Button>
+                        )
+                    )}
+
+                    {/* 4. DOCUMENTS & ARCHIVES RESOURCE */}
+                    {!isUsersResource && !isCoordResource && !isDocReqResource && !isDeptResource && (
+                        isOfficer ? (
+                            // Officer role: Approve, Reject, Unapprove, Unreject, Batch Download
+                            <div className="grid grid-cols-2 gap-2 w-full">
+                                {approvedDocs.length === selectedItems.length ? (
+                                    <Button
+                                        variant="secondary"
+                                        leadingIcon={RotateCcw}
+                                        isLoading={activeActionLoading === 'unapprove'}
+                                        isDisabled={Boolean(activeActionLoading)}
+                                        onClick={() => handleBatchActionClick('unapprove', approvedDocs)}
+                                        className="col-span-2 justify-center truncate text-xs"
+                                    >
+                                        {`Unapprove All (${approvedDocs.length})`}
+                                    </Button>
+                                ) : rejectedDocs.length === selectedItems.length ? (
+                                    <Button
+                                        variant="secondary"
+                                        leadingIcon={RotateCcw}
+                                        isLoading={activeActionLoading === 'unreject'}
+                                        isDisabled={Boolean(activeActionLoading)}
+                                        onClick={() => handleBatchActionClick('unreject', rejectedDocs)}
+                                        className="col-span-2 justify-center truncate text-xs"
+                                    >
+                                        {`Unreject All (${rejectedDocs.length})`}
+                                    </Button>
+                                ) : pendingDocs.length === selectedItems.length ? (
+                                    <>
+                                        <Button
+                                            variant="primary"
+                                            leadingIcon={Check}
+                                            isLoading={activeActionLoading === 'approve'}
+                                            isDisabled={Boolean(activeActionLoading)}
+                                            onClick={() => handleBatchActionClick('approve', pendingDocs)}
+                                            className="justify-center truncate text-xs"
+                                        >
+                                            {`Approve All (${pendingDocs.length})`}
+                                        </Button>
+                                        <Button
+                                            variant="destructive"
+                                            leadingIcon={XCircle}
+                                            isLoading={activeActionLoading === 'reject'}
+                                            isDisabled={Boolean(activeActionLoading)}
+                                            onClick={() => handleBatchActionClick('reject', pendingDocs)}
+                                            className="justify-center truncate text-xs"
+                                        >
+                                            {`Reject All (${pendingDocs.length})`}
+                                        </Button>
+                                    </>
+                                ) : (
+                                    <div className="col-span-2 flex flex-col gap-1.5 w-full">
+                                        {pendingDocs.length === 0 && approvedDocs.length === 0 && rejectedDocs.length === 0 && (
+                                            <div className="p-2 rounded-lg bg-surface-hover/80 text-center text-xs text-text-muted border border-surface-border">
+                                                Selected files are finalized or managed by the Director.
+                                            </div>
+                                        )}
+                                        {pendingDocs.length > 0 && (
+                                            <div className="grid grid-cols-2 gap-2 w-full">
+                                                <Button
+                                                    variant="primary"
+                                                    leadingIcon={Check}
+                                                    isLoading={activeActionLoading === 'approve'}
+                                                    isDisabled={Boolean(activeActionLoading)}
+                                                    onClick={() => handleBatchActionClick('approve', pendingDocs)}
+                                                    className="justify-center truncate text-xs"
+                                                >
+                                                    {`Approve Pending (${pendingDocs.length})`}
+                                                </Button>
+                                                <Button
+                                                    variant="destructive"
+                                                    leadingIcon={XCircle}
+                                                    isLoading={activeActionLoading === 'reject'}
+                                                    isDisabled={Boolean(activeActionLoading)}
+                                                    onClick={() => handleBatchActionClick('reject', pendingDocs)}
+                                                    className="justify-center truncate text-xs"
+                                                >
+                                                    {`Reject Pending (${pendingDocs.length})`}
+                                                </Button>
+                                            </div>
+                                        )}
+                                        {approvedDocs.length > 0 && (
+                                            <Button
+                                                variant="secondary"
+                                                leadingIcon={RotateCcw}
+                                                isLoading={activeActionLoading === 'unapprove'}
+                                                isDisabled={Boolean(activeActionLoading)}
+                                                onClick={() => handleBatchActionClick('unapprove', approvedDocs)}
+                                                className="w-full justify-center truncate text-xs"
+                                            >
+                                                {`Unapprove Approved (${approvedDocs.length})`}
+                                            </Button>
+                                        )}
+                                        {rejectedDocs.length > 0 && (
+                                            <Button
+                                                variant="secondary"
+                                                leadingIcon={RotateCcw}
+                                                isLoading={activeActionLoading === 'unreject'}
+                                                isDisabled={Boolean(activeActionLoading)}
+                                                onClick={() => handleBatchActionClick('unreject', rejectedDocs)}
+                                                className="w-full justify-center truncate text-xs"
+                                            >
+                                                {`Unreject Rejected (${rejectedDocs.length})`}
+                                            </Button>
+                                        )}
+                                    </div>
+                                )}
+                                <Button
+                                    variant="secondary"
+                                    leadingIcon={Download}
+                                    isLoading={activeActionLoading === 'download'}
+                                    isDisabled={Boolean(activeActionLoading)}
+                                    onClick={() => handleBatchActionClick('download')}
+                                    className="col-span-2 justify-center truncate text-xs"
+                                >
+                                    Batch Download
+                                </Button>
+                            </div>
+                        ) : isDirector ? (
+                            // Director role: Publish/Unpublish, Stash/Unstash, Batch Download
+                            <div className="grid grid-cols-2 gap-2 w-full">
+                                {publishedDocs.length === selectedItems.length ? (
+                                    <Button
+                                        variant="destructive"
+                                        leadingIcon={EyeOff}
+                                        isLoading={activeActionLoading === 'unpublish'}
+                                        isDisabled={Boolean(activeActionLoading)}
+                                        onClick={() => handleBatchActionClick('unpublish', publishedDocs)}
+                                        className="col-span-2 justify-center truncate text-xs"
+                                    >
+                                        {`Unpublish All (${publishedDocs.length})`}
+                                    </Button>
+                                ) : stashedDocs.length === selectedItems.length ? (
+                                    <Button
+                                        variant="secondary"
+                                        leadingIcon={RotateCcw}
+                                        isLoading={activeActionLoading === 'unstash'}
+                                        isDisabled={Boolean(activeActionLoading)}
+                                        onClick={() => handleBatchActionClick('unstash', stashedDocs)}
+                                        className="col-span-2 justify-center truncate text-xs"
+                                    >
+                                        {`Unstash All (${stashedDocs.length})`}
+                                    </Button>
+                                ) : unpublishedDocs.length === selectedItems.length ? (
+                                    <>
+                                        <Button
+                                            variant="primary"
+                                            leadingIcon={Globe}
+                                            isLoading={activeActionLoading === 'publish'}
+                                            isDisabled={Boolean(activeActionLoading)}
+                                            onClick={() => handleBatchActionClick('publish', unpublishedDocs)}
+                                            className="justify-center truncate text-xs"
+                                        >
+                                            {`Publish All (${unpublishedDocs.length})`}
+                                        </Button>
+                                        <Button
+                                            variant="secondary"
+                                            leadingIcon={Layers}
+                                            isLoading={activeActionLoading === 'stash'}
+                                            isDisabled={Boolean(activeActionLoading)}
+                                            onClick={() => handleBatchActionClick('stash', unpublishedDocs)}
+                                            className="justify-center truncate text-xs"
+                                        >
+                                            {`Stash All (${unpublishedDocs.length})`}
+                                        </Button>
+                                    </>
+                                ) : (
+                                    <div className="col-span-2 flex flex-col gap-1.5 w-full">
+                                        {publishedDocs.length > 0 && (
+                                            <Button
+                                                variant="destructive"
+                                                leadingIcon={EyeOff}
+                                                isLoading={activeActionLoading === 'unpublish'}
+                                                isDisabled={Boolean(activeActionLoading)}
+                                                onClick={() => handleBatchActionClick('unpublish', publishedDocs)}
+                                                className="w-full justify-center truncate text-xs"
+                                            >
+                                                {`Unpublish Published (${publishedDocs.length})`}
+                                            </Button>
+                                        )}
+                                        {unpublishedDocs.length > 0 && (
+                                            <div className="grid grid-cols-2 gap-2 w-full">
+                                                <Button
+                                                    variant="primary"
+                                                    leadingIcon={Globe}
+                                                    isLoading={activeActionLoading === 'publish'}
+                                                    isDisabled={Boolean(activeActionLoading)}
+                                                    onClick={() => handleBatchActionClick('publish', unpublishedDocs)}
+                                                    className="justify-center truncate text-xs"
+                                                >
+                                                    {`Publish (${unpublishedDocs.length})`}
+                                                </Button>
+                                                <Button
+                                                    variant="secondary"
+                                                    leadingIcon={Layers}
+                                                    isLoading={activeActionLoading === 'stash'}
+                                                    isDisabled={Boolean(activeActionLoading)}
+                                                    onClick={() => handleBatchActionClick('stash', unpublishedDocs)}
+                                                    className="justify-center truncate text-xs"
+                                                >
+                                                    {`Stash (${unpublishedDocs.length})`}
+                                                </Button>
+                                            </div>
+                                        )}
+                                        {stashedDocs.length > 0 && (
+                                            <Button
+                                                variant="secondary"
+                                                leadingIcon={RotateCcw}
+                                                isLoading={activeActionLoading === 'unstash'}
+                                                isDisabled={Boolean(activeActionLoading)}
+                                                onClick={() => handleBatchActionClick('unstash', stashedDocs)}
+                                                className="w-full justify-center truncate text-xs"
+                                            >
+                                                {`Unstash Stashed (${stashedDocs.length})`}
+                                            </Button>
+                                        )}
+                                    </div>
+                                )}
+                                <Button
+                                    variant="secondary"
+                                    leadingIcon={Download}
+                                    isLoading={activeActionLoading === 'download'}
+                                    isDisabled={Boolean(activeActionLoading)}
+                                    onClick={() => handleBatchActionClick('download')}
+                                    className="col-span-2 justify-center truncate text-xs"
+                                >
+                                    Batch Download
+                                </Button>
+                            </div>
+                        ) : isMember ? (
+                            // Member role: Download only
+                            <Button
+                                variant="primary"
+                                leadingIcon={Download}
+                                isLoading={activeActionLoading === 'download'}
+                                isDisabled={Boolean(activeActionLoading)}
+                                onClick={() => handleBatchActionClick('download')}
+                                className="w-full justify-center truncate text-xs"
+                            >
+                                Batch Download
+                            </Button>
+                        ) : (
+                            // Admin & Coordinator role: Share/Unshare, Archive/Unarchive, Batch Download, Delete (NO Approve!)
+                            <div className="grid grid-cols-2 gap-2 w-full">
+                                {isArchivedSelection ? (
+                                    <>
+                                        <Button
+                                            variant="secondary"
+                                            leadingIcon={Archive}
+                                            isLoading={activeActionLoading === 'archive'}
+                                            isDisabled={Boolean(activeActionLoading)}
+                                            onClick={() => handleBatchActionClick('archive')}
+                                            className="justify-center truncate text-xs"
+                                        >
+                                            Unarchive All
+                                        </Button>
+                                        <Button
+                                            variant="destructive"
+                                            leadingIcon={Trash2}
+                                            isLoading={activeActionLoading === 'delete'}
+                                            isDisabled={Boolean(activeActionLoading)}
+                                            onClick={() => handleBatchActionClick('delete')}
+                                            className="justify-center truncate text-xs"
+                                        >
+                                            Delete All
+                                        </Button>
+                                        <Button
+                                            variant="secondary"
+                                            leadingIcon={Download}
+                                            isLoading={activeActionLoading === 'download'}
+                                            isDisabled={Boolean(activeActionLoading)}
+                                            onClick={() => handleBatchActionClick('download')}
+                                            className="col-span-2 justify-center truncate text-xs"
+                                        >
+                                            Download All
+                                        </Button>
+                                    </>
+                                ) : (
+                                    <>
+                                        {sharedDocs.length > 0 && unsharedDocs.length > 0 ? (
+                                            <>
+                                                <Button
+                                                    variant="primary"
+                                                    leadingIcon={Share2}
+                                                    isLoading={activeActionLoading === 'share'}
+                                                    isDisabled={Boolean(activeActionLoading)}
+                                                    onClick={() => handleBatchActionClick('share', unsharedDocs)}
+                                                    className="justify-center truncate text-xs"
+                                                >
+                                                    {`Share (${unsharedDocs.length})`}
+                                                </Button>
+                                                <Button
+                                                    variant="destructive"
+                                                    leadingIcon={Share2}
+                                                    isLoading={activeActionLoading === 'unshare'}
+                                                    isDisabled={Boolean(activeActionLoading)}
+                                                    onClick={() => handleBatchActionClick('unshare', sharedDocs)}
+                                                    className="justify-center truncate text-xs"
+                                                >
+                                                    {`Unshare (${sharedDocs.length})`}
+                                                </Button>
+                                            </>
+                                        ) : sharedDocs.length === selectedItems.length ? (
+                                            <>
+                                                <Button
+                                                    variant="primary"
+                                                    leadingIcon={Share2}
+                                                    isLoading={activeActionLoading === 'share'}
+                                                    isDisabled={Boolean(activeActionLoading)}
+                                                    onClick={() => handleBatchActionClick('share', selectedItems)}
+                                                    className="justify-center truncate text-xs"
+                                                >
+                                                    Share New
+                                                </Button>
+                                                <Button
+                                                    variant="destructive"
+                                                    leadingIcon={Share2}
+                                                    isLoading={activeActionLoading === 'unshare'}
+                                                    isDisabled={Boolean(activeActionLoading)}
+                                                    onClick={() => handleBatchActionClick('unshare', sharedDocs)}
+                                                    className="justify-center truncate text-xs"
+                                                >
+                                                    {`Unshare All (${sharedDocs.length})`}
+                                                </Button>
+                                            </>
+                                        ) : (
+                                            <Button
+                                                variant="primary"
+                                                leadingIcon={Share2}
+                                                isLoading={activeActionLoading === 'share'}
+                                                isDisabled={Boolean(activeActionLoading)}
+                                                onClick={() => handleBatchActionClick('share', selectedItems)}
+                                                className="justify-center truncate text-xs"
+                                            >
+                                                {`Share All (${selectedItems.length})`}
+                                            </Button>
+                                        )}
+                                        <Button
+                                            variant="secondary"
+                                            leadingIcon={Archive}
+                                            isLoading={activeActionLoading === 'archive'}
+                                            isDisabled={Boolean(activeActionLoading)}
+                                            onClick={() => handleBatchActionClick('archive')}
+                                            className="justify-center truncate text-xs"
+                                        >
+                                            Archive All
+                                        </Button>
+                                        <Button
+                                            variant="destructive"
+                                            leadingIcon={Trash2}
+                                            isLoading={activeActionLoading === 'delete'}
+                                            isDisabled={Boolean(activeActionLoading)}
+                                            onClick={() => handleBatchActionClick('delete')}
+                                            className="justify-center truncate text-xs"
+                                        >
+                                            Delete All
+                                        </Button>
+                                        <Button
+                                            variant="secondary"
+                                            leadingIcon={Download}
+                                            isLoading={activeActionLoading === 'download'}
+                                            isDisabled={Boolean(activeActionLoading)}
+                                            onClick={() => handleBatchActionClick('download')}
+                                            className={`justify-center truncate text-xs ${sharedDocs.length > 0 ? 'col-span-2' : ''}`}
+                                        >
+                                            Download All
+                                        </Button>
+                                    </>
+                                )}
+                            </div>
+                        )
+                    )}
+
+                    {/* 5. DEPARTMENTS RESOURCE */}
+                    {isDeptResource && (
+                        <Button
+                            variant="destructive"
+                            leadingIcon={Trash2}
+                            isLoading={activeActionLoading === 'delete'}
+                            isDisabled={Boolean(activeActionLoading)}
+                            onClick={() => handleBatchActionClick('delete')}
+                            className="w-full justify-center truncate text-xs"
+                        >
+                            Delete All
+                        </Button>
+                    )}
+                </div>
+
+                {/* ACTION CONFIRMATION MODAL */}
+                {Boolean(inspectorConfirmAction) && (
+                    <Modal
+                        isOpen={Boolean(inspectorConfirmAction)}
+                        onClose={() => setInspectorConfirmAction(null)}
+                        title={inspectorConfirmAction.title}
+                        description={inspectorConfirmAction.message}
+                        icon={inspectorConfirmAction.actionKey === 'stash' ? Clock : CheckCircle2}
+                        size="sm"
+                        confirmOnClose={false}
+                        primaryAction={{
+                            label: inspectorConfirmAction.primaryLabel,
+                            variant: inspectorConfirmAction.variant || 'primary',
+                            isLoading: activeActionLoading === inspectorConfirmAction.actionKey,
+                            isDisabled: Boolean(activeActionLoading),
+                            onClick: handleConfirmInspectorAction,
+                        }}
+                        secondaryAction={{
+                            label: 'Cancel',
+                            isDisabled: Boolean(activeActionLoading),
+                            onClick: () => setInspectorConfirmAction(null),
+                        }}
+                    >
+                        <div className="text-xs text-text-muted leading-relaxed">
+                            Please confirm you wish to perform this action. The status will update immediately across departmental queues.
+                        </div>
+                    </Modal>
+                )}
+
+                {/* REJECTION FORM MODAL */}
+                {Boolean(inspectorRejectModal) && (
+                    <Modal
+                        isOpen={Boolean(inspectorRejectModal)}
+                        onClose={() => {
+                            setInspectorRejectModal(null);
+                            setInspectorRejectReason('');
+                        }}
+                        title={Array.isArray(inspectorRejectModal.targetItem)
+                            ? `Reject All Files (${inspectorRejectModal.targetItem.length})`
+                            : `Reject ${inspectorRejectModal.targetItem?.isFolder ? 'Folder' : 'Document'}`}
+                        description={Array.isArray(inspectorRejectModal.targetItem)
+                            ? `Provide a reason for rejecting the ${inspectorRejectModal.targetItem.length} selected items. They will remain in the repository as Rejected.`
+                            : `Provide a reason for rejecting "${inspectorRejectModal.targetItem?.name || inspectorRejectModal.targetItem?.title || 'this document'}". The item will remain in the repository as Rejected.`}
+                        icon={AlertTriangle}
+                        size="md"
+                        confirmOnClose={false}
+                        primaryAction={{
+                            label: Array.isArray(inspectorRejectModal.targetItem) ? 'Reject All Files' : 'Confirm Rejection',
+                            variant: 'danger',
+                            isLoading: activeActionLoading === 'reject',
+                            isDisabled: Boolean(activeActionLoading) || !inspectorRejectReason.trim(),
+                            onClick: handleConfirmInspectorRejection,
+                        }}
+                        secondaryAction={{
+                            label: 'Cancel',
+                            isDisabled: Boolean(activeActionLoading),
+                            onClick: () => {
+                                setInspectorRejectModal(null);
+                                setInspectorRejectReason('');
+                            },
+                        }}
+                    >
+                        <div className="flex flex-col gap-4">
+                            <AreaField
+                                label="Rejection Reason"
+                                required
+                                placeholder="Explain why these items are being rejected so corrective action can be taken..."
+                                value={inspectorRejectReason}
+                                onChange={(e) => setInspectorRejectReason(e.target.value)}
+                                rows={4}
+                            />
+                            <p className="text-[11px] text-text-muted">
+                                This reason will be recorded on the audit log and visible to repository administrators.
+                            </p>
+                        </div>
+                    </Modal>
+                )}
+            </div>
+        );
+    }
+
     // GUARD CLAUSES
     if (!item) {
         return (
@@ -1882,15 +2801,17 @@ const Inspector = ({
                     {primaryTitle}
                 </h2>
 
-                <SegmentSelection
-                    value={activeTab}
-                    options={tabOptions}
-                    onChange={(newTab) => {
-                        setActiveTab(newTab);
-                        onTabChange?.(newTab);
-                    }}
-                    className="w-full justify-stretch [&>button]:flex-1 mt-1"
-                />
+                <div className="overflow-x-auto scrollbar-none pb-0.5 mt-1">
+                    <SegmentSelection
+                        value={activeTab}
+                        options={tabOptions}
+                        onChange={(newTab) => {
+                            setActiveTab(newTab);
+                            onTabChange?.(newTab);
+                        }}
+                        className="w-full min-w-max justify-stretch [&>button]:flex-1"
+                    />
+                </div>
             </div>
 
             <div className="flex-1 overflow-y-auto py-4 flex flex-col gap-4">
@@ -2504,16 +3425,18 @@ const Inspector = ({
                     </div>
                 )}
 
-                {activeTab === 'share' && !isMember && (isDocument || isFolder) && (
+                {activeTab === 'share' && !isMember && (isDocument || isFolder) && (() => {
+                    const visibleSharesCount = departmentShares.length + userShares.length;
+                    return (
                     <div className="flex flex-col gap-4">
                         <div className="flex items-center justify-between">
                             <span className={SECTION_TITLE_STYLE}>Permissions & Access</span>
                             <span className="text-xs text-text-muted">
-                                {documentShares.length} {documentShares.length === 1 ? 'share' : 'shares'}
+                                {visibleSharesCount} {visibleSharesCount === 1 ? 'share' : 'shares'}
                             </span>
                         </div>
 
-                        {documentShares.length === 0 ? (
+                        {visibleSharesCount === 0 ? (
                             <div className="p-3.5 rounded-lg border border-surface-border bg-surface-hover text-center text-text-muted text-xs">
                                 No sharing rules configured yet.
                             </div>
@@ -2812,6 +3735,7 @@ const Inspector = ({
 
                                                 {/* DEPARTMENT READERSHIP STATISTIC & READERSHIP CHART */}
                                                 {(() => {
+                                                    const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
                                                     const deptId = shareDepartment?.id ?? shareItem.department?.id ?? shareItem.departmentId;
                                                     const isFold = Boolean(item?.isFolder || item?.mimeType === 'folder');
                                                     const userMap = new Map((allUsers || []).map((u) => [String(u.id), u]));
@@ -2821,14 +3745,20 @@ const Inspector = ({
                                                     let uniqueReadersCount;
 
                                                     if (isFold) {
-                                                        const descendantIds = new Set(getRecursiveDescendantDocIds(item?.id, allDocuments));
+                                                        const rawDescendantIds = getRecursiveDescendantDocIds(item?.id, allDocuments);
+                                                        const descendantIds = new Set();
+                                                        rawDescendantIds.forEach((id) => {
+                                                            descendantIds.add(id);
+                                                            descendantIds.add(cleanId(id));
+                                                        });
+
                                                         const childDocDeptReadersMap = new Map();
                                                         const deptUniqueUsers = new Set();
                                                         const deptLogs = [];
 
                                                         (allAuditLogs || []).forEach((log) => {
-                                                            const docId = log?.entityId || log?.document?.id;
-                                                            if (!docId || !descendantIds.has(docId)) return;
+                                                            const docId = log?.entityId || log?.document?.id || log?.documentId;
+                                                            if (!docId || (!descendantIds.has(docId) && !descendantIds.has(cleanId(docId)))) return;
                                                             const isReadAction = ['READ', 'VIEW', 'VIEWED', 'DOWNLOAD', 'DOWNLOADED', 'ACCESS', 'ACCESSED'].includes(String(log?.action || '').toUpperCase());
                                                             if (!isReadAction) return;
 
@@ -2836,32 +3766,32 @@ const Inspector = ({
                                                             if (!actorId) return;
 
                                                             let actorUser = userMap.get(actorId) || log?.actor;
-                                                            if (!actorUser && typeof log?.data === 'string') {
-                                                                try {
-                                                                    const parsed = JSON.parse(log.data);
-                                                                    actorUser = { id: actorId, role: parsed.role, departmentId: parsed.departmentId };
-                                                                } catch {
-                                                                    // ignore malformed log data
-                                                                }
-                                                            }
-                                                            if (isRmoUser(actorUser, allDepartments)) return;
-
+                                                            let actorRole = actorUser?.role;
                                                             let logDeptId = actorUser?.departmentId;
-                                                            if (!logDeptId && typeof log?.data === 'string') {
+
+                                                            if (typeof log?.data === 'string') {
                                                                 try {
                                                                     const parsed = JSON.parse(log.data);
-                                                                    logDeptId = parsed.departmentId;
+                                                                    actorRole = actorRole || parsed.role || parsed.actorRole;
+                                                                    logDeptId = logDeptId || parsed.departmentId || parsed._actorDepartmentId || parsed.new?._departmentId;
+                                                                    if (!actorUser) {
+                                                                        actorUser = { id: actorId, role: actorRole, departmentId: logDeptId };
+                                                                    }
                                                                 } catch {
                                                                     // ignore malformed log data
                                                                 }
                                                             }
 
-                                                            if (deptId && logDeptId && String(logDeptId) === String(deptId)) {
-                                                                if (!childDocDeptReadersMap.has(docId)) {
-                                                                    childDocDeptReadersMap.set(docId, new Set());
+                                                            // Exclude Administrator, Coordinator, and RMO reads
+                                                            if (isStaffRole(actorRole) || isRmoUser({ ...(actorUser || {}), role: actorRole }, allDepartments)) return;
+
+                                                            if (deptId && logDeptId && cleanId(logDeptId) === cleanId(deptId)) {
+                                                                const normalizedDocId = cleanId(docId);
+                                                                if (!childDocDeptReadersMap.has(normalizedDocId)) {
+                                                                    childDocDeptReadersMap.set(normalizedDocId, new Set());
                                                                 }
-                                                                if (!childDocDeptReadersMap.get(docId).has(actorId)) {
-                                                                    childDocDeptReadersMap.get(docId).add(actorId);
+                                                                if (!childDocDeptReadersMap.get(normalizedDocId).has(actorId)) {
+                                                                    childDocDeptReadersMap.get(normalizedDocId).add(actorId);
                                                                     deptLogs.push(log);
                                                                 }
                                                                 deptUniqueUsers.add(actorId);
@@ -2877,9 +3807,12 @@ const Inspector = ({
                                                         deptAuditLogs = deptLogs;
                                                     } else {
                                                         const targetDocId = item?.id;
+                                                        const cleanTargetId = cleanId(targetDocId);
                                                         const nonRmoUserFirstReadLogs = new Map();
+
                                                         (allAuditLogs || []).forEach((log) => {
-                                                            const isDoc = log?.entityId === targetDocId || log?.document?.id === targetDocId;
+                                                            const docId = log?.entityId || log?.document?.id || log?.documentId;
+                                                            const isDoc = docId && cleanId(docId) === cleanTargetId;
                                                             const isReadAction = ['READ', 'VIEW', 'VIEWED', 'DOWNLOAD', 'DOWNLOADED', 'ACCESS', 'ACCESSED'].includes(String(log?.action || '').toUpperCase());
                                                             if (!isDoc || !isReadAction) return;
 
@@ -2887,27 +3820,26 @@ const Inspector = ({
                                                             if (!actorId) return;
 
                                                             let actorUser = userMap.get(actorId) || log?.actor;
-                                                            if (!actorUser && typeof log?.data === 'string') {
-                                                                try {
-                                                                    const parsed = JSON.parse(log.data);
-                                                                    actorUser = { id: actorId, role: parsed.role, departmentId: parsed.departmentId };
-                                                                } catch {
-                                                                    // ignore malformed log data
-                                                                }
-                                                            }
-                                                            if (isRmoUser(actorUser, allDepartments)) return;
-
+                                                            let actorRole = actorUser?.role;
                                                             let logDeptId = actorUser?.departmentId;
-                                                            if (!logDeptId && typeof log?.data === 'string') {
+
+                                                            if (typeof log?.data === 'string') {
                                                                 try {
                                                                     const parsed = JSON.parse(log.data);
-                                                                    logDeptId = parsed.departmentId;
+                                                                    actorRole = actorRole || parsed.role || parsed.actorRole;
+                                                                    logDeptId = logDeptId || parsed.departmentId || parsed._actorDepartmentId || parsed.new?._departmentId;
+                                                                    if (!actorUser) {
+                                                                        actorUser = { id: actorId, role: actorRole, departmentId: logDeptId };
+                                                                    }
                                                                 } catch {
                                                                     // ignore malformed log data
                                                                 }
                                                             }
 
-                                                            if (deptId && logDeptId && String(logDeptId) === String(deptId)) {
+                                                            // Exclude Administrator, Coordinator, and RMO reads
+                                                            if (isStaffRole(actorRole) || isRmoUser({ ...(actorUser || {}), role: actorRole }, allDepartments)) return;
+
+                                                            if (deptId && logDeptId && cleanId(logDeptId) === cleanId(deptId)) {
                                                                 if (!nonRmoUserFirstReadLogs.has(actorId)) {
                                                                     nonRmoUserFirstReadLogs.set(actorId, log);
                                                                 }
@@ -3078,7 +4010,8 @@ const Inspector = ({
                             </div>
                         )}
                     </div>
-                )}
+                    );
+                })()}
 
                 {activeTab === 'content' && isFolder && (() => {
                     const renderDirectoryNode = (node, depth = 0) => {
@@ -4246,6 +5179,18 @@ const Inspector = ({
 
                         const isApproved = effectiveOfficerStatus === constants.DOCUMENT_SHARES_STATUS.APPROVED;
                         const isRejected = effectiveOfficerStatus === constants.DOCUMENT_SHARES_STATUS.REJECTED;
+                        const isPublished = effectiveOfficerStatus === constants.DOCUMENT_SHARES_STATUS.PUBLISHED;
+                        const isStashed = effectiveOfficerStatus === constants.DOCUMENT_SHARES_STATUS.STASHED;
+
+                        if (isPublished || isStashed) {
+                            return (
+                                <div className="p-2 rounded-lg bg-surface-hover/80 text-center text-xs text-text-muted border border-surface-border">
+                                    {isPublished
+                                        ? 'This document has been published by the Director.'
+                                        : 'This document has been stashed by the Director.'}
+                                </div>
+                            );
+                        }
 
                         const targetWithShare = {
                             ...item,
@@ -4277,9 +5222,9 @@ const Inspector = ({
                             );
                         }
 
-                        return (
-                            <div className="grid grid-cols-2 gap-2 w-full">
-                                {isApproved ? (
+                        if (isApproved) {
+                            return (
+                                <div className="w-full">
                                     <Button
                                         variant="secondary"
                                         leadingIcon={RotateCcw}
@@ -4293,29 +5238,33 @@ const Inspector = ({
                                             primaryLabel: 'Revoke Approval',
                                             variant: 'warning',
                                         })}
-                                        className="justify-center truncate px-2"
+                                        className="w-full justify-center truncate px-2"
                                     >
                                         Unapprove
                                     </Button>
-                                ) : (
-                                    <Button
-                                        variant="primary"
-                                        leadingIcon={CheckCircle2}
-                                        isLoading={activeActionLoading === 'approve'}
-                                        isDisabled={Boolean(activeActionLoading)}
-                                        onClick={() => setInspectorConfirmAction({
-                                            actionKey: 'approve',
-                                            targetItem: targetWithShare,
-                                            title: `Approve ${item.isFolder ? 'Folder' : 'Document'}`,
-                                            message: `Are you sure you want to approve "${item.name || item.title || 'this document'}" for department director review?`,
-                                            primaryLabel: 'Approve',
-                                            variant: 'primary',
-                                        })}
-                                        className="justify-center truncate px-2"
-                                    >
-                                        Approve
-                                    </Button>
-                                )}
+                                </div>
+                            );
+                        }
+
+                        return (
+                            <div className="grid grid-cols-2 gap-2 w-full">
+                                <Button
+                                    variant="primary"
+                                    leadingIcon={CheckCircle2}
+                                    isLoading={activeActionLoading === 'approve'}
+                                    isDisabled={Boolean(activeActionLoading)}
+                                    onClick={() => setInspectorConfirmAction({
+                                        actionKey: 'approve',
+                                        targetItem: targetWithShare,
+                                        title: `Approve ${item.isFolder ? 'Folder' : 'Document'}`,
+                                        message: `Are you sure you want to approve "${item.name || item.title || 'this document'}" for department director review?`,
+                                        primaryLabel: 'Approve',
+                                        variant: 'primary',
+                                    })}
+                                    className="justify-center truncate px-2"
+                                >
+                                    Approve
+                                </Button>
                                 <Button
                                     variant="destructive"
                                     leadingIcon={XCircle}
@@ -4337,9 +5286,17 @@ const Inspector = ({
                     if (isDirector) {
                         const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
                         const userDeptClean = cleanId(activeUser?.departmentId ?? activeUser?.department?.id ?? activeUser?.department);
+                        const isBaseShare = (s) => !s.recipientId && !s.recipient?.id && !s.recipient;
                         const directorShare = (documentShares || []).find((s) => {
                             const sDeptId = cleanId(s.department?.id ?? s.departmentId);
+                            return userDeptClean && sDeptId === userDeptClean && isBaseShare(s);
+                        }) || (documentShares || []).find((s) => {
+                            const sDeptId = cleanId(s.department?.id ?? s.departmentId);
                             return userDeptClean && sDeptId === userDeptClean;
+                        }) || (allDocumentShares || []).find((s) => {
+                            const sDocId = cleanId(s.document?.id ?? s.documentId);
+                            const sDeptId = cleanId(s.department?.id ?? s.departmentId);
+                            return cleanId(item?.id) === sDocId && userDeptClean && sDeptId === userDeptClean && isBaseShare(s);
                         }) || (allDocumentShares || []).find((s) => {
                             const sDocId = cleanId(s.document?.id ?? s.documentId);
                             const sDeptId = cleanId(s.department?.id ?? s.departmentId);
@@ -4367,7 +5324,14 @@ const Inspector = ({
                                         leadingIcon={EyeOff}
                                         isLoading={activeActionLoading === 'unpublish'}
                                         isDisabled={Boolean(activeActionLoading)}
-                                        onClick={() => handleActionClick('unpublish', targetWithShare)}
+                                        onClick={() => setInspectorConfirmAction({
+                                            actionKey: 'unpublish',
+                                            targetItem: targetWithShare,
+                                            title: `Unpublish ${item.isFolder ? 'Folder' : 'Document'}`,
+                                            message: `Are you sure you want to unpublish "${item.name || item.title || 'this document'}" from faculty and department members?`,
+                                            primaryLabel: 'Unpublish',
+                                            variant: 'destructive',
+                                        })}
                                         className="justify-center truncate px-2"
                                     >
                                         Unpublish

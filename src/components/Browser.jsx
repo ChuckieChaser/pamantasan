@@ -7,6 +7,7 @@ import {
     ArrowUpDown,
     ChevronRight,
     Clock,
+    FileType,
     Filter,
     Home,
     LayoutGrid,
@@ -20,6 +21,7 @@ import { useDoubleClick } from '../hooks';
 import { Button } from './Button';
 import { ComboField, SearchField, SelectField } from './Fields';
 import { ToggleSelection, ViewSelection } from './Selections';
+import { Checkbox } from './Checkbox';
 import { Table } from './browser/Table';
 import { List } from './browser/List';
 import { Grid } from './browser/Grid';
@@ -27,6 +29,8 @@ import { Menu } from './browser/Menu';
 import {
     getResourceTitle,
     renderItemIcon,
+    getItemCategoryRank,
+    getMimeTypeFromItem,
 } from './browser/common';
 
 
@@ -36,6 +40,8 @@ const DEFAULT_SORT_OPTIONS = [
     { value: 'name-desc', label: 'Name (Z to A)', icon: ArrowUpAZ },
     { value: 'date-desc', label: 'Recently Added', icon: Clock },
     { value: 'date-asc', label: 'Oldest Added', icon: Clock },
+    { value: 'mimetype-asc', label: 'File Type (Docs first)', icon: FileType },
+    { value: 'mimetype-desc', label: 'File Type (Media first)', icon: FileType },
 ];
 
 const VIEW_OPTIONS = [
@@ -57,6 +63,7 @@ const Browser = ({
     filterOptions = [],
     breadcrumbs = null,
     selectedItem = null,
+    selectedIds: selectedIdsProp,
     addItemLabel = 'Add New',
     addItemIcon = Plus,
     searchPlaceholder = 'Search records...',
@@ -67,6 +74,10 @@ const Browser = ({
     onBreadcrumbClick,
     onAddItem,
     onSelectItem,
+    onToggleSelect: onToggleSelectProp,
+    onToggleSelectAll: onToggleSelectAllProp,
+    onClearSelection: onClearSelectionProp,
+    onSelectMultipleItems,
     onDoubleClickItem,
     onOpenItem,
     onItemAction,
@@ -80,9 +91,26 @@ const Browser = ({
     const [internalSortBy, setInternalSortBy] = useState(sortBy ?? 'name-asc');
     const [currentView, setCurrentView] = useState(initialView);
     const [internalSelectedId, setInternalSelectedId] = useState(null);
+    const [internalSelectedIds, setInternalSelectedIds] = useState(() => new Set());
     const [activeActionMenu, setActiveActionMenu] = useState(null);
     const [toolbarWidth, setToolbarWidth] = useState(null);
     const toolbarRef = useRef(null);
+
+    const activeSelectedIds = useMemo(() => {
+        if (selectedIdsProp !== undefined && selectedIdsProp !== null) {
+            return selectedIdsProp instanceof Set ? selectedIdsProp : new Set(selectedIdsProp);
+        }
+        return internalSelectedIds;
+    }, [selectedIdsProp, internalSelectedIds]);
+
+    useEffect(() => {
+        if (selectedIdsProp !== undefined && selectedIdsProp !== null) {
+            const next = selectedIdsProp instanceof Set ? selectedIdsProp : new Set(selectedIdsProp);
+            setInternalSelectedIds(next);
+        }
+    }, [selectedIdsProp]);
+
+
 
     // MEASURE TOOLBAR CONTAINER WIDTH DYNAMICALLY
     useEffect(() => {
@@ -140,8 +168,76 @@ const Browser = ({
         return () => clearTimeout(timer);
     }, [selectedId]);
 
+    // SELECTION TOGGLERS
+    const handleToggleSelect = (item) => {
+        const next = new Set(activeSelectedIds);
+        if (next.has(item.id)) {
+            next.delete(item.id);
+        } else {
+            next.add(item.id);
+        }
+        setInternalSelectedIds(next);
+        onToggleSelectProp?.(item);
+
+        const selectedList = data.filter((d) => next.has(d.id));
+        if (next.size === 0) {
+            setInternalSelectedId(null);
+            onSelectItem?.(null);
+            onSelectMultipleItems?.([]);
+        } else if (next.size === 1) {
+            const singleItem = data.find((d) => next.has(d.id)) || item;
+            setInternalSelectedId(singleItem.id);
+            onSelectItem?.(singleItem);
+            onSelectMultipleItems?.([singleItem]);
+        } else {
+            setInternalSelectedId(null);
+            onSelectItem?.(null);
+            onSelectMultipleItems?.(selectedList);
+        }
+    };
+
+    const handleToggleSelectAll = () => {
+        const allFilteredSelected = filteredData.length > 0 && filteredData.every((item) => activeSelectedIds.has(item.id));
+        const next = new Set(activeSelectedIds);
+        if (allFilteredSelected) {
+            filteredData.forEach((item) => next.delete(item.id));
+        } else {
+            filteredData.forEach((item) => next.add(item.id));
+        }
+        setInternalSelectedIds(next);
+        onToggleSelectAllProp?.(Array.from(next));
+
+        const selectedList = data.filter((d) => next.has(d.id));
+        if (next.size === 0) {
+            setInternalSelectedId(null);
+            onSelectItem?.(null);
+            onSelectMultipleItems?.([]);
+        } else if (next.size === 1) {
+            const singleItem = selectedList[0];
+            setInternalSelectedId(singleItem.id);
+            onSelectItem?.(singleItem);
+            onSelectMultipleItems?.([singleItem]);
+        } else {
+            setInternalSelectedId(null);
+            onSelectItem?.(null);
+            onSelectMultipleItems?.(selectedList);
+        }
+    };
+
+    const handleClearSelection = () => {
+        setInternalSelectedIds(new Set());
+        onClearSelectionProp?.();
+        setInternalSelectedId(null);
+        onSelectItem?.(null);
+        onSelectMultipleItems?.([]);
+    };
+
     const handleItemInteraction = useDoubleClick({
         onClick: (item) => {
+            if (activeSelectedIds.size > 0) {
+                handleToggleSelect(item);
+                return;
+            }
             const activeSelectedId = selectedItem?.id ?? internalSelectedId;
             if (activeSelectedId === item.id) {
                 setInternalSelectedId(null);
@@ -192,6 +288,23 @@ const Browser = ({
             return;
         }
 
+        if (activeSelectedIds.size > 0 && !activeSelectedIds.has(item.id)) {
+            const next = new Set(activeSelectedIds);
+            next.add(item.id);
+            setInternalSelectedIds(next);
+            onToggleSelectProp?.(item);
+            const selectedList = data.filter((d) => next.has(d.id));
+            if (next.size === 1) {
+                setInternalSelectedId(item.id);
+                onSelectItem?.(item);
+                onSelectMultipleItems?.([item]);
+            } else {
+                setInternalSelectedId(null);
+                onSelectItem?.(null);
+                onSelectMultipleItems?.(selectedList);
+            }
+        }
+
         const buttonRect = event.currentTarget.getBoundingClientRect();
         setActiveActionMenu({
             id: item.id,
@@ -203,7 +316,14 @@ const Browser = ({
     const handleActionClick = (event, actionKey, item) => {
         event?.stopPropagation();
         setActiveActionMenu(null);
-        onItemAction?.(actionKey, item);
+        if (Array.isArray(item)) {
+            onItemAction?.(actionKey, item);
+        } else if (activeSelectedIds.size > 1) {
+            const selectedList = data.filter((d) => activeSelectedIds.has(d.id));
+            onItemAction?.(actionKey, selectedList.length > 0 ? selectedList : [item]);
+        } else {
+            onItemAction?.(actionKey, item);
+        }
     };
 
     // DERIVED VALUES
@@ -308,10 +428,75 @@ const Browser = ({
                 return nameB.localeCompare(nameA);
             }
 
+            // DATE HELPERS
+            const parseItemTimestamp = (item) => {
+                if (!item) return 0;
+                const candidate = item.updatedAt ?? item.createdAt ?? item.rawDate ?? item.dateValue ?? item.date;
+                if (!candidate) return 0;
+                if (typeof candidate === 'number') return candidate;
+                if (candidate instanceof Date) return candidate.getTime();
+                if (typeof candidate === 'string') {
+                    const direct = new Date(candidate).getTime();
+                    if (!isNaN(direct) && direct > 0) return direct;
+                    const stripped = candidate.replace(/\s+at\s+/i, ' ');
+                    const strippedTime = new Date(stripped).getTime();
+                    if (!isNaN(strippedTime) && strippedTime > 0) return strippedTime;
+                }
+                return 0;
+            };
+
+            if (activeSortBy === 'date-desc') {
+                const timeA = parseItemTimestamp(itemA);
+                const timeB = parseItemTimestamp(itemB);
+                if (timeA !== timeB) {
+                    return timeB - timeA;
+                }
+                const nameA = itemA.title ?? itemA.name ?? itemA.subject ?? '';
+                const nameB = itemB.title ?? itemB.name ?? itemB.subject ?? '';
+                return nameA.localeCompare(nameB);
+            }
+
             if (activeSortBy === 'date-asc') {
-                const timeA = new Date(itemA.updatedAt ?? itemA.createdAt ?? itemA.date ?? 0).getTime() || 0;
-                const timeB = new Date(itemB.updatedAt ?? itemB.createdAt ?? itemB.date ?? 0).getTime() || 0;
-                return timeA - timeB;
+                const timeA = parseItemTimestamp(itemA);
+                const timeB = parseItemTimestamp(itemB);
+                if (timeA !== timeB) {
+                    return timeA - timeB;
+                }
+                const nameA = itemA.title ?? itemA.name ?? itemA.subject ?? '';
+                const nameB = itemB.title ?? itemB.name ?? itemB.subject ?? '';
+                return nameA.localeCompare(nameB);
+            }
+
+            if (activeSortBy === 'mimetype-asc' || activeSortBy === 'type-asc') {
+                const rankA = getItemCategoryRank(itemA);
+                const rankB = getItemCategoryRank(itemB);
+                if (rankA !== rankB) {
+                    return rankA - rankB;
+                }
+                const mimeA = (getMimeTypeFromItem(itemA) || '').toLowerCase();
+                const mimeB = (getMimeTypeFromItem(itemB) || '').toLowerCase();
+                if (mimeA !== mimeB) {
+                    return mimeA.localeCompare(mimeB);
+                }
+                const nameA = itemA.title ?? itemA.name ?? itemA.subject ?? '';
+                const nameB = itemB.title ?? itemB.name ?? itemB.subject ?? '';
+                return nameA.localeCompare(nameB);
+            }
+
+            if (activeSortBy === 'mimetype-desc' || activeSortBy === 'type-desc') {
+                const rankA = getItemCategoryRank(itemA);
+                const rankB = getItemCategoryRank(itemB);
+                if (rankA !== rankB) {
+                    return rankB - rankA;
+                }
+                const mimeA = (getMimeTypeFromItem(itemA) || '').toLowerCase();
+                const mimeB = (getMimeTypeFromItem(itemB) || '').toLowerCase();
+                if (mimeA !== mimeB) {
+                    return mimeB.localeCompare(mimeA);
+                }
+                const nameA = itemA.title ?? itemA.name ?? itemA.subject ?? '';
+                const nameB = itemB.title ?? itemB.name ?? itemB.subject ?? '';
+                return nameA.localeCompare(nameB);
             }
 
             if (activeSortBy === 'size-desc') {
@@ -325,8 +510,8 @@ const Browser = ({
                 return parseSize(itemB.size) - parseSize(itemA.size);
             }
 
-            const timeA = new Date(itemA.updatedAt ?? itemA.createdAt ?? itemA.date ?? 0).getTime() || 0;
-            const timeB = new Date(itemB.updatedAt ?? itemB.createdAt ?? itemB.date ?? 0).getTime() || 0;
+            const timeA = parseItemTimestamp(itemA);
+            const timeB = parseItemTimestamp(itemB);
             if (timeA !== timeB) {
                 return timeB - timeA;
             }
@@ -643,6 +828,33 @@ const Browser = ({
                 )}
             </div>
 
+            {/* ANDROID-STYLE MULTI-SELECTION BANNER */}
+            {activeSelectedIds.size > 0 && (
+                <div className="flex items-center justify-between px-3.5 py-2.5 rounded-xl bg-accent/10 border border-accent/30 text-accent text-xs sm:text-sm font-medium shadow-2xs animate-fade-in select-none">
+                    <div className="flex items-center gap-2.5">
+                        <Checkbox
+                            checked={filteredData.length > 0 && filteredData.every((item) => activeSelectedIds.has(item.id))}
+                            indeterminate={filteredData.some((item) => activeSelectedIds.has(item.id)) && !(filteredData.length > 0 && filteredData.every((item) => activeSelectedIds.has(item.id)))}
+                            onChange={handleToggleSelectAll}
+                            title="Select all / Deselect all"
+                            aria-label="Select all or deselect all"
+                        />
+                        <span>
+                            {activeSelectedIds.size} {resourceName === 'users' ? (activeSelectedIds.size === 1 ? 'user selected' : 'users selected') : resourceName === 'departments' ? (activeSelectedIds.size === 1 ? 'department selected' : 'departments selected') : (activeSelectedIds.size === 1 ? 'file selected' : 'files selected')}
+                        </span>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={handleClearSelection}
+                        className="p-1 rounded-lg text-accent hover:bg-accent/15 transition-colors cursor-pointer"
+                        title="Deselect all"
+                        aria-label="Deselect all"
+                    >
+                        <X className="h-4 w-4" />
+                    </button>
+                </div>
+            )}
+
             {/* MAIN CONTENT AREA: VIEW RENDERER */}
             {filteredData.length === 0 ? (
                 <div className="relative z-0 py-16 sm:py-20 px-4 text-center border border-dashed border-surface-border rounded-2xl bg-surface/60 backdrop-blur-xs flex flex-col items-center justify-center gap-3">
@@ -679,16 +891,20 @@ const Browser = ({
                     data={filteredData}
                     resourceName={resourceName}
                     selectedId={selectedId}
+                    selectedIds={activeSelectedIds}
                     onItemClick={handleItemInteraction}
                     onToggleActionMenu={handleToggleActionMenu}
+                    onToggleSelect={handleToggleSelect}
                 />
             ) : currentView === 'list' ? (
                 <List
                     data={filteredData}
                     resourceName={resourceName}
                     selectedId={selectedId}
+                    selectedIds={activeSelectedIds}
                     onItemClick={handleItemInteraction}
                     onToggleActionMenu={handleToggleActionMenu}
+                    onToggleSelect={handleToggleSelect}
                 />
             ) : (
                 <Table
@@ -696,9 +912,12 @@ const Browser = ({
                     columns={columns}
                     resourceName={resourceName}
                     selectedId={selectedId}
+                    selectedIds={activeSelectedIds}
                     onItemClick={handleItemInteraction}
                     onItemDoubleClick={handleItemInteraction}
                     onToggleActionMenu={handleToggleActionMenu}
+                    onToggleSelect={handleToggleSelect}
+                    onToggleSelectAll={handleToggleSelectAll}
                 />
             )}
 
@@ -709,6 +928,9 @@ const Browser = ({
                     resourceName={resourceName}
                     anchorRect={activeActionMenu.anchorRect}
                     onActionClick={handleActionClick}
+                    isMultipleSelected={activeSelectedIds.size > 1}
+                    selectedCount={activeSelectedIds.size}
+                    selectedItems={data.filter((d) => activeSelectedIds.has(d.id))}
                 />
             )}
         </div>

@@ -70,6 +70,7 @@ const PAGE_TITLES = {
 const AppContent = () => {
     // STATES: WORKSPACE & INSPECTOR
     const [selectedItem, setSelectedItem] = useState(null);
+    const [selectedItems, setSelectedItems] = useState([]);
     const [isDetailPanelOpen, setIsDetailPanelOpen] = useState(false);
     const [inspectorTab, setInspectorTab] = useState(null);
     const [restoreConflictModalItem, setRestoreConflictModalItem] = useState(null);
@@ -436,6 +437,7 @@ const AppContent = () => {
 
     const handleNavigationChange = (navigationKey) => {
         setSelectedItem(null);
+        setSelectedItems([]);
         setInspectorTab('information');
         const targetPath =
             navigationKey === 'request_document' || navigationKey === 'requests'
@@ -454,6 +456,7 @@ const AppContent = () => {
 
     const handleSelectActivity = (activityItem, targetTab = null) => {
         setSelectedItem(activityItem);
+        setSelectedItems([]);
         if (targetTab) {
             setInspectorTab(targetTab);
         } else if (activityItem?._targetTab) {
@@ -466,15 +469,51 @@ const AppContent = () => {
         }
     };
 
+    const handleSelectMultiple = (items) => {
+        const safeItems = Array.isArray(items) ? items : [];
+        setSelectedItems(safeItems);
+        if (safeItems.length > 1) {
+            setSelectedItem(null);
+            setIsDetailPanelOpen(true);
+        } else if (safeItems.length === 1) {
+            setSelectedItem(safeItems[0]);
+            setIsDetailPanelOpen(true);
+        } else {
+            setSelectedItem(null);
+            setIsDetailPanelOpen(false);
+        }
+    };
+
+    const handleUnstageItem = (itemToUnstage) => {
+        setSelectedItems((prev) => {
+            const next = prev.filter((i) => i.id !== itemToUnstage.id);
+            if (next.length === 1) {
+                setSelectedItem(next[0]);
+            } else if (next.length === 0) {
+                setSelectedItem(null);
+                setIsDetailPanelOpen(false);
+            }
+            return next;
+        });
+    };
+
+    const handleClearSelection = () => {
+        setSelectedItems([]);
+        setSelectedItem(null);
+        setIsDetailPanelOpen(false);
+    };
+
     const handleDetailAction = async (actionKey, item) => {
         const targetItem = item || selectedItem;
-        const isCoordinatorReq = Boolean(
-            targetItem?.action &&
-            typeof targetItem.action === 'string' &&
-            (targetItem.action.startsWith('USER_') ||
-             targetItem.action.startsWith('DEPARTMENT_') ||
-             targetItem.action.startsWith('DOCUMENT_'))
-        );
+        const isCoordinatorReq = Array.isArray(targetItem)
+            ? targetItem.some((i) => i.action && typeof i.action === 'string')
+            : Boolean(
+                targetItem?.action &&
+                typeof targetItem.action === 'string' &&
+                (targetItem.action.startsWith('USER_') ||
+                 targetItem.action.startsWith('DEPARTMENT_') ||
+                 targetItem.action.startsWith('DOCUMENT_'))
+            );
 
         if (isCoordinatorReq) {
             if (actionKey === 'approve') {
@@ -587,6 +626,38 @@ const AppContent = () => {
         }
 
         if (actionKey === 'download' || actionKey === 'download_version') {
+            const itemsToDownload = Array.isArray(item) ? item : [item];
+            if (itemsToDownload.length > 1) {
+                showToast({
+                    type: 'information',
+                    title: 'Batch Download Started',
+                    description: `Packaging ${itemsToDownload.length} items into ZIP archive...`,
+                });
+                try {
+                    const allDocs = useDocumentStore.getState().documents ?? [];
+                    const allVersions = useDocumentStore.getState().documentVersions ?? [];
+                    await storageService.downloadMultipleAsZip(
+                        itemsToDownload,
+                        allDocs,
+                        allVersions,
+                        'Documents.zip'
+                    );
+                    showToast({
+                        type: 'success',
+                        title: 'Batch Download Complete',
+                        description: `Packaged ${itemsToDownload.length} items into Documents.zip.`,
+                    });
+                } catch (err) {
+                    console.error('Batch zip download failed:', err);
+                    showToast({
+                        type: 'error',
+                        title: 'Download Failed',
+                        description: err?.message || 'Could not download zip archive.',
+                    });
+                }
+                return;
+            }
+
             const targetDocId = item?.documentId ?? item?.document?.id ?? item?.id;
             const allDocs = useDocumentStore.getState().documents ?? [];
             const matchedDoc = allDocs.find((d) => d.id === targetDocId);
@@ -689,15 +760,194 @@ const AppContent = () => {
             return;
         }
 
-        const isDocRequest = Boolean(
-            targetItem?.subject ||
-            targetItem?.requestNumber ||
-            item?.subject ||
-            selectedItem?.subject
-        );
+        if (actionKey === 'publish') {
+            const target = item || selectedItem;
+            if (target) {
+                useDocumentStore.getState().setPublishModalDocument(target);
+            }
+            return;
+        }
+
+        const isDocRequest = Array.isArray(targetItem)
+            ? targetItem.some((i) => i.subject || i.requestNumber)
+            : Boolean(
+                targetItem?.subject ||
+                targetItem?.requestNumber ||
+                item?.subject ||
+                selectedItem?.subject
+            );
 
         if (!isCoordinatorReq && !isDocRequest && ['approve', 'unapprove', 'reject', 'unreject', 'publish', 'unpublish', 'stash', 'unstash', 'unshare'].includes(actionKey)) {
-            const targetDoc = item || selectedItem;
+            const targetDocs = Array.isArray(item) ? item : (item ? [item] : (selectedItem ? [selectedItem] : []));
+            if (targetDocs.length === 0) return;
+
+            const cleanId = (uid) => (typeof uid === 'string' ? uid.replace(/-/g, '').toLowerCase() : uid);
+            const userDeptClean = currentUser?.departmentId ? cleanId(currentUser.departmentId) : null;
+
+            if (targetDocs.length > 1) {
+                let successCount = 0;
+                const store = useDocumentStore.getState();
+                const allShares = store.documentShares || [];
+
+                for (const doc of targetDocs) {
+                    try {
+                        let shareRecord = doc?.share;
+                        if (!shareRecord) {
+                            const docClean = cleanId(doc?.id);
+                            if (userDeptClean) {
+                                shareRecord = allShares.find(
+                                    (s) =>
+                                        cleanId(s.document?.id ?? s.documentId) === docClean &&
+                                        cleanId(s.department?.id ?? s.departmentId) === userDeptClean
+                                );
+                            } else {
+                                shareRecord = allShares.find((s) => cleanId(s.document?.id ?? s.documentId) === docClean);
+                            }
+                        }
+                        const shareId = shareRecord?.id;
+                        const deptId = shareRecord?.department?.id ?? shareRecord?.departmentId ?? currentUser?.departmentId;
+
+                        const docStatus = String(shareRecord?.status ?? doc?.status ?? '').toUpperCase();
+                        if (
+                            constants.isOfficerRole(currentUser?.role) &&
+                            (docStatus === constants.DOCUMENT_SHARES_STATUS.PUBLISHED || docStatus === constants.DOCUMENT_SHARES_STATUS.STASHED) &&
+                            ['approve', 'unapprove', 'reject', 'unreject'].includes(actionKey)
+                        ) {
+                            continue;
+                        }
+                        if (actionKey === 'reject' && docStatus === constants.DOCUMENT_SHARES_STATUS.APPROVED) {
+                            continue;
+                        }
+                        if (actionKey === 'approve' && docStatus === constants.DOCUMENT_SHARES_STATUS.REJECTED) {
+                            continue;
+                        }
+
+                        if (actionKey === 'approve') {
+                            if (doc?.isFolder && deptId) {
+                                await store.updateShareStatusRecursive(doc.id, deptId, constants.DOCUMENT_SHARES_STATUS.APPROVED);
+                            } else if (shareId) {
+                                await store.approveShare(shareId);
+                            }
+                            successCount++;
+                        } else if (actionKey === 'unapprove') {
+                            if (doc?.isFolder && deptId) {
+                                await store.updateShareStatusRecursive(doc.id, deptId, constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL);
+                            } else if (shareId) {
+                                await store.unapproveShare(shareId);
+                            }
+                            successCount++;
+                        } else if (actionKey === 'reject') {
+                            const bulkReason = (Array.isArray(item) ? (item[0]?.rejectionReason || item?.rejectionReason) : item?.rejectionReason) || 'Rejected in bulk';
+                            if (doc?.isFolder && deptId) {
+                                await store.updateShareStatusRecursive(doc.id, deptId, constants.DOCUMENT_SHARES_STATUS.REJECTED);
+                            } else if (shareId) {
+                                await store.rejectShare(shareId, bulkReason, currentUser?.id);
+                            }
+                            successCount++;
+                        } else if (actionKey === 'unreject') {
+                            if (doc?.isFolder && deptId) {
+                                await store.updateShareStatusRecursive(doc.id, deptId, constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL);
+                            } else if (shareId) {
+                                await store.unrejectShare(shareId);
+                            }
+                            successCount++;
+                        } else if (actionKey === 'publish') {
+                            if (doc?.isFolder && deptId) {
+                                await store.updateShareStatusRecursive(doc.id, deptId, constants.DOCUMENT_SHARES_STATUS.PUBLISHED);
+                            } else if (shareId) {
+                                await store.publishShare(shareId);
+                            }
+                            successCount++;
+                        } else if (actionKey === 'unpublish') {
+                            if (doc?.isFolder && deptId) {
+                                await store.updateShareStatusRecursive(doc.id, deptId, constants.DOCUMENT_SHARES_STATUS.APPROVED);
+                            } else if (shareId) {
+                                await store.unpublishShare(shareId);
+                            }
+                            successCount++;
+                        } else if (actionKey === 'stash') {
+                            if (doc?.isFolder && deptId) {
+                                await store.updateShareStatusRecursive(doc.id, deptId, constants.DOCUMENT_SHARES_STATUS.STASHED);
+                            } else if (shareId) {
+                                await store.stashShare(shareId);
+                            }
+                            successCount++;
+                        } else if (actionKey === 'unstash') {
+                            if (doc?.isFolder && deptId) {
+                                await store.updateShareStatusRecursive(doc.id, deptId, constants.DOCUMENT_SHARES_STATUS.APPROVED);
+                            } else if (shareId) {
+                                await store.unstashShare(shareId);
+                            }
+                            successCount++;
+                        } else if (actionKey === 'unshare') {
+                            const docClean = cleanId(doc.id);
+                            const matchingShares = userDeptClean
+                                ? allShares.filter((s) => cleanId(s.document?.id ?? s.documentId) === docClean && cleanId(s.department?.id ?? s.departmentId) === userDeptClean)
+                                : allShares.filter((s) => cleanId(s.document?.id ?? s.documentId) === docClean);
+
+                            if (matchingShares.length > 0) {
+                                for (const mShare of matchingShares) {
+                                    const mDeptId = mShare.department?.id ?? mShare.departmentId;
+                                    if (constants.isCoordinatorRole(currentUser?.role)) {
+                                        const unsharePayload = {
+                                            shareId: mShare.id,
+                                            documentId: doc?.id,
+                                            departmentId: mDeptId,
+                                            isRecursive: Boolean(doc?.isFolder),
+                                        };
+                                        const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
+                                        await coordinatorApprovalService.submitCoordinatorRequest({
+                                            action: constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_UNSHARE,
+                                            requesterId,
+                                            data: unsharePayload,
+                                        });
+                                    } else {
+                                        if (doc?.isFolder && mDeptId) {
+                                            await store.unshareDocumentRecursive(doc.id, mDeptId);
+                                        } else if (mShare.id) {
+                                            await store.unshareDocument(mShare.id);
+                                        }
+                                    }
+                                }
+                            } else if (shareId) {
+                                if (constants.isCoordinatorRole(currentUser?.role)) {
+                                    const unsharePayload = {
+                                        shareId: shareId,
+                                        documentId: doc?.id,
+                                        departmentId: deptId,
+                                        isRecursive: Boolean(doc?.isFolder),
+                                    };
+                                    const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
+                                    await coordinatorApprovalService.submitCoordinatorRequest({
+                                        action: constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_UNSHARE,
+                                        requesterId,
+                                        data: unsharePayload,
+                                    });
+                                } else {
+                                    if (doc?.isFolder && deptId) {
+                                        await store.unshareDocumentRecursive(doc.id, deptId);
+                                    } else {
+                                        await store.unshareDocument(shareId);
+                                    }
+                                }
+                            }
+                            successCount++;
+                        }
+                    } catch (err) {
+                        console.error('Batch document action error:', err);
+                    }
+                }
+
+                showToast({
+                    type: 'success',
+                    title: 'Batch Action Completed',
+                    description: `Processed ${successCount} of ${targetDocs.length} items.`,
+                });
+                handleClearSelection();
+                return;
+            }
+
+            const targetDoc = targetDocs[0];
             const allShares = useDocumentStore.getState().documentShares || [];
             let shareRecord = targetDoc?.share;
 
@@ -705,13 +955,16 @@ const AppContent = () => {
                 if ((actionKey === 'unshare' || actionKey === 'unpublish') && (targetDoc?.departmentId || targetDoc?.department || targetDoc?.recipientId || targetDoc?.recipient)) {
                     shareRecord = targetDoc;
                 } else if (currentUser?.departmentId) {
+                    const docClean = cleanId(targetDoc?.id);
+                    const userDeptClean = cleanId(currentUser.departmentId);
                     shareRecord = allShares.find(
                         (s) =>
-                            (s.document?.id ?? s.documentId) === targetDoc?.id &&
-                            (s.department?.id ?? s.departmentId) === currentUser.departmentId
+                            cleanId(s.document?.id ?? s.documentId) === docClean &&
+                            cleanId(s.department?.id ?? s.departmentId) === userDeptClean
                     );
                 } else {
-                    shareRecord = allShares.find((s) => (s.document?.id ?? s.documentId) === targetDoc?.id);
+                    const docClean = cleanId(targetDoc?.id);
+                    shareRecord = allShares.find((s) => cleanId(s.document?.id ?? s.documentId) === docClean);
                 }
             }
 
@@ -730,6 +983,36 @@ const AppContent = () => {
                 const docTitle = targetDoc?.name || targetDoc?.title || selectedItem?.name || selectedItem?.title || 'document';
                 const deptId = shareRecord?.department?.id ?? shareRecord?.departmentId ?? currentUser?.departmentId;
                 const isUserShare = Boolean(shareRecord?.recipientId || shareRecord?.recipient);
+
+                const currentStatus = String(shareRecord?.status ?? targetDoc?.status ?? '').toUpperCase();
+                if (
+                    constants.isOfficerRole(currentUser?.role) &&
+                    (currentStatus === constants.DOCUMENT_SHARES_STATUS.PUBLISHED || currentStatus === constants.DOCUMENT_SHARES_STATUS.STASHED) &&
+                    ['approve', 'unapprove', 'reject', 'unreject'].includes(actionKey)
+                ) {
+                    showToast({
+                        type: 'error',
+                        title: 'Action Prohibited',
+                        description: `This document is already ${currentStatus.toLowerCase()} by the Director and cannot be modified by an Officer.`,
+                    });
+                    return;
+                }
+                if (actionKey === 'reject' && currentStatus === constants.DOCUMENT_SHARES_STATUS.APPROVED) {
+                    showToast({
+                        type: 'error',
+                        title: 'Action Prohibited',
+                        description: 'You cannot directly reject an approved document. Please revoke approval (unapprove) first.',
+                    });
+                    return;
+                }
+                if (actionKey === 'approve' && currentStatus === constants.DOCUMENT_SHARES_STATUS.REJECTED) {
+                    showToast({
+                        type: 'error',
+                        title: 'Action Prohibited',
+                        description: 'You cannot directly approve a rejected document. Please unreject it first.',
+                    });
+                    return;
+                }
 
                 if (actionKey === 'approve') {
                     if (targetDoc?.isFolder && deptId) {
@@ -1158,7 +1441,8 @@ const AppContent = () => {
             if (item?.id) {
                 await useDocumentStore.getState().archiveDocument(item.id, false);
             }
-            setSelectedItem((prev) => (prev ? { ...prev, isArchived: false } : null));
+            setSelectedItems((prev) => (Array.isArray(prev) ? prev.filter((p) => p.id !== item?.id) : []));
+            setSelectedItem((prev) => (prev?.id === item?.id ? { ...prev, isArchived: false } : prev));
             showToast({
                 type: 'success',
                 title: item?.isFolder ? 'Folder Restored' : 'Document Restored',
@@ -1192,7 +1476,8 @@ const AppContent = () => {
                 await useDocumentStore.getState().archiveDocument(item.id, false);
             }
 
-            setSelectedItem((prev) => (prev ? { ...prev, isArchived: false } : null));
+            setSelectedItems((prev) => (Array.isArray(prev) ? prev.filter((p) => p.id !== item?.id) : []));
+            setSelectedItem((prev) => (prev?.id === item?.id ? { ...prev, isArchived: false } : prev));
             showToast({
                 type: 'success',
                 title: 'Items Restored',
@@ -1290,15 +1575,24 @@ const AppContent = () => {
                             notificationCount={unreadNotificationCount}
                             hasUnreadNotifications={unreadNotificationCount > 0}
                             isDetailPanelOpen={isDetailPanelOpen}
-                            detailPanelTitle={selectedItem ? 'Record Inspector' : 'Inspector'}
+                            detailPanelTitle={
+                                selectedItems.length > 1
+                                    ? `You select multiple files (${selectedItems.length})`
+                                    : selectedItem
+                                    ? 'Record Inspector'
+                                    : 'Inspector'
+                            }
                             detailPanelContent={
                                 <Inspector
                                     item={selectedItem}
+                                    selectedItems={selectedItems}
                                     currentUser={currentUser}
                                     targetTab={inspectorTab}
                                     onTabChange={(tab) => setInspectorTab(tab)}
                                     onClose={handleCloseDetailPanel}
                                     onAction={handleDetailAction}
+                                    onUnstageItem={handleUnstageItem}
+                                    onClearSelection={handleClearSelection}
                                 />
                             }
                             onNavigationChange={handleNavigationChange}
@@ -1332,7 +1626,9 @@ const AppContent = () => {
                         <DocumentsPage
                             currentUser={currentUser}
                             selectedItem={selectedItem}
+                            selectedItems={selectedItems}
                             onSelectDocument={handleSelectActivity}
+                            onSelectMultiple={handleSelectMultiple}
                         />
                     }
                 />
@@ -1343,7 +1639,9 @@ const AppContent = () => {
                             <ArchivesPage
                                 currentUser={currentUser}
                                 selectedItem={selectedItem}
+                                selectedItems={selectedItems}
                                 onSelectDocument={handleSelectActivity}
+                                onSelectMultiple={handleSelectMultiple}
                             />
                         ) : (
                             <Navigate to="/documents" replace />
@@ -1356,7 +1654,9 @@ const AppContent = () => {
                         <RequestsPage
                             currentUser={currentUser}
                             selectedItem={selectedItem}
+                            selectedItems={selectedItems}
                             onSelectRequest={handleSelectActivity}
+                            onSelectMultiple={handleSelectMultiple}
                         />
                     }
                 />
@@ -1381,7 +1681,9 @@ const AppContent = () => {
                             <DepartmentsPage
                                 currentUser={currentUser}
                                 selectedItem={selectedItem}
+                                selectedItems={selectedItems}
                                 onSelectDepartment={handleSelectActivity}
+                                onSelectMultiple={handleSelectMultiple}
                             />
                         }
                     />
@@ -1391,7 +1693,9 @@ const AppContent = () => {
                             <UsersPage
                                 currentUser={currentUser}
                                 selectedItem={selectedItem}
+                                selectedItems={selectedItems}
                                 onSelectUser={handleSelectActivity}
+                                onSelectMultiple={handleSelectMultiple}
                             />
                         }
                     />
@@ -1401,7 +1705,9 @@ const AppContent = () => {
                             <CoordinatorPage
                                 currentUser={currentUser}
                                 selectedItem={selectedItem}
+                                selectedItems={selectedItems}
                                 onSelectRequest={handleSelectActivity}
+                                onSelectMultiple={handleSelectMultiple}
                             />
                         }
                     />

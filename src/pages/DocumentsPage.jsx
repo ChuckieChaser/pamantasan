@@ -52,6 +52,7 @@ import {
     getExtensionFromMimeType,
     fileToBase64,
 } from '../components';
+import { getSpecificMimeLabel } from '../components/browser/common';
 import { useToast, useAuth } from '../hooks';
 import { constants } from '../constants';
 import {
@@ -129,7 +130,9 @@ const INITIAL_BREADCRUMBS = [
 const DocumentsPage = ({
     currentUser: propUser = null,
     selectedItem = null,
+    selectedItems = [],
     onSelectDocument,
+    onSelectMultiple,
     className,
     ...props
 }) => {
@@ -257,9 +260,11 @@ const DocumentsPage = ({
 
     useEffect(() => {
         if (publishModalDocument) {
+            const isPublishArray = Array.isArray(publishModalDocument);
+            const targetDocId = isPublishArray ? publishModalDocument[0]?.id : publishModalDocument.id;
             const existingSpecific = (documentShares || []).filter(
                 (s) =>
-                    (s.document?.id ?? s.documentId) === publishModalDocument.id &&
+                    (s.document?.id ?? s.documentId) === targetDocId &&
                     (s.department?.id ?? s.departmentId) === currentUser?.departmentId &&
                     (s.recipient?.id ?? s.recipientId)
             );
@@ -559,14 +564,17 @@ const DocumentsPage = ({
             const itemStatus = shareMeta?.status ?? '—';
 
             const displayName = doc.isFolder ? doc.name : (doc.name || '').replace(/\.[^/.]+$/, '').trim() || doc.name;
+            const effectiveMime = doc.isFolder ? 'folder' : (latestVer?.mimeType || (doc.name ? getMimeTypeFromFilename(doc.name) : null));
+            const subtitleText = doc.isFolder ? 'Directory' : getSpecificMimeLabel(effectiveMime, doc.name);
 
             return {
                 id: doc.id,
                 parentId: doc.parentId ?? 'root',
                 title: displayName,
                 name: displayName,
-                subtitle: doc.isFolder ? 'DIR' : 'Document',
-                mimeType: doc.isFolder ? 'folder' : (latestVer?.mimeType ?? null),
+                subtitle: subtitleText,
+                fileName: doc.name || null,
+                mimeType: effectiveMime,
                 description: doc.comment ?? null,
                 summary: doc.isFolder ? null : (latestVer?.summary ?? null),
                 comment: doc.comment ?? null,
@@ -580,7 +588,9 @@ const DocumentsPage = ({
                 path: latestVer?.path ?? null,
                 status: itemStatus,
                 share: shareMeta?.share ?? null,
-                shares: shareMeta?.shares ?? [],
+                createdAt: latestVer?.createdAt || doc.createdAt || doc.updatedAt || null,
+                updatedAt: doc.updatedAt || latestVer?.createdAt || doc.createdAt || null,
+                rawDate: doc.updatedAt || latestVer?.createdAt || doc.createdAt || null,
                 date: (doc.updatedAt || latestVer?.createdAt || doc.createdAt) && !isNaN(new Date(doc.updatedAt || latestVer?.createdAt || doc.createdAt).getTime())
                     ? formatDateTime(doc.updatedAt || latestVer?.createdAt || doc.createdAt)
                     : 'Active',
@@ -602,13 +612,14 @@ const DocumentsPage = ({
 
     // DERIVED SELECTION & ACTIVE FOLDER: Reactive to both local navigation and external selectedItem
     const activeSelectedDocument = useMemo(() => {
+        if (selectedItems && selectedItems.length > 1) return null;
         const targetId = selectedItem?.id ?? selectedDocument?.id;
         if (!targetId) return null;
         const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
         const targetClean = cleanId(targetId);
         const matched = repositoryItems.find((item) => cleanId(item.id) === targetClean);
         return matched ?? null;
-    }, [selectedItem, selectedDocument, repositoryItems]);
+    }, [selectedItems, selectedItem, selectedDocument, repositoryItems]);
 
     const activeFolderId = useMemo(() => {
         if (selectedItem?.id) {
@@ -765,13 +776,17 @@ const DocumentsPage = ({
     useEffect(() => {
         const handleArchiveDocEvent = (event) => {
             if (event.detail) {
-                const targetDoc = documents.find((d) => d?.id === event.detail.id) ?? event.detail;
+                const targetDoc = Array.isArray(event.detail)
+                    ? event.detail
+                    : (documents.find((d) => d?.id === event.detail.id) ?? event.detail);
                 setArchivingItem(targetDoc);
             }
         };
         const handleDeleteDocEvent = (event) => {
             if (event.detail) {
-                const targetDoc = documents.find((d) => d?.id === event.detail.id) ?? event.detail;
+                const targetDoc = Array.isArray(event.detail)
+                    ? event.detail
+                    : (documents.find((d) => d?.id === event.detail.id) ?? event.detail);
                 setDeletingItem(targetDoc);
             }
         };
@@ -1134,60 +1149,150 @@ const DocumentsPage = ({
         const { actionKey, item, shareId, deptId, docTitle } = confirmActionModal;
         setIsSubmittingAction(true);
         try {
-            if (actionKey === 'approve') {
-                if (item.isFolder && deptId) {
-                    await updateShareStatusRecursive(item.id, deptId, constants.DOCUMENT_SHARES_STATUS.APPROVED);
-                } else {
-                    await approveShare(shareId);
+            const cleanId = (uid) => (typeof uid === 'string' ? uid.replace(/-/g, '').toLowerCase() : uid);
+            const userDeptClean = cleanId(currentUser?.departmentId);
+
+            const executeSingle = async (targetItem, targetShareId, targetDeptId) => {
+                if (actionKey === 'approve') {
+                    if (targetItem.isFolder && targetDeptId) {
+                        await updateShareStatusRecursive(targetItem.id, targetDeptId, constants.DOCUMENT_SHARES_STATUS.APPROVED);
+                    } else if (targetShareId) {
+                        await approveShare(targetShareId);
+                    }
+                } else if (actionKey === 'unapprove') {
+                    if (targetItem.isFolder && targetDeptId) {
+                        await updateShareStatusRecursive(targetItem.id, targetDeptId, constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL);
+                    } else if (targetShareId) {
+                        await unapproveShare(targetShareId);
+                    }
+                } else if (actionKey === 'stash') {
+                    if (targetItem.isFolder && targetDeptId) {
+                        await updateShareStatusRecursive(targetItem.id, targetDeptId, constants.DOCUMENT_SHARES_STATUS.STASHED);
+                    } else if (targetShareId) {
+                        await stashShare(targetShareId);
+                    }
+                } else if (actionKey === 'unstash') {
+                    if (targetItem.isFolder && targetDeptId) {
+                        await updateShareStatusRecursive(targetItem.id, targetDeptId, constants.DOCUMENT_SHARES_STATUS.APPROVED);
+                    } else if (targetShareId) {
+                        await unstashShare(targetShareId);
+                    }
+                } else if (actionKey === 'unreject') {
+                    if (targetItem.isFolder && targetDeptId) {
+                        await updateShareStatusRecursive(targetItem.id, targetDeptId, constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL);
+                    } else if (targetShareId) {
+                        await unrejectShare(targetShareId);
+                    }
+                } else if (actionKey === 'unpublish') {
+                    if (targetItem.isFolder && targetDeptId) {
+                        await updateShareStatusRecursive(targetItem.id, targetDeptId, constants.DOCUMENT_SHARES_STATUS.APPROVED);
+                    } else if (targetShareId) {
+                        await unpublishShare(targetShareId);
+                    }
+                } else if (actionKey === 'unshare') {
+                    if (targetItem.isFolder && targetDeptId) {
+                        await unshareDocumentRecursive(targetItem.id, targetDeptId);
+                    } else if (targetShareId) {
+                        await unshareDocument(targetShareId);
+                    }
+                }
+            };
+
+            if (Array.isArray(item)) {
+                let successCount = 0;
+                for (const singleItem of item) {
+                    if (actionKey === 'unshare') {
+                        const itemClean = cleanId(singleItem.id);
+                        if (userDeptClean) {
+                            const deptShares = (documentShares || []).filter((s) => {
+                                const sDocId = cleanId(s.document?.id ?? s.documentId);
+                                const sDeptId = cleanId(s.department?.id ?? s.departmentId);
+                                return sDocId === itemClean && sDeptId === userDeptClean;
+                            });
+                            for (const s of deptShares) {
+                                const dId = s.department?.id ?? s.departmentId ?? currentUser?.departmentId;
+                                await executeSingle(singleItem, s.id, dId);
+                            }
+                        } else {
+                            const allItemShares = (documentShares || []).filter((s) => {
+                                const sDocId = cleanId(s.document?.id ?? s.documentId);
+                                return sDocId === itemClean;
+                            });
+                            if (allItemShares.length > 0) {
+                                for (const s of allItemShares) {
+                                    const dId = s.department?.id ?? s.departmentId;
+                                    await executeSingle(singleItem, s.id, dId);
+                                }
+                            } else if (singleItem.share?.id || singleItem.id) {
+                                await executeSingle(singleItem, singleItem.share?.id, singleItem.departmentId);
+                            }
+                        }
+                        successCount++;
+                        continue;
+                    }
+
+                    let sRecord = singleItem.share;
+                    if (!sRecord) {
+                        if (userDeptClean) {
+                            sRecord = (documentShares || []).find((s) => {
+                                const sDocId = cleanId(s.document?.id ?? s.documentId);
+                                const sDeptId = cleanId(s.department?.id ?? s.departmentId);
+                                const isBase = !s.recipientId && !s.recipient?.id;
+                                return sDocId === cleanId(singleItem.id) && sDeptId === userDeptClean && isBase;
+                            }) || (documentShares || []).find((s) => {
+                                const sDocId = cleanId(s.document?.id ?? s.documentId);
+                                const sDeptId = cleanId(s.department?.id ?? s.departmentId);
+                                return sDocId === cleanId(singleItem.id) && sDeptId === userDeptClean;
+                            });
+                        } else {
+                            sRecord = (documentShares || []).find((s) => {
+                                const sDocId = cleanId(s.document?.id ?? s.documentId);
+                                const isBase = !s.recipientId && !s.recipient?.id;
+                                return sDocId === cleanId(singleItem.id) && isBase;
+                            }) || (documentShares || []).find((s) => cleanId(s.document?.id ?? s.documentId) === cleanId(singleItem.id));
+                        }
+                    }
+                    const sId = sRecord?.id;
+                    const dId = sRecord?.department?.id ?? sRecord?.departmentId ?? currentUser?.departmentId;
+                    try {
+                        await executeSingle(singleItem, sId, dId);
+                        successCount++;
+                    } catch (singleErr) {
+                        console.error(`Failed ${actionKey} for ${singleItem.name || singleItem.title}:`, singleErr);
+                    }
+                }
+                if (actionKey === 'unshare') {
+                    onSelectMultiple?.([]);
                 }
                 showToast({
                     type: 'success',
-                    title: item.isFolder ? 'Folder Approved' : 'Document Approved',
-                    description: `Approved "${docTitle}" for department director review.`,
+                    title: 'Batch Action Completed',
+                    description: `Processed ${successCount} of ${item.length} files.`,
                 });
-            } else if (actionKey === 'unapprove') {
-                if (item.isFolder && deptId) {
-                    await updateShareStatusRecursive(item.id, deptId, constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL);
-                } else {
-                    await unapproveShare(shareId);
-                }
+            } else {
+                await executeSingle(item, shareId, deptId);
+                const titleMap = {
+                    approve: item.isFolder ? 'Folder Approved' : 'Document Approved',
+                    unapprove: 'Approval Revoked',
+                    stash: item.isFolder ? 'Folder Stashed' : 'Document Stashed',
+                    unstash: item.isFolder ? 'Folder Unstashed' : 'Document Unstashed',
+                    unreject: item.isFolder ? 'Folder Restored' : 'Document Restored',
+                    unpublish: item.isFolder ? 'Folder Unpublished' : 'Document Unpublished',
+                    unshare: 'Share Removed',
+                };
+                const descMap = {
+                    approve: `Approved "${docTitle}" for department director review.`,
+                    unapprove: `Reverted "${docTitle}" to pending approval.`,
+                    stash: `Stashed "${docTitle}" at upper management level.`,
+                    unstash: `Restored "${docTitle}" to approved state.`,
+                    unreject: `Restored "${docTitle}" to pending approval.`,
+                    unpublish: `Unpublished "${docTitle}" and returned it to approved status.`,
+                    unshare: `Removed department share for "${docTitle}".`,
+                };
                 showToast({
-                    type: 'information',
-                    title: 'Approval Revoked',
-                    description: `Reverted "${docTitle}" to pending approval.`,
-                });
-            } else if (actionKey === 'stash') {
-                if (item.isFolder && deptId) {
-                    await updateShareStatusRecursive(item.id, deptId, constants.DOCUMENT_SHARES_STATUS.STASHED);
-                } else {
-                    await stashShare(shareId);
-                }
-                showToast({
-                    type: 'information',
-                    title: item.isFolder ? 'Folder Stashed' : 'Document Stashed',
-                    description: `Stashed "${docTitle}" at upper management level.`,
-                });
-            } else if (actionKey === 'unstash') {
-                if (item.isFolder && deptId) {
-                    await updateShareStatusRecursive(item.id, deptId, constants.DOCUMENT_SHARES_STATUS.APPROVED);
-                } else {
-                    await unstashShare(shareId);
-                }
-                showToast({
-                    type: 'success',
-                    title: item.isFolder ? 'Folder Unstashed' : 'Document Unstashed',
-                    description: `Restored "${docTitle}" to approved state.`,
-                });
-            } else if (actionKey === 'unreject') {
-                if (item.isFolder && deptId) {
-                    await updateShareStatusRecursive(item.id, deptId, constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL);
-                } else {
-                    await unrejectShare(shareId);
-                }
-                showToast({
-                    type: 'success',
-                    title: item.isFolder ? 'Folder Restored' : 'Document Restored',
-                    description: `Restored "${docTitle}" to pending approval.`,
+                    type: actionKey === 'unapprove' || actionKey === 'stash' || actionKey === 'unpublish' ? 'information' : 'success',
+                    title: titleMap[actionKey] || 'Action Completed',
+                    description: descMap[actionKey] || `Completed ${actionKey} for "${docTitle}".`,
                 });
             }
             if (currentUser) {
@@ -1220,16 +1325,54 @@ const DocumentsPage = ({
         }
         setIsSubmittingAction(true);
         try {
-            if (item.isFolder && deptId) {
-                await updateShareStatusRecursive(item.id, deptId, constants.DOCUMENT_SHARES_STATUS.REJECTED);
+            const cleanId = (uid) => (typeof uid === 'string' ? uid.replace(/-/g, '').toLowerCase() : uid);
+            const userDeptClean = cleanId(currentUser?.departmentId);
+
+            if (Array.isArray(item)) {
+                let successCount = 0;
+                for (const singleItem of item) {
+                    let sRecord = singleItem.share;
+                    if (!sRecord) {
+                        if (userDeptClean) {
+                            sRecord = (documentShares || []).find((s) => {
+                                const sDocId = cleanId(s.document?.id ?? s.documentId);
+                                const sDeptId = cleanId(s.department?.id ?? s.departmentId);
+                                return sDocId === cleanId(singleItem.id) && sDeptId === userDeptClean;
+                            });
+                        } else {
+                            sRecord = (documentShares || []).find((s) => cleanId(s.document?.id ?? s.documentId) === cleanId(singleItem.id));
+                        }
+                    }
+                    const sId = sRecord?.id;
+                    const dId = sRecord?.department?.id ?? sRecord?.departmentId ?? currentUser?.departmentId;
+                    try {
+                        if (singleItem.isFolder && dId) {
+                            await updateShareStatusRecursive(singleItem.id, dId, constants.DOCUMENT_SHARES_STATUS.REJECTED);
+                        } else if (sId) {
+                            await rejectShare(sId, reason, currentUser?.id);
+                        }
+                        successCount++;
+                    } catch (singleErr) {
+                        console.error(`Failed reject for ${singleItem.name || singleItem.title}:`, singleErr);
+                    }
+                }
+                showToast({
+                    type: 'warning',
+                    title: 'Files Rejected',
+                    description: `Rejected ${successCount} of ${item.length} files.`,
+                });
             } else {
-                await rejectShare(shareId, reason, currentUser?.id);
+                if (item.isFolder && deptId) {
+                    await updateShareStatusRecursive(item.id, deptId, constants.DOCUMENT_SHARES_STATUS.REJECTED);
+                } else {
+                    await rejectShare(shareId, reason, currentUser?.id);
+                }
+                showToast({
+                    type: 'warning',
+                    title: item.isFolder ? 'Folder Rejected' : 'Document Rejected',
+                    description: `Rejected "${docTitle}". The item remains in your repository as Rejected.`,
+                });
             }
-            showToast({
-                type: 'warning',
-                title: item.isFolder ? 'Folder Rejected' : 'Document Rejected',
-                description: `Rejected "${docTitle}". The item remains in your repository as Rejected.`,
-            });
             if (currentUser) {
                 syncAllDocumentShares(currentUser, departments).catch(() => {});
             }
@@ -1268,18 +1411,86 @@ const DocumentsPage = ({
         }
 
         if (['approve', 'unapprove', 'reject', 'unreject', 'unpublish', 'stash', 'unstash', 'unshare'].includes(actionKey)) {
+            const isBatch = Array.isArray(item);
+            const cleanId = (uid) => (typeof uid === 'string' ? uid.replace(/-/g, '').toLowerCase() : uid);
+            const userDeptClean = cleanId(currentUser?.departmentId);
+
+            if (isBatch) {
+                const count = item.length;
+                if (actionKey === 'reject') {
+                    setRejectionReasonText('');
+                    setRejectionActionModal({
+                        item,
+                        count,
+                        docTitle: `${count} files`,
+                    });
+                    return;
+                }
+
+                const titles = {
+                    approve: `Approve Files (${count})`,
+                    unapprove: `Revoke Approval for Files (${count})`,
+                    stash: `Stash Files (${count})`,
+                    unstash: `Unstash Files (${count})`,
+                    unreject: `Unreject Files (${count})`,
+                    unpublish: `Unpublish Files (${count})`,
+                    unshare: `Unshare Files (${count})`,
+                };
+                const messages = {
+                    approve: `Are you sure you want to approve ${count} selected files for department director review?`,
+                    unapprove: `Are you sure you want to revert ${count} selected files to pending approval?`,
+                    stash: `Are you sure you want to stash ${count} selected files? They will be held at upper management level.`,
+                    unstash: `Are you sure you want to unstash ${count} selected files and restore them to approved status?`,
+                    unreject: `Are you sure you want to unreject ${count} selected files and return them to pending approval?`,
+                    unpublish: `Are you sure you want to unpublish ${count} selected files from faculty and department members?`,
+                    unshare: `Are you sure you want to remove departmental sharing for ${count} selected files?`,
+                };
+                const primaryLabels = {
+                    approve: `Approve (${count})`,
+                    unapprove: `Revoke Approval (${count})`,
+                    stash: `Stash (${count})`,
+                    unstash: `Unstash (${count})`,
+                    unreject: `Unreject (${count})`,
+                    unpublish: `Unpublish (${count})`,
+                    unshare: `Unshare (${count})`,
+                };
+
+                setConfirmActionModal({
+                    actionKey,
+                    item,
+                    count,
+                    docTitle: `${count} files`,
+                    title: titles[actionKey] || `Confirm ${actionKey}`,
+                    message: messages[actionKey] || `Are you sure you want to proceed with ${actionKey} on ${count} files?`,
+                    primaryLabel: primaryLabels[actionKey] || 'Confirm',
+                });
+                return;
+            }
+
             let shareRecord = item.share;
             if (!shareRecord) {
                 if (actionKey === 'unshare' && (item.departmentId || item.department)) {
                     shareRecord = item;
                 } else if (currentUser?.departmentId) {
+                    const uDeptClean = cleanId(currentUser.departmentId);
+                    const iClean = cleanId(item.id);
                     shareRecord = (documentShares || []).find(
                         (s) =>
-                            (s.document?.id ?? s.documentId) === item.id &&
-                            (s.department?.id ?? s.departmentId) === currentUser.departmentId
+                            cleanId(s.document?.id ?? s.documentId) === iClean &&
+                            cleanId(s.department?.id ?? s.departmentId) === uDeptClean &&
+                            !s.recipientId && !s.recipient?.id
+                    ) || (documentShares || []).find(
+                        (s) =>
+                            cleanId(s.document?.id ?? s.documentId) === iClean &&
+                            cleanId(s.department?.id ?? s.departmentId) === uDeptClean
                     );
                 } else {
-                    shareRecord = (documentShares || []).find((s) => (s.document?.id ?? s.documentId) === item.id);
+                    const iClean = cleanId(item.id);
+                    shareRecord = (documentShares || []).find(
+                        (s) =>
+                            cleanId(s.document?.id ?? s.documentId) === iClean &&
+                            !s.recipientId && !s.recipient?.id
+                    ) || (documentShares || []).find((s) => cleanId(s.document?.id ?? s.documentId) === iClean);
                 }
             }
 
@@ -1296,13 +1507,27 @@ const DocumentsPage = ({
             const docTitle = item.title || item.name || 'document';
             const deptId = shareRecord?.department?.id ?? shareRecord?.departmentId ?? currentUser?.departmentId;
 
-            if (['approve', 'unapprove', 'stash', 'unstash', 'unreject'].includes(actionKey)) {
+            if (actionKey === 'approve') {
+                const currentStatus = String(shareRecord?.status ?? item?.status ?? '').toUpperCase();
+                if (currentStatus === constants.DOCUMENT_SHARES_STATUS.REJECTED) {
+                    showToast({
+                        type: 'error',
+                        title: 'Action Prohibited',
+                        description: 'You cannot directly approve a rejected document. Please unreject it first.',
+                    });
+                    return;
+                }
+            }
+
+            if (['approve', 'unapprove', 'stash', 'unstash', 'unreject', 'unpublish', 'unshare'].includes(actionKey)) {
                 const titles = {
                     approve: `Approve ${item.isFolder ? 'Folder' : 'Document'}`,
                     unapprove: `Revoke Approval for ${item.isFolder ? 'Folder' : 'Document'}`,
                     stash: `Stash ${item.isFolder ? 'Folder' : 'Document'}`,
                     unstash: `Unstash ${item.isFolder ? 'Folder' : 'Document'}`,
                     unreject: `Unreject ${item.isFolder ? 'Folder' : 'Document'}`,
+                    unpublish: `Unpublish ${item.isFolder ? 'Folder' : 'Document'}`,
+                    unshare: `Unshare ${item.isFolder ? 'Folder' : 'Document'}`,
                 };
                 const messages = {
                     approve: `Are you sure you want to approve "${docTitle}" for department director review?`,
@@ -1310,6 +1535,8 @@ const DocumentsPage = ({
                     stash: `Are you sure you want to stash "${docTitle}"? It will be held at upper management level.`,
                     unstash: `Are you sure you want to unstash "${docTitle}" and restore it to approved status?`,
                     unreject: `Are you sure you want to unreject "${docTitle}" and return it to pending approval?`,
+                    unpublish: `Are you sure you want to unpublish "${docTitle}" from faculty and department members?`,
+                    unshare: `Are you sure you want to remove departmental sharing for "${docTitle}"?`,
                 };
                 const primaryLabels = {
                     approve: 'Approve',
@@ -1317,6 +1544,8 @@ const DocumentsPage = ({
                     stash: 'Stash Item',
                     unstash: 'Unstash Item',
                     unreject: 'Unreject',
+                    unpublish: 'Unpublish',
+                    unshare: 'Unshare',
                 };
                 setConfirmActionModal({
                     actionKey,
@@ -1332,6 +1561,15 @@ const DocumentsPage = ({
             }
 
             if (actionKey === 'reject') {
+                const currentStatus = String(shareRecord?.status ?? item?.status ?? '').toUpperCase();
+                if (currentStatus === constants.DOCUMENT_SHARES_STATUS.APPROVED) {
+                    showToast({
+                        type: 'error',
+                        title: 'Action Prohibited',
+                        description: 'You cannot directly reject an approved document. Please revoke approval (unapprove) first.',
+                    });
+                    return;
+                }
                 setRejectionReasonText('');
                 setRejectionActionModal({
                     item,
@@ -1451,54 +1689,88 @@ const DocumentsPage = ({
         }
 
         if (actionKey === 'download') {
-            const fileName = item.name || item.title || 'document';
-            try {
-                if (item.isFolder) {
-                    await storageService.downloadFolder(
-                        item,
-                        documents,
-                        documentVersions
-                    );
-                    const childFiles = (documents || []).filter(
-                        (d) => !d.isFolder && (d.parentId === item.id || d.parentFolderId === item.id)
-                    );
-                    childFiles.forEach((file) => {
-                        systemEventService.recordDocumentRead({
-                            document: file,
-                            user: currentUser,
-                        }).catch(() => {});
-                    });
-                } else {
-                    const vers = (documentVersions || []).filter(
-                        (v) => (v.document?.id ?? v.documentId) === item.id
-                    );
-                    const latestVer = vers.length > 0
-                        ? [...vers].sort((a, b) => (b.version ?? 0) - (a.version ?? 0))[0]
-                        : null;
-                    const path = latestVer?.path || item.path || item.url || item.downloadUrl;
-                    await storageService.downloadDocument(path, fileName);
-                    if (currentUser?.id) {
-                        systemEventService.recordDocumentRead({
-                            document: item,
-                            user: currentUser,
-                            version: latestVer?.version,
-                        }).catch(() => {});
-                    }
-                }
-            } catch (err) {
+            const itemsToDownload = Array.isArray(item) ? item : [item];
+            if (itemsToDownload.length > 1) {
                 showToast({
-                    type: 'error',
-                    title: 'Download Failed',
-                    description: err?.message || 'Could not download file.',
+                    type: 'information',
+                    title: 'Batch Download Started',
+                    description: `Packaging ${itemsToDownload.length} items into ZIP archive...`,
                 });
+                try {
+                    await storageService.downloadMultipleAsZip(
+                        itemsToDownload,
+                        documents,
+                        documentVersions,
+                        'Documents.zip'
+                    );
+                    showToast({
+                        type: 'success',
+                        title: 'Batch Download Complete',
+                        description: `Packaged ${itemsToDownload.length} items into Documents.zip.`,
+                    });
+                } catch (err) {
+                    console.error('Batch zip download failed:', err);
+                    showToast({
+                        type: 'error',
+                        title: 'Download Failed',
+                        description: err?.message || 'Could not download zip archive.',
+                    });
+                }
+                return;
+            }
+
+            for (const downloadTarget of itemsToDownload) {
+                const fileName = downloadTarget.name || downloadTarget.title || 'document';
+                try {
+                    if (downloadTarget.isFolder) {
+                        await storageService.downloadFolder(
+                            downloadTarget,
+                            documents,
+                            documentVersions
+                        );
+                        const childFiles = (documents || []).filter(
+                            (d) => !d.isFolder && (d.parentId === downloadTarget.id || d.parentFolderId === downloadTarget.id)
+                        );
+                        childFiles.forEach((file) => {
+                            systemEventService.recordDocumentRead({
+                                document: file,
+                                user: currentUser,
+                            }).catch(() => {});
+                        });
+                    } else {
+                        const vers = (documentVersions || []).filter(
+                            (v) => (v.document?.id ?? v.documentId) === downloadTarget.id
+                        );
+                        const latestVer = vers.length > 0
+                            ? [...vers].sort((a, b) => (b.version ?? 0) - (a.version ?? 0))[0]
+                            : null;
+                        const path = latestVer?.path || downloadTarget.path || downloadTarget.url || downloadTarget.downloadUrl;
+                        await storageService.downloadDocument(path, fileName);
+                        if (currentUser?.id) {
+                            systemEventService.recordDocumentRead({
+                                document: downloadTarget,
+                                user: currentUser,
+                                version: latestVer?.version,
+                            }).catch(() => {});
+                        }
+                    }
+                } catch (err) {
+                    showToast({
+                        type: 'error',
+                        title: 'Download Failed',
+                        description: err?.message || 'Could not download file.',
+                    });
+                }
             }
             return;
         }
 
         if (actionKey === 'approve') {
+            const targetItems = Array.isArray(item) ? item : [item];
+            const targetIds = new Set(targetItems.map((i) => i.id));
             setLocalCreatedItems((previousItems) =>
                 previousItems.map((repositoryItem) => {
-                    if (repositoryItem.id !== item.id) {
+                    if (!targetIds.has(repositoryItem.id)) {
                         return repositoryItem;
                     }
                     return {
@@ -1509,8 +1781,8 @@ const DocumentsPage = ({
             );
             showToast({
                 type: 'success',
-                title: 'Document Approved',
-                description: `"${item.title || item.name}" has been approved for distribution.`,
+                title: targetItems.length > 1 ? 'Documents Approved' : 'Document Approved',
+                description: targetItems.length > 1 ? `${targetItems.length} items approved for distribution.` : `"${targetItems[0].title || targetItems[0].name}" has been approved for distribution.`,
             });
             return;
         }
@@ -1527,17 +1799,20 @@ const DocumentsPage = ({
         }
 
         if (actionKey === 'restore') {
-            const allDocs = useDocumentStore.getState().documents || [];
-            const targetParentId = item.parentId && item.parentId !== 'root' ? item.parentId : null;
-            const parentDoc = targetParentId ? allDocs.find((d) => d.id === targetParentId) : null;
+            const itemsToRestore = Array.isArray(item) ? item : [item];
+            for (const singleItem of itemsToRestore) {
+                const allDocs = useDocumentStore.getState().documents || [];
+                const targetParentId = singleItem.parentId && singleItem.parentId !== 'root' ? singleItem.parentId : null;
+                const parentDoc = targetParentId ? allDocs.find((d) => d.id === targetParentId) : null;
 
-            // CHILD RESTORE GUARD: If original parent folder is currently archived, block and prompt
-            if (parentDoc && parentDoc.isArchived) {
-                setRestoreConflictModalItem({ item, parentFolder: parentDoc });
-                return;
+                // CHILD RESTORE GUARD: If original parent folder is currently archived, block and prompt
+                if (parentDoc && parentDoc.isArchived) {
+                    setRestoreConflictModalItem({ item: singleItem, parentFolder: parentDoc });
+                    return;
+                }
+
+                await performRestoreItem(singleItem);
             }
-
-            await performRestoreItem(item);
             return;
         }
 
@@ -1657,40 +1932,46 @@ const DocumentsPage = ({
     };
 
     const handleConfirmArchiveItem = async () => {
-        if (!archivingItem?.id) {
+        const itemsToArchive = Array.isArray(archivingItem) ? archivingItem : (archivingItem?.id ? [archivingItem] : []);
+        if (itemsToArchive.length === 0) {
             return;
         }
         setIsArchivingItem(true);
         try {
             if (isCoordinator) {
-                const archivePayload = {
-                    documentId: archivingItem.id,
-                    documentTitle: archivingItem.title || archivingItem.name,
-                    isArchived: true,
-                    isFolder: Boolean(archivingItem.isFolder),
-                };
-
                 const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
-                await coordinatorApprovalService.submitCoordinatorRequest({
-                    action: constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_ARCHIVE,
-                    requesterId,
-                    data: archivePayload,
-                });
+                for (const item of itemsToArchive) {
+                    const archivePayload = {
+                        documentId: item.id,
+                        documentTitle: item.title || item.name,
+                        isArchived: true,
+                        isFolder: Boolean(item.isFolder),
+                    };
+
+                    await coordinatorApprovalService.submitCoordinatorRequest({
+                        action: constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_ARCHIVE,
+                        requesterId,
+                        data: archivePayload,
+                    });
+                }
                 useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
 
                 showToast({
                     type: 'success',
                     title: 'Request Submitted',
-                    description: `Archive request for "${archivingItem.title || archivingItem.name}" sent for Administrator approval.`,
+                    description: `Archive request for ${itemsToArchive.length} item(s) sent for Administrator approval.`,
                 });
                 setArchivingItem(null);
                 return;
             }
 
-            await useDocumentStore.getState().archiveDocument(archivingItem.id, true);
+            const archiveIds = new Set(itemsToArchive.map((i) => i.id));
+            for (const item of itemsToArchive) {
+                await useDocumentStore.getState().archiveDocument(item.id, true);
+            }
             setLocalCreatedItems((previousItems) =>
                 previousItems.map((repositoryItem) => {
-                    if (repositoryItem.id !== archivingItem.id) {
+                    if (!archiveIds.has(repositoryItem.id)) {
                         return repositoryItem;
                     }
                     return {
@@ -1700,15 +1981,16 @@ const DocumentsPage = ({
                     };
                 })
             );
-            if (selectedDocument?.id === archivingItem.id) {
+            if (selectedDocument && archiveIds.has(selectedDocument.id)) {
                 const updated = { ...selectedDocument, isArchived: true, directlyArchived: true };
                 setSelectedDocument(updated);
                 onSelectDocument?.(updated);
             }
+            onSelectMultiple?.([]);
             showToast({
                 type: 'success',
-                title: archivingItem.isFolder ? 'Folder Archived' : 'Document Archived',
-                description: `"${archivingItem.title || archivingItem.name}" moved to archives.`,
+                title: itemsToArchive.length > 1 ? 'Documents Archived' : (itemsToArchive[0].isFolder ? 'Folder Archived' : 'Document Archived'),
+                description: itemsToArchive.length > 1 ? `${itemsToArchive.length} items moved to archives.` : `"${itemsToArchive[0].title || itemsToArchive[0].name}" moved to archives.`,
             });
             setArchivingItem(null);
         } catch (error) {
@@ -1724,47 +2006,54 @@ const DocumentsPage = ({
     };
 
     const handleConfirmDeleteItem = async () => {
-        if (!deletingItem?.id) {
+        const itemsToDelete = Array.isArray(deletingItem) ? deletingItem : (deletingItem?.id ? [deletingItem] : []);
+        if (itemsToDelete.length === 0) {
             return;
         }
         setIsDeletingItemLoading(true);
         try {
             if (isCoordinator) {
-                const deletePayload = {
-                    documentId: deletingItem.id,
-                    documentTitle: deletingItem.title || deletingItem.name,
-                    isFolder: Boolean(deletingItem.isFolder),
-                };
-
                 const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
-                await coordinatorApprovalService.submitCoordinatorRequest({
-                    action: constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_DELETE,
-                    requesterId,
-                    data: deletePayload,
-                });
+                for (const item of itemsToDelete) {
+                    const deletePayload = {
+                        documentId: item.id,
+                        documentTitle: item.title || item.name,
+                        isFolder: Boolean(item.isFolder),
+                    };
+
+                    await coordinatorApprovalService.submitCoordinatorRequest({
+                        action: constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_DELETE,
+                        requesterId,
+                        data: deletePayload,
+                    });
+                }
                 useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
 
                 showToast({
                     type: 'success',
                     title: 'Request Submitted',
-                    description: `Delete request for "${deletingItem.title || deletingItem.name}" sent for Administrator approval.`,
+                    description: `Delete request for ${itemsToDelete.length} item(s) sent for Administrator approval.`,
                 });
                 setDeletingItem(null);
                 return;
             }
 
-            await useDocumentStore.getState().deleteDocument(deletingItem.id);
+            const deleteIds = new Set(itemsToDelete.map((i) => i.id));
+            for (const item of itemsToDelete) {
+                await useDocumentStore.getState().deleteDocument(item.id);
+            }
             setLocalCreatedItems((previousItems) =>
-                previousItems.filter((repositoryItem) => repositoryItem.id !== deletingItem.id)
+                previousItems.filter((repositoryItem) => !deleteIds.has(repositoryItem.id))
             );
-            if (selectedDocument?.id === deletingItem.id) {
+            if (selectedDocument && deleteIds.has(selectedDocument.id)) {
                 setSelectedDocument(null);
                 onSelectDocument?.(null);
             }
+            onSelectMultiple?.([]);
             showToast({
                 type: 'success',
-                title: deletingItem.isFolder ? 'Folder Deleted' : 'Document Deleted',
-                description: `"${deletingItem.title || deletingItem.name}" deleted from repository.`,
+                title: itemsToDelete.length > 1 ? 'Documents Deleted' : (itemsToDelete[0].isFolder ? 'Folder Deleted' : 'Document Deleted'),
+                description: itemsToDelete.length > 1 ? `${itemsToDelete.length} items deleted from repository.` : `"${itemsToDelete[0].title || itemsToDelete[0].name}" deleted from repository.`,
             });
             setDeletingItem(null);
         } catch (error) {
@@ -2689,28 +2978,32 @@ const DocumentsPage = ({
     const activeSharesForModalDoc = useMemo(() => {
         if (!shareModalDocument) return [];
         const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
-        const modalClean = cleanId(shareModalDocument.id);
+        const docs = Array.isArray(shareModalDocument) ? shareModalDocument : [shareModalDocument];
+        const modalCleanIds = new Set(docs.map((d) => cleanId(d.id)).filter(Boolean));
         return (documentShares || []).filter(
-            (s) => cleanId(s.document?.id ?? s.documentId) === modalClean
+            (s) => modalCleanIds.has(cleanId(s.document?.id ?? s.documentId))
         );
     }, [shareModalDocument, documentShares]);
 
     const availableDepartmentsToShare = useMemo(() => {
         if (!shareModalDocument) return [];
         const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
+        const docs = Array.isArray(shareModalDocument) ? shareModalDocument : [shareModalDocument];
         const sharedDeptIds = new Set(
             activeSharesForModalDoc.map((s) => cleanId(s.department?.id ?? s.departmentId))
         );
         const rawUserDept = currentUser?.department;
         const userDeptClean = cleanId(currentUser?.departmentId || (typeof rawUserDept === 'object' ? rawUserDept?.id : null));
-        const docDeptClean = cleanId(shareModalDocument?.departmentId || shareModalDocument?.department?.id);
+        const docDeptCleanIds = new Set(
+            docs.map((d) => cleanId(d.departmentId || d.department?.id)).filter(Boolean)
+        );
         const userDeptName = typeof rawUserDept === 'string' ? rawUserDept : (rawUserDept?.name || '');
         const userDeptNameLower = userDeptName.toLowerCase().trim();
 
         return (departments || []).filter((d) => {
             const dClean = cleanId(d.id);
-            // 1. Exclude already shared departments
-            if (sharedDeptIds.has(dClean)) return false;
+            // 1. Exclude already shared departments (if single document)
+            if (docs.length === 1 && sharedDeptIds.has(dClean)) return false;
 
             const name = (d.name || '').toLowerCase().trim();
             const code = (d.code || '').toLowerCase().trim();
@@ -2720,7 +3013,7 @@ const DocumentsPage = ({
 
             // 3. Exclude user's own department and the document's own department
             if (userDeptClean && dClean === userDeptClean) return false;
-            if (docDeptClean && dClean === docDeptClean) return false;
+            if (docDeptCleanIds.has(dClean)) return false;
             if (userDeptNameLower && name === userDeptNameLower) return false;
 
             return true;
@@ -2763,30 +3056,41 @@ const DocumentsPage = ({
 
         setIsSharingDepartment(true);
         try {
-            const isFolder = Boolean(shareModalDocument.isFolder);
+            const docs = Array.isArray(shareModalDocument) ? shareModalDocument : [shareModalDocument];
             const targetCount = selectedShareDepartmentIds.length;
-            const docTitle = shareModalDocument.title || shareModalDocument.name || 'document';
+            const docCount = docs.length;
+            const isSingle = docCount === 1;
+            const firstDoc = docs[0];
+            const docTitle = isSingle
+                ? (firstDoc.title || firstDoc.name || 'document')
+                : `${docCount} documents`;
 
             if (isCoordinator) {
-                const sharePayload = {
-                    documentId: shareModalDocument.id,
-                    documentTitle: docTitle,
-                    departmentIds: selectedShareDepartmentIds,
-                    isRecursive: isFolder,
-                };
-
                 const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
-                await coordinatorApprovalService.submitCoordinatorRequest({
-                    action: constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_SHARE,
-                    requesterId,
-                    data: sharePayload,
-                });
+                for (const doc of docs) {
+                    const isFolder = Boolean(doc.isFolder);
+                    const singleDocTitle = doc.title || doc.name || 'document';
+                    const sharePayload = {
+                        documentId: doc.id,
+                        documentTitle: singleDocTitle,
+                        departmentIds: selectedShareDepartmentIds,
+                        isRecursive: isFolder,
+                    };
+
+                    await coordinatorApprovalService.submitCoordinatorRequest({
+                        action: constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_SHARE,
+                        requesterId,
+                        data: sharePayload,
+                    });
+                }
                 useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
 
                 showToast({
                     type: 'success',
                     title: 'Request Submitted',
-                    description: `Share request for "${docTitle}" sent for Administrator approval.`,
+                    description: isSingle
+                        ? `Share request for "${docTitle}" sent for Administrator approval.`
+                        : `Share requests for ${docCount} documents sent for Administrator approval.`,
                 });
 
                 setSelectedShareDepartmentIds([]);
@@ -2795,29 +3099,33 @@ const DocumentsPage = ({
                 return;
             }
 
-            if (isFolder) {
-                await shareDocumentRecursive(
-                    shareModalDocument.id,
-                    selectedShareDepartmentIds,
-                    currentUser.id
-                );
-                showToast({
-                    type: 'success',
-                    title: 'Folder Shared with Cascade',
-                    description: `Folder "${docTitle}" and all nested contents shared with ${targetCount} department${targetCount > 1 ? 's' : ''}. Status set to Pending Approval.`,
-                });
-            } else {
-                await Promise.all(
-                    selectedShareDepartmentIds.map((deptId) =>
-                        shareDocument(shareModalDocument.id, deptId, currentUser.id)
-                    )
-                );
-                showToast({
-                    type: 'success',
-                    title: 'Document Shared',
-                    description: `Shared "${docTitle}" with ${targetCount} department${targetCount > 1 ? 's' : ''}. Status set to Pending Approval.`,
-                });
+            for (const doc of docs) {
+                if (doc.isFolder) {
+                    await shareDocumentRecursive(
+                        doc.id,
+                        selectedShareDepartmentIds,
+                        currentUser.id
+                    );
+                } else {
+                    await Promise.all(
+                        selectedShareDepartmentIds.map((deptId) =>
+                            shareDocument(doc.id, deptId, currentUser.id)
+                        )
+                    );
+                }
             }
+
+            showToast({
+                type: 'success',
+                title: isSingle && Boolean(firstDoc?.isFolder)
+                    ? 'Folder Shared with Cascade'
+                    : isSingle
+                    ? 'Document Shared'
+                    : 'Documents Shared',
+                description: isSingle
+                    ? `Shared "${docTitle}" with ${targetCount} department${targetCount > 1 ? 's' : ''}. Status set to Pending Approval.`
+                    : `Shared ${docCount} documents with ${targetCount} department${targetCount > 1 ? 's' : ''}. Status set to Pending Approval.`,
+            });
 
             setSelectedShareDepartmentIds([]);
             setDepartmentSearchQuery('');
@@ -2943,25 +3251,38 @@ const DocumentsPage = ({
         if (!publishModalDocument || !currentUser?.departmentId) return;
 
         setIsPublishingMembers(true);
-        const docTitle = publishModalDocument.title || publishModalDocument.name || 'document';
-        const isFolder = Boolean(publishModalDocument.isFolder);
+        const docs = Array.isArray(publishModalDocument) ? publishModalDocument : [publishModalDocument];
+        const isSingle = docs.length === 1;
+        const firstDoc = docs[0];
+        const docTitle = firstDoc?.title || firstDoc?.name || 'document';
+        const docCount = docs.length;
         const targetIds = publishMode === 'all' ? [] : selectedPublishMemberIds;
 
         try {
-            await publishDocumentToMembers(
-                publishModalDocument.id,
-                currentUser.departmentId,
-                targetIds,
-                currentUser.id
-            );
+            for (const doc of docs) {
+                await publishDocumentToMembers(
+                    doc.id,
+                    currentUser.departmentId,
+                    targetIds,
+                    currentUser.id
+                );
+            }
 
             showToast({
                 type: 'success',
-                title: isFolder ? 'Folder Published' : 'Document Published',
+                title: isSingle && Boolean(firstDoc?.isFolder)
+                    ? 'Folder Published'
+                    : isSingle
+                    ? 'Document Published'
+                    : 'Documents Published',
                 description:
                     publishMode === 'all'
-                        ? `Published "${docTitle}" to all members in ${userDepartment}.`
-                        : `Published "${docTitle}" to ${targetIds.length} selected member${targetIds.length === 1 ? '' : 's'}.`,
+                        ? isSingle
+                            ? `Published "${docTitle}" to all members in ${userDepartment}.`
+                            : `Published ${docCount} items to all members in ${userDepartment}.`
+                        : isSingle
+                            ? `Published "${docTitle}" to ${targetIds.length} selected member${targetIds.length === 1 ? '' : 's'}.`
+                            : `Published ${docCount} items to ${targetIds.length} selected member${targetIds.length === 1 ? '' : 's'}.`,
             });
             setPublishModalDocument(null);
             setSelectedPublishMemberIds([]);
@@ -3034,7 +3355,9 @@ const DocumentsPage = ({
                 filterOptions={dynamicFilterOptions}
                 breadcrumbs={activeBreadcrumbsList}
                 selectedItem={activeSelectedDocument}
+                selectedIds={new Set((selectedItems || []).map((i) => i.id))}
                 onSelectItem={handleItemSelect}
+                onSelectMultipleItems={onSelectMultiple}
                 onDoubleClickItem={handleItemDoubleClick}
                 onBreadcrumbClick={handleBreadcrumbClick}
                 onAddItem={canUpload ? handleOpenCreateModal : undefined}
@@ -3747,9 +4070,17 @@ const DocumentsPage = ({
                 <Modal
                     isOpen={Boolean(archivingItem)}
                     onClose={() => !isArchivingItem && setArchivingItem(null)}
-                    title={archivingItem.isFolder ? 'Archive Folder' : 'Archive Document'}
+                    title={
+                        Array.isArray(archivingItem)
+                            ? `Archive ${archivingItem.length} Items`
+                            : archivingItem.isFolder
+                            ? 'Archive Folder'
+                            : 'Archive Document'
+                    }
                     description={
-                        archivingItem.isFolder
+                        Array.isArray(archivingItem)
+                            ? `Are you sure you want to archive ${archivingItem.length} selected items and their contents?`
+                            : archivingItem.isFolder
                             ? `Are you sure you want to archive folder "${archivingItem.title || archivingItem.name}" and all of its contents?`
                             : `Are you sure you want to archive document "${archivingItem.title || archivingItem.name}"?`
                     }
@@ -3757,7 +4088,9 @@ const DocumentsPage = ({
                     variant="destructive"
                     size="sm"
                     callout={
-                        archivingItem.isFolder
+                        Array.isArray(archivingItem)
+                            ? 'The selected items and their contents will be moved to the archives and hidden from the active repository. Directly archived items can be restored later.'
+                            : archivingItem.isFolder
                             ? 'The folder and its active contents will be moved to the archives and hidden from the active repository. Directly archived items can be restored later.'
                             : 'The document will be moved to the archives and hidden from active views. It can be restored at any time.'
                     }
@@ -3766,6 +4099,8 @@ const DocumentsPage = ({
                     confirmLabel={
                         isArchivingItem
                             ? 'Archiving...'
+                            : Array.isArray(archivingItem)
+                            ? `Archive ${archivingItem.length} Items`
                             : archivingItem.isFolder
                             ? 'Archive Folder'
                             : 'Archive Document'
@@ -3781,14 +4116,28 @@ const DocumentsPage = ({
                 <Modal
                     isOpen={Boolean(deletingItem)}
                     onClose={() => !isDeletingItemLoading && setDeletingItem(null)}
-                    title={`Delete ${deletingItem.isFolder ? 'Folder' : 'Document'}`}
-                    description={`Are you sure you want to delete "${deletingItem.title || deletingItem.name}"?`}
+                    title={
+                        Array.isArray(deletingItem)
+                            ? `Delete ${deletingItem.length} Items`
+                            : `Delete ${deletingItem.isFolder ? 'Folder' : 'Document'}`
+                    }
+                    description={
+                        Array.isArray(deletingItem)
+                            ? `Are you sure you want to delete ${deletingItem.length} selected items?`
+                            : `Are you sure you want to delete "${deletingItem.title || deletingItem.name}"?`
+                    }
                     icon={Trash2}
                     variant="destructive"
                     size="sm"
                     callout="This action cannot be undone and will permanently remove all associated version records from the database and storage files."
                     onConfirm={handleConfirmDeleteItem}
-                    confirmLabel={isDeletingItemLoading ? 'Deleting...' : `Delete ${deletingItem.isFolder ? 'Folder' : 'Document'}`}
+                    confirmLabel={
+                        isDeletingItemLoading
+                            ? 'Deleting...'
+                            : Array.isArray(deletingItem)
+                            ? `Delete ${deletingItem.length} Items`
+                            : `Delete ${deletingItem.isFolder ? 'Folder' : 'Document'}`
+                    }
                     cancelLabel="Cancel"
                     isConfirmLoading={isDeletingItemLoading}
                     isConfirmDisabled={isDeletingItemLoading}
@@ -3829,8 +4178,12 @@ const DocumentsPage = ({
                         setSelectedShareDepartmentIds([]);
                         setDepartmentSearchQuery('');
                     }}
-                    title={`Share ${shareModalDocument.isFolder ? 'Folder' : 'Document'}`}
-                    description={`Manage departmental distribution and review routing for "${shareModalDocument.title || shareModalDocument.name}".`}
+                    title={Array.isArray(shareModalDocument)
+                        ? `Share ${shareModalDocument.length} Documents`
+                        : `Share ${shareModalDocument.isFolder ? 'Folder' : 'Document'}`}
+                    description={Array.isArray(shareModalDocument)
+                        ? `Manage departmental distribution and review routing for ${shareModalDocument.length} selected documents.`
+                        : `Manage departmental distribution and review routing for "${shareModalDocument.title || shareModalDocument.name}".`}
                     icon={Share2}
                     size="xl"
                     secondaryAction={{
@@ -3844,7 +4197,7 @@ const DocumentsPage = ({
                 >
                     <div className="flex flex-col gap-4">
                         {/* FOLDER CASCADING SHARE BANNER */}
-                        {shareModalDocument.isFolder && (
+                        {!Array.isArray(shareModalDocument) && shareModalDocument.isFolder && (
                             <div className="p-3.5 rounded-xl border border-accent/20 bg-accent/5 flex items-start gap-3">
                                 <div className="p-2 rounded-lg bg-accent/10 text-accent shrink-0">
                                     <Folder className="h-4 w-4" />
@@ -4027,7 +4380,9 @@ const DocumentsPage = ({
                                             <Share2 className="h-6 w-6 text-text-muted/40" />
                                             <span className="font-semibold text-text">Not Shared Externally</span>
                                             <span className="text-[11px] leading-relaxed max-w-xs">
-                                                This {shareModalDocument.isFolder ? 'folder' : 'document'} is currently internal to your department. Use the picker on the left to share with other units.
+                                                {Array.isArray(shareModalDocument)
+                                                    ? 'The selected documents are currently internal to your department. Use the picker on the left to share with other units.'
+                                                    : `This ${shareModalDocument.isFolder ? 'folder' : 'document'} is currently internal to your department. Use the picker on the left to share with other units.`}
                                             </span>
                                         </div>
                                     ) : (
@@ -4065,7 +4420,7 @@ const DocumentsPage = ({
                                                         </div>
                                                         <div className="flex items-center gap-1.5 flex-wrap">
                                                             <Badge variant={badgeVariant} size="xs" label={share.status} />
-                                                            {shareModalDocument.isFolder && (
+                                                            {!Array.isArray(shareModalDocument) && shareModalDocument.isFolder && (
                                                                 <Badge variant="neutral" size="xs" label="Cascading" />
                                                             )}
                                                         </div>
@@ -4110,7 +4465,9 @@ const DocumentsPage = ({
                         setSelectedPublishMemberIds([]);
                         setMemberSearchQuery('');
                     }}
-                    title={`Publish ${publishModalDocument.isFolder ? 'Folder' : 'Document'} to Faculty`}
+                    title={Array.isArray(publishModalDocument)
+                        ? `Publish Multiple Documents (${publishModalDocument.length}) to Faculty`
+                        : `Publish ${publishModalDocument.isFolder ? 'Folder' : 'Document'} to Faculty`}
                     description={`Configure faculty member distribution within ${userDepartment}.`}
                     icon={Send}
                     size="xl"
@@ -4125,7 +4482,7 @@ const DocumentsPage = ({
                 >
                     <div className="flex flex-col gap-4">
                         {/* RECURSIVE FOLDER CASCADE BANNER */}
-                        {publishModalDocument.isFolder && (
+                        {!Array.isArray(publishModalDocument) && publishModalDocument.isFolder && (
                             <div className="p-3.5 rounded-xl border border-accent/20 bg-accent/5 flex items-start gap-3">
                                 <div className="p-2 rounded-lg bg-accent/10 text-accent shrink-0">
                                     <Folder className="h-4 w-4" />
@@ -4148,7 +4505,7 @@ const DocumentsPage = ({
                                         Publication Scope
                                     </h4>
                                     <p className="text-[11px] text-text-muted">
-                                        Choose who can view this {publishModalDocument.isFolder ? 'folder' : 'document'}
+                                        Choose who can view {Array.isArray(publishModalDocument) ? 'these documents' : (publishModalDocument.isFolder ? 'this folder' : 'this document')}
                                     </p>
                                 </div>
 
@@ -4503,7 +4860,7 @@ const DocumentsPage = ({
                     confirmOnClose={false}
                     primaryAction={{
                         label: confirmActionModal.primaryLabel,
-                        variant: confirmActionModal.actionKey === 'unapprove' ? 'warning' : 'primary',
+                        variant: confirmActionModal.actionKey === 'unapprove' || confirmActionModal.actionKey === 'unshare' ? 'warning' : 'primary',
                         isLoading: isSubmittingAction,
                         isDisabled: isSubmittingAction,
                         onClick: handleConfirmAction,
@@ -4530,8 +4887,8 @@ const DocumentsPage = ({
                             setRejectionReasonText('');
                         }
                     }}
-                    title={`Reject ${rejectionActionModal.item?.isFolder ? 'Folder' : 'Document'}`}
-                    description={`Provide a reason for rejecting "${rejectionActionModal.docTitle}". The item remains in your repository as Rejected.`}
+                    title={Array.isArray(rejectionActionModal.item) ? `Reject Files (${rejectionActionModal.count})` : `Reject ${rejectionActionModal.item?.isFolder ? 'Folder' : 'Document'}`}
+                    description={Array.isArray(rejectionActionModal.item) ? `Provide a reason for rejecting ${rejectionActionModal.count} selected files.` : `Provide a reason for rejecting "${rejectionActionModal.docTitle}". The item remains in your repository as Rejected.`}
                     icon={AlertTriangle}
                     size="md"
                     confirmOnClose={false}

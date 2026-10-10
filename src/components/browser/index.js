@@ -9,4 +9,9 @@ export {
     getResourceTitle,
     renderItemIcon,
     renderItemBadge,
+    renderMimeTypeIcon,
+    getMimeTypeFromItem,
+    getExtensionFromItem,
+    getItemCategoryRank,
+    getSpecificMimeLabel,
 } from './common';

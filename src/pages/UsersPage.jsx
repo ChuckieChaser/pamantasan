@@ -86,7 +86,9 @@ const isRmoDepartmentId = (deptId, departmentsList = [], resolvedRmoId = RMO_DEP
 const UsersPage = ({
     currentUser: propUser = null,
     selectedItem = null,
+    selectedItems = [],
     onSelectUser = null,
+    onSelectMultiple = null,
     className,
     ...props
 }) => {
@@ -254,6 +256,13 @@ const UsersPage = ({
         }
 
         if (actionKey === 'suspend' || actionKey === 'unsuspend') {
+            if (Array.isArray(item)) {
+                const targetUsers = item;
+                const isUnsuspending = actionKey === 'unsuspend';
+                setSuspendingUser(Object.assign([...targetUsers], { _isUnsuspending: isUnsuspending }));
+                return;
+            }
+
             const isSelfUser = Boolean(
                 currentUser && (
                     rawUser.id === currentUser.id ||
@@ -275,7 +284,7 @@ const UsersPage = ({
         }
 
         if (actionKey === 'delete') {
-            setDeletingUser(rawUser);
+            setDeletingUser(item);
             return;
         }
     };
@@ -595,6 +604,74 @@ const UsersPage = ({
             return;
         }
 
+        const isBatch = Array.isArray(suspendingUser);
+        if (isBatch) {
+            const targetUsers = suspendingUser;
+            const isUnsuspending = Boolean(suspendingUser._isUnsuspending);
+            const activeActor = currentUser || useAuthStore.getState().currentUser;
+
+            setIsSuspendingLoading(true);
+            try {
+                for (const u of targetUsers) {
+                    const isSelf = currentUser && (u.id === currentUser.id || u.universityId === currentUser.universityId);
+                    if (!isUnsuspending && isSelf) continue;
+
+                    let newStatus;
+                    if (isUnsuspending) {
+                        const restored = useUserStore.getState().getPreviousStatus(u.id);
+                        newStatus = (restored && String(restored).toUpperCase() !== constants.USERS_STATUS.SUSPENDED)
+                            ? restored
+                            : constants.USERS_STATUS.VERIFIED;
+                    } else {
+                        newStatus = constants.USERS_STATUS.SUSPENDED;
+                    }
+
+                    if (isCoordinator) {
+                        const userPayload = {
+                            userId: u.id,
+                            universityId: u.universityId,
+                            name: `${u.firstName} ${u.lastName}`.trim(),
+                            old: { status: u.status },
+                            new: { status: newStatus },
+                        };
+                        const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
+                        await coordinatorApprovalService.submitCoordinatorRequest({
+                            action: constants.COORDINATOR_REQUESTS_ACTION.USER_UPDATE,
+                            requesterId,
+                            data: userPayload,
+                        });
+                    } else {
+                        await updateUser(u.id, { status: newStatus }, activeActor);
+                    }
+                }
+
+                if (isCoordinator) {
+                    useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
+                    showToast({
+                        type: 'success',
+                        title: 'Requests Submitted',
+                        description: `Status change requests for ${targetUsers.length} user(s) sent for Administrator approval.`,
+                    });
+                } else {
+                    showToast({
+                        type: isUnsuspending ? 'success' : 'warning',
+                        title: isUnsuspending ? 'Users Re-activated' : 'Users Suspended',
+                        description: `${targetUsers.length} user account(s) have been ${isUnsuspending ? 're-activated' : 'suspended'}.`,
+                    });
+                }
+                handleCloseModals();
+            } catch (err) {
+                showToast({
+                    type: 'error',
+                    title: 'Status Update Failed',
+                    description: err?.message || 'An unexpected error occurred while updating accounts.',
+                });
+            } finally {
+                setIsSuspendingLoading(false);
+            }
+            return;
+        }
+
         const isSelfUser = Boolean(
             currentUser && (
                 suspendingUser.id === currentUser.id ||
@@ -694,40 +771,43 @@ const UsersPage = ({
     };
 
     const handleDeleteUser = async () => {
-        if (!deletingUser) {
+        const usersToDelete = Array.isArray(deletingUser) ? deletingUser : (deletingUser?.id ? [deletingUser] : []);
+        if (usersToDelete.length === 0) {
             return;
         }
 
         if (isCoordinator) {
-            const userPayload = {
-                userId: deletingUser.id,
-                universityId: deletingUser.universityId,
-                name: `${deletingUser.firstName} ${deletingUser.lastName}`.trim(),
-                old: {
-                    universityId: deletingUser.universityId,
-                    name: `${deletingUser.firstName} ${deletingUser.lastName}`.trim(),
-                    email: deletingUser.email,
-                    role: deletingUser.role,
-                    department: deletingUser.department,
-                    status: deletingUser.status,
-                },
-                new: {
-                    status: 'DELETED',
-                },
-            };
-
             const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
-            await coordinatorApprovalService.submitCoordinatorRequest({
-                action: constants.COORDINATOR_REQUESTS_ACTION.USER_DELETE,
-                requesterId,
-                data: userPayload,
-            });
+            for (const singleUser of usersToDelete) {
+                const userPayload = {
+                    userId: singleUser.id,
+                    universityId: singleUser.universityId,
+                    name: `${singleUser.firstName} ${singleUser.lastName}`.trim(),
+                    old: {
+                        universityId: singleUser.universityId,
+                        name: `${singleUser.firstName} ${singleUser.lastName}`.trim(),
+                        email: singleUser.email,
+                        role: singleUser.role,
+                        department: singleUser.department,
+                        status: singleUser.status,
+                    },
+                    new: {
+                        status: 'DELETED',
+                    },
+                };
+
+                await coordinatorApprovalService.submitCoordinatorRequest({
+                    action: constants.COORDINATOR_REQUESTS_ACTION.USER_DELETE,
+                    requesterId,
+                    data: userPayload,
+                });
+            }
             useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
 
             showToast({
                 type: 'success',
                 title: 'Request Submitted',
-                description: `User deletion request for "${deletingUser.universityId}" sent for Administrator approval.`,
+                description: `User deletion request for ${usersToDelete.length} user(s) sent for Administrator approval.`,
             });
             handleCloseModals();
             return;
@@ -737,20 +817,22 @@ const UsersPage = ({
         try {
             const activeActor = currentUser || useAuthStore.getState().currentUser;
             const minTimer = new Promise((resolve) => setTimeout(resolve, 500));
-            await Promise.all([
-                deleteUser(deletingUser.id, activeActor),
-                minTimer,
-            ]);
+            const deleteIds = new Set(usersToDelete.map((u) => u.id));
 
-            if (selectedUser?.id === deletingUser.id) {
+            for (const singleUser of usersToDelete) {
+                await deleteUser(singleUser.id, activeActor);
+            }
+            await minTimer;
+
+            if (selectedUser && deleteIds.has(selectedUser.id)) {
                 setSelectedUser(null);
                 onSelectUser?.(null);
             }
 
             showToast({
                 type: 'success',
-                title: 'User Deleted',
-                description: `User ${deletingUser.universityId} has been deleted.`,
+                title: usersToDelete.length > 1 ? 'Users Deleted' : 'User Deleted',
+                description: usersToDelete.length > 1 ? `${usersToDelete.length} users have been deleted.` : `User ${usersToDelete[0].universityId} has been deleted.`,
             });
             handleCloseModals();
         } catch (error) {
@@ -857,11 +939,12 @@ const UsersPage = ({
     }, [formattedUserData]);
 
     const activeSelectedUser = useMemo(() => {
+        if (selectedItems && selectedItems.length > 1) return null;
         const targetId = selectedItem?.id ?? selectedUser?.id;
         if (!targetId) return null;
         const matched = formattedUserData.find((u) => u.id === targetId);
         return matched ?? null;
-    }, [selectedItem, selectedUser, formattedUserData]);
+    }, [selectedItems, selectedItem, selectedUser, formattedUserData]);
 
     // Safety cleanup: Ensure deleted user is cleared from store selection
     useEffect(() => {
@@ -890,11 +973,13 @@ const UsersPage = ({
                 sortOptions={USER_SORT_OPTIONS}
                 filterOptions={userFilterOptions}
                 selectedItem={activeSelectedUser}
+                selectedIds={selectedItems && selectedItems.length > 0 ? new Set(selectedItems.map((i) => i.id)) : undefined}
                 addItemLabel="New User"
                 addItemIcon={Plus}
                 searchPlaceholder="Search user..."
                 onAddItem={handleOpenAddModal}
                 onSelectItem={handleSelectUser}
+                onSelectMultipleItems={onSelectMultiple}
                 onOpenItem={handleSelectUser}
                 onItemAction={handleItemAction}
             />
@@ -1231,29 +1316,39 @@ const UsersPage = ({
 
             {/* SUSPEND / UNSUSPEND USER CONFIRMATION MODAL */}
             {suspendingUser && (() => {
-                const isSelf = Boolean(
+                const isBatch = Array.isArray(suspendingUser);
+                const isCurrentlySuspended = Boolean(
+                    suspendingUser._isUnsuspending ||
+                    (!isBatch && String(suspendingUser.status || '').toUpperCase() === constants.USERS_STATUS.SUSPENDED)
+                );
+                const isSelf = !isBatch && Boolean(
                     currentUser && (
                         suspendingUser.id === currentUser.id ||
                         (suspendingUser.universityId && currentUser.universityId === suspendingUser.universityId)
                     )
                 );
-                const isCurrentlySuspended = Boolean(
-                    suspendingUser._isUnsuspending ||
-                    String(suspendingUser.status || '').toUpperCase() === constants.USERS_STATUS.SUSPENDED
-                );
                 const isBlocked = isSelf && !isCurrentlySuspended;
+                const batchCount = isBatch ? suspendingUser.length : 1;
 
                 return (
                     <Modal
                         isOpen={Boolean(suspendingUser)}
                         onClose={handleCloseModals}
                         title={
-                            isCurrentlySuspended
+                            isBatch
+                                ? isCurrentlySuspended
+                                    ? `Unsuspend Users (${batchCount})`
+                                    : `Suspend Users (${batchCount})`
+                                : isCurrentlySuspended
                                 ? 'Unsuspend User Account'
                                 : 'Suspend User Account'
                         }
                         description={
-                            isCurrentlySuspended
+                            isBatch
+                                ? isCurrentlySuspended
+                                    ? `Are you sure you want to unsuspend ${batchCount} selected user account(s)? They will be restored to their previous verified status.`
+                                    : `Are you sure you want to suspend ${batchCount} selected user account(s)? The users will be immediately logged out and prohibited from institutional authentication.`
+                                : isCurrentlySuspended
                                 ? `Are you sure you want to unsuspend ${suspendingUser.firstName} ${suspendingUser.lastName} (${suspendingUser.universityId})? The user will be restored to ${useUserStore.getState().getPreviousStatus(suspendingUser.id) || 'VERIFIED'}.`
                                 : `Are you sure you want to suspend ${suspendingUser.firstName} ${suspendingUser.lastName} (${suspendingUser.universityId})? The user will be immediately logged out and prohibited from institutional authentication.`
                         }
@@ -1261,6 +1356,10 @@ const UsersPage = ({
                         callout={
                             isBlocked
                                 ? 'Safety Guard: You cannot suspend your own account. Only another system administrator can suspend this account.'
+                                : isBatch
+                                ? isCurrentlySuspended
+                                    ? `${batchCount} user accounts will regain institutional access and credentials upon confirmation.`
+                                    : `${batchCount} user accounts will be immediately logged out and prohibited from authentication.`
                                 : isCurrentlySuspended
                                 ? 'The user will regain institutional access and credentials upon confirmation.'
                                 : 'The user will be immediately logged out and prohibited from institutional authentication.'
@@ -1272,6 +1371,10 @@ const UsersPage = ({
                                 ? 'Updating Status...'
                                 : isBlocked
                                 ? 'Self-Suspension Prohibited'
+                                : isBatch
+                                ? isCurrentlySuspended
+                                    ? `Unsuspend (${batchCount})`
+                                    : `Suspend (${batchCount})`
                                 : isCurrentlySuspended
                                 ? 'Unsuspend User'
                                 : 'Suspend User'
@@ -1289,13 +1392,23 @@ const UsersPage = ({
                 <Modal
                     isOpen={Boolean(deletingUser)}
                     onClose={handleCloseModals}
-                    title="Delete User"
-                    description={`Are you sure you want to delete ${deletingUser.firstName} ${deletingUser.lastName} (${deletingUser.universityId})? This action cannot be undone and will revoke all sessions.`}
+                    title={Array.isArray(deletingUser) ? `Delete ${deletingUser.length} Users` : 'Delete User'}
+                    description={
+                        Array.isArray(deletingUser)
+                            ? `Are you sure you want to permanently delete ${deletingUser.length} selected users? This action cannot be undone and will revoke all sessions.`
+                            : `Are you sure you want to delete ${deletingUser.firstName} ${deletingUser.lastName} (${deletingUser.universityId})? This action cannot be undone and will revoke all sessions.`
+                    }
                     icon={Trash2}
                     callout="This action cannot be undone and will permanently revoke all authenticated sessions and permissions."
                     calloutVariant="destructive"
                     onConfirm={handleDeleteUser}
-                    confirmLabel={isDeletingUserLoading ? 'Deleting User...' : 'Delete User'}
+                    confirmLabel={
+                        isDeletingUserLoading
+                            ? 'Deleting Users...'
+                            : Array.isArray(deletingUser)
+                            ? `Delete ${deletingUser.length} Users`
+                            : 'Delete User'
+                    }
                     cancelLabel="Cancel"
                     variant="destructive"
                     isConfirmLoading={isDeletingUserLoading}

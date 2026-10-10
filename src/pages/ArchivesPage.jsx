@@ -9,7 +9,9 @@ import {
     Container,
     Modal,
     formatDateTime,
+    getMimeTypeFromFilename,
 } from '../components';
+import { getSpecificMimeLabel } from '../components/browser/common';
 import { useToast, useAuth } from '../hooks';
 import { constants } from '../constants';
 import { useDocumentStore, useDepartmentStore, useCoordinatorStore, useAuthStore } from '../stores';
@@ -31,7 +33,9 @@ const DOCUMENT_COLUMNS = [
 const ArchivesPage = ({
     currentUser: propUser = null,
     selectedItem = null,
+    selectedItems = [],
     onSelectDocument = null,
+    onSelectMultiple = null,
     className,
     ...props
 }) => {
@@ -85,15 +89,23 @@ const ArchivesPage = ({
                 ? formatDateTime(dateValue)
                 : 'Active';
 
+            const effectiveMime = isFolder
+                ? 'folder'
+                : (latestVer?.mimeType ?? doc.mimeType ?? (doc.name ? getMimeTypeFromFilename(doc.name) : null));
+            const subtitleText = isFolder ? 'Directory' : getSpecificMimeLabel(effectiveMime, doc.name || doc.title);
+
             return {
                 ...doc,
                 id: doc.id,
                 parentId: doc.parentId ?? 'root',
                 name: doc.name || doc.title,
                 title: doc.name || doc.title,
-                subtitle: isFolder ? 'DIR' : 'Document',
+                subtitle: subtitleText,
                 category: isFolder ? 'Folder' : 'Document',
                 isFolder,
+                fileName: doc.name || doc.title || null,
+                path: latestVer?.path ?? doc.path ?? null,
+                mimeType: effectiveMime,
                 department: dept?.name || dept?.code || 'General',
                 classification: isFolder
                     ? null
@@ -102,6 +114,9 @@ const ArchivesPage = ({
                 size: formattedSize,
                 sizeBytes: isFolder ? folderSizeBytes : (Number(latestVer?.sizeBytes ?? doc.sizeBytes ?? 0) || 0),
                 status: '—',
+                createdAt: doc.createdAt || latestVer?.createdAt || doc.updatedAt || null,
+                updatedAt: doc.updatedAt || latestVer?.createdAt || doc.createdAt || null,
+                rawDate: dateValue || null,
                 date: formattedDate,
                 tags: isFolder
                     ? ['Folder']
@@ -141,7 +156,9 @@ const ArchivesPage = ({
     useEffect(() => {
         const handleDeleteDocEvent = (event) => {
             if (event.detail) {
-                const targetDoc = documents.find((d) => d?.id === event.detail.id) ?? event.detail;
+                const targetDoc = Array.isArray(event.detail)
+                    ? event.detail
+                    : (documents.find((d) => d?.id === event.detail.id) ?? event.detail);
                 setDeletingItem(targetDoc);
             }
         };
@@ -279,53 +296,89 @@ const ArchivesPage = ({
         }
 
         if (actionKey === 'download') {
-            const fileName = item.name || item.title || 'document';
-            try {
-                if (item.isFolder) {
-                    await storageService.downloadFolder(
-                        item,
-                        documents,
-                        documentVersions
-                    );
-                } else {
-                    const vers = (documentVersions || []).filter(
-                        (v) => (v.document?.id ?? v.documentId) === item.id
-                    );
-                    const latestVer = vers.length > 0
-                        ? [...vers].sort((a, b) => (b.version ?? 0) - (a.version ?? 0))[0]
-                        : null;
-                    const path = latestVer?.path || item.path || item.url || item.downloadUrl;
-                    await storageService.downloadDocument(path, fileName);
-                    if (item && currentUser?.id) {
-                        systemEventService.recordDocumentRead({
-                            document: item,
-                            user: currentUser,
-                            version: latestVer?.version,
-                        }).catch(() => {});
-                    }
-                }
-            } catch (err) {
+            const itemsToDownload = Array.isArray(item) ? item : [item];
+            if (itemsToDownload.length > 1) {
                 showToast({
-                    type: 'error',
-                    title: 'Download Failed',
-                    description: err?.message || 'Could not download file.',
+                    type: 'information',
+                    title: 'Batch Download Started',
+                    description: `Packaging ${itemsToDownload.length} items into ZIP archive...`,
                 });
+                try {
+                    await storageService.downloadMultipleAsZip(
+                        itemsToDownload,
+                        documents,
+                        documentVersions,
+                        'Documents.zip'
+                    );
+                    showToast({
+                        type: 'success',
+                        title: 'Batch Download Complete',
+                        description: `Packaged ${itemsToDownload.length} items into Documents.zip.`,
+                    });
+                } catch (err) {
+                    console.error('Batch zip download failed:', err);
+                    showToast({
+                        type: 'error',
+                        title: 'Download Failed',
+                        description: err?.message || 'Could not download zip archive.',
+                    });
+                }
+                return;
+            }
+
+            for (const downloadTarget of itemsToDownload) {
+                const fileName = downloadTarget.name || downloadTarget.title || 'document';
+                try {
+                    if (downloadTarget.isFolder) {
+                        await storageService.downloadFolder(
+                            downloadTarget,
+                            documents,
+                            documentVersions
+                        );
+                    } else {
+                        const vers = (documentVersions || []).filter(
+                            (v) => (v.document?.id ?? v.documentId) === downloadTarget.id
+                        );
+                        const latestVer = vers.length > 0
+                            ? [...vers].sort((a, b) => (b.version ?? 0) - (a.version ?? 0))[0]
+                            : null;
+                        const path = latestVer?.path || downloadTarget.path || downloadTarget.url || downloadTarget.downloadUrl;
+                        await storageService.downloadDocument(path, fileName);
+                        if (downloadTarget && currentUser?.id) {
+                            systemEventService.recordDocumentRead({
+                                document: downloadTarget,
+                                user: currentUser,
+                                version: latestVer?.version,
+                            }).catch(() => {});
+                        }
+                    }
+                } catch (err) {
+                    showToast({
+                        type: 'error',
+                        title: 'Download Failed',
+                        description: err?.message || 'Could not download file.',
+                    });
+                }
             }
             return;
         }
 
         if (actionKey === 'restore') {
-            const allDocs = useDocumentStore.getState().documents || [];
-            const targetParentId = item.parentId && item.parentId !== 'root' ? item.parentId : null;
-            const parentDoc = targetParentId ? allDocs.find((d) => d.id === targetParentId) : null;
+            const itemsToRestore = Array.isArray(item) ? item : [item];
+            for (const singleItem of itemsToRestore) {
+                const allDocs = useDocumentStore.getState().documents || [];
+                const targetParentId = singleItem.parentId && singleItem.parentId !== 'root' ? singleItem.parentId : null;
+                const parentDoc = targetParentId ? allDocs.find((d) => d.id === targetParentId) : null;
 
-            // CHILD RESTORE GUARD: If original parent folder is currently archived, block and prompt
-            if (parentDoc && parentDoc.isArchived) {
-                setRestoreConflictModalItem({ item, parentFolder: parentDoc });
-                return;
+                // CHILD RESTORE GUARD: If original parent folder is currently archived, block and prompt
+                if (parentDoc && parentDoc.isArchived) {
+                    setRestoreConflictModalItem({ item: singleItem, parentFolder: parentDoc });
+                    return;
+                }
+
+                await performRestoreItem(singleItem);
             }
-
-            await performRestoreItem(item);
+            onSelectMultiple?.([]);
             return;
         }
 
@@ -336,43 +389,50 @@ const ArchivesPage = ({
     };
 
     const handleConfirmDeleteItem = async () => {
-        if (!deletingItem) return;
+        const itemsToDelete = Array.isArray(deletingItem) ? deletingItem : (deletingItem?.id ? [deletingItem] : []);
+        if (itemsToDelete.length === 0) return;
         setIsDeletingItemLoading(true);
         try {
             if (isCoordinator) {
-                const deletePayload = {
-                    documentId: deletingItem.id,
-                    documentTitle: deletingItem.title || deletingItem.name,
-                    isFolder: Boolean(deletingItem.isFolder),
-                };
-
                 const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
-                await coordinatorApprovalService.submitCoordinatorRequest({
-                    action: constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_DELETE,
-                    requesterId,
-                    data: deletePayload,
-                });
+                for (const singleItem of itemsToDelete) {
+                    const deletePayload = {
+                        documentId: singleItem.id,
+                        documentTitle: singleItem.title || singleItem.name,
+                        isFolder: Boolean(singleItem.isFolder),
+                    };
+
+                    await coordinatorApprovalService.submitCoordinatorRequest({
+                        action: constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_DELETE,
+                        requesterId,
+                        data: deletePayload,
+                    });
+                }
                 useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
 
                 showToast({
                     type: 'success',
                     title: 'Request Submitted',
-                    description: `Delete request for "${deletingItem.title || deletingItem.name}" sent for Administrator approval.`,
+                    description: `Delete request for ${itemsToDelete.length} item(s) sent for Administrator approval.`,
                 });
                 setDeletingItem(null);
                 return;
             }
 
-            await useDocumentStore.getState().deleteDocument(deletingItem.id);
+            const deleteIds = new Set(itemsToDelete.map((i) => i.id));
+            for (const singleItem of itemsToDelete) {
+                await useDocumentStore.getState().deleteDocument(singleItem.id);
+            }
             showToast({
                 type: 'success',
-                title: deletingItem.isFolder ? 'Folder Deleted' : 'Document Deleted',
-                description: `"${deletingItem.title || deletingItem.name}" has been permanently deleted.`,
+                title: itemsToDelete.length > 1 ? 'Documents Deleted' : (itemsToDelete[0].isFolder ? 'Folder Deleted' : 'Document Deleted'),
+                description: itemsToDelete.length > 1 ? `${itemsToDelete.length} items permanently deleted.` : `"${itemsToDelete[0].title || itemsToDelete[0].name}" has been permanently deleted.`,
             });
-            if (selectedDocument?.id === deletingItem.id) {
+            if (selectedDocument && deleteIds.has(selectedDocument.id)) {
                 setSelectedDocument(null);
                 onSelectDocument?.(null);
             }
+            onSelectMultiple?.([]);
             setDeletingItem(null);
         } catch (err) {
             showToast({
@@ -399,8 +459,10 @@ const ArchivesPage = ({
                 data={archivedItems}
                 columns={DOCUMENT_COLUMNS}
                 filterOptions={dynamicFilterOptions}
-                selectedItem={selectedDocument ?? selectedItem}
+                selectedItem={selectedItems.length > 1 ? null : (selectedDocument ?? selectedItem)}
+                selectedIds={new Set((selectedItems || []).map((i) => i.id))}
                 onSelectItem={handleItemSelect}
+                onSelectMultipleItems={onSelectMultiple}
                 onDoubleClickItem={handleItemDoubleClick}
                 searchPlaceholder="Search archived documents by name, classification..."
                 initialView="table"
@@ -437,15 +499,29 @@ const ArchivesPage = ({
                 <Modal
                     isOpen={Boolean(deletingItem)}
                     onClose={() => !isDeletingItemLoading && setDeletingItem(null)}
-                    title={`Delete ${deletingItem.isFolder ? 'Folder' : 'Document'}`}
-                    description={`Are you sure you want to delete "${deletingItem.title || deletingItem.name}"?`}
+                    title={
+                        Array.isArray(deletingItem)
+                            ? `Delete ${deletingItem.length} Items`
+                            : `Delete ${deletingItem.isFolder ? 'Folder' : 'Document'}`
+                    }
+                    description={
+                        Array.isArray(deletingItem)
+                            ? `Are you sure you want to permanently delete ${deletingItem.length} selected items?`
+                            : `Are you sure you want to delete "${deletingItem.title || deletingItem.name}"?`
+                    }
                     icon={Trash2}
                     variant="destructive"
                     size="sm"
                     callout="This action cannot be undone and will permanently remove all associated version records from the database and storage files."
                     calloutVariant="destructive"
                     onConfirm={handleConfirmDeleteItem}
-                    confirmLabel={isDeletingItemLoading ? 'Deleting...' : `Delete ${deletingItem.isFolder ? 'Folder' : 'Document'}`}
+                    confirmLabel={
+                        isDeletingItemLoading
+                            ? 'Deleting...'
+                            : Array.isArray(deletingItem)
+                            ? `Delete ${deletingItem.length} Items`
+                            : `Delete ${deletingItem.isFolder ? 'Folder' : 'Document'}`
+                    }
                     cancelLabel="Cancel"
                     isConfirmLoading={isDeletingItemLoading}
                     isConfirmDisabled={isDeletingItemLoading}

@@ -345,6 +345,122 @@ const storageService = {
         return true;
     },
 
+    downloadMultipleAsZip: async (items = [], allDocuments = [], allVersions = [], customZipName = 'Documents.zip', onProgress) => {
+        const safeItems = Array.isArray(items) ? items : [items];
+        if (safeItems.length === 0) return false;
+
+        onProgress?.({ progress: 10, statusText: 'Scanning selected items...' });
+        const filesToDownload = [];
+
+        const collectFolderChildren = (parentId, prefix) => {
+            const children = (allDocuments || []).filter(
+                (doc) => (doc.parent?.id ?? doc.parentId) === parentId && !doc.isArchived
+            );
+            for (const child of children) {
+                if (child.isFolder) {
+                    const nextPrefix = `${prefix}${child.name || child.title || 'folder'}/`;
+                    collectFolderChildren(child.id, nextPrefix);
+                } else {
+                    const docVers = (allVersions || []).filter(
+                        (v) => (v.document?.id ?? v.documentId) === child.id
+                    );
+                    const latestVer = docVers.length > 0
+                        ? [...docVers].sort((a, b) => (b.version ?? 0) - (a.version ?? 0))[0]
+                        : null;
+                    const path = latestVer?.path || child.path || child.url || child.downloadUrl;
+                    const fileName = child.name || child.title || (path ? path.split('/').pop() : 'file');
+                    filesToDownload.push({
+                        relativePath: `${prefix}${fileName}`,
+                        storagePath: path,
+                        fileName: fileName,
+                    });
+                }
+            }
+        };
+
+        const usedNames = new Set();
+        const getUniqueRelativePath = (name) => {
+            let unique = name;
+            let counter = 1;
+            while (usedNames.has(unique)) {
+                const dotIndex = name.lastIndexOf('.');
+                if (dotIndex > 0) {
+                    unique = `${name.slice(0, dotIndex)} (${counter})${name.slice(dotIndex)}`;
+                } else {
+                    unique = `${name} (${counter})`;
+                }
+                counter++;
+            }
+            usedNames.add(unique);
+            return unique;
+        };
+
+        for (const item of safeItems) {
+            if (item.isFolder) {
+                const folderName = item.name || item.title || 'Folder';
+                collectFolderChildren(item.id, `${folderName}/`);
+            } else {
+                const docId = item.documentId ?? item.document?.id ?? item.id;
+                const matchedDoc = (allDocuments || []).find((d) => d.id === docId) ?? item;
+                const docVers = (allVersions || []).filter(
+                    (v) => (v.document?.id ?? v.documentId) === docId
+                );
+                const latestVer = docVers.length > 0
+                    ? [...docVers].sort((a, b) => (b.version ?? 0) - (a.version ?? 0))[0]
+                    : null;
+                const path = item.path ?? latestVer?.path ?? matchedDoc.path ?? item.url ?? item.downloadUrl;
+                const fileName = item.name || matchedDoc.name || item.title || (path ? path.split('/').pop() : 'document');
+                const relPath = getUniqueRelativePath(fileName);
+                filesToDownload.push({
+                    relativePath: relPath,
+                    storagePath: path,
+                    fileName: fileName,
+                });
+            }
+        }
+
+        let filesWithData = [];
+        if (filesToDownload.length > 0) {
+            let completedCount = 0;
+            filesWithData = await Promise.all(
+                filesToDownload.map(async (file) => {
+                    let blob = null;
+                    if (file.storagePath) {
+                        blob = await storageService.getFileBlob(file.storagePath);
+                    }
+                    if (!blob) {
+                        const content = `Pamantasan Institutional Document\n\nFile: ${file.fileName}\nPath: ${file.storagePath || 'N/A'}\nDownloaded: ${new Date().toISOString()}\n`;
+                        blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+                    }
+                    const buffer = await blob.arrayBuffer();
+                    completedCount++;
+                    const progressPercent = 20 + Math.round((completedCount / filesToDownload.length) * 60);
+                    onProgress?.({
+                        progress: progressPercent,
+                        statusText: `Processed ${completedCount} of ${filesToDownload.length} files...`,
+                    });
+                    return {
+                        path: file.relativePath,
+                        data: new Uint8Array(buffer),
+                    };
+                })
+            );
+        } else {
+            filesWithData.push({
+                path: 'README.txt',
+                data: new TextEncoder().encode(`No downloadable files found.\nDownloaded: ${new Date().toISOString()}\n`),
+            });
+        }
+
+        onProgress?.({ progress: 85, statusText: 'Packaging ZIP archive...' });
+        const zipBlob = createZipBlob(filesWithData);
+        onProgress?.({ progress: 95, statusText: 'Saving ZIP archive...' });
+        const finalZipName = customZipName.endsWith('.zip') ? customZipName : `${customZipName}.zip`;
+        await triggerBrowserDownload(zipBlob, finalZipName);
+        onProgress?.({ progress: 100, isFinished: true, statusText: 'Saved ZIP to device' });
+        return true;
+    },
+
     deleteDocument: async (storagePath) => {
         if (!storage || !storagePath) {
             return false;

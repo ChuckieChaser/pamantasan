@@ -109,7 +109,9 @@ const formatFullDateTime = (dateStr) => {
 const RequestsPage = ({
     currentUser: propUser = null,
     selectedItem = null,
+    selectedItems = [],
     onSelectRequest = null,
+    onSelectMultiple = null,
     className,
     ...props
 }) => {
@@ -477,6 +479,7 @@ const RequestsPage = ({
 
     // DERIVED SELECTION: Stays reactive to store updates and formatted data
     const activeSelectedRequest = useMemo(() => {
+        if (selectedItems && selectedItems.length > 1) return null;
         const targetId = selectedItem?.id ?? selectedRequestItem?.id;
         if (!targetId) return null;
         const matched = formattedDocumentData.find((item) => item.id === targetId);
@@ -487,7 +490,7 @@ const RequestsPage = ({
             };
         }
         return null;
-    }, [selectedItem, selectedRequestItem, formattedDocumentData]);
+    }, [selectedItems, selectedItem, selectedRequestItem, formattedDocumentData]);
 
     // HANDLERS
     const handleSelectRequest = (item, targetTab = null) => {
@@ -783,17 +786,54 @@ const RequestsPage = ({
         }
 
         if (actionKey === 'resolve') {
+            if (Array.isArray(item)) {
+                const openItems = item.filter((r) => {
+                    const s = String(r.status || '').toUpperCase();
+                    return s !== constants.DOCUMENT_REQUESTS_STATUS.RESOLVED && s !== constants.DOCUMENT_REQUESTS_STATUS.REJECTED;
+                });
+                if (openItems.length === 0) {
+                    showToast({
+                        type: 'information',
+                        title: 'No Eligible Requests',
+                        description: 'Selected requests are already resolved or rejected.',
+                    });
+                    return;
+                }
+                setResolvingRequestItem(openItems);
+                return;
+            }
             setResolvingRequestItem(item);
             return;
         }
 
         if (actionKey === 'reject') {
+            if (Array.isArray(item)) {
+                const openItems = item.filter((r) => {
+                    const s = String(r.status || '').toUpperCase();
+                    return s !== constants.DOCUMENT_REQUESTS_STATUS.RESOLVED && s !== constants.DOCUMENT_REQUESTS_STATUS.REJECTED;
+                });
+                if (openItems.length === 0) {
+                    showToast({
+                        type: 'information',
+                        title: 'No Eligible Requests',
+                        description: 'Selected requests are already resolved or rejected.',
+                    });
+                    return;
+                }
+                setRejectReason('');
+                setRejectingRequestItem(openItems);
+                return;
+            }
             setRejectReason('');
             setRejectingRequestItem(item);
             return;
         }
 
         if (actionKey === 'delete') {
+            if (Array.isArray(item)) {
+                setDeletingRequestItem(item);
+                return;
+            }
             const isClosed = item.status === constants.DOCUMENT_REQUESTS_STATUS.RESOLVED || item.status === constants.DOCUMENT_REQUESTS_STATUS.REJECTED;
             const isOwner = activeUser && String(item.requesterId ?? item.requester) === String(activeUser.id);
             if (isClosed && (!isAdmin || isOwner)) {
@@ -805,17 +845,32 @@ const RequestsPage = ({
                 return;
             }
             setDeletingRequestItem(item);
+            return;
         }
     };
 
     const handleConfirmResolveRequest = async () => {
-        if (!resolvingRequestItem?.id) return;
+        if (!resolvingRequestItem) return;
         setIsResolvingRequest(true);
         try {
-            await handleUpdateDocumentStatus(
-                resolvingRequestItem.id,
-                constants.DOCUMENT_REQUESTS_STATUS.RESOLVED
-            );
+            if (Array.isArray(resolvingRequestItem)) {
+                for (const singleItem of resolvingRequestItem) {
+                    await handleUpdateDocumentStatus(
+                        singleItem.id,
+                        constants.DOCUMENT_REQUESTS_STATUS.RESOLVED
+                    );
+                }
+                showToast({
+                    type: 'success',
+                    title: 'Requests Resolved',
+                    description: `Resolved ${resolvingRequestItem.length} requests successfully.`,
+                });
+            } else if (resolvingRequestItem.id) {
+                await handleUpdateDocumentStatus(
+                    resolvingRequestItem.id,
+                    constants.DOCUMENT_REQUESTS_STATUS.RESOLVED
+                );
+            }
             setResolvingRequestItem(null);
         } finally {
             setIsResolvingRequest(false);
@@ -823,14 +878,30 @@ const RequestsPage = ({
     };
 
     const handleConfirmRejectRequest = async () => {
-        if (!rejectingRequestItem?.id) return;
+        if (!rejectingRequestItem) return;
         setIsRejectingRequest(true);
         try {
-            await handleUpdateDocumentStatus(
-                rejectingRequestItem.id,
-                constants.DOCUMENT_REQUESTS_STATUS.REJECTED,
-                rejectReason.trim() || null
-            );
+            const reason = rejectReason.trim() || null;
+            if (Array.isArray(rejectingRequestItem)) {
+                for (const singleItem of rejectingRequestItem) {
+                    await handleUpdateDocumentStatus(
+                        singleItem.id,
+                        constants.DOCUMENT_REQUESTS_STATUS.REJECTED,
+                        reason || 'Rejected in bulk'
+                    );
+                }
+                showToast({
+                    type: 'success',
+                    title: 'Requests Rejected',
+                    description: `Rejected ${rejectingRequestItem.length} requests.`,
+                });
+            } else if (rejectingRequestItem.id) {
+                await handleUpdateDocumentStatus(
+                    rejectingRequestItem.id,
+                    constants.DOCUMENT_REQUESTS_STATUS.REJECTED,
+                    reason
+                );
+            }
             setRejectingRequestItem(null);
             setRejectReason('');
         } finally {
@@ -937,31 +1008,23 @@ const RequestsPage = ({
     };
 
     const handleConfirmDeleteRequest = async () => {
-        if (!deletingRequestItem?.id) {
-            return;
-        }
-
-        const isClosed = deletingRequestItem.status === constants.DOCUMENT_REQUESTS_STATUS.RESOLVED || deletingRequestItem.status === constants.DOCUMENT_REQUESTS_STATUS.REJECTED;
-        const isOwner = activeUser && String(deletingRequestItem.requesterId ?? deletingRequestItem.requester) === String(activeUser.id);
-        if (isClosed && (!isAdmin || isOwner)) {
-            showToast({
-                type: 'error',
-                title: 'Action Prohibited',
-                description: 'Closed and resolved document requests cannot be deleted for compliance and auditing.',
-            });
-            setDeletingRequestItem(null);
+        const itemsToDelete = Array.isArray(deletingRequestItem) ? deletingRequestItem : (deletingRequestItem?.id ? [deletingRequestItem] : []);
+        if (itemsToDelete.length === 0) {
             return;
         }
 
         setIsDeletingRequest(true);
         try {
-            await deleteDocumentRequest(deletingRequestItem.id, activeUser);
+            const deleteIds = new Set(itemsToDelete.map((i) => i.id));
+            for (const item of itemsToDelete) {
+                await deleteDocumentRequest(item.id, activeUser);
+            }
             showToast({
                 type: 'success',
-                title: 'Request Deleted',
-                description: 'Document request has been deleted.',
+                title: itemsToDelete.length > 1 ? 'Requests Deleted' : 'Request Deleted',
+                description: itemsToDelete.length > 1 ? `${itemsToDelete.length} requests have been deleted.` : 'Document request has been deleted.',
             });
-            if (activeSelectedRequest?.id === deletingRequestItem.id) {
+            if (activeSelectedRequest && deleteIds.has(activeSelectedRequest.id)) {
                 setSelectedRequestItem(null);
                 onSelectRequest?.(null);
             }
@@ -989,11 +1052,13 @@ const RequestsPage = ({
                 sortOptions={DOCUMENT_SORT_OPTIONS}
                 filterOptions={DOCUMENT_FILTER_OPTIONS}
                 selectedItem={activeSelectedRequest}
+                selectedIds={selectedItems && selectedItems.length > 0 ? new Set(selectedItems.map((i) => i.id)) : undefined}
                 addItemLabel={canCreateRequest ? "New Request" : undefined}
                 addItemIcon={canCreateRequest ? Plus : undefined}
                 searchPlaceholder="Search request..."
                 onAddItem={canCreateRequest ? handleOpenCreateModal : undefined}
                 onSelectItem={handleSelectRequest}
+                onSelectMultipleItems={onSelectMultiple}
                 onOpenItem={handleSelectRequest}
                 onItemAction={handleDocumentAction}
             />
@@ -1691,18 +1756,32 @@ const RequestsPage = ({
                 <Modal
                     isOpen={Boolean(resolvingRequestItem)}
                     onClose={() => !isResolvingRequest && setResolvingRequestItem(null)}
-                    title="Resolve Document Request"
-                    description={`Are you sure you want to mark "${resolvingRequestItem.subject || 'this document request'}" as resolved?`}
+                    title={
+                        Array.isArray(resolvingRequestItem)
+                            ? `Resolve Document Requests (${resolvingRequestItem.length})`
+                            : "Resolve Document Request"
+                    }
+                    description={
+                        Array.isArray(resolvingRequestItem)
+                            ? `Are you sure you want to mark ${resolvingRequestItem.length} selected document request(s) as resolved?`
+                            : `Are you sure you want to mark "${resolvingRequestItem.subject || 'this document request'}" as resolved?`
+                    }
                     icon={CheckCircle2}
                     size="sm"
                     callout={
                         isCoordinator
-                            ? "This will submit a resolution request to the Administrator for approval."
-                            : "Marking this request as resolved locks the thread communications and preserves clearance records for compliance and auditing."
+                            ? "This will submit resolution request(s) to the Administrator for approval."
+                            : "Marking request(s) as resolved locks thread communications and preserves clearance records for compliance and auditing."
                     }
                     calloutVariant="neutral"
                     onConfirm={handleConfirmResolveRequest}
-                    confirmLabel={isResolvingRequest ? 'Resolving...' : (isCoordinator ? 'Submit Resolution' : 'Mark Resolved')}
+                    confirmLabel={
+                        isResolvingRequest
+                            ? 'Resolving...'
+                            : Array.isArray(resolvingRequestItem)
+                            ? `Resolve (${resolvingRequestItem.length})`
+                            : (isCoordinator ? 'Submit Resolution' : 'Mark Resolved')
+                    }
                     cancelLabel="Cancel"
                     isConfirmLoading={isResolvingRequest}
                     isConfirmDisabled={isResolvingRequest}
@@ -1714,19 +1793,33 @@ const RequestsPage = ({
                 <Modal
                     isOpen={Boolean(rejectingRequestItem)}
                     onClose={() => !isRejectingRequest && setRejectingRequestItem(null)}
-                    title="Reject Document Request"
-                    description={`Are you sure you want to reject "${rejectingRequestItem.subject || 'this document request'}"?`}
+                    title={
+                        Array.isArray(rejectingRequestItem)
+                            ? `Reject Document Requests (${rejectingRequestItem.length})`
+                            : "Reject Document Request"
+                    }
+                    description={
+                        Array.isArray(rejectingRequestItem)
+                            ? `Are you sure you want to reject ${rejectingRequestItem.length} selected document request(s)?`
+                            : `Are you sure you want to reject "${rejectingRequestItem.subject || 'this document request'}"?`
+                    }
                     icon={XCircle}
                     variant="destructive"
                     size="md"
                     callout={
                         isCoordinator
-                            ? "This will submit a rejection request to the Administrator for review."
-                            : "Rejecting this document request will close the thread and record the rejection in institutional audit logs."
+                            ? "This will submit rejection request(s) to the Administrator for review."
+                            : "Rejecting document request(s) will close thread communications and record the rejection in institutional audit logs."
                     }
                     calloutVariant="destructive"
                     onConfirm={handleConfirmRejectRequest}
-                    confirmLabel={isRejectingRequest ? 'Rejecting...' : (isCoordinator ? 'Submit Rejection' : 'Reject Request')}
+                    confirmLabel={
+                        isRejectingRequest
+                            ? 'Rejecting...'
+                            : Array.isArray(rejectingRequestItem)
+                            ? `Reject (${rejectingRequestItem.length})`
+                            : (isCoordinator ? 'Submit Rejection' : 'Reject Request')
+                    }
                     cancelLabel="Cancel"
                     isConfirmLoading={isRejectingRequest}
                     isConfirmDisabled={isRejectingRequest}
@@ -1748,15 +1841,25 @@ const RequestsPage = ({
                 <Modal
                     isOpen={Boolean(deletingRequestItem)}
                     onClose={() => !isDeletingRequest && setDeletingRequestItem(null)}
-                    title="Delete Request"
-                    description={`Are you sure you want to delete "${deletingRequestItem.subject || 'this document request'}"?`}
+                    title={Array.isArray(deletingRequestItem) ? `Delete ${deletingRequestItem.length} Requests` : 'Delete Request'}
+                    description={
+                        Array.isArray(deletingRequestItem)
+                            ? `Are you sure you want to permanently delete ${deletingRequestItem.length} selected requests?`
+                            : `Are you sure you want to delete "${deletingRequestItem.subject || 'this document request'}"?`
+                    }
                     icon={Trash2}
                     variant="destructive"
                     size="sm"
                     callout="This request and all its associated messages and status history will be permanently deleted."
                     calloutVariant="destructive"
                     onConfirm={handleConfirmDeleteRequest}
-                    confirmLabel={isDeletingRequest ? 'Deleting...' : 'Delete Request'}
+                    confirmLabel={
+                        isDeletingRequest
+                            ? 'Deleting...'
+                            : Array.isArray(deletingRequestItem)
+                            ? `Delete ${deletingRequestItem.length} Requests`
+                            : 'Delete Request'
+                    }
                     cancelLabel="Cancel"
                     isConfirmLoading={isDeletingRequest}
                     isConfirmDisabled={isDeletingRequest}

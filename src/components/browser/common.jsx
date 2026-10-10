@@ -3,13 +3,22 @@
 import {
     Archive,
     Building2,
+    FileArchive,
+    FileCode,
+    FileSpreadsheet,
     FileText,
+    Film,
     Folder,
+    Image,
+    Inbox,
+    Music,
+    Presentation,
     UserCheck,
 } from 'lucide-react';
 import { Avatar } from '../Avatar';
 import { Badge } from '../Badge';
 import { constants } from '../../constants';
+import { getMimeTypeFromFilename } from '../common';
 
 
 // --- CONFIGURATIONS ---
@@ -31,17 +40,425 @@ const getResourceTitle = (resourceName) => {
     return titles[resourceName] ?? 'Resource Browser';
 };
 
-const renderItemIcon = (item, resourceName) => {
-    if (item.isFolder) {
-        return <Folder className={LARGE_ICON_STYLE} />;
+const getExtensionFromItem = (item) => {
+    if (!item) return '';
+    const raw = item.fileName || item.path || item.name || item.title || item.subject || '';
+    if (typeof raw !== 'string') return '';
+    const lastDot = raw.lastIndexOf('.');
+    if (lastDot >= 0 && lastDot < raw.length - 1) {
+        return raw.slice(lastDot + 1).toLowerCase().trim();
+    }
+    return '';
+};
+
+const getMimeTypeFromItem = (item) => {
+    if (!item) return '';
+    if (item.mimeType && item.mimeType !== 'application/octet-stream') {
+        return item.mimeType;
+    }
+    if (item.type && item.type !== 'application/octet-stream') {
+        return item.type;
+    }
+    if (item.contentType && item.contentType !== 'application/octet-stream') {
+        return item.contentType;
+    }
+    const ext = getExtensionFromItem(item);
+    if (ext) {
+        return getMimeTypeFromFilename(`file.${ext}`);
+    }
+    return item.mimeType || item.type || item.contentType || '';
+};
+
+const renderMimeTypeIcon = (mimeType, ext, className = LARGE_ICON_STYLE) => {
+    const lowerMime = (mimeType || '').toLowerCase();
+    const lowerExt = (ext || '').toLowerCase().replace(/^\./, '');
+
+    // 1. Image
+    if (
+        lowerMime.startsWith('image/') ||
+        ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico', 'tiff', 'tif', 'avif', 'heic', 'heif'].includes(lowerExt)
+    ) {
+        return <Image className={className} />;
     }
 
-    if (resourceName === 'users' || item.universityId) {
+    // 2. Spreadsheet / Table
+    if (
+        lowerMime.includes('spreadsheetml') ||
+        lowerMime.includes('ms-excel') ||
+        lowerMime === 'text/csv' ||
+        lowerMime === 'application/csv' ||
+        ['xlsx', 'xls', 'csv', 'ods', 'xlsm', 'tsv'].includes(lowerExt)
+    ) {
+        return <FileSpreadsheet className={className} />;
+    }
+
+    // 3. Presentation / Slide deck
+    if (
+        lowerMime.includes('presentationml') ||
+        lowerMime.includes('ms-powerpoint') ||
+        ['pptx', 'ppt', 'odp', 'key'].includes(lowerExt)
+    ) {
+        return <Presentation className={className} />;
+    }
+
+    // 4. Code / Data Interchange / Config / Markup
+    if (
+        lowerMime === 'application/json' ||
+        lowerMime.includes('xml') ||
+        lowerMime.includes('javascript') ||
+        lowerMime.includes('typescript') ||
+        lowerMime === 'text/html' ||
+        lowerMime === 'text/css' ||
+        lowerMime === 'text/x-python' ||
+        lowerMime === 'application/x-sh' ||
+        lowerMime.includes('yaml') ||
+        lowerMime.includes('sql') ||
+        ['js', 'jsx', 'ts', 'tsx', 'json', 'html', 'htm', 'css', 'scss', 'sass', 'less', 'xml', 'py', 'sh', 'bash', 'zsh', 'yaml', 'yml', 'sql', 'env'].includes(lowerExt)
+    ) {
+        return <FileCode className={className} />;
+    }
+
+    // 5. Compressed Archive
+    if (
+        lowerMime.includes('zip') ||
+        lowerMime.includes('tar') ||
+        lowerMime.includes('compressed') ||
+        lowerMime.includes('gzip') ||
+        ['zip', 'rar', '7z', 'tar', 'gz', 'tgz', 'bz2'].includes(lowerExt)
+    ) {
+        return <FileArchive className={className} />;
+    }
+
+    // 6. Audio
+    if (
+        lowerMime.startsWith('audio/') ||
+        ['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac', 'wma', 'aiff'].includes(lowerExt)
+    ) {
+        return <Music className={className} />;
+    }
+
+    // 7. Video
+    if (
+        lowerMime.startsWith('video/') ||
+        ['mp4', 'webm', 'ogg', 'mov', 'avi', 'mkv', 'flv', 'wmv', 'm4v'].includes(lowerExt)
+    ) {
+        return <Film className={className} />;
+    }
+
+    // 8. Documents (PDF, Word, Text, Markdown, Rich text)
+    if (
+        lowerMime === 'application/pdf' ||
+        lowerMime.includes('wordprocessingml') ||
+        lowerMime.includes('msword') ||
+        lowerMime === 'text/plain' ||
+        lowerMime === 'text/markdown' ||
+        ['pdf', 'docx', 'doc', 'txt', 'text', 'md', 'markdown', 'rtf', 'odt'].includes(lowerExt)
+    ) {
+        return <FileText className={className} />;
+    }
+
+    // Default fallback icon
+    return <FileText className={className} />;
+};
+
+const getItemCategoryRank = (item) => {
+    if (!item) return 9;
+    if (item.isFolder || item.category === 'Folder' || item.mimeType === 'folder') {
+        return 0;
+    }
+
+    const mime = (getMimeTypeFromItem(item) || '').toLowerCase();
+    const ext = getExtensionFromItem(item).toLowerCase();
+
+    // 1. Documents (PDF, Word, Text, Markdown, Rich text)
+    if (
+        mime === 'application/pdf' ||
+        mime.includes('wordprocessingml') ||
+        mime.includes('msword') ||
+        mime === 'text/plain' ||
+        mime === 'text/markdown' ||
+        ['pdf', 'docx', 'doc', 'txt', 'text', 'md', 'markdown', 'rtf', 'odt'].includes(ext)
+    ) {
+        return 1;
+    }
+
+    // 2. Spreadsheets (Excel, CSV, etc.)
+    if (
+        mime.includes('spreadsheetml') ||
+        mime.includes('ms-excel') ||
+        mime === 'text/csv' ||
+        mime === 'application/csv' ||
+        ['xlsx', 'xls', 'csv', 'ods', 'xlsm', 'tsv'].includes(ext)
+    ) {
+        return 2;
+    }
+
+    // 3. Presentations (PowerPoint, Keynote, etc.)
+    if (
+        mime.includes('presentationml') ||
+        mime.includes('ms-powerpoint') ||
+        ['pptx', 'ppt', 'odp', 'key'].includes(ext)
+    ) {
+        return 3;
+    }
+
+    // 4. Images
+    if (
+        mime.startsWith('image/') ||
+        ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico', 'tiff', 'tif', 'avif', 'heic', 'heif'].includes(ext)
+    ) {
+        return 4;
+    }
+
+    // 5. Code & Data
+    if (
+        mime === 'application/json' ||
+        mime.includes('xml') ||
+        mime.includes('javascript') ||
+        mime.includes('typescript') ||
+        mime === 'text/html' ||
+        mime === 'text/css' ||
+        mime === 'text/x-python' ||
+        mime === 'application/x-sh' ||
+        mime.includes('yaml') ||
+        mime.includes('sql') ||
+        ['js', 'jsx', 'ts', 'tsx', 'json', 'html', 'htm', 'css', 'scss', 'sass', 'less', 'xml', 'py', 'sh', 'bash', 'zsh', 'yaml', 'yml', 'sql', 'env'].includes(ext)
+    ) {
+        return 5;
+    }
+
+    // 6. Archives
+    if (
+        mime.includes('zip') ||
+        mime.includes('tar') ||
+        mime.includes('compressed') ||
+        mime.includes('gzip') ||
+        ['zip', 'rar', '7z', 'tar', 'gz', 'tgz', 'bz2'].includes(ext)
+    ) {
+        return 6;
+    }
+
+    // 7. Audio
+    if (
+        mime.startsWith('audio/') ||
+        ['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac', 'wma', 'aiff'].includes(ext)
+    ) {
+        return 7;
+    }
+
+    // 8. Video
+    if (
+        mime.startsWith('video/') ||
+        ['mp4', 'webm', 'ogg', 'mov', 'avi', 'mkv', 'flv', 'wmv', 'm4v'].includes(ext)
+    ) {
+        return 8;
+    }
+
+    return 9;
+};
+
+const getSpecificMimeLabel = (mimeType, candidateNameOrExt) => {
+    let ext = '';
+    if (typeof candidateNameOrExt === 'string' && candidateNameOrExt.trim()) {
+        const raw = candidateNameOrExt.trim();
+        const lastDot = raw.lastIndexOf('.');
+        ext = (lastDot >= 0 && lastDot < raw.length - 1 ? raw.slice(lastDot + 1) : raw).toLowerCase();
+    }
+
+    const mime = (mimeType || '').toLowerCase();
+
+    // 1. Folders
+    if (mime === 'folder' || ext === 'folder') {
+        return 'Directory';
+    }
+
+    // 2. Documents (without "Document" suffix)
+    if (mime === 'application/pdf' || ext === 'pdf') {
+        return 'PDF';
+    }
+    if (mime.includes('wordprocessingml') || ext === 'docx') {
+        return 'Word (.docx)';
+    }
+    if (mime.includes('msword') || ext === 'doc') {
+        return 'Word (.doc)';
+    }
+    if (ext === 'odt') {
+        return 'OpenDocument Text (.odt)';
+    }
+    if (mime === 'text/plain' || ext === 'txt' || ext === 'text') {
+        return 'Plain Text (.txt)';
+    }
+    if (mime === 'text/markdown' || ext === 'md' || ext === 'markdown') {
+        return 'Markdown (.md)';
+    }
+    if (ext === 'rtf') {
+        return 'Rich Text (.rtf)';
+    }
+
+    // 3. Spreadsheets
+    if (mime.includes('spreadsheetml') || ext === 'xlsx') {
+        return 'Excel (.xlsx)';
+    }
+    if (mime.includes('ms-excel') || ext === 'xls') {
+        return 'Excel (.xls)';
+    }
+    if (mime === 'text/csv' || mime === 'application/csv' || ext === 'csv') {
+        return 'CSV Spreadsheet';
+    }
+    if (ext === 'ods') {
+        return 'OpenDocument Sheet (.ods)';
+    }
+
+    // 4. Presentations
+    if (mime.includes('presentationml') || ext === 'pptx') {
+        return 'PowerPoint (.pptx)';
+    }
+    if (mime.includes('ms-powerpoint') || ext === 'ppt') {
+        return 'PowerPoint (.ppt)';
+    }
+    if (ext === 'odp') {
+        return 'OpenDocument Presentation (.odp)';
+    }
+    if (ext === 'key') {
+        return 'Keynote Presentation';
+    }
+
+    // 5. Images
+    if (mime === 'image/png' || ext === 'png') {
+        return 'PNG Image';
+    }
+    if (mime === 'image/jpeg' || mime === 'image/jpg' || ext === 'jpg' || ext === 'jpeg') {
+        return 'JPEG Image';
+    }
+    if (mime === 'image/webp' || ext === 'webp') {
+        return 'WebP Image';
+    }
+    if (mime === 'image/gif' || ext === 'gif') {
+        return 'GIF Image';
+    }
+    if (mime === 'image/svg+xml' || ext === 'svg') {
+        return 'SVG Vector';
+    }
+    if (mime.startsWith('image/')) {
+        return `${ext ? ext.toUpperCase() + ' ' : ''}Image`;
+    }
+
+    // 6. Audio (Separated specifically from Video)
+    if (mime === 'audio/mpeg' || mime === 'audio/mp3' || ext === 'mp3') {
+        return 'MP3 Audio';
+    }
+    if (mime === 'audio/wav' || ext === 'wav') {
+        return 'WAV Audio';
+    }
+    if (mime === 'audio/ogg' || ext === 'ogg') {
+        return 'OGG Audio';
+    }
+    if (mime === 'audio/flac' || ext === 'flac') {
+        return 'FLAC Audio';
+    }
+    if (mime === 'audio/aac' || ext === 'aac') {
+        return 'AAC Audio';
+    }
+    if (mime === 'audio/m4a' || ext === 'm4a') {
+        return 'M4A Audio';
+    }
+    if (mime.startsWith('audio/')) {
+        return `${ext ? ext.toUpperCase() + ' ' : ''}Audio Recording`;
+    }
+
+    // 7. Video (Separated specifically from Audio)
+    if (mime === 'video/mp4' || ext === 'mp4') {
+        return 'MP4 Video';
+    }
+    if (mime === 'video/webm' || ext === 'webm') {
+        return 'WebM Video';
+    }
+    if (mime === 'video/quicktime' || ext === 'mov') {
+        return 'QuickTime Video (.mov)';
+    }
+    if (mime === 'video/x-msvideo' || ext === 'avi') {
+        return 'AVI Video';
+    }
+    if (ext === 'mkv') {
+        return 'MKV Video';
+    }
+    if (mime.startsWith('video/')) {
+        return `${ext ? ext.toUpperCase() + ' ' : ''}Video Recording`;
+    }
+
+    // 8. Code & Data
+    if (mime === 'application/json' || ext === 'json') {
+        return 'JSON';
+    }
+    if (mime.includes('xml') || ext === 'xml') {
+        return 'XML';
+    }
+    if (mime.includes('javascript') || ext === 'js' || ext === 'mjs' || ext === 'cjs') {
+        return 'JavaScript';
+    }
+    if (ext === 'jsx') {
+        return 'React JSX';
+    }
+    if (mime.includes('typescript') || ext === 'ts') {
+        return 'TypeScript';
+    }
+    if (ext === 'tsx') {
+        return 'React TSX';
+    }
+    if (mime === 'text/html' || ext === 'html' || ext === 'htm') {
+        return 'HTML';
+    }
+    if (mime === 'text/css' || ext === 'css' || ext === 'scss' || ext === 'sass' || ext === 'less') {
+        return 'CSS Stylesheet';
+    }
+    if (mime === 'text/x-python' || ext === 'py') {
+        return 'Python Script';
+    }
+    if (mime === 'application/x-sh' || ext === 'sh' || ext === 'bash') {
+        return 'Shell Script';
+    }
+    if (mime.includes('yaml') || ext === 'yaml' || ext === 'yml') {
+        return 'YAML';
+    }
+    if (mime.includes('sql') || ext === 'sql') {
+        return 'SQL Query';
+    }
+
+    // 9. Archives
+    if (mime === 'application/zip' || ext === 'zip') {
+        return 'ZIP Archive';
+    }
+    if (mime === 'application/x-tar' || ext === 'tar') {
+        return 'TAR Archive';
+    }
+    if (mime === 'application/gzip' || ext === 'gz' || ext === 'tgz') {
+        return 'GZip Archive';
+    }
+    if (mime === 'application/x-7z-compressed' || ext === '7z') {
+        return '7-Zip Archive';
+    }
+    if (mime.includes('rar') || ext === 'rar') {
+        return 'RAR Archive';
+    }
+
+    if (ext) {
+        return `${ext.toUpperCase()} File`;
+    }
+
+    return mime || 'File';
+};
+
+const renderItemIcon = (item = {}, resourceName, customClassName = LARGE_ICON_STYLE) => {
+    if (item?.isFolder || item?.category === 'Folder' || item?.mimeType === 'folder') {
+        return <Folder className={customClassName} />;
+    }
+
+    if (resourceName === 'users' || item?.universityId) {
         return (
             <Avatar
-                src={item.avatarPath}
-                user={item.user ?? item}
-                alt={item.title ?? item.name}
+                src={item?.avatarPath}
+                user={item?.user ?? item}
+                alt={item?.title ?? item?.name}
                 size="small"
                 className="h-full w-full rounded-full aspect-square"
             />
@@ -49,18 +466,34 @@ const renderItemIcon = (item, resourceName) => {
     }
 
     if (resourceName === 'departments') {
-        return <Building2 className={LARGE_ICON_STYLE} />;
+        return <Building2 className={customClassName} />;
     }
 
     if (resourceName === 'coordinator_requests') {
-        return <UserCheck className={LARGE_ICON_STYLE} />;
+        return <UserCheck className={customClassName} />;
+    }
+
+    if (resourceName === 'document_requests' && !item?.mimeType && !getExtensionFromItem(item)) {
+        return <Inbox className={customClassName} />;
+    }
+
+    // If an archive resource empty placeholder or item without file/mime
+    if (resourceName === 'archives' && !item?.id && !item?.mimeType && !getExtensionFromItem(item)) {
+        return <Archive className={customClassName} />;
+    }
+
+    const effectiveMime = getMimeTypeFromItem(item);
+    const effectiveExt = getExtensionFromItem(item);
+
+    if (effectiveMime || effectiveExt) {
+        return renderMimeTypeIcon(effectiveMime, effectiveExt, customClassName);
     }
 
     if (resourceName === 'archives') {
-        return <Archive className={LARGE_ICON_STYLE} />;
+        return <Archive className={customClassName} />;
     }
 
-    return <FileText className={LARGE_ICON_STYLE} />;
+    return <FileText className={customClassName} />;
 };
 
 const renderItemBadge = (item, columnKey) => {
@@ -152,4 +585,9 @@ export {
     getResourceTitle,
     renderItemIcon,
     renderItemBadge,
+    renderMimeTypeIcon,
+    getMimeTypeFromItem,
+    getExtensionFromItem,
+    getItemCategoryRank,
+    getSpecificMimeLabel,
 };

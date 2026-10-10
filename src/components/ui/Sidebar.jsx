@@ -76,7 +76,7 @@ const Sidebar = ({
             const spaceRight = window.innerWidth - rect.right;
             const flyoutWidth = 288;
 
-            if (isMobileTrigger && spaceRight < flyoutWidth + 16) {
+            if (isMobileTrigger || window.innerWidth < 640 || spaceRight < flyoutWidth + 16) {
                 // Narrow mobile: keep inside viewport
                 setFlyoutPosition({
                     left: Math.max(12, Math.min(rect.left, window.innerWidth - flyoutWidth - 12)),

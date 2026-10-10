@@ -1,10 +1,11 @@
-// --- IMPORTS ---
 import { MoreVertical } from 'lucide-react';
 import { Avatar } from '../Avatar';
+import { Checkbox } from '../Checkbox';
 import {
     ICON_STYLE,
     renderItemIcon,
     renderItemBadge,
+    getSpecificMimeLabel,
 } from './common';
 
 
@@ -14,9 +15,12 @@ const Table = ({
     columns = [],
     resourceName,
     selectedId,
+    selectedIds = new Set(),
     onItemClick,
     onItemDoubleClick,
     onToggleActionMenu,
+    onToggleSelect,
+    onToggleSelectAll,
     className,
     ...props
 }) => {
@@ -37,12 +41,24 @@ const Table = ({
         return '';
     };
 
+    const isAllSelected = data.length > 0 && data.every((item) => selectedIds.has(item.id));
+    const isSomeSelected = data.some((item) => selectedIds.has(item.id)) && !isAllSelected;
+
     // RENDER
     return (
         <div className={`w-full overflow-x-auto overflow-y-auto max-h-[485px] rounded-xl border border-surface-border bg-surface shadow-2xs ${className ?? ''}`.trim()} {...props}>
             <table className="w-max min-w-full text-left text-xs sm:text-sm border-collapse">
                 <thead className="sticky top-0 z-10 bg-surface shadow-2xs">
                     <tr className="border-b border-surface-border bg-surface-hover/70 font-semibold text-xs sm:text-sm text-text select-none h-10 sm:h-11">
+                        <th className="w-10 px-3 py-2 sm:py-2.5 text-center align-middle">
+                            <Checkbox
+                                checked={isAllSelected}
+                                indeterminate={isSomeSelected}
+                                onChange={() => onToggleSelectAll?.()}
+                                title={isAllSelected ? 'Deselect all' : 'Select all'}
+                                aria-label="Select all"
+                            />
+                        </th>
                         {effectiveColumns.map((column) => (
                             <th
                                 key={column.key}
@@ -56,20 +72,43 @@ const Table = ({
                 </thead>
                 <tbody className="divide-y divide-surface-border/80">
                     {data.map((item) => {
-                        const isSelected = selectedId === item.id;
+                        const isChecked = selectedIds.has(item.id);
+                        const isSelected = selectedId === item.id || isChecked;
 
                         return (
                             <tr
                                 key={item.id}
                                 data-record-id={item.id}
                                 data-selected={isSelected ? 'true' : 'false'}
-                                onClick={() => onItemClick?.(item)}
-                                onDoubleClick={() => onItemDoubleClick?.(item)}
-                                className={`group cursor-pointer transition-colors duration-150 select-none h-10 sm:h-11 ${isSelected
+                                onClick={() => {
+                                    if (selectedIds.size > 0) {
+                                        onToggleSelect?.(item);
+                                    } else {
+                                        onItemClick?.(item);
+                                    }
+                                }}
+                                onDoubleClick={() => {
+                                    if (selectedIds.size === 0) {
+                                        onItemDoubleClick?.(item);
+                                    }
+                                }}
+                                className={`group cursor-pointer transition-colors duration-150 select-none h-10 sm:h-11 ${isChecked
+                                    ? 'bg-accent/15 text-text font-medium'
+                                    : isSelected
                                     ? 'bg-accent/10 text-text font-medium'
                                     : 'hover:bg-surface-hover/60 text-text'
                                 }`}
                             >
+                                <td
+                                    className="w-10 px-3 py-2 sm:py-2.5 text-center align-middle"
+                                    onClick={(e) => e.stopPropagation()}
+                                >
+                                    <Checkbox
+                                        checked={isChecked}
+                                        onChange={() => onToggleSelect?.(item)}
+                                        aria-label={`Select ${item.title ?? item.name ?? 'item'}`}
+                                    />
+                                </td>
                                 {effectiveColumns.map((column) => (
                                     <td
                                         key={column.key}
@@ -101,7 +140,11 @@ const Table = ({
                                                     </span>
                                                     {item.subtitle && (
                                                         <span className="text-[10px] text-text-muted font-normal truncate max-w-xs leading-tight">
-                                                            {item.subtitle}
+                                                            {item.isFolder || item.subtitle === 'DIR'
+                                                                ? 'Directory'
+                                                                : (item.subtitle === 'Document'
+                                                                    ? getSpecificMimeLabel(item.mimeType, item.fileName || item.path || item.name || item.title)
+                                                                    : item.subtitle)}
                                                         </span>
                                                     )}
                                                 </div>

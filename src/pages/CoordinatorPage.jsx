@@ -59,7 +59,9 @@ const COORDINATOR_FILTER_OPTIONS = [
 const CoordinatorPage = ({
     currentUser = null,
     selectedItem = null,
+    selectedItems = [],
     onSelectRequest = null,
+    onSelectMultiple = null,
     className,
     ...props
 }) => {
@@ -115,6 +117,10 @@ const CoordinatorPage = ({
     useEffect(() => {
         const handleApproveCoordinatorRequestEvent = (event) => {
             if (event.detail) {
+                if (Array.isArray(event.detail)) {
+                    handleCoordinatorAction('approve', event.detail);
+                    return;
+                }
                 const targetRequest = (coordinatorRequests || []).find((r) => r.id === event.detail.id) ?? event.detail;
                 handleStartCoordinatorApproval(targetRequest);
             }
@@ -122,6 +128,10 @@ const CoordinatorPage = ({
 
         const handleRejectCoordinatorRequestEvent = (event) => {
             if (event.detail) {
+                if (Array.isArray(event.detail)) {
+                    handleCoordinatorAction('reject', event.detail);
+                    return;
+                }
                 const targetRequest = (coordinatorRequests || []).find((r) => r.id === event.detail.id) ?? event.detail;
                 handleStartCoordinatorRejection(targetRequest);
             }
@@ -129,6 +139,10 @@ const CoordinatorPage = ({
 
         const handleDeleteCoordinatorRequestEvent = (event) => {
             if (event.detail) {
+                if (Array.isArray(event.detail)) {
+                    setDeletingRequestItem(event.detail);
+                    return;
+                }
                 const targetRequest = (coordinatorRequests || []).find((r) => r.id === event.detail.id) ?? event.detail;
                 if (targetRequest.status && targetRequest.status !== constants.COORDINATOR_REQUESTS_STATUS.PENDING) {
                     showToast({
@@ -242,6 +256,7 @@ const CoordinatorPage = ({
 
     // DERIVED SELECTION: Stays reactive to store updates and formatted data
     const activeSelectedRequest = useMemo(() => {
+        if (selectedItems && selectedItems.length > 1) return null;
         const targetId = selectedItem?.id ?? selectedRequestItem?.id;
         if (!targetId) return null;
         const matched = formattedCoordinatorData.find((item) => item.id === targetId);
@@ -252,7 +267,7 @@ const CoordinatorPage = ({
             };
         }
         return null;
-    }, [selectedItem, selectedRequestItem, formattedCoordinatorData]);
+    }, [selectedItems, selectedItem, selectedRequestItem, formattedCoordinatorData]);
 
     // HANDLERS
     const handleSelectRequest = (item, targetTab = 'information') => {
@@ -279,20 +294,33 @@ const CoordinatorPage = ({
             if (!isAdmin) {
                 throw new Error('Only administrators can approve coordinator requests.');
             }
-            const targetReq = coordinatorRequests.find((r) => r.id === approvingCoordinatorRequest.id) ?? approvingCoordinatorRequest;
-            const updated = await coordinatorApprovalService.executeApprovedRequest(targetReq, activeUser);
 
-            showToast({
-                type: 'success',
-                title: 'Request Approved & Executed',
-                description: `Action "${(targetReq.action ?? '').replace(/_/g, ' ')}" approved and executed with administrative privileges.`,
-            });
+            if (Array.isArray(approvingCoordinatorRequest)) {
+                for (const req of approvingCoordinatorRequest) {
+                    const targetReq = coordinatorRequests.find((r) => r.id === req.id) ?? req;
+                    await coordinatorApprovalService.executeApprovedRequest(targetReq, activeUser);
+                }
+                showToast({
+                    type: 'success',
+                    title: 'Requests Approved & Executed',
+                    description: `Approved and executed ${approvingCoordinatorRequest.length} coordinator requests.`,
+                });
+            } else {
+                const targetReq = coordinatorRequests.find((r) => r.id === approvingCoordinatorRequest.id) ?? approvingCoordinatorRequest;
+                const updated = await coordinatorApprovalService.executeApprovedRequest(targetReq, activeUser);
 
-            if (activeSelectedRequest?.id === approvingCoordinatorRequest.id) {
-                const targetTab = activeSelectedRequest?._targetTab ?? 'information';
-                const nextItem = { ...activeSelectedRequest, ...updated, status: constants.COORDINATOR_REQUESTS_STATUS.APPROVED, _targetTab: targetTab };
-                setSelectedRequestItem(nextItem);
-                onSelectRequest?.(nextItem, targetTab);
+                showToast({
+                    type: 'success',
+                    title: 'Request Approved & Executed',
+                    description: `Action "${(targetReq.action ?? '').replace(/_/g, ' ')}" approved and executed with administrative privileges.`,
+                });
+
+                if (activeSelectedRequest?.id === approvingCoordinatorRequest.id) {
+                    const targetTab = activeSelectedRequest?._targetTab ?? 'information';
+                    const nextItem = { ...activeSelectedRequest, ...updated, status: constants.COORDINATOR_REQUESTS_STATUS.APPROVED, _targetTab: targetTab };
+                    setSelectedRequestItem(nextItem);
+                    onSelectRequest?.(nextItem, targetTab);
+                }
             }
 
             setApprovingCoordinatorRequest(null);
@@ -322,29 +350,48 @@ const CoordinatorPage = ({
             if (!isAdmin) {
                 throw new Error('Only administrators can reject coordinator requests.');
             }
-            await coordinatorApprovalService.rejectCoordinatorRequest({
-                ...rejectingCoordinatorRequest,
-                rejectionReason: rejectionReason.trim() || undefined,
-            }, activeUser);
 
-            await fetchCoordinatorRequests();
+            const reason = rejectionReason.trim() || undefined;
 
-            showToast({
-                type: 'success',
-                title: 'Request Rejected',
-                description: 'Coordinator request rejected and recorded under Decisions.',
-            });
+            if (Array.isArray(rejectingCoordinatorRequest)) {
+                for (const req of rejectingCoordinatorRequest) {
+                    await coordinatorApprovalService.rejectCoordinatorRequest({
+                        ...req,
+                        rejectionReason: req.rejectionReason || reason || 'Rejected in bulk',
+                    }, activeUser);
+                }
+                await fetchCoordinatorRequests();
 
-            if (activeSelectedRequest?.id === rejectingCoordinatorRequest.id) {
-                const targetTab = activeSelectedRequest?._targetTab ?? 'information';
-                const nextItem = {
-                    ...activeSelectedRequest,
-                    status: constants.COORDINATOR_REQUESTS_STATUS.REJECTED,
-                    rejectionReason: rejectionReason.trim() || undefined,
-                    _targetTab: targetTab,
-                };
-                setSelectedRequestItem(nextItem);
-                onSelectRequest?.(nextItem, targetTab);
+                showToast({
+                    type: 'success',
+                    title: 'Requests Rejected',
+                    description: `Rejected ${rejectingCoordinatorRequest.length} coordinator requests and recorded under Decisions.`,
+                });
+            } else {
+                await coordinatorApprovalService.rejectCoordinatorRequest({
+                    ...rejectingCoordinatorRequest,
+                    rejectionReason: reason,
+                }, activeUser);
+
+                await fetchCoordinatorRequests();
+
+                showToast({
+                    type: 'success',
+                    title: 'Request Rejected',
+                    description: 'Coordinator request rejected and recorded under Decisions.',
+                });
+
+                if (activeSelectedRequest?.id === rejectingCoordinatorRequest.id) {
+                    const targetTab = activeSelectedRequest?._targetTab ?? 'information';
+                    const nextItem = {
+                        ...activeSelectedRequest,
+                        status: constants.COORDINATOR_REQUESTS_STATUS.REJECTED,
+                        rejectionReason: reason,
+                        _targetTab: targetTab,
+                    };
+                    setSelectedRequestItem(nextItem);
+                    onSelectRequest?.(nextItem, targetTab);
+                }
             }
 
             setRejectingCoordinatorRequest(null);
@@ -361,23 +408,76 @@ const CoordinatorPage = ({
         }
     };
 
-    const handleCoordinatorAction = (actionKey, item) => {
+    const handleCoordinatorAction = async (actionKey, item) => {
         if (actionKey === 'open' || actionKey === 'inspect' || actionKey === 'view_payload') {
             handleOpenCoordinatorReview(item);
             return;
         }
 
         if (actionKey === 'approve') {
+            if (Array.isArray(item)) {
+                if (!isAdmin) {
+                    showToast({
+                        type: 'error',
+                        title: 'Permission Denied',
+                        description: 'Only administrators can approve coordinator requests.',
+                    });
+                    return;
+                }
+                const pendingItems = item.filter((r) => {
+                    const s = String(r.status || '').toUpperCase();
+                    return !s || s === constants.COORDINATOR_REQUESTS_STATUS.PENDING;
+                });
+                if (pendingItems.length === 0) {
+                    showToast({
+                        type: 'information',
+                        title: 'No Pending Requests',
+                        description: 'Selected coordinator requests are already finalized.',
+                    });
+                    return;
+                }
+                setApprovingCoordinatorRequest(pendingItems);
+                return;
+            }
             handleStartCoordinatorApproval(item);
             return;
         }
 
         if (actionKey === 'reject') {
+            if (Array.isArray(item)) {
+                if (!isAdmin) {
+                    showToast({
+                        type: 'error',
+                        title: 'Permission Denied',
+                        description: 'Only administrators can reject coordinator requests.',
+                    });
+                    return;
+                }
+                const pendingItems = item.filter((r) => {
+                    const s = String(r.status || '').toUpperCase();
+                    return !s || s === constants.COORDINATOR_REQUESTS_STATUS.PENDING;
+                });
+                if (pendingItems.length === 0) {
+                    showToast({
+                        type: 'information',
+                        title: 'No Pending Requests',
+                        description: 'Selected coordinator requests are already finalized.',
+                    });
+                    return;
+                }
+                setRejectionReason('');
+                setRejectingCoordinatorRequest(pendingItems);
+                return;
+            }
             handleStartCoordinatorRejection(item);
             return;
         }
 
         if (actionKey === 'delete') {
+            if (Array.isArray(item)) {
+                setDeletingRequestItem(item);
+                return;
+            }
             if (item.status && item.status !== constants.COORDINATOR_REQUESTS_STATUS.PENDING) {
                 showToast({
                     type: 'error',
@@ -387,33 +487,28 @@ const CoordinatorPage = ({
                 return;
             }
             setDeletingRequestItem(item);
+            return;
         }
     };
 
     const handleConfirmDeleteRequest = async () => {
-        if (!deletingRequestItem?.id) {
-            return;
-        }
-
-        if (deletingRequestItem.status && deletingRequestItem.status !== constants.COORDINATOR_REQUESTS_STATUS.PENDING) {
-            showToast({
-                type: 'error',
-                title: 'Action Prohibited',
-                description: 'Only pending coordinator requests can be deleted. Finalized requests cannot be removed.',
-            });
-            setDeletingRequestItem(null);
+        const itemsToDelete = Array.isArray(deletingRequestItem) ? deletingRequestItem : (deletingRequestItem?.id ? [deletingRequestItem] : []);
+        if (itemsToDelete.length === 0) {
             return;
         }
 
         setIsDeletingRequest(true);
         try {
-            await deleteCoordinatorRequest(deletingRequestItem.id, activeUser);
+            const deleteIds = new Set(itemsToDelete.map((i) => i.id));
+            for (const req of itemsToDelete) {
+                await deleteCoordinatorRequest(req.id, activeUser);
+            }
             showToast({
                 type: 'success',
-                title: 'Request Deleted',
-                description: 'Coordinator request deleted from queue.',
+                title: itemsToDelete.length > 1 ? 'Requests Deleted' : 'Request Deleted',
+                description: itemsToDelete.length > 1 ? `${itemsToDelete.length} requests deleted from queue.` : 'Coordinator request deleted from queue.',
             });
-            if (activeSelectedRequest?.id === deletingRequestItem.id) {
+            if (activeSelectedRequest && deleteIds.has(activeSelectedRequest.id)) {
                 setSelectedRequestItem(null);
                 onSelectRequest?.(null);
             }
@@ -444,8 +539,10 @@ const CoordinatorPage = ({
                 sortOptions={COORDINATOR_SORT_OPTIONS}
                 filterOptions={COORDINATOR_FILTER_OPTIONS}
                 selectedItem={activeSelectedRequest}
+                selectedIds={selectedItems && selectedItems.length > 0 ? new Set(selectedItems.map((i) => i.id)) : undefined}
                 searchPlaceholder="Search request..."
                 onSelectItem={handleSelectRequest}
+                onSelectMultipleItems={onSelectMultiple}
                 onOpenItem={handleOpenCoordinatorReview}
                 onItemAction={handleCoordinatorAction}
             />
@@ -613,14 +710,32 @@ const CoordinatorPage = ({
                 <Modal
                     isOpen={Boolean(approvingCoordinatorRequest)}
                     onClose={() => !isApprovingRequest && setApprovingCoordinatorRequest(null)}
-                    title="Approve Request"
-                    description={`Are you sure you want to approve this request for action "${(approvingCoordinatorRequest.action ?? '').replace(/_/g, ' ')}"?`}
+                    title={
+                        Array.isArray(approvingCoordinatorRequest)
+                            ? `Approve Coordinator Requests (${approvingCoordinatorRequest.length})`
+                            : "Approve Request"
+                    }
+                    description={
+                        Array.isArray(approvingCoordinatorRequest)
+                            ? `Are you sure you want to approve and execute ${approvingCoordinatorRequest.length} selected coordinator requests?`
+                            : `Are you sure you want to approve this request for action "${(approvingCoordinatorRequest.action ?? '').replace(/_/g, ' ')}"?`
+                    }
                     icon={CheckCircle2}
                     size="sm"
-                    callout="Approving will immediately apply and execute the proposed changes with administrative privileges."
+                    callout={
+                        Array.isArray(approvingCoordinatorRequest)
+                            ? "Approving will immediately execute the proposed changes for all selected requests with administrative privileges."
+                            : "Approving will immediately apply and execute the proposed changes with administrative privileges."
+                    }
                     calloutVariant="neutral"
                     onConfirm={handleConfirmApproveRequest}
-                    confirmLabel={isApprovingRequest ? 'Approving...' : 'Approve & Execute'}
+                    confirmLabel={
+                        isApprovingRequest
+                            ? 'Approving...'
+                            : Array.isArray(approvingCoordinatorRequest)
+                            ? `Approve (${approvingCoordinatorRequest.length})`
+                            : 'Approve & Execute'
+                    }
                     cancelLabel="Cancel"
                     isConfirmLoading={isApprovingRequest}
                     isConfirmDisabled={isApprovingRequest}
@@ -632,24 +747,43 @@ const CoordinatorPage = ({
                 <Modal
                     isOpen={Boolean(rejectingCoordinatorRequest)}
                     onClose={() => !isRejectingRequest && setRejectingCoordinatorRequest(null)}
-                    title="Reject Request"
-                    description={`Are you sure you want to reject this request for action "${(rejectingCoordinatorRequest.action ?? '').replace(/_/g, ' ')}"?`}
+                    title={
+                        Array.isArray(rejectingCoordinatorRequest)
+                            ? `Reject Coordinator Requests (${rejectingCoordinatorRequest.length})`
+                            : "Reject Request"
+                    }
+                    description={
+                        Array.isArray(rejectingCoordinatorRequest)
+                            ? `Are you sure you want to reject ${rejectingCoordinatorRequest.length} selected coordinator requests?`
+                            : `Are you sure you want to reject this request for action "${(rejectingCoordinatorRequest.action ?? '').replace(/_/g, ' ')}"?`
+                    }
                     icon={XCircle}
                     variant="destructive"
-                    callout="Rejection will notify the department coordinator and terminate the requested operation."
+                    callout={
+                        Array.isArray(rejectingCoordinatorRequest)
+                            ? "Rejection will notify department coordinators and terminate the requested operations."
+                            : "Rejection will notify the department coordinator and terminate the requested operation."
+                    }
                     calloutVariant="destructive"
                     onConfirm={handleConfirmCoordinatorRejection}
-                    confirmLabel={isRejectingRequest ? 'Rejecting...' : 'Reject Request'}
+                    confirmLabel={
+                        isRejectingRequest
+                            ? 'Rejecting...'
+                            : Array.isArray(rejectingCoordinatorRequest)
+                            ? `Reject (${rejectingCoordinatorRequest.length})`
+                            : 'Reject Request'
+                    }
                     cancelLabel="Cancel"
                     isConfirmLoading={isRejectingRequest}
                     isConfirmDisabled={isRejectingRequest}
                 >
                     <div className="flex flex-col gap-3 py-2">
                         <AreaField
-                            label="Rejection Reason"
+                            label="Rejection Reason (Optional)"
                             placeholder="Enter rejection reason..."
                             value={rejectionReason}
                             onChange={(changeEvent) => setRejectionReason(changeEvent.target.value)}
+                            helperText="Provide specific feedback or explanation for the coordinator."
                         />
                     </div>
                 </Modal>
@@ -660,15 +794,25 @@ const CoordinatorPage = ({
                 <Modal
                     isOpen={Boolean(deletingRequestItem)}
                     onClose={() => !isDeletingRequest && setDeletingRequestItem(null)}
-                    title="Delete Request"
-                    description="Are you sure you want to delete this coordinator request? This action cannot be undone."
+                    title={Array.isArray(deletingRequestItem) ? `Delete ${deletingRequestItem.length} Requests` : 'Delete Request'}
+                    description={
+                        Array.isArray(deletingRequestItem)
+                            ? `Are you sure you want to permanently delete ${deletingRequestItem.length} selected coordinator requests? This action cannot be undone.`
+                            : 'Are you sure you want to delete this coordinator request? This action cannot be undone.'
+                    }
                     icon={Trash2}
                     variant="destructive"
                     size="sm"
                     callout="This request and all its associated review history will be permanently deleted."
                     calloutVariant="destructive"
                     onConfirm={handleConfirmDeleteRequest}
-                    confirmLabel={isDeletingRequest ? 'Deleting Request...' : 'Delete Request'}
+                    confirmLabel={
+                        isDeletingRequest
+                            ? 'Deleting...'
+                            : Array.isArray(deletingRequestItem)
+                            ? `Delete ${deletingRequestItem.length} Requests`
+                            : 'Delete Request'
+                    }
                     cancelLabel="Cancel"
                     isConfirmLoading={isDeletingRequest}
                     isConfirmDisabled={isDeletingRequest}

@@ -20,7 +20,7 @@ import { SegmentSelection } from '../Selections';
 import { constants } from '../../constants';
 
 // --- CONFIGURATIONS ---
-const BASE_STYLE = 'absolute left-0 top-full mt-2 z-[100] w-[calc(100vw-2rem)] sm:w-96 md:w-[32rem] max-w-[95vw]';
+const BASE_STYLE = 'fixed inset-x-2.5 top-13 sm:absolute sm:inset-auto sm:left-0 sm:top-full mt-0 sm:mt-2 z-[100] w-auto sm:w-96 md:w-[32rem] max-w-none sm:max-w-[95vw]';
 
 const getClassificationIcon = (classification) => {
     switch (classification) {
@@ -266,7 +266,7 @@ const GlobalSearchDropdown = ({
                 </div>
 
                 {/* 2. RESULTS BODY */}
-                <div className="max-h-96 overflow-y-auto flex flex-col gap-1 p-0.5">
+                <div className="max-h-[65vh] sm:max-h-96 overflow-y-auto flex flex-col gap-1 p-0.5">
                     {/* EMPTY STATE */}
                     {searchResults.total === 0 && (
                         <div className="p-8 flex flex-col items-center justify-center text-center gap-2 rounded-lg border border-dashed border-surface-border">

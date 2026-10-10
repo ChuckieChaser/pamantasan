@@ -1,6 +1,6 @@
-// --- IMPORTS ---
 import { MoreVertical } from 'lucide-react';
 import { Avatar } from '../Avatar';
+import { Checkbox } from '../Checkbox';
 import {
     ICON_STYLE,
     renderItemIcon,
@@ -13,8 +13,10 @@ const List = ({
     data = [],
     resourceName,
     selectedId,
+    selectedIds = new Set(),
     onItemClick,
     onToggleActionMenu,
+    onToggleSelect,
     className,
     ...props
 }) => {
@@ -22,20 +24,39 @@ const List = ({
     return (
         <div className={`flex flex-col gap-2 max-h-[640px] overflow-y-auto pr-1 ${className ?? ''}`.trim()} {...props}>
             {data.map((item) => {
-                const isSelected = selectedId === item.id;
+                const isChecked = selectedIds.has(item.id);
+                const isSelected = selectedId === item.id || isChecked;
 
                 return (
                     <div
                         key={item.id}
                         data-record-id={item.id}
                         data-selected={isSelected ? 'true' : 'false'}
-                        onClick={() => onItemClick?.(item)}
-                        className={`group flex items-center justify-between p-3 sm:p-3.5 rounded-xl border transition-all duration-150 cursor-pointer select-none gap-3 min-w-0 ${isSelected
+                        onClick={() => {
+                            if (selectedIds.size > 0) {
+                                onToggleSelect?.(item);
+                            } else {
+                                onItemClick?.(item);
+                            }
+                        }}
+                        className={`group flex items-center justify-between p-3 sm:p-3.5 rounded-xl border transition-all duration-150 cursor-pointer select-none gap-3 min-w-0 ${isChecked
+                            ? 'bg-accent/15 border-accent/60 shadow-2xs'
+                            : isSelected
                             ? 'bg-accent/10 border-accent/70 shadow-2xs'
                             : 'bg-surface border-surface-border hover:border-surface-border/90 hover:bg-surface-hover/50 hover:shadow-2xs'
                         }`}
                     >
                         <div className="flex items-center gap-3 min-w-0 flex-1">
+                            <div
+                                className="flex items-center justify-center shrink-0 pr-0.5"
+                                onClick={(e) => e.stopPropagation()}
+                            >
+                                <Checkbox
+                                    checked={isChecked}
+                                    onChange={() => onToggleSelect?.(item)}
+                                    aria-label={`Select ${item.title ?? item.name ?? 'item'}`}
+                                />
+                            </div>
                             {resourceName === 'users' ? (
                                 <Avatar
                                     src={item.avatarPath}

@@ -25,7 +25,7 @@ import { useAuditStore } from '../../stores/useAuditStore';
 import { useAuthStore } from '../../stores/useAuthStore';
 
 // --- CONFIGURATIONS ---
-const BASE_STYLE = 'absolute right-0 top-full mt-2 z-[100] w-[calc(100vw-2rem)] sm:w-96 md:w-[32rem] max-w-[95vw]';
+const BASE_STYLE = 'fixed inset-x-2.5 top-13 sm:absolute sm:inset-auto sm:right-0 sm:top-full mt-0 sm:mt-2 z-[100] w-auto sm:w-96 md:w-[32rem] max-w-none sm:max-w-[95vw]';
 const INITIAL_NOTIFICATION_LIMIT = 15;
 
 // --- HELPERS ---
@@ -742,7 +742,7 @@ const Notifications = ({
                 </div>
 
                 {/* 3. NOTIFICATIONS LIST BODY */}
-                <div className="max-h-96 sm:max-h-[28rem] overflow-y-auto flex flex-col gap-1 p-0.5">
+                <div className="max-h-[65vh] sm:max-h-[28rem] overflow-y-auto flex flex-col gap-1 p-0.5">
                     {/* EMPTY STATE */}
                     {filteredNotifications.length === 0 && (
                         <div className="p-8 flex flex-col items-center justify-center text-center gap-2 rounded-lg border border-dashed border-surface-border">

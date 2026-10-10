@@ -509,24 +509,29 @@ const SelectField = ({
             const rect = triggerRef.current.getBoundingClientRect();
             const spaceBelow = window.innerHeight - rect.bottom;
             const spaceAbove = rect.top;
-            const estimatedDropdownHeight = Math.min(options.length * 36 + 16, 260);
+            const estimatedDropdownHeight = Math.min(options.length * 40 + 16, 280);
 
             const openUpward = dropdownAlign === 'top' || (dropdownAlign === 'auto' && spaceBelow < estimatedDropdownHeight && spaceAbove > spaceBelow);
 
             const top = rect.bottom + 4;
             const bottom = Math.max(8, window.innerHeight - rect.top + 4);
 
-            let left = rect.left;
-            const dropdownWidth = Math.max(rect.width, 180);
+            const isMobile = window.innerWidth < 640;
+            const dropdownWidth = isMobile
+                ? Math.min(Math.max(rect.width, 180), window.innerWidth - 24)
+                : Math.max(rect.width, 180);
 
-            if (dropdownAlign === 'right' || (left + dropdownWidth > window.innerWidth - 16)) {
+            let left = rect.left;
+            if (isMobile) {
+                left = Math.max(12, Math.min(left, window.innerWidth - dropdownWidth - 12));
+            } else if (dropdownAlign === 'right' || (left + dropdownWidth > window.innerWidth - 16)) {
                 left = Math.max(16, rect.right - dropdownWidth);
             }
 
             setDropdownCoords({
                 top,
                 bottom,
-                left: Math.max(16, Math.min(left, window.innerWidth - dropdownWidth - 16)),
+                left: isMobile ? left : Math.max(16, Math.min(left, window.innerWidth - dropdownWidth - 16)),
                 width: dropdownWidth,
                 openUpward,
                 isPositioned: true,
@@ -653,17 +658,17 @@ const SelectField = ({
                     ref={dropdownRef}
                     style={dropdownStyle}
                     onClick={(event) => event.stopPropagation()}
-                    className="w-max max-w-sm sm:max-w-md shadow-2xl"
+                    className="w-max max-w-[calc(100vw-1.5rem)] sm:max-w-md shadow-2xl"
                 >
                     <Container
                         variant="dropdown"
-                        className="max-h-60 overflow-y-auto"
+                        className="max-h-64 sm:max-h-60 overflow-y-auto"
                     >
                         {options.map((option) => {
                             const isSelected = option.value === value;
                             const itemClassName = isSelected
-                                ? 'w-full h-7 flex items-center justify-between px-2 text-xs bg-accent-background text-accent font-semibold rounded-md transition-colors text-left cursor-pointer select-none gap-2 whitespace-nowrap'
-                                : 'w-full h-7 flex items-center justify-between px-2 text-xs text-text hover:bg-surface-hover rounded-md transition-colors text-left cursor-pointer select-none gap-2 whitespace-nowrap';
+                                ? 'w-full min-h-9 sm:min-h-7 py-2 sm:py-1 flex items-center justify-between px-3 sm:px-2 text-sm sm:text-xs bg-accent-background text-accent font-semibold rounded-md transition-colors text-left cursor-pointer select-none gap-2 whitespace-nowrap'
+                                : 'w-full min-h-9 sm:min-h-7 py-2 sm:py-1 flex items-center justify-between px-3 sm:px-2 text-sm sm:text-xs text-text hover:bg-surface-hover rounded-md transition-colors text-left cursor-pointer select-none gap-2 whitespace-nowrap';
 
                             const renderedOptionIcon = renderIcon(option.icon, ICON_STYLE);
 
@@ -874,7 +879,7 @@ const ComboField = ({
             {isOpen && (
                 <div
                     ref={dropdownRef}
-                    className={`absolute z-[100] ${composedPositionStyle} min-w-full w-max max-w-[calc(100vw-2rem)] sm:max-w-2xl`}
+                    className={`absolute z-[100] ${composedPositionStyle} min-w-full w-max max-w-[calc(100vw-1.5rem)] sm:max-w-2xl`}
                 >
                     <Container
                         variant="dropdown"
@@ -885,11 +890,11 @@ const ComboField = ({
                                 No options available
                             </div>
                         ) : (
-                            <div className="flex flex-row divide-x divide-surface-border overflow-x-auto max-h-72">
+                            <div className="flex flex-col sm:flex-row divide-y sm:divide-y-0 sm:divide-x divide-surface-border overflow-y-auto sm:overflow-x-auto max-h-80 sm:max-h-72">
                                 {categorizedGroups.map((group) => (
                                     <div
                                         key={group.title}
-                                        className="flex flex-col shrink-0 min-w-28 w-max max-w-xs"
+                                        className="flex flex-col w-full sm:w-max sm:shrink-0 sm:min-w-28 sm:max-w-xs pb-1 sm:pb-0"
                                     >
                                         <div className="px-3 pt-2 pb-1 flex items-center justify-between shrink-0">
                                             <span className="font-bold text-xs text-text-muted uppercase tracking-wider select-none whitespace-nowrap">
@@ -897,7 +902,7 @@ const ComboField = ({
                                             </span>
                                         </div>
 
-                                        <div className="p-1 flex flex-col gap-1 overflow-y-auto flex-1">
+                                        <div className="p-1 flex flex-col gap-0.5 sm:gap-1 overflow-y-auto flex-1">
                                             {group.options.map((option) => {
                                                 const isSelected = selectedValues.includes(option.value);
 
@@ -906,7 +911,7 @@ const ComboField = ({
                                                         key={option.value}
                                                         type="button"
                                                         onClick={() => handleToggleOption(option.value)}
-                                                        className={`w-full h-7 flex items-center justify-between px-2 rounded-md text-xs transition-colors cursor-pointer text-left select-none gap-3 whitespace-nowrap ${
+                                                        className={`w-full min-h-8 sm:h-7 py-1.5 sm:py-0 flex items-center justify-between px-2.5 sm:px-2 rounded-md text-sm sm:text-xs transition-colors cursor-pointer text-left select-none gap-3 whitespace-nowrap ${
                                                             isSelected
                                                                 ? 'bg-accent-background text-accent font-semibold'
                                                                 : 'text-text hover:bg-surface-hover'
@@ -915,7 +920,7 @@ const ComboField = ({
                                                         <div className="flex items-center gap-2 min-w-0">
                                                             {isMultiple && (
                                                                 <div
-                                                                    className={`h-4 w-4 rounded-sm border flex items-center justify-center transition-colors shrink-0 ${
+                                                                    className={`h-4.5 w-4.5 sm:h-4 sm:w-4 rounded-sm border flex items-center justify-center transition-colors shrink-0 ${
                                                                         isSelected
                                                                             ? 'bg-accent border-accent text-text-inverted'
                                                                             : 'border-surface-border bg-surface'

@@ -39,7 +39,9 @@ const DEPARTMENT_SORT_OPTIONS = [
 const DepartmentsPage = ({
     currentUser: propUser = null,
     selectedItem = null,
+    selectedItems = [],
     onSelectDepartment = null,
+    onSelectMultiple = null,
     className,
     ...props
 }) => {
@@ -140,6 +142,10 @@ const DepartmentsPage = ({
         }
 
         if (actionKey === 'delete') {
+            if (Array.isArray(item)) {
+                setDeletingDepartment(item);
+                return;
+            }
             const rawDepartment = departments.find((department) => department?.id === item.id) ?? item;
             setDeletingDepartment(rawDepartment);
             return;
@@ -315,17 +321,21 @@ const DepartmentsPage = ({
 
     const deletingDeptAssignedUsers = useMemo(() => {
         if (!deletingDepartment) return 0;
+        const depts = Array.isArray(deletingDepartment) ? deletingDepartment : [deletingDepartment];
+        const deptIds = new Set(depts.map((d) => d.id));
+        const deptNames = new Set(depts.map((d) => d.name));
+        const deptCodes = new Set(depts.map((d) => d.code));
         return (users || []).filter(
             (u) =>
-                u.departmentId === deletingDepartment.id ||
-                u.department === deletingDepartment.name ||
-                u.department === `${deletingDepartment.code} — ${deletingDepartment.name}` ||
-                u.department === deletingDepartment.code
+                deptIds.has(u.departmentId) ||
+                deptNames.has(u.department) ||
+                deptCodes.has(u.department)
         ).length;
     }, [deletingDepartment, users]);
 
     const handleDeleteDepartment = async () => {
-        if (!deletingDepartment) {
+        const deptsToDelete = Array.isArray(deletingDepartment) ? deletingDepartment : (deletingDepartment?.id ? [deletingDepartment] : []);
+        if (deptsToDelete.length === 0) {
             return;
         }
 
@@ -333,7 +343,7 @@ const DepartmentsPage = ({
             showToast({
                 type: 'error',
                 title: 'Cannot Delete Department',
-                description: `This department has ${deletingDeptAssignedUsers} active member(s). Reassign or remove them first.`,
+                description: `Selected department(s) have ${deletingDeptAssignedUsers} active member(s). Reassign or remove them first.`,
             });
             return;
         }
@@ -341,30 +351,32 @@ const DepartmentsPage = ({
         setIsDeletingDepartmentLoading(true);
         try {
             if (isCoordinator) {
-                const deptPayload = {
-                    departmentId: deletingDepartment.id,
-                    code: deletingDepartment.code,
-                    name: deletingDepartment.name,
-                    old: {
-                        code: deletingDepartment.code,
-                        name: deletingDepartment.name,
-                    },
-                    new: {
-                        status: 'DELETED',
-                    },
-                };
-
                 const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
-                await coordinatorApprovalService.submitCoordinatorRequest({
-                    action: constants.COORDINATOR_REQUESTS_ACTION.DEPARTMENT_DELETE,
-                    requesterId: requesterId,
-                    data: deptPayload,
-                });
+                for (const dept of deptsToDelete) {
+                    const deptPayload = {
+                        departmentId: dept.id,
+                        code: dept.code,
+                        name: dept.name,
+                        old: {
+                            code: dept.code,
+                            name: dept.name,
+                        },
+                        new: {
+                            status: 'DELETED',
+                        },
+                    };
+
+                    await coordinatorApprovalService.submitCoordinatorRequest({
+                        action: constants.COORDINATOR_REQUESTS_ACTION.DEPARTMENT_DELETE,
+                        requesterId: requesterId,
+                        data: deptPayload,
+                    });
+                }
 
                 showToast({
                     type: 'success',
                     title: 'Request Submitted',
-                    description: `Department deletion request for "${deletingDepartment.code}" sent for Administrator approval.`,
+                    description: `Department deletion request for ${deptsToDelete.length} department(s) sent for Administrator approval.`,
                 });
                 useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
                 handleCloseModals();
@@ -373,18 +385,21 @@ const DepartmentsPage = ({
 
             const minTimer = new Promise((resolve) => setTimeout(resolve, 500));
             const activeActor = currentUser || useAuthStore.getState().currentUser;
-            await Promise.all([
-                deleteDepartment(deletingDepartment.id, activeActor),
-                minTimer,
-            ]);
-            if (selectedDepartment?.id === deletingDepartment.id) {
+            const deleteIds = new Set(deptsToDelete.map((d) => d.id));
+
+            for (const dept of deptsToDelete) {
+                await deleteDepartment(dept.id, activeActor);
+            }
+            await minTimer;
+
+            if (selectedDepartment && deleteIds.has(selectedDepartment.id)) {
                 setSelectedDepartment(null);
                 onSelectDepartment?.(null);
             }
             showToast({
                 type: 'success',
-                title: 'Department Deleted',
-                description: `Department ${deletingDepartment.code} has been deleted.`,
+                title: deptsToDelete.length > 1 ? 'Departments Deleted' : 'Department Deleted',
+                description: deptsToDelete.length > 1 ? `${deptsToDelete.length} departments have been deleted.` : `Department ${deptsToDelete[0].code} has been deleted.`,
             });
             handleCloseModals();
         } catch (error) {
@@ -400,6 +415,7 @@ const DepartmentsPage = ({
 
     // DERIVED VALUES
     const activeSelectedDepartment = useMemo(() => {
+        if (selectedItems && selectedItems.length > 1) return null;
         const targetId = selectedItem?.id ?? selectedDepartment?.id;
         if (!targetId) return null;
         const matched = departments.find((d) => d?.id === targetId);
@@ -412,7 +428,7 @@ const DepartmentsPage = ({
             createdAt: matched.createdAt,
             updatedAt: matched.updatedAt,
         };
-    }, [departments, selectedDepartment, selectedItem]);
+    }, [departments, selectedDepartment, selectedItem, selectedItems]);
 
     // Safety cleanup: Ensure deleted department is cleared from store selection
     useEffect(() => {
@@ -470,11 +486,13 @@ const DepartmentsPage = ({
                 columns={DEPARTMENT_COLUMNS}
                 sortOptions={DEPARTMENT_SORT_OPTIONS}
                 selectedItem={activeSelectedDepartment}
+                selectedIds={selectedItems && selectedItems.length > 0 ? new Set(selectedItems.map((i) => i.id)) : undefined}
                 addItemLabel="New Department"
                 addItemIcon={Plus}
                 searchPlaceholder="Search department..."
                 onAddItem={handleOpenAddModal}
                 onSelectItem={handleSelectDepartment}
+                onSelectMultipleItems={onSelectMultiple}
                 onOpenItem={handleSelectDepartment}
                 onItemAction={handleItemAction}
             />
@@ -569,17 +587,19 @@ const DepartmentsPage = ({
                 <Modal
                     isOpen={Boolean(deletingDepartment)}
                     onClose={handleCloseModals}
-                    title="Delete Department"
+                    title={Array.isArray(deletingDepartment) ? `Delete ${deletingDepartment.length} Departments` : 'Delete Department'}
                     description={
                         deletingDeptAssignedUsers > 0
-                            ? `Cannot delete "${deletingDepartment.name}" (${deletingDepartment.code}) because ${deletingDeptAssignedUsers} user(s) are currently assigned to this department.`
+                            ? `Cannot delete selected department(s) because ${deletingDeptAssignedUsers} user(s) are currently assigned.`
+                            : Array.isArray(deletingDepartment)
+                            ? `Are you sure you want to permanently delete ${deletingDepartment.length} selected departments? This action cannot be undone.`
                             : `Are you sure you want to delete "${deletingDepartment.name}" (${deletingDepartment.code})? This action cannot be undone.`
                     }
                     icon={Trash2}
                     callout={
                         deletingDeptAssignedUsers > 0
-                            ? `Safety Guard: You must reassign or remove all ${deletingDeptAssignedUsers} member(s) before this department can be deleted.`
-                            : 'This action cannot be undone and will permanently remove this department record.'
+                            ? `Safety Guard: You must reassign or remove all ${deletingDeptAssignedUsers} member(s) before deleting.`
+                            : 'This action cannot be undone and will permanently remove the department record(s).'
                     }
                     calloutVariant="destructive"
                     onConfirm={handleDeleteDepartment}
@@ -587,7 +607,9 @@ const DepartmentsPage = ({
                         deletingDeptAssignedUsers > 0
                             ? 'Deletion Blocked'
                             : isDeletingDepartmentLoading
-                            ? 'Deleting Department...'
+                            ? 'Deleting...'
+                            : Array.isArray(deletingDepartment)
+                            ? `Delete ${deletingDepartment.length} Departments`
                             : 'Delete Department'
                     }
                     cancelLabel="Cancel"

@@ -346,10 +346,28 @@ const useDocumentStore = create((set, get) => ({
             const targetDoc = allDocs.find((d) => d.id === id);
             const targetIds = await documentService.deleteDocumentRecursive(id, allDocs);
 
+            // Cascade delete all shares for the deleted documents
+            const cleanId = (uid) => (typeof uid === 'string' ? uid.replace(/-/g, '').toLowerCase() : uid);
+            const targetCleanIds = targetIds.map(cleanId);
+            const currentShares = get().documentShares || [];
+            const sharesToDelete = currentShares.filter((s) => {
+                const sDocClean = cleanId(s.document?.id ?? s.documentId);
+                return targetCleanIds.includes(sDocClean);
+            });
+            for (const s of sharesToDelete) {
+                await documentService.deleteDocumentShare(s.id).catch((err) =>
+                    console.warn(`Failed to delete document share ${s.id}:`, err)
+                );
+            }
+            const deletedShareIds = new Set(sharesToDelete.map((s) => s.id));
+
             set((state) => ({
                 documents: state.documents.filter((item) => !targetIds.includes(item.id)),
                 documentVersions: state.documentVersions.filter(
                     (v) => !targetIds.includes(v.document?.id ?? v.documentId)
+                ),
+                documentShares: state.documentShares.filter(
+                    (s) => !targetCleanIds.includes(cleanId(s.document?.id ?? s.documentId)) && !deletedShareIds.has(s.id)
                 ),
                 selectedDocument: state.selectedDocument && targetIds.includes(state.selectedDocument.id)
                     ? null
@@ -1273,18 +1291,21 @@ const useDocumentStore = create((set, get) => ({
 
     unshareDocumentRecursive: async (rootDocId, departmentId) => {
         try {
+            const cleanId = (uid) => (typeof uid === 'string' ? uid.replace(/-/g, '').toLowerCase() : uid);
+            const deptClean = cleanId(departmentId);
             const allDocs = get().documents || [];
             const targetDoc = allDocs.find((d) => d.id === rootDocId);
             const targetDocIds = targetDoc?.isFolder
                 ? getRecursiveDescendantDocIds(rootDocId, allDocs)
                 : [rootDocId];
+            const targetCleanDocIds = targetDocIds.map(cleanId);
 
             const currentShares = get().documentShares || [];
-            const sharesToDelete = currentShares.filter(
-                (s) =>
-                    targetDocIds.includes(s.document?.id ?? s.documentId) &&
-                    (s.department?.id ?? s.departmentId) === departmentId
-            );
+            const sharesToDelete = currentShares.filter((s) => {
+                const sDocClean = cleanId(s.document?.id ?? s.documentId);
+                const sDeptClean = cleanId(s.department?.id ?? s.departmentId);
+                return targetCleanDocIds.includes(sDocClean) && sDeptClean === deptClean;
+            });
 
             if (sharesToDelete.length === 0) {
                 return 0;
@@ -1339,16 +1360,40 @@ const useDocumentStore = create((set, get) => ({
 
     unshareDocument: async (shareId) => {
         try {
+            const cleanId = (uid) => (typeof uid === 'string' ? uid.replace(/-/g, '').toLowerCase() : uid);
             const existingShare = (get().documentShares || []).find((s) => s.id === shareId);
             const isDeleted = await documentService.deleteDocumentShare(shareId);
             if (isDeleted) {
-                set((state) => ({
-                    documentShares: state.documentShares.filter((item) => item.id !== shareId),
-                }));
-
                 const docId = existingShare?.documentId ?? existingShare?.document?.id;
                 const deptId = existingShare?.department?.id ?? existingShare?.departmentId;
                 const recId = existingShare?.recipient?.id ?? existingShare?.recipientId;
+
+                const docClean = cleanId(docId);
+                const deptClean = cleanId(deptId);
+                const deletedIds = new Set([shareId]);
+
+                // If unsharing a departmental share, cascade deletion to member shares under that department
+                if (!recId && docClean && deptClean) {
+                    const memberShares = (get().documentShares || []).filter((s) => {
+                        const sDoc = cleanId(s.document?.id ?? s.documentId);
+                        const sDept = cleanId(s.department?.id ?? s.departmentId);
+                        const hasRec = Boolean(s.recipientId || s.recipient?.id || s.recipient);
+                        return hasRec && sDoc === docClean && sDept === deptClean;
+                    });
+                    for (const ms of memberShares) {
+                        try {
+                            await documentService.deleteDocumentShare(ms.id);
+                            deletedIds.add(ms.id);
+                        } catch (err) {
+                            console.warn('Failed to delete member share on unshare:', err);
+                        }
+                    }
+                }
+
+                set((state) => ({
+                    documentShares: state.documentShares.filter((item) => !deletedIds.has(item.id)),
+                }));
+
                 const targetDoc = (get().documents || []).find((d) => d.id === docId);
 
                 systemEventService.recordSystemEvent({
@@ -1409,35 +1454,87 @@ const useDocumentStore = create((set, get) => ({
             }
 
             const timestamp = new Date().toISOString();
-            await Promise.allSettled(
-                sharesToUpdate.map((s) => {
-                    const deptId = s.department?.id ?? s.departmentId ?? departmentId;
-                    const recId = s.recipient?.id ?? s.recipientId;
-                    return documentService.updateDocumentShare(s.id, {
-                        status: nextStatus,
-                        departmentId: deptId,
-                        recipientId: recId,
-                        updatedAt: timestamp,
-                    });
-                })
-            );
+            if (nextStatus === constants.DOCUMENT_SHARES_STATUS.APPROVED) {
+                const baseShares = sharesToUpdate.filter(
+                    (s) => !s.recipientId && !s.recipient?.id && !s.recipient
+                );
+                const memberShares = sharesToUpdate.filter(
+                    (s) => Boolean(s.recipientId || s.recipient?.id || s.recipient)
+                );
 
-            const targetShareIds = new Set(sharesToUpdate.map((s) => s.id));
-            set((state) => ({
-                documentShares: state.documentShares.map((item) => {
-                    if (targetShareIds.has(item.id)) {
-                        const deptId = item.department?.id ?? item.departmentId ?? departmentId;
-                        return {
-                            ...item,
+                await Promise.allSettled(
+                    baseShares.map((s) => {
+                        const deptId = s.department?.id ?? s.departmentId ?? departmentId;
+                        return documentService.updateDocumentShare(s.id, {
                             status: nextStatus,
                             departmentId: deptId,
-                            department: item.department ?? (deptId ? { id: deptId } : null),
+                            recipientId: null,
                             updatedAt: timestamp,
-                        };
+                        });
+                    })
+                );
+
+                for (const ms of memberShares) {
+                    try {
+                        await documentService.deleteDocumentShare(ms.id);
+                    } catch (delErr) {
+                        console.error('Failed to cascade delete member share on recursive unpublish:', delErr);
                     }
-                    return item;
-                }),
-            }));
+                }
+
+                const deletedMemberIds = new Set(memberShares.map((s) => s.id));
+                const targetBaseIds = new Set(baseShares.map((s) => s.id));
+
+                set((state) => ({
+                    documentShares: state.documentShares
+                        .filter((item) => !deletedMemberIds.has(item.id))
+                        .map((item) => {
+                            if (targetBaseIds.has(item.id)) {
+                                const deptId = item.department?.id ?? item.departmentId ?? departmentId;
+                                return {
+                                    ...item,
+                                    status: nextStatus,
+                                    departmentId: deptId,
+                                    department: item.department ?? (deptId ? { id: deptId } : null),
+                                    recipientId: null,
+                                    recipient: null,
+                                    updatedAt: timestamp,
+                                };
+                            }
+                            return item;
+                        }),
+                }));
+            } else {
+                await Promise.allSettled(
+                    sharesToUpdate.map((s) => {
+                        const deptId = s.department?.id ?? s.departmentId ?? departmentId;
+                        const recId = s.recipient?.id ?? s.recipientId;
+                        return documentService.updateDocumentShare(s.id, {
+                            status: nextStatus,
+                            departmentId: deptId,
+                            recipientId: recId,
+                            updatedAt: timestamp,
+                        });
+                    })
+                );
+
+                const targetShareIds = new Set(sharesToUpdate.map((s) => s.id));
+                set((state) => ({
+                    documentShares: state.documentShares.map((item) => {
+                        if (targetShareIds.has(item.id)) {
+                            const deptId = item.department?.id ?? item.departmentId ?? departmentId;
+                            return {
+                                ...item,
+                                status: nextStatus,
+                                departmentId: deptId,
+                                department: item.department ?? (deptId ? { id: deptId } : null),
+                                updatedAt: timestamp,
+                            };
+                        }
+                        return item;
+                    }),
+                }));
+            }
 
             let targetRoles = ['ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF'];
             if (nextStatus === constants.DOCUMENT_SHARES_STATUS.APPROVED) {
@@ -1752,6 +1849,9 @@ const useDocumentStore = create((set, get) => ({
     approveShare: async (shareId) => {
         try {
             const existing = (get().documentShares || []).find((s) => s.id === shareId);
+            if (existing?.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED || existing?.status === constants.DOCUMENT_SHARES_STATUS.STASHED) {
+                throw new Error(`Cannot approve a share that has already been ${existing.status.toLowerCase()} by the Director.`);
+            }
             const deptId = existing?.department?.id ?? existing?.departmentId;
             const recId = existing?.recipient?.id ?? existing?.recipientId;
             const timestamp = new Date().toISOString();
@@ -1812,6 +1912,9 @@ const useDocumentStore = create((set, get) => ({
     unapproveShare: async (shareId) => {
         try {
             const existing = (get().documentShares || []).find((s) => s.id === shareId);
+            if (existing?.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED || existing?.status === constants.DOCUMENT_SHARES_STATUS.STASHED) {
+                throw new Error(`Cannot unapprove a share that has already been ${existing.status.toLowerCase()} by the Director.`);
+            }
             const deptId = existing?.department?.id ?? existing?.departmentId;
             const recId = existing?.recipient?.id ?? existing?.recipientId;
             const timestamp = new Date().toISOString();
@@ -1872,6 +1975,9 @@ const useDocumentStore = create((set, get) => ({
     rejectShare: async (shareId, rejectionReason = null, rejecterId = null) => {
         try {
             const existing = (get().documentShares || []).find((s) => s.id === shareId);
+            if (existing?.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED || existing?.status === constants.DOCUMENT_SHARES_STATUS.STASHED) {
+                throw new Error(`Cannot reject a share that has already been ${existing.status.toLowerCase()} by the Director.`);
+            }
             const deptId = existing?.department?.id ?? existing?.departmentId;
             const docId = existing?.documentId ?? existing?.document?.id;
             const targetDoc = (get().documents || []).find((d) => d.id === docId);
@@ -1972,6 +2078,9 @@ const useDocumentStore = create((set, get) => ({
     unrejectShare: async (shareId) => {
         try {
             const existing = (get().documentShares || []).find((s) => s.id === shareId);
+            if (existing?.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED || existing?.status === constants.DOCUMENT_SHARES_STATUS.STASHED) {
+                throw new Error(`Cannot unreject a share that has already been ${existing.status.toLowerCase()} by the Director.`);
+            }
             const deptId = existing?.department?.id ?? existing?.departmentId;
             const docId = existing?.documentId ?? existing?.document?.id;
             const targetDoc = (get().documents || []).find((d) => d.id === docId);
@@ -2293,31 +2402,86 @@ const useDocumentStore = create((set, get) => ({
 
     unpublishShare: async (shareId) => {
         try {
-            const existing = (get().documentShares || []).find((s) => s.id === shareId);
+            const allShares = get().documentShares || [];
+            const existing = allShares.find((s) => s.id === shareId);
             const deptId = existing?.department?.id ?? existing?.departmentId;
-            const recId = existing?.recipient?.id ?? existing?.recipientId;
+            const recId = existing?.recipient?.id ?? existing?.recipientId ?? null;
+            const targetDocId = existing?.documentId ?? existing?.document?.id;
+            const cleanId = (uid) => (typeof uid === 'string' ? uid.replace(/-/g, '').toLowerCase() : uid);
+            const targetDocClean = cleanId(targetDocId);
+            const deptClean = cleanId(deptId);
             const timestamp = new Date().toISOString();
 
-            await documentService.updateDocumentShare(shareId, {
+            // Find base departmental share
+            const baseShare = allShares.find((s) => {
+                const sDocClean = cleanId(s.document?.id ?? s.documentId);
+                const sDeptClean = cleanId(s.department?.id ?? s.departmentId);
+                const isBase = !s.recipientId && !s.recipient?.id && !s.recipient;
+                return sDocClean === targetDocClean && sDeptClean === deptClean && isBase;
+            }) || (existing?.recipientId || existing?.recipient ? null : existing);
+
+            const targetBaseShareId = baseShare?.id ?? (existing?.recipientId || existing?.recipient ? null : shareId);
+
+            if (targetBaseShareId) {
+                await documentService.updateDocumentShare(targetBaseShareId, {
+                    status: constants.DOCUMENT_SHARES_STATUS.APPROVED,
+                    departmentId: deptId,
+                    recipientId: null,
+                    updatedAt: timestamp,
+                });
+            }
+
+            const merged = targetBaseShareId ? {
+                ...(baseShare || existing),
+                id: targetBaseShareId,
                 status: constants.DOCUMENT_SHARES_STATUS.APPROVED,
                 departmentId: deptId,
-                recipientId: recId,
+                department: (baseShare || existing)?.department ?? (deptId ? { id: deptId } : null),
+                recipientId: null,
+                recipient: null,
                 updatedAt: timestamp,
+            } : null;
+
+            // Cascade delete all member-specific shares under that department
+            const allDocs = get().documents || [];
+            const docIdsToClean = new Set();
+            if (targetDocClean) {
+                docIdsToClean.add(targetDocClean);
+                const collectChildren = (parentId) => {
+                    allDocs
+                        .filter((d) => cleanId(d.parentId ?? d.parentFolderId) === parentId)
+                        .forEach((child) => {
+                            const cClean = cleanId(child.id);
+                            if (!docIdsToClean.has(cClean)) {
+                                docIdsToClean.add(cClean);
+                                collectChildren(cClean);
+                            }
+                        });
+                };
+                collectChildren(targetDocClean);
+            }
+
+            const memberSharesToDelete = allShares.filter((s) => {
+                const sDocClean = cleanId(s.document?.id ?? s.documentId);
+                const sDeptClean = cleanId(s.department?.id ?? s.departmentId);
+                const hasRecipient = Boolean(s.recipientId || s.recipient?.id || s.recipient);
+                return hasRecipient && docIdsToClean.has(sDocClean) && (!deptClean || sDeptClean === deptClean);
             });
 
-            const merged = {
-                ...existing,
-                status: constants.DOCUMENT_SHARES_STATUS.APPROVED,
-                departmentId: deptId,
-                department: existing?.department ?? (deptId ? { id: deptId } : null),
-                recipientId: recId,
-                updatedAt: timestamp,
-            };
+            for (const memberShare of memberSharesToDelete) {
+                try {
+                    await documentService.deleteDocumentShare(memberShare.id);
+                } catch (delErr) {
+                    console.error('Failed to cascade delete member share on unpublish:', delErr);
+                }
+            }
+
+            const memberShareIds = new Set(memberSharesToDelete.map((s) => s.id));
 
             set((state) => ({
-                documentShares: state.documentShares.map((item) =>
-                    item.id === shareId ? merged : item
-                ),
+                documentShares: state.documentShares
+                    .filter((item) => !memberShareIds.has(item.id))
+                    .map((item) => (targetBaseShareId && item.id === targetBaseShareId ? merged : item)),
             }));
 
             const targetDoc = (get().documents || []).find(
@@ -3045,6 +3209,14 @@ const useDocumentStore = create((set, get) => ({
 
     setSelectedDocumentRequest: (request) => {
         set({ selectedDocumentRequest: request });
+    },
+
+    setShareModalDocument: (document) => {
+        set({ shareModalDocument: document });
+    },
+
+    setPublishModalDocument: (document) => {
+        set({ publishModalDocument: document });
     },
 
     clearError: () => {

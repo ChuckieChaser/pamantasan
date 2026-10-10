@@ -124,7 +124,14 @@ const formatMimeTypeLabel = (mimeType) => {
     if (lower.includes('zip') || lower.includes('tar') || lower.includes('compressed') || lower.includes('7z')) {
         return 'Compressed Archive (.zip)';
     }
+    if (lower === 'audio/mpeg' || lower === 'audio/mp3') return 'MP3 Audio (.mp3)';
+    if (lower === 'audio/wav') return 'WAV Audio (.wav)';
+    if (lower === 'audio/ogg') return 'OGG Audio (.ogg)';
+    if (lower === 'audio/flac') return 'FLAC Audio (.flac)';
     if (lower.startsWith('audio/')) return 'Audio Recording';
+    if (lower === 'video/mp4') return 'MP4 Video (.mp4)';
+    if (lower === 'video/webm') return 'WebM Video (.webm)';
+    if (lower === 'video/quicktime') return 'QuickTime Video (.mov)';
     if (lower.startsWith('video/')) return 'Video Recording';
     if (lower === 'folder') return 'Directory Folder';
     return mimeType;
@@ -144,6 +151,10 @@ const getExtensionFromMimeType = (mimeType) => {
     if (lower.includes('png')) return '.png';
     if (lower.includes('jpeg') || lower.includes('jpg')) return '.jpg';
     if (lower.includes('webp')) return '.webp';
+    if (lower.includes('mp4')) return '.mp4';
+    if (lower.includes('webm')) return '.webm';
+    if (lower.includes('mp3') || lower.includes('mpeg')) return '.mp3';
+    if (lower.includes('wav')) return '.wav';
     return '.pdf';
 };
 

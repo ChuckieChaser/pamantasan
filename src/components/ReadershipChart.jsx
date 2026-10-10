@@ -3,23 +3,18 @@
 import { useId, useMemo, useState } from 'react';
 import { Eye } from 'lucide-react';
 
-// --- HELPERS: CURRENT WEEK SLOTS (SUN TO SAT) ---
+// --- HELPERS: ROLLING 7-DAY SLOTS (DAY -6 UP TO TODAY) ---
 export const compute7DaySlots = (logs = []) => {
     const now = new Date();
-    const currentDay = now.getDay(); // 0 = Sun, 1 = Mon, ..., 6 = Sat
-    const sunday = new Date(now);
-    sunday.setDate(now.getDate() - currentDay);
-    sunday.setHours(0, 0, 0, 0);
-
     const daysOfWeek = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
     const slots = [];
 
-    for (let i = 0; i < 7; i++) {
-        const d = new Date(sunday);
-        d.setDate(sunday.getDate() + i);
-        const isToday = d.toDateString() === now.toDateString();
-        const isFuture = d > now && !isToday;
-        const dayLabel = daysOfWeek[i];
+    // Construct a rolling 7-day sequence ending today
+    for (let i = 6; i >= 0; i--) {
+        const d = new Date(now);
+        d.setDate(now.getDate() - i);
+        const isToday = i === 0;
+        const dayLabel = daysOfWeek[d.getDay()];
         const dateStr = d.toLocaleDateString([], { month: 'short', day: 'numeric' });
         const fullDateStr = d.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
 
@@ -29,13 +24,13 @@ export const compute7DaySlots = (logs = []) => {
         const ymd = `${year}-${month}-${day}`;
 
         slots.push({
-            index: i,
+            index: 6 - i,
             dayLabel,
             dateStr,
             fullDateStr,
             ymd,
             isToday,
-            isFuture,
+            isFuture: false,
             count: 0,
             uniqueActors: new Set(),
         });
@@ -43,8 +38,9 @@ export const compute7DaySlots = (logs = []) => {
 
     if (Array.isArray(logs)) {
         logs.forEach((log) => {
-            if (!log?.createdAt) return;
-            const logDate = new Date(log.createdAt);
+            const rawDate = log?.createdAt || log?.timestamp || log?.readAt || log?.updatedAt;
+            if (!rawDate) return;
+            const logDate = new Date(rawDate);
             if (isNaN(logDate.getTime())) return;
 
             const year = logDate.getFullYear();
@@ -64,8 +60,8 @@ export const compute7DaySlots = (logs = []) => {
     return slots;
 };
 
-// --- HELPERS: ALL-TIME READERSHIP SLOTS (7 HISTORICAL MONTHS / INTERVALS) ---
-export const computeAllTimeSlots = (logs = []) => {
+// --- HELPERS: MONTHLY READERSHIP SLOTS (LAST 7 CALENDAR MONTHS) ---
+export const computeMonthlySlots = (logs = []) => {
     const now = new Date();
     const slots = [];
 
@@ -90,8 +86,9 @@ export const computeAllTimeSlots = (logs = []) => {
 
     if (Array.isArray(logs)) {
         logs.forEach((log) => {
-            if (!log?.createdAt) return;
-            const logDate = new Date(log.createdAt);
+            const rawDate = log?.createdAt || log?.timestamp || log?.readAt || log?.updatedAt;
+            if (!rawDate) return;
+            const logDate = new Date(rawDate);
             if (isNaN(logDate.getTime())) return;
 
             const logYearMonth = `${logDate.getFullYear()}-${String(logDate.getMonth() + 1).padStart(2, '0')}`;
@@ -101,6 +98,7 @@ export const computeAllTimeSlots = (logs = []) => {
                 const actorId = log.actor?.id || log.actorId;
                 if (actorId) slot.uniqueActors.add(actorId);
             } else if (logDate < new Date(now.getFullYear(), now.getMonth() - 6, 1)) {
+                // Reads older than the 6-month window roll into the oldest slot
                 slots[0].count += 1;
                 const actorId = log.actor?.id || log.actorId;
                 if (actorId) slots[0].uniqueActors.add(actorId);
@@ -111,25 +109,41 @@ export const computeAllTimeSlots = (logs = []) => {
     return slots;
 };
 
-// Smooth cubic bezier path generator
-const getSmoothLinePath = (points = []) => {
+// Backwards-compatibility alias
+export const computeAllTimeSlots = computeMonthlySlots;
+
+// Natural Catmull-Rom spline curve generator with boundary tension and baseline clamping
+const getCatmullRomSplinePath = (points = [], tension = 0.2, baselineY) => {
     if (!points || points.length === 0) return '';
     if (points.length === 1) return `M ${points[0].x},${points[0].y}`;
 
-    let d = `M ${points[0].x},${points[0].y}`;
+    let path = `M ${points[0].x.toFixed(2)},${points[0].y.toFixed(2)}`;
+
     for (let i = 0; i < points.length - 1; i++) {
-        const p0 = points[i];
-        const p1 = points[i + 1];
-        const cpX1 = p0.x + (p1.x - p0.x) * 0.45;
-        const cpY1 = p0.y;
-        const cpX2 = p0.x + (p1.x - p0.x) * 0.55;
-        const cpY2 = p1.y;
-        d += ` C ${cpX1},${cpY1} ${cpX2},${cpY2} ${p1.x},${p1.y}`;
+        const pPrev = i > 0 ? points[i - 1] : points[i];
+        const pCurr = points[i];
+        const pNext = points[i + 1];
+        const pAfter = i + 2 < points.length ? points[i + 2] : pNext;
+
+        // If both points sit on the baseline (0 reads), draw a clean straight line along the baseline
+        if (pCurr.y >= baselineY - 0.5 && pNext.y >= baselineY - 0.5) {
+            path += ` L ${pNext.x.toFixed(2)},${baselineY.toFixed(2)}`;
+            continue;
+        }
+
+        let cp1x = pCurr.x + (pNext.x - pPrev.x) * tension;
+        let cp1y = pCurr.y + (pNext.y - pPrev.y) * tension;
+
+        let cp2x = pNext.x - (pAfter.x - pCurr.x) * tension;
+        let cp2y = pNext.y - (pAfter.y - pCurr.y) * tension;
+
+        path += ` C ${cp1x.toFixed(2)},${cp1y.toFixed(2)} ${cp2x.toFixed(2)},${cp2y.toFixed(2)} ${pNext.x.toFixed(2)},${pNext.y.toFixed(2)}`;
     }
-    return d;
+
+    return path;
 };
 
-// --- COMPONENT: LINE GRAPH WITH OPAQUE GRADIENT & GRID LINES ---
+// --- COMPONENT: LINE GRAPH WITH DYNAMIC SPIKES & ABSOLUTE TREND SCALING ---
 export const ReadershipChart = ({
     logs = [],
     precomputedSlots = null,
@@ -140,31 +154,47 @@ export const ReadershipChart = ({
     className = '',
 }) => {
     const slots = useMemo(() => {
-        if (Array.isArray(precomputedSlots) && precomputedSlots.length === 7) {
+        if (Array.isArray(precomputedSlots) && precomputedSlots.length > 0) {
             return precomputedSlots;
         }
-        return compute7DaySlots(logs);
+        const weekSlots = compute7DaySlots(logs);
+        const weekTotal = weekSlots.reduce((sum, s) => sum + s.count, 0);
+
+        // If there are historical logs (like "jerry" with 2 reads), but none in the rolling 7-day window,
+        // automatically fallback to monthly slots so the reads visibly spike on the chart!
+        if (weekTotal === 0 && Array.isArray(logs) && logs.length > 0) {
+            return computeMonthlySlots(logs);
+        }
+
+        return weekSlots;
     }, [logs, precomputedSlots]);
 
-    const maxCount = useMemo(() => {
+    const rawMax = useMemo(() => {
         const counts = slots.map((s) => s.count);
-        return Math.max(...counts, 1);
+        return Math.max(...counts, 0);
     }, [slots]);
 
-    const totalWeekReads = useMemo(() => {
+    // Absolute dynamic ceiling scaling: ensures spikes crest naturally with headroom
+    const maxCount = useMemo(() => {
+        if (rawMax === 0) return 4;
+        return Math.max(Math.ceil(rawMax * 1.25), rawMax + 1);
+    }, [rawMax]);
+
+    const totalPeriodReads = useMemo(() => {
         return slots.reduce((acc, s) => acc + s.count, 0);
     }, [slots]);
 
     const [activeHoverIndex, setActiveHoverIndex] = useState(null);
 
-    // Chart dimensions (tuned for sleek horizontal proportions and cross-browser consistency)
+    // Chart dimensions
     const width = compact ? 240 : 280;
     const height = compact ? 48 : 68;
     const paddingX = compact ? 14 : 18;
-    const paddingTop = compact ? 6 : 10;
+    const paddingTop = compact ? 8 : 12;
     const baselineY = compact ? 34 : 50;
     const availableHeight = baselineY - paddingTop;
-    const stepX = (width - 2 * paddingX) / 6;
+    const slotCount = Math.max(slots.length, 2);
+    const stepX = (width - 2 * paddingX) / (slotCount - 1);
 
     // Compute coordinate points
     const points = useMemo(() => {
@@ -176,8 +206,8 @@ export const ReadershipChart = ({
         });
     }, [slots, maxCount, paddingX, stepX, baselineY, availableHeight]);
 
-    // Path strings
-    const linePathD = useMemo(() => getSmoothLinePath(points), [points]);
+    // Path strings with natural Catmull-Rom spline curves
+    const linePathD = useMemo(() => getCatmullRomSplinePath(points, 0.22, baselineY), [points, baselineY]);
     const areaPathD = useMemo(() => {
         if (points.length === 0) return '';
         const first = points[0];
@@ -197,15 +227,15 @@ export const ReadershipChart = ({
                 <div className="flex items-center justify-between text-[11px] text-text-muted px-0.5">
                     <span className="flex items-center gap-1 font-medium">
                         <Eye className="h-3 w-3 text-accent" />
-                        <span>This Week: {totalWeekReads} reads</span>
+                        <span>Activity: {totalPeriodReads} reads</span>
                     </span>
                     <span className="font-semibold text-text">
-                        {maxCount > 1 ? `Peak: ${maxCount}/day` : 'Quiet week'}
+                        {rawMax > 0 ? `Peak: ${rawMax}/period` : 'Quiet'}
                     </span>
                 </div>
             )}
 
-            {/* SVG CONTAINER WITH PROPORTIONATE HORIZONTAL ASPECT RATIO & GRID BACKGROUND */}
+            {/* SVG CONTAINER WITH ABSOLUTE TREND VISUALIZATION */}
             <div className="relative w-full flex items-center justify-center">
                 {/* FLOATING HOVER TOOLTIP */}
                 {activeSlot && (
@@ -233,14 +263,15 @@ export const ReadershipChart = ({
                 >
                     <defs>
                         <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor={color} stopOpacity="0.35" />
-                            <stop offset="100%" stopColor={color} stopOpacity="0.04" />
+                            <stop offset="0%" stopColor={color} stopOpacity="0.38" />
+                            <stop offset="60%" stopColor={color} stopOpacity="0.12" />
+                            <stop offset="100%" stopColor={color} stopOpacity="0.01" />
                         </linearGradient>
                     </defs>
 
                     {/* BACKGROUND GRID LINES */}
                     <g className="opacity-40">
-                        {/* Horizontal grid lines */}
+                        {/* Upper reference line */}
                         <line
                             x1={paddingX}
                             y1={paddingTop}
@@ -250,6 +281,7 @@ export const ReadershipChart = ({
                             strokeWidth="1"
                             strokeDasharray="3 3"
                         />
+                        {/* Midline reference */}
                         <line
                             x1={paddingX}
                             y1={paddingTop + availableHeight / 2}
@@ -259,6 +291,7 @@ export const ReadershipChart = ({
                             strokeWidth="1"
                             strokeDasharray="3 3"
                         />
+                        {/* Baseline ground line */}
                         <line
                             x1={paddingX}
                             y1={baselineY}
@@ -268,7 +301,7 @@ export const ReadershipChart = ({
                             strokeWidth="1"
                         />
 
-                        {/* Vertical day grid lines */}
+                        {/* Vertical grid lines */}
                         {points.map((pt, i) => (
                             <line
                                 key={`vgrid-${i}`}
@@ -283,23 +316,35 @@ export const ReadershipChart = ({
                         ))}
                     </g>
 
-                    {/* HOVER HIGHLIGHT COLUMN */}
+                    {/* HOVER HIGHLIGHT VERTICAL COLUMN & CROSSHAIR */}
                     {activeHoverIndex !== null && (
-                        <rect
-                            x={points[activeHoverIndex].x - stepX / 2}
-                            y={paddingTop - 2}
-                            width={stepX}
-                            height={availableHeight + 4}
-                            fill={color}
-                            fillOpacity="0.07"
-                            rx="2"
-                        />
+                        <g>
+                            <rect
+                                x={points[activeHoverIndex].x - stepX / 2}
+                                y={paddingTop - 2}
+                                width={stepX}
+                                height={availableHeight + 4}
+                                fill={color}
+                                fillOpacity="0.08"
+                                rx="2"
+                            />
+                            <line
+                                x1={points[activeHoverIndex].x}
+                                y1={paddingTop}
+                                x2={points[activeHoverIndex].x}
+                                y2={baselineY}
+                                stroke={color}
+                                strokeWidth="1.25"
+                                strokeDasharray="2 2"
+                                strokeOpacity="0.65"
+                            />
+                        </g>
                     )}
 
                     {/* OPAQUE GRADIENT AREA BELOW LINE */}
                     <path d={areaPathD} fill={`url(#${gradientId})`} />
 
-                    {/* MAIN SMOOTH CURVE LINE */}
+                    {/* MAIN SMOOTH CURVE LINE WITH NATURAL SPIKES */}
                     <path
                         d={linePathD}
                         fill="none"
@@ -313,25 +358,38 @@ export const ReadershipChart = ({
                     {points.map((pt, i) => {
                         const isHovered = activeHoverIndex === i;
                         const isToday = pt.slot.isToday;
+                        const hasReads = pt.slot.count > 0;
+                        const isPeak = pt.slot.count === rawMax && rawMax > 0;
 
                         return (
                             <g key={`point-${i}`}>
+                                {isPeak && !isHovered && (
+                                    <circle
+                                        cx={pt.x}
+                                        cy={pt.y}
+                                        r="5.5"
+                                        fill="none"
+                                        stroke={color}
+                                        strokeWidth="1"
+                                        strokeOpacity="0.4"
+                                    />
+                                )}
                                 <circle
                                     cx={pt.x}
                                     cy={pt.y}
-                                    r={isHovered ? 4.5 : isToday ? 4 : 2.75}
+                                    r={isHovered ? 4.75 : isPeak ? 4 : isToday || hasReads ? 3.5 : 2.5}
                                     style={{
-                                        fill: isToday || isHovered ? color : 'var(--color-surface)',
+                                        fill: isHovered || isPeak || isToday ? color : 'var(--color-surface)',
                                         stroke: color,
                                     }}
                                     className="transition-all duration-150"
-                                    strokeWidth={isToday || isHovered ? '2' : '1.75'}
+                                    strokeWidth={isHovered || isPeak || isToday ? '2' : '1.75'}
                                 />
                             </g>
                         );
                     })}
 
-                    {/* DAY LABELS (S M T W T F S / SUN MON TUE WED THU FRI SAT) */}
+                    {/* DAY / MONTH LABELS */}
                     {showLabels && (
                         <g className="text-center font-mono">
                             {points.map((pt, i) => {
@@ -359,7 +417,7 @@ export const ReadershipChart = ({
                         </g>
                     )}
 
-                    {/* INVISIBLE INTERACTIVE HOVER TRIGGER REGIONS */}
+                    {/* INVISIBLE INTERACTIVE HOVER & TOUCH TRIGGER REGIONS */}
                     {points.map((pt, i) => (
                         <rect
                             key={`trigger-${i}`}
@@ -371,6 +429,15 @@ export const ReadershipChart = ({
                             className="cursor-pointer"
                             onMouseEnter={() => setActiveHoverIndex(i)}
                             onMouseLeave={() => setActiveHoverIndex(null)}
+                            onTouchStart={(e) => {
+                                e.stopPropagation();
+                                setActiveHoverIndex(i);
+                            }}
+                            onTouchEnd={() => {
+                                setTimeout(() => {
+                                    setActiveHoverIndex((curr) => (curr === i ? null : curr));
+                                }, 2200);
+                            }}
                         />
                     ))}
                 </svg>

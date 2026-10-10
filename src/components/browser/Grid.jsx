@@ -1,12 +1,13 @@
-// --- IMPORTS ---
 import { Building2, Mail, MoreVertical } from 'lucide-react';
 import { Avatar } from '../Avatar';
 import { Badge } from '../Badge';
+import { Checkbox } from '../Checkbox';
 import { Container } from '../Container';
 import {
     ICON_STYLE,
     renderItemIcon,
     renderItemBadge,
+    getSpecificMimeLabel,
 } from './common';
 
 
@@ -15,8 +16,10 @@ const Grid = ({
     data = [],
     resourceName,
     selectedId,
+    selectedIds = new Set(),
     onItemClick,
     onToggleActionMenu,
+    onToggleSelect,
     className,
     ...props
 }) => {
@@ -24,7 +27,8 @@ const Grid = ({
     return (
         <div className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-3.5 max-h-[680px] overflow-y-auto pr-1 ${className ?? ''}`.trim()} {...props}>
             {data.map((item) => {
-                const isSelected = selectedId === item.id;
+                const isChecked = selectedIds.has(item.id);
+                const isSelected = selectedId === item.id || isChecked;
 
                 return (
                     <Container
@@ -32,14 +36,32 @@ const Grid = ({
                         data-record-id={item.id}
                         data-selected={isSelected ? 'true' : 'false'}
                         variant="card"
-                        onClick={() => onItemClick?.(item)}
-                        className={`p-3.5 sm:p-4 gap-3 justify-between transition-all duration-150 cursor-pointer group select-none min-w-0 rounded-xl ${isSelected
+                        onClick={() => {
+                            if (selectedIds.size > 0) {
+                                onToggleSelect?.(item);
+                            } else {
+                                onItemClick?.(item);
+                            }
+                        }}
+                        className={`p-3.5 sm:p-4 gap-3 justify-between transition-all duration-150 cursor-pointer group select-none min-w-0 rounded-xl ${isChecked
+                            ? 'bg-accent/15 border-accent/60 shadow-2xs'
+                            : isSelected
                             ? 'bg-accent/10 border-accent/70 shadow-2xs'
                             : 'bg-surface border-surface-border hover:border-surface-border/90 hover:shadow-2xs hover:bg-surface-hover/30'
                         }`}
                     >
                         <div className="flex items-start justify-between gap-2.5 min-w-0">
                             <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                                <div
+                                    className="shrink-0 flex items-center justify-center mr-0.5"
+                                    onClick={(e) => e.stopPropagation()}
+                                >
+                                    <Checkbox
+                                        checked={isChecked}
+                                        onChange={() => onToggleSelect?.(item)}
+                                        aria-label={`Select ${item.title ?? item.name ?? 'item'}`}
+                                    />
+                                </div>
                                 {resourceName === 'users' ? (
                                     <Avatar
                                         src={item.avatarPath}
@@ -67,7 +89,11 @@ const Grid = ({
                                     </span>
                                     {item.subtitle && (
                                         <span className="text-[10px] text-text-muted truncate mt-0.5">
-                                            {item.subtitle}
+                                            {item.isFolder || item.subtitle === 'DIR'
+                                                ? 'Directory'
+                                                : (item.subtitle === 'Document'
+                                                    ? getSpecificMimeLabel(item.mimeType, item.fileName || item.path || item.name || item.title)
+                                                    : item.subtitle)}
                                         </span>
                                     )}
                                 </div>

@@ -27,6 +27,8 @@ import {
     Check,
     Copy,
     FileCheck,
+    FileX,
+    FileQuestion,
 } from 'lucide-react';
 import {
     Avatar,
@@ -37,6 +39,7 @@ import {
     SearchField,
     SelectField,
     compute7DaySlots,
+    computeMonthlySlots,
     computeAllTimeSlots,
     resolveUserAvatar,
     formatDateTime,
@@ -54,6 +57,8 @@ import { useAuth } from '../hooks';
 import {
     constants,
     isStaffRole,
+    isAdminRole,
+    isCoordinatorRole,
     isOfficerRole,
     isDirectorRole,
     isMemberRole,
@@ -815,17 +820,23 @@ const DashboardPage = ({
         const totalPendingCount = pendingDocRequestsCount + pendingCoordRequestsCount;
         const totalUnitsCount = safeDepts.length;
 
+        const safeShares = Array.isArray(documentShares) ? documentShares : [];
+        const rejectedDocsCount = safeShares.filter(
+            (s) => (s?.status ?? '').toUpperCase() === constants.DOCUMENT_SHARES_STATUS.REJECTED
+        ).length;
+
         return {
             totalDocsCount,
             totalFoldersCount,
             totalPendingCount,
             pendingDocRequestsCount,
             pendingCoordRequestsCount,
+            rejectedDocsCount,
             totalUnitsCount,
             totalNodesCount: safeDocs.length,
             totalUsersCount: (users || []).length,
         };
-    }, [documents, requests, visibleCoordinatorRequests, departments, users]);
+    }, [documents, requests, visibleCoordinatorRequests, departments, users, documentShares]);
 
     // DOCUMENT ANALYTICS (RESTRICTED TO SHARED REPOSITORY FILES)
     const documentAnalyticsList = useMemo(() => {
@@ -896,10 +907,7 @@ const DashboardPage = ({
             }
         });
 
-        const eligibleFiles = allDocs.filter((doc) => {
-            const isFolder = Boolean(doc?.isFolder || doc?.mimeType === 'folder');
-            if (isFolder) return false;
-
+        const checkIsShared = (doc) => {
             const docId = doc.id;
             const cId = cleanId(docId);
 
@@ -931,37 +939,62 @@ const DashboardPage = ({
             }
 
             return false;
+        };
+
+        // Include all repository files (both shared and unshared files)
+        const eligibleFiles = allDocs.filter((doc) => {
+            const isFolder = Boolean(doc?.isFolder || doc?.mimeType === 'folder');
+            return !isFolder;
         });
 
         const analyticsList = eligibleFiles.map((doc) => {
+            const isShared = checkIsShared(doc);
             const docLogs = readMap.get(doc.id) || readMap.get(cleanId(doc.id)) || [];
 
-            // Filter docLogs to ONLY non-Records Management Office faculty reads
+            // Filter docLogs to ONLY non-Records Management Office faculty reads, strictly excluding Administrator and Coordinator
             const nonRmoLogs = docLogs.filter((log) => {
                 const actorId = log?.actor?.id || log?.actorId;
                 let actorUser = safeUsers.find((u) => String(u.id) === String(actorId)) || log?.actor;
-                if (!actorUser && typeof log?.data === 'string') {
+                let actorRole = actorUser?.role;
+                let actorDeptId = actorUser?.departmentId;
+
+                if (typeof log?.data === 'string') {
                     try {
                         const parsed = JSON.parse(log.data);
-                        actorUser = { id: actorId, role: parsed.role, departmentId: parsed.departmentId };
+                        actorRole = actorRole || parsed.role || parsed.actorRole;
+                        actorDeptId = actorDeptId || parsed.departmentId || parsed._actorDepartmentId || parsed.new?._departmentId;
                     } catch {
                         /* ignore */
                     }
                 }
+
+                if (!actorUser) {
+                    actorUser = { id: actorId, role: actorRole, departmentId: actorDeptId };
+                } else {
+                    actorUser = { ...actorUser, role: actorRole, departmentId: actorDeptId };
+                }
+
+                // Strict role exclusion: Administrator and Coordinator reads must NEVER count up
+                if (isStaffRole(actorRole) || isAdminRole(actorRole) || isCoordinatorRole(actorRole)) {
+                    return false;
+                }
+
                 return !isRmoUser(actorUser, safeDepts);
             });
 
-            // Count readership once per user only ("only 1 of this should work, count readership up once per user only")
+            // Count readership once per user only
             const userFirstReadMap = new Map();
             nonRmoLogs.forEach((log) => {
                 const actorId = String(log?.actor?.id || log?.actorId || '');
                 if (!actorId) return;
-                const logTime = log.createdAt ? new Date(log.createdAt).getTime() : 0;
+                const rawDate = log.createdAt || log.timestamp || log.readAt || log.updatedAt;
+                const logTime = rawDate ? new Date(rawDate).getTime() : 0;
                 if (!userFirstReadMap.has(actorId)) {
                     userFirstReadMap.set(actorId, log);
                 } else {
                     const existingLog = userFirstReadMap.get(actorId);
-                    const existingTime = existingLog.createdAt ? new Date(existingLog.createdAt).getTime() : 0;
+                    const existingRaw = existingLog?.createdAt || existingLog?.timestamp || existingLog?.readAt || existingLog?.updatedAt;
+                    const existingTime = existingRaw ? new Date(existingRaw).getTime() : 0;
                     if (logTime < existingTime) {
                         userFirstReadMap.set(actorId, log);
                     }
@@ -969,21 +1002,41 @@ const DashboardPage = ({
             });
 
             const uniqueUserReadLogs = Array.from(userFirstReadMap.values());
-            uniqueUserReadLogs.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+            uniqueUserReadLogs.sort((a, b) => {
+                const timeA = new Date(a.createdAt || a.timestamp || a.readAt || a.updatedAt || 0).getTime();
+                const timeB = new Date(b.createdAt || b.timestamp || b.readAt || b.updatedAt || 0).getTime();
+                return timeB - timeA;
+            });
 
             const totalReads = uniqueUserReadLogs.length;
             const totalUniqueReaders = totalReads;
 
             const now = new Date();
             const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-            const weekUniqueUserLogs = uniqueUserReadLogs.filter(
-                (l) => l.createdAt && new Date(l.createdAt) >= sevenDaysAgo
-            );
+            const weekUniqueUserLogs = uniqueUserReadLogs.filter((l) => {
+                const rawDate = l.createdAt || l.timestamp || l.readAt || l.updatedAt;
+                if (!rawDate) return false;
+                const d = new Date(rawDate);
+                return !isNaN(d.getTime()) && d >= sevenDaysAgo;
+            });
             const weekReads = weekUniqueUserLogs.length;
             const weekUniqueReaders = weekReads;
 
+            // Monthly Reads: unique readers in the current calendar month
+            const currentYear = now.getFullYear();
+            const currentMonth = now.getMonth();
+            const monthUniqueUserLogs = uniqueUserReadLogs.filter((l) => {
+                const rawDate = l.createdAt || l.timestamp || l.readAt || l.updatedAt;
+                if (!rawDate) return false;
+                const d = new Date(rawDate);
+                return !isNaN(d.getTime()) && d.getFullYear() === currentYear && d.getMonth() === currentMonth;
+            });
+            const monthReads = monthUniqueUserLogs.length;
+            const monthUniqueReaders = monthReads;
+
             const slots = compute7DaySlots(uniqueUserReadLogs);
-            const allTimeSlots = computeAllTimeSlots(uniqueUserReadLogs);
+            const monthlySlots = computeMonthlySlots(uniqueUserReadLogs);
+            const allTimeSlots = monthlySlots;
 
             let parentFolderName = null;
             let currParentId = doc.parentId ?? doc.parent?.id ?? doc.parentFolderId;
@@ -1016,7 +1069,7 @@ const DashboardPage = ({
                 if (!deptId && typeof l?.data === 'string') {
                     try {
                         const parsed = JSON.parse(l.data);
-                        deptId = parsed.departmentId;
+                        deptId = parsed.departmentId || parsed._actorDepartmentId || parsed.new?._departmentId;
                     } catch {
                         /* ignore */
                     }
@@ -1037,7 +1090,8 @@ const DashboardPage = ({
             });
 
             const lastLog = uniqueUserReadLogs[0];
-            const lastReadAt = lastLog?.createdAt ? new Date(lastLog.createdAt) : null;
+            const rawLastDate = lastLog?.createdAt || lastLog?.timestamp || lastLog?.readAt || lastLog?.updatedAt;
+            const lastReadAt = rawLastDate ? new Date(rawLastDate) : null;
 
             const versionsForDoc = (documentVersions || []).filter(
                 (v) => cleanId(v.document?.id ?? v.documentId) === cleanId(doc.id)
@@ -1065,11 +1119,15 @@ const DashboardPage = ({
                 departmentName,
                 classification,
                 classificationLabel,
+                isShared,
                 weekReads,
                 totalReads,
+                monthReads,
                 weekUniqueReaders,
+                monthUniqueReaders,
                 totalUniqueReaders,
                 slots,
+                monthlySlots,
                 allTimeSlots,
                 topDeptName,
                 lastReadAt,
@@ -1082,7 +1140,7 @@ const DashboardPage = ({
             };
         });
 
-        // Filter by analysisSearch query
+        // Filter by analysisSearch query or readership count > 1 to avoid cluttering the view
         const q = analysisSearch.trim().toLowerCase();
         const searchFiltered = q
             ? analyticsList.filter((item) =>
@@ -1091,7 +1149,7 @@ const DashboardPage = ({
                   (item.parentFolderName && item.parentFolderName.toLowerCase().includes(q)) ||
                   item.classificationLabel.toLowerCase().includes(q)
               )
-            : analyticsList;
+            : analyticsList.filter((item) => item.totalReads > 1);
 
         if (analyticsSortBy === 'READS') {
             searchFiltered.sort((a, b) => b.weekReads - a.weekReads || b.totalReads - a.totalReads || b.weekUniqueReaders - a.weekUniqueReaders);
@@ -1103,7 +1161,7 @@ const DashboardPage = ({
             });
         }
 
-        return searchFiltered.slice(0, 8);
+        return searchFiltered;
     }, [documents, documentVersions, documentShares, auditLogs, users, departments, analyticsSortBy, analysisSearch]);
 
     // PENDING ACTION ITEMS (SEGMENTED: DOCUMENT vs COORDINATOR)
@@ -1829,16 +1887,16 @@ const DashboardPage = ({
                     </div>
                 </div>
             ) : (
-                /* ADMINISTRATIVE ROLES: EXISTING 3 CARDS */
-                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-4">
-                    {/* CARD 1: TOTAL DOCUMENTS */}
+                /* ADMINISTRATIVE ROLES: 4 CARDS (DOCUMENTS, COORDINATOR'S REQUEST, DOCUMENT REQUEST, REJECTED DOCUMENTS) */
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4">
+                    {/* CARD 1: DOCUMENTS */}
                     <div
                         onClick={() => onNavigate?.('documents')}
                         className="p-3.5 sm:p-4 rounded-xl bg-surface border border-surface-border hover:border-accent/50 hover:shadow-md transition-all duration-200 cursor-pointer flex flex-col justify-between gap-2.5 group"
                     >
                         <div className="flex items-center justify-between">
                             <span className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">
-                                Active Documents
+                                Documents
                             </span>
                             <div className="p-2 rounded-lg bg-accent-background text-accent group-hover:scale-105 transition-transform">
                                 <FileText className="h-4 w-4" />
@@ -1862,33 +1920,33 @@ const DashboardPage = ({
                         </div>
                     </div>
 
-                    {/* CARD 2: PENDING CLEARANCES */}
+                    {/* CARD 2: COORDINATOR'S REQUEST */}
                     <div
-                        onClick={() => onNavigate?.(isStaff ? 'coordinator' : 'requests')}
+                        onClick={() => onNavigate?.('coordinator')}
                         className="p-3.5 sm:p-4 rounded-xl bg-surface border border-surface-border hover:border-warning/50 hover:shadow-md transition-all duration-200 cursor-pointer flex flex-col justify-between gap-2.5 group"
                     >
                         <div className="flex items-center justify-between">
                             <span className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">
-                                Pending Clearances
+                                Coordinator's Request
                             </span>
-                            <div className={`p-2 rounded-lg ${dynamicMetrics.totalPendingCount > 0 ? 'bg-warning-background text-warning' : 'bg-accent-background text-accent'} group-hover:scale-105 transition-transform`}>
+                            <div className={`p-2 rounded-lg ${dynamicMetrics.pendingCoordRequestsCount > 0 ? 'bg-warning-background text-warning' : 'bg-accent-background text-accent'} group-hover:scale-105 transition-transform`}>
                                 <Clock className="h-4 w-4" />
                             </div>
                         </div>
 
                         <div className="flex flex-col gap-0.5">
                             <span className="text-2xl sm:text-3xl font-bold text-text font-serif tracking-tight">
-                                {dynamicMetrics.totalPendingCount}
+                                {dynamicMetrics.pendingCoordRequestsCount}
                             </span>
                             <span className="text-xs text-text-muted">
-                                {dynamicMetrics.totalPendingCount > 0
-                                    ? `${dynamicMetrics.pendingDocRequestsCount} requests • ${dynamicMetrics.pendingCoordRequestsCount} coordinator`
-                                    : 'All clearance queues resolved'}
+                                {dynamicMetrics.pendingCoordRequestsCount > 0
+                                    ? `${dynamicMetrics.pendingCoordRequestsCount} pending approval`
+                                    : 'All coordinator approvals resolved'}
                             </span>
                         </div>
 
                         <div className="pt-2 border-t border-surface-border flex items-center justify-between text-[11px]">
-                            {dynamicMetrics.totalPendingCount > 0 ? (
+                            {dynamicMetrics.pendingCoordRequestsCount > 0 ? (
                                 <span className="text-warning font-semibold flex items-center gap-1">
                                     <span className="h-1.5 w-1.5 rounded-full bg-warning animate-pulse" />
                                     Action Needed
@@ -1902,34 +1960,83 @@ const DashboardPage = ({
                         </div>
                     </div>
 
-                    {/* CARD 3: CONNECTED UNITS (SPANS 2 COLS IN HALF-WINDOW FOR BALANCED PROPORTIONS) */}
+                    {/* CARD 3: DOCUMENT REQUEST */}
                     <div
-                        onClick={() => onNavigate?.('departments')}
-                        className="p-3.5 sm:p-4 rounded-xl bg-surface border border-surface-border hover:border-information/50 hover:shadow-md transition-all duration-200 cursor-pointer flex flex-col justify-between gap-2.5 group sm:col-span-2 xl:col-span-1"
+                        onClick={() => onNavigate?.('requests')}
+                        className="p-3.5 sm:p-4 rounded-xl bg-surface border border-surface-border hover:border-information/50 hover:shadow-md transition-all duration-200 cursor-pointer flex flex-col justify-between gap-2.5 group"
                     >
                         <div className="flex items-center justify-between">
                             <span className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">
-                                Academic Units
+                                Document Request
                             </span>
-                            <div className="p-2 rounded-lg bg-information-background text-information group-hover:scale-105 transition-transform">
-                                <Building2 className="h-4 w-4" />
+                            <div className={`p-2 rounded-lg ${dynamicMetrics.pendingDocRequestsCount > 0 ? 'bg-information-background text-information' : 'bg-accent-background text-accent'} group-hover:scale-105 transition-transform`}>
+                                <FileQuestion className="h-4 w-4" />
                             </div>
                         </div>
 
                         <div className="flex flex-col gap-0.5">
                             <span className="text-2xl sm:text-3xl font-bold text-text font-serif tracking-tight">
-                                {dynamicMetrics.totalUnitsCount}
+                                {dynamicMetrics.pendingDocRequestsCount}
                             </span>
                             <span className="text-xs text-text-muted">
-                                Colleges & administrative offices
+                                {dynamicMetrics.pendingDocRequestsCount > 0
+                                    ? `${dynamicMetrics.pendingDocRequestsCount} active clearance requests`
+                                    : 'No open document requests'}
                             </span>
                         </div>
 
-                        <div className="pt-2 border-t border-surface-border flex items-center justify-between text-[11px] text-text-muted">
-                            <span className="text-information font-semibold flex items-center gap-1">
-                                <Users className="h-3 w-3" /> {dynamicMetrics.totalUsersCount} Accounts
+                        <div className="pt-2 border-t border-surface-border flex items-center justify-between text-[11px]">
+                            {dynamicMetrics.pendingDocRequestsCount > 0 ? (
+                                <span className="text-information font-semibold flex items-center gap-1">
+                                    <span className="h-1.5 w-1.5 rounded-full bg-information animate-pulse" />
+                                    In Resolution
+                                </span>
+                            ) : (
+                                <span className="text-accent font-semibold flex items-center gap-1">
+                                    <Check className="h-3.5 w-3.5" /> All Clear
+                                </span>
+                            )}
+                            <span className="text-text-muted">Request Hub</span>
+                        </div>
+                    </div>
+
+                    {/* CARD 4: REJECTED DOCUMENTS */}
+                    <div
+                        onClick={() => onNavigate?.('documents')}
+                        className="p-3.5 sm:p-4 rounded-xl bg-surface border border-surface-border hover:border-error/50 hover:shadow-md transition-all duration-200 cursor-pointer flex flex-col justify-between gap-2.5 group"
+                    >
+                        <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">
+                                Rejected Documents
                             </span>
-                            <span>Institutional Directory</span>
+                            <div className={`p-2 rounded-lg ${dynamicMetrics.rejectedDocsCount > 0 ? 'bg-error-background text-error' : 'bg-accent-background text-accent'} group-hover:scale-105 transition-transform`}>
+                                <FileX className="h-4 w-4" />
+                            </div>
+                        </div>
+
+                        <div className="flex flex-col gap-0.5">
+                            <span className="text-2xl sm:text-3xl font-bold text-text font-serif tracking-tight">
+                                {dynamicMetrics.rejectedDocsCount}
+                            </span>
+                            <span className="text-xs text-text-muted">
+                                {dynamicMetrics.rejectedDocsCount > 0
+                                    ? `${dynamicMetrics.rejectedDocsCount} files rejected by department officers`
+                                    : 'No officer rejections logged'}
+                            </span>
+                        </div>
+
+                        <div className="pt-2 border-t border-surface-border flex items-center justify-between text-[11px]">
+                            {dynamicMetrics.rejectedDocsCount > 0 ? (
+                                <span className="text-error font-semibold flex items-center gap-1">
+                                    <span className="h-1.5 w-1.5 rounded-full bg-error animate-pulse" />
+                                    Revision Needed
+                                </span>
+                            ) : (
+                                <span className="text-accent font-semibold flex items-center gap-1">
+                                    <Check className="h-3.5 w-3.5" /> All Accepted
+                                </span>
+                            )}
+                            <span className="text-text-muted">Officer Feedback</span>
                         </div>
                     </div>
                 </div>
@@ -2439,11 +2546,11 @@ const DashboardPage = ({
                                 <div className="p-2.5 rounded-full bg-surface-hover text-text-muted">
                                     <BarChart3 className="h-5 w-5" />
                                 </div>
-                                <span className="text-xs sm:text-sm font-bold text-text">No Shared Document Activity</span>
+                                <span className="text-xs sm:text-sm font-bold text-text">No Document Activity</span>
                                 <span className="text-xs text-text-muted max-w-xs">
                                     {analysisSearch
                                         ? `No records found matching "${analysisSearch}".`
-                                        : 'Only documents shared with colleges or located inside shared folders appear in readership analytics.'}
+                                        : 'No documents with multiple reads (> 1) found. Search above to view any document.'}
                                 </span>
                             </div>
                         ) : (
@@ -2464,8 +2571,8 @@ const DashboardPage = ({
                                         className="p-3.5 rounded-xl border border-surface-border bg-surface-hover/20 hover:bg-surface-hover/50 hover:border-accent/40 transition-all flex flex-col gap-3 cursor-pointer group shadow-2xs shrink-0"
                                     >
                                         {/* DOCUMENT HEADER TITLE & INLINE META BADGES */}
-                                        <div className="flex items-center justify-between gap-2.5 min-w-0">
-                                            <div className="flex items-center gap-2 min-w-0 flex-1">
+                                        <div className="flex flex-wrap sm:flex-nowrap items-center justify-between gap-2 min-w-0">
+                                            <div className="flex items-center gap-2 min-w-0 flex-1 max-w-full">
                                                 <div className="p-1.5 rounded-lg bg-accent-background text-accent shrink-0">
                                                     <FileText className="h-3.5 w-3.5" />
                                                 </div>
@@ -2475,9 +2582,25 @@ const DashboardPage = ({
                                                 >
                                                     {item.title}
                                                 </span>
+                                                {/* ACTUAL TOTAL READ COUNT ACROSS ALL */}
+                                                <span
+                                                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-accent/15 text-accent border border-accent/25 shrink-0 select-none shadow-2xs"
+                                                    title={`Total reads across all: ${item.totalReads}`}
+                                                >
+                                                    <Eye className="h-2.5 w-2.5" />
+                                                    <span>{item.totalReads}</span>
+                                                </span>
+                                                {!item.isShared && (
+                                                    <span
+                                                        className="text-[9px] font-semibold px-1.5 py-0.5 rounded border bg-surface text-text-muted border-surface-border shrink-0 select-none"
+                                                        title="Unshared repository document"
+                                                    >
+                                                        Unshared
+                                                    </span>
+                                                )}
                                             </div>
 
-                                            <div className="flex items-center gap-1.5 shrink-0">
+                                            <div className="flex items-center gap-1.5 shrink-0 ml-auto sm:ml-0">
                                                 {item.parentFolderName && (
                                                     <span
                                                         className="text-[10px] font-medium bg-surface-hover px-1.5 py-0.5 rounded border border-surface-border text-text-muted truncate max-w-[120px] sm:max-w-[160px]"
@@ -2513,29 +2636,27 @@ const DashboardPage = ({
 
                                                 <div className="flex items-center justify-between text-[10px] text-text-muted pt-0.5 border-t border-surface-border/50">
                                                     <span className="truncate">Top: {item.topDeptName}</span>
-                                                    <span className="font-mono text-[9px] uppercase tracking-wider text-accent font-semibold">SUN – SAT</span>
                                                 </div>
                                             </div>
 
-                                            {/* GRAPH 2: ALL TIME READ */}
+                                            {/* GRAPH 2: MONTHLY READS */}
                                             <div className="p-2.5 rounded-lg bg-surface border border-surface-border flex flex-col gap-1.5">
                                                 <div className="flex items-center justify-between text-xs">
                                                     <span className="font-semibold text-text flex items-center gap-1 text-[11px]">
                                                         <BarChart3 className="h-3 w-3 text-sky-500" />
-                                                        <span>All Time Reads</span>
+                                                        <span>Monthly Reads</span>
                                                     </span>
                                                     <span className="text-[10px] text-text-muted font-medium">
-                                                        {item.totalUniqueReaders} {item.totalUniqueReaders === 1 ? 'reader' : 'readers'}
+                                                        {item.monthUniqueReaders} {item.monthUniqueReaders === 1 ? 'reader' : 'readers'}
                                                     </span>
                                                 </div>
 
                                                 <div className="w-full pt-0.5">
-                                                    <ReadershipChart precomputedSlots={item.allTimeSlots} compact={true} showPeak={false} color="#0ea5e9" />
+                                                    <ReadershipChart precomputedSlots={item.monthlySlots} compact={true} showPeak={false} color="#0ea5e9" />
                                                 </div>
 
                                                 <div className="flex items-center justify-between text-[10px] text-text-muted pt-0.5 border-t border-surface-border/50">
-                                                    <span className="truncate">Cumulative History</span>
-                                                    <span className="font-mono text-[9px] uppercase tracking-wider text-sky-600 dark:text-sky-400 font-semibold">ALL TIME</span>
+                                                    <span className="truncate">Top: {item.topDeptName}</span>
                                                 </div>
                                             </div>
                                         </div>
