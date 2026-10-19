@@ -55,6 +55,7 @@ import {
 import { getSpecificMimeLabel } from '../components/browser/common';
 import { useToast, useAuth } from '../hooks';
 import { constants } from '../constants';
+import { stripFileExtension, isGenericFileName, deriveTitleFromDocumentText } from '../utils/fileNameUtils';
 import {
     useDocumentStore,
     useDepartmentStore,
@@ -563,7 +564,7 @@ const DocumentsPage = ({
             })();
             const itemStatus = shareMeta?.status ?? '—';
 
-            const displayName = doc.isFolder ? doc.name : (doc.name || '').replace(/\.[^/.]+$/, '').trim() || doc.name;
+            const displayName = doc.isFolder ? doc.name : stripFileExtension(doc.name || '') || doc.name;
             const effectiveMime = doc.isFolder ? 'folder' : (latestVer?.mimeType || (doc.name ? getMimeTypeFromFilename(doc.name) : null));
             const subtitleText = doc.isFolder ? 'Directory' : getSpecificMimeLabel(effectiveMime, doc.name);
 
@@ -937,7 +938,7 @@ const DocumentsPage = ({
                         description: `Summary and classification updated (${res?.classification || 'Analyzed'}).`,
                     });
                 } else {
-                    const cleanedName = (editItem.isFolder ? editFormName : `${editFormName}${editFormExtension}`).replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
+                    const cleanedName = stripFileExtension(editItem.isFolder ? editFormName : `${editFormName}${editFormExtension}`).replace(/[-_]/g, ' ');
                     const generated = `Institutional documentation and operational records pertaining to ${cleanedName}.`;
                     setEditFormSummary(generated);
                     if (editFormErrors.summary) {
@@ -1041,7 +1042,7 @@ const DocumentsPage = ({
 
         const cleanSavedName = editItem.isFolder
             ? editFormName.trim()
-            : editFormName.trim().replace(/\.[^/.]+$/, '').trim();
+            : stripFileExtension(editFormName.trim());
 
         const targetMimeType = editItem.isFolder
             ? undefined
@@ -1413,7 +1414,6 @@ const DocumentsPage = ({
         if (['approve', 'unapprove', 'reject', 'unreject', 'unpublish', 'stash', 'unstash', 'unshare'].includes(actionKey)) {
             const isBatch = Array.isArray(item);
             const cleanId = (uid) => (typeof uid === 'string' ? uid.replace(/-/g, '').toLowerCase() : uid);
-            const userDeptClean = cleanId(currentUser?.departmentId);
 
             if (isBatch) {
                 const count = item.length;
@@ -1645,7 +1645,7 @@ const DocumentsPage = ({
 
         if (actionKey === 'edit') {
             setEditItem(item);
-            let rawName = (item.name || item.title || '').replace(/\.[^/.]+$/, '').trim();
+            let rawName = stripFileExtension(item.name || item.title || '');
             let rawExtension = '.pdf';
             if (!item.isFolder) {
                 const vers = (documentVersions || []).filter(
@@ -2239,7 +2239,7 @@ const DocumentsPage = ({
                 }
 
                 const finalFileName = item.fileName || item.file?.name || (item.title ? item.title.split('/').pop() : 'document');
-                const cleanDocName = finalFileName.replace(/\.[^/.]+$/, '').trim() || finalFileName;
+                let cleanDocName = stripFileExtension(finalFileName) || finalFileName;
 
                 // 2. Check if creating new version or new document
                 let targetDocumentId = item.action === 'create_new' ? null : item.existingDocumentId;
@@ -2273,6 +2273,25 @@ const DocumentsPage = ({
                     }
                 }
                 const activeExtractedText = ocrSummary || textContentSnippet || item.summary || null;
+
+                // AUTO-DERIVE TITLE: If the filename was generic (camera photo hash like 8311655..., 1234, etc.),
+                // promote the institutional reference or subject from OCR text as the document title.
+                if (isGenericFileName(cleanDocName) && activeExtractedText) {
+                    const derivedTitle = deriveTitleFromDocumentText(activeExtractedText);
+                    if (derivedTitle) {
+                        cleanDocName = derivedTitle;
+                        // Re-check existing documents with the derived title if no targetDocumentId was bound
+                        if (!targetDocumentId && activeUserId && item.action !== 'create_new') {
+                            const existingWithDerived = knownDocs.find(
+                                (d) => !d.isFolder && (d.parentId ?? null) === targetParentId && !d.isArchived &&
+                                    d.name.toLowerCase() === cleanDocName.toLowerCase()
+                            );
+                            if (existingWithDerived) {
+                                targetDocumentId = existingWithDerived.id;
+                            }
+                        }
+                    }
+                }
 
                 if (targetDocumentId) {
                     // VERSIONING: Existing document found, increment version
@@ -5163,7 +5182,7 @@ function annotateDuplicates(extractedList, targetParentId, existingDocs, existin
 
         if (resolvedParentId !== 'will-create-folder') {
             const rawItemName = (item.fileName || item.title || '').trim();
-            const cleanItemName = rawItemName.replace(/\.[^/.]+$/, '').trim();
+            const cleanItemName = stripFileExtension(rawItemName);
             const matchingDoc = (existingDocs || []).find(
                 (d) => !d.isFolder &&
                 !d.isArchived &&

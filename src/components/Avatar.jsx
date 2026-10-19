@@ -14,16 +14,32 @@ const SIZE_STYLE = {
     extraLarge: 'h-12 w-12 text-base',
 };
 
-const FALLBACK_AVATAR = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%239ca3af"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>';
-
+const isPlaceholder = (path) => {
+    if (!path || typeof path !== 'string') return true;
+    const trimmed = path.trim().toLowerCase();
+    return (
+        trimmed === '' ||
+        trimmed === 'avatars/placeholder.png' ||
+        trimmed === '/avatars/placeholder.png' ||
+        trimmed === 'placeholder.png' ||
+        trimmed === '/placeholder.png' ||
+        trimmed === 'avatars/defaultavatar.png' ||
+        trimmed === '/avatars/defaultavatar.png' ||
+        trimmed === 'null' ||
+        trimmed === 'undefined'
+    );
+};
 
 // --- HELPERS ---
 export function resolveUserAvatar(user, currentUser = null) {
     if (!user) return null;
-    if (typeof user === 'string') return user;
+    if (typeof user === 'string') {
+        return isPlaceholder(user) ? null : user;
+    }
 
-    const targetId = user.id || user.userId;
-    const isCurrentUser = Boolean(targetId && currentUser?.id && targetId === currentUser.id);
+    const targetId = user.id || user.userId || user.uid;
+    const currentId = currentUser?.id || currentUser?.userId || currentUser?.uid;
+    const isCurrentUser = Boolean(targetId && currentId && targetId === currentId);
 
     // 1. Resolve avatar preference (local override, user's saved setting, or default SYSTEM)
     const avatarPref = (typeof localStorage !== 'undefined' && targetId
@@ -33,18 +49,35 @@ export function resolveUserAvatar(user, currentUser = null) {
     // 2. Resolve Google photo URL (local cache, user property, or current user property)
     const googlePhoto = (typeof localStorage !== 'undefined' && targetId
         ? localStorage.getItem(`pamantasan_google_photo_url_${targetId}`)
-        : null) ?? user.googlePhotoUrl ?? (isCurrentUser ? currentUser?.googlePhotoUrl : null);
+        : null) ?? user.googlePhotoUrl ?? user.photoURL ?? (isCurrentUser ? (currentUser?.googlePhotoUrl || currentUser?.photoURL) : null);
 
     if (avatarPref === 'GOOGLE' && googlePhoto) {
         return googlePhoto;
     }
 
-    // Direct HTTP/HTTPS URL from database (e.g., Google Profile avatar)
+    // Direct HTTP/HTTPS URL from database or auth (e.g., Google Profile avatar)
     if (user.avatarPath && (user.avatarPath.startsWith('http://') || user.avatarPath.startsWith('https://'))) {
         return user.avatarPath;
     }
+    if (user.photoURL && (user.photoURL.startsWith('http://') || user.photoURL.startsWith('https://'))) {
+        return user.photoURL;
+    }
 
-    return user.avatarPath ?? user.avatar ?? null;
+    // Custom uploaded avatar in storage
+    if (user.avatarPath && !isPlaceholder(user.avatarPath)) {
+        return user.avatarPath;
+    }
+
+    // If Google photo is available, use it before giving up
+    if (googlePhoto) {
+        return googlePhoto;
+    }
+
+    if (user.avatar && !isPlaceholder(user.avatar)) {
+        return user.avatar;
+    }
+
+    return null;
 }
 
 
@@ -66,7 +99,7 @@ const Avatar = ({
     }, []);
 
     // RESOLVE EFFECTIVE SOURCE
-    const effectiveTargetSrc = user ? resolveUserAvatar(user) : src;
+    const effectiveTargetSrc = user ? (resolveUserAvatar(user, user) || src) : src;
 
     const isDirectUrl = Boolean(
         effectiveTargetSrc &&
@@ -76,94 +109,95 @@ const Avatar = ({
          effectiveTargetSrc.startsWith('blob:'))
     );
 
-    const isPlaceholderPath = !effectiveTargetSrc ||
-        effectiveTargetSrc === 'avatars/placeholder.png' ||
-        effectiveTargetSrc === '/avatars/placeholder.png' ||
-        effectiveTargetSrc === 'placeholder.png' ||
-        effectiveTargetSrc === '/placeholder.png' ||
-        effectiveTargetSrc === 'avatars/defaultAvatar.png' ||
-        effectiveTargetSrc === '/avatars/defaultAvatar.png';
+    const isPlaceholderSrc = isPlaceholder(effectiveTargetSrc);
 
     const [resolvedUrl, setResolvedUrl] = useState(null);
-    const [hasLoadError, setHasLoadError] = useState(false);
+    const [failedSrcs, setFailedSrcs] = useState({});
 
     // HOOKS
     useEffect(() => {
         let isCancelled = false;
 
-        if (isDirectUrl) {
+        if (isDirectUrl || isPlaceholderSrc || !effectiveTargetSrc) {
             return;
         }
 
-        if (!isPlaceholderPath && effectiveTargetSrc) {
-            storageService
-                .getFileDownloadUrl(effectiveTargetSrc)
-                .then((downloadUrl) => {
-                    if (!isCancelled) {
-                        if (downloadUrl) {
-                            setResolvedUrl(downloadUrl);
-                            setHasLoadError(false);
-                        } else {
-                            // If user custom avatar not found, fallback to cloud default placeholder
-                            storageService.getDefaultAvatarUrl().then((defaultUrl) => {
-                                if (!isCancelled && defaultUrl) {
-                                    setResolvedUrl(defaultUrl);
-                                }
-                            });
-                        }
-                    }
-                })
-                .catch(() => {
-                    if (!isCancelled) {
-                        storageService.getDefaultAvatarUrl().then((defaultUrl) => {
-                            if (!isCancelled && defaultUrl) {
-                                setResolvedUrl(defaultUrl);
-                            }
-                        });
-                    }
-                });
-        } else {
-            storageService
-                .getDefaultAvatarUrl()
-                .then((defaultUrl) => {
-                    if (!isCancelled && defaultUrl) {
-                        setResolvedUrl(defaultUrl);
-                        setHasLoadError(false);
-                    }
-                })
-                .catch(() => {});
-        }
+        storageService
+            .getFileDownloadUrl(effectiveTargetSrc)
+            .then((downloadUrl) => {
+                if (!isCancelled) {
+                    setResolvedUrl(downloadUrl || null);
+                }
+            })
+            .catch(() => {
+                if (!isCancelled) {
+                    setResolvedUrl(null);
+                }
+            });
 
         return () => {
             isCancelled = true;
         };
-    }, [effectiveTargetSrc, isDirectUrl, isPlaceholderPath, avatarVersion]);
+    }, [effectiveTargetSrc, isDirectUrl, isPlaceholderSrc, avatarVersion]);
+
+    // DERIVED ACTIVE SOURCE
+    const activeResolved = isDirectUrl ? effectiveTargetSrc : resolvedUrl;
+    const hasLoadError = Boolean(activeResolved && failedSrcs[activeResolved]);
 
     // HANDLERS
     const handleImageError = () => {
-        if (!hasLoadError) {
-            setHasLoadError(true);
-            storageService.getDefaultAvatarUrl().then((defaultUrl) => {
-                if (defaultUrl && defaultUrl !== resolvedUrl) {
-                    setResolvedUrl(defaultUrl);
-                    setHasLoadError(false);
-                }
-            }).catch(() => {});
+        if (activeResolved) {
+            setFailedSrcs((prev) => ({ ...prev, [activeResolved]: true }));
         }
     };
 
-    // DERIVED VALUES
+    const getInitials = (name) => {
+        if (!name || typeof name !== 'string') return '';
+        const clean = name.replace(/[^a-zA-Z\s]/g, '').trim();
+        if (!clean) return '';
+        const parts = clean.split(/\s+/).filter(Boolean);
+        if (parts.length === 0) return '';
+        if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+        return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+    };
+
     const sizeStyle = SIZE_STYLE[size] ?? SIZE_STYLE.medium;
     const composedClassName = `${BASE_STYLE} ${sizeStyle} ${className ?? ''}`.trim();
-    const effectiveAlt = alt || 'User avatar';
-    const activeResolved = isDirectUrl ? effectiveTargetSrc : resolvedUrl;
-    const effectiveSource = (!hasLoadError && activeResolved) ? activeResolved : FALLBACK_AVATAR;
+    const userFullName = user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() : '';
+    const effectiveAlt = alt || userFullName || 'User avatar';
+    const initials = getInitials(effectiveAlt !== 'User avatar' && effectiveAlt !== 'You' ? effectiveAlt : userFullName);
 
-    // RENDER
+    // If load error occurred or no active image URL is resolved, render clean fallback (prevents broken image icon)
+    if (hasLoadError || !activeResolved) {
+        return (
+            <div
+                className={`${composedClassName} flex items-center justify-center bg-accent/15 text-accent font-semibold select-none`}
+                title={effectiveAlt}
+                {...props}
+            >
+                {initials ? (
+                    <span className="text-[0.65em] font-bold text-accent uppercase tracking-wider">{initials}</span>
+                ) : (
+                    <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        viewBox="0 0 24 24"
+                        fill="currentColor"
+                        className="w-3/5 h-3/5 text-accent/80"
+                    >
+                        <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
+                    </svg>
+                )}
+            </div>
+        );
+    }
+
+    // RENDER IMAGE WITH NO-REFERRER (CRUCIAL FOR GOOGLE/FIREBASE USER AVATARS)
     return (
         <img
-            src={effectiveSource}
+            key={activeResolved}
+            src={activeResolved}
             alt={effectiveAlt}
+            referrerPolicy="no-referrer"
             onError={handleImageError}
             className={composedClassName}
             {...props}

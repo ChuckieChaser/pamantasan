@@ -4,6 +4,9 @@ import {
     AlertCircle,
     AlertTriangle,
     Archive,
+    ArrowDownAZ,
+    ArrowUpAZ,
+    ArrowUpDown,
     Building2,
     Calendar,
     Check,
@@ -19,6 +22,7 @@ import {
     FileCheck,
     FileText,
     FileType,
+    Filter,
     Folder,
     FolderInput,
     FolderOpen,
@@ -69,7 +73,8 @@ import { SegmentSelection } from './Selections';
 import { Account } from './ui/Account';
 import { formatMimeTypeLabel } from './common';
 import { constants, isStaffRole } from '../constants';
-import { storageService, coordinatorApprovalService } from '../services';
+import { storageService, coordinatorApprovalService, aiService } from '../services';
+import { stripFileExtension } from '../utils/fileNameUtils';
 
 const isRmoUser = (user, safeDepts = []) => {
     if (!user) return false;
@@ -108,6 +113,24 @@ const CLASSIFICATION_BADGE_VARIANT = {
     [constants.DOCUMENT_VERSIONS_CLASSIFICATION.CONFIDENTIAL]: 'warning',
     [constants.DOCUMENT_VERSIONS_CLASSIFICATION.RESTRICTED]: 'error',
 };
+
+const ATTACH_SORT_OPTIONS = [
+    { value: 'name-asc',      label: 'Name (A to Z)',           icon: ArrowDownAZ },
+    { value: 'name-desc',     label: 'Name (Z to A)',           icon: ArrowUpAZ },
+    { value: 'date-desc',     label: 'Recently Added',          icon: Clock },
+    { value: 'date-asc',      label: 'Oldest Added',            icon: Clock },
+    { value: 'mimetype-asc',  label: 'File Type (Docs first)',  icon: FileText },
+    { value: 'mimetype-desc', label: 'File Type (Media first)', icon: FileText },
+];
+
+const ATTACH_CLASSIFICATION_OPTIONS = [
+    { value: 'all',          label: 'All Classifications' },
+    { value: 'PUBLIC',       label: 'Public' },
+    { value: 'INTERNAL',     label: 'Internal' },
+    { value: 'CONFIDENTIAL', label: 'Confidential' },
+    { value: 'RESTRICTED',   label: 'Restricted' },
+    { value: 'PRIVATE',      label: 'Private' },
+];
 
 const ROLE_BADGE_VARIANT = {
     [constants.USERS_ROLE.ADMINISTRATOR]: 'neutral',
@@ -304,6 +327,10 @@ const Inspector = ({
     const [stagedAttachments, setStagedAttachments] = useState([]);
     const [isAttachModalOpen, setIsAttachModalOpen] = useState(false);
     const [attachSearchTerm, setAttachSearchTerm] = useState('');
+    const [attachSortBy, setAttachSortBy] = useState('name-asc');
+    const [attachClassFilter, setAttachClassFilter] = useState('all');
+    const [isSemanticSearching, setIsSemanticSearching] = useState(false);
+    const [semanticScoreMap, setSemanticScoreMap] = useState({});
     const [previousItemId, setPreviousItemId] = useState(item?.id);
 
     // VERSION REVERT CONFIRMATION STATE
@@ -401,6 +428,77 @@ const Inspector = ({
     const allDepartments = useDepartmentStore((state) => state.departments);
     const allUsers = useUserStore((state) => state.users);
     const allAuditLogs = useAuditStore((state) => state.auditLogs);
+
+    // DEBOUNCED SEMANTIC SEARCH IN REPOSITORY ATTACH MODAL
+    useEffect(() => {
+        const trimmed = attachSearchTerm.trim();
+        if (!isAttachModalOpen || trimmed.length < 3) {
+            return;
+        }
+
+        let isMounted = true;
+        const timer = setTimeout(async () => {
+            setIsSemanticSearching(true);
+            try {
+                const queryVec = await aiService.generateTextEmbedding(trimmed);
+                if (!isMounted || !queryVec) {
+                    setIsSemanticSearching(false);
+                    return;
+                }
+                const map = {};
+                (allDocuments || []).forEach((doc) => {
+                    const vers = (allDocumentVersions || []).filter(
+                        (v) => (v.document?.id ?? v.documentId) === doc.id
+                    );
+                    const latest = vers.length > 0
+                        ? [...vers].sort((a, b) => (b.version ?? 0) - (a.version ?? 0))[0]
+                        : null;
+                    if (latest?.embedding && Array.isArray(latest.embedding) && latest.embedding.length > 0) {
+                        const sim = aiService.computeCosineSimilarity(queryVec, latest.embedding);
+                        if (sim >= 0.35) {
+                            map[doc.id] = {
+                                similarity: sim,
+                                confidencePct: Math.round(sim * 100),
+                                summarySnippet: latest.summary ? latest.summary.slice(0, 110) + '...' : null,
+                            };
+                        }
+                    }
+                });
+                if (isMounted) {
+                    setSemanticScoreMap(map);
+                }
+            } catch (err) {
+                console.warn('[SemanticSearch] Embedding search skipped:', err?.message);
+            } finally {
+                if (isMounted) {
+                    setIsSemanticSearching(false);
+                }
+            }
+        }, 380);
+
+        return () => {
+            isMounted = false;
+            clearTimeout(timer);
+        };
+    }, [attachSearchTerm, isAttachModalOpen, allDocuments, allDocumentVersions]);
+
+    const renderClassificationBadge = (classification) => {
+        const norm = String(classification || 'UNCLASSIFIED').toUpperCase().trim();
+        const styleMap = {
+            PUBLIC: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30',
+            INTERNAL: 'bg-sky-500/15 text-sky-700 dark:text-sky-400 border-sky-500/30',
+            CONFIDENTIAL: 'bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30',
+            RESTRICTED: 'bg-purple-500/15 text-purple-700 dark:text-purple-400 border-purple-500/30',
+            PRIVATE: 'bg-slate-500/15 text-slate-700 dark:text-slate-400 border-slate-500/30',
+            UNCLASSIFIED: 'bg-neutral-500/15 text-text-muted border-neutral-500/30',
+        };
+        const classes = styleMap[norm] || styleMap.UNCLASSIFIED;
+        return (
+            <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold tracking-wider border ${classes}`}>
+                {norm}
+            </span>
+        );
+    };
 
     // DERIVED ENTITY TYPES (STRICTLY MUTUALLY EXCLUSIVE)
     const isFolder = Boolean(item?.isFolder);
@@ -1123,19 +1221,131 @@ const Inspector = ({
     }, [tabOptions, activeTab, onTabChange]);
 
     const attachableDocuments = useMemo(() => {
-        return allDocuments
+        let list = (allDocuments || [])
             .filter((doc) => !doc.isFolder && !doc.isArchived)
-            .filter((doc) => {
-                if (!attachSearchTerm.trim()) {
-                    return true;
-                }
-                const query = attachSearchTerm.toLowerCase();
-                return (
-                    (doc.name && doc.name.toLowerCase().includes(query)) ||
-                    (doc.title && doc.title.toLowerCase().includes(query))
+            .map((doc) => {
+                const vers = (allDocumentVersions || []).filter(
+                    (v) => (v.document?.id ?? v.documentId) === doc.id
                 );
+                const latestVer = vers.length > 0
+                    ? [...vers].sort((a, b) => (b.version ?? 0) - (a.version ?? 0))[0]
+                    : null;
+                const classification = latestVer?.classification || doc.classification || constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED;
+                return {
+                    ...doc,
+                    _latestVer: latestVer,
+                    classification,
+                };
             });
-    }, [allDocuments, attachSearchTerm]);
+
+        // 1. Classification filter
+        if (attachClassFilter && attachClassFilter !== 'all') {
+            list = list.filter((doc) => String(doc.classification || '').toUpperCase() === attachClassFilter.toUpperCase());
+        }
+
+        // 2. Sorting comparator
+        const sortComparator = (a, b) => {
+            switch (attachSortBy) {
+                case 'name-asc':
+                    return (a.name || '').localeCompare(b.name || '');
+                case 'name-desc':
+                    return (b.name || '').localeCompare(a.name || '');
+                case 'date-desc':
+                    return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
+                case 'date-asc':
+                    return new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime();
+                case 'mimetype-asc': {
+                    const extA = (a.name || '').split('.').pop()?.toLowerCase() || '';
+                    const extB = (b.name || '').split('.').pop()?.toLowerCase() || '';
+                    return extA.localeCompare(extB);
+                }
+                case 'mimetype-desc': {
+                    const extA = (a.name || '').split('.').pop()?.toLowerCase() || '';
+                    const extB = (b.name || '').split('.').pop()?.toLowerCase() || '';
+                    return extB.localeCompare(extA);
+                }
+                default:
+                    return 0;
+            }
+        };
+
+        if (!attachSearchTerm.trim()) {
+            return list.sort(sortComparator);
+        }
+
+        const query = attachSearchTerm.toLowerCase().trim();
+        const tokens = query.split(/\s+/).filter(Boolean);
+
+        return list
+            .map((doc) => {
+                const nameLower = (doc.name || '').toLowerCase();
+                const titleLower = (doc.title || '').toLowerCase();
+                const summaryLower = (doc._latestVer?.summary || '').toLowerCase();
+                const changeLower = (doc._latestVer?.changeSummary || '').toLowerCase();
+                const classLower = (doc.classification || '').toLowerCase();
+                const semInfo = attachSearchTerm.trim().length >= 3 ? semanticScoreMap[doc.id] : null;
+
+                let score = 0;
+                let matchType = null;
+                let matchSnippet = null;
+
+                // 1. Direct name/title match
+                if (nameLower.includes(query) || titleLower.includes(query)) {
+                    score += 100;
+                    matchType = 'name';
+                } else {
+                    const nameTokens = tokens.filter((t) => nameLower.includes(t) || titleLower.includes(t));
+                    if (nameTokens.length > 0) {
+                        score += nameTokens.length * 25;
+                        matchType = 'name';
+                    }
+                }
+
+                // 2. Content / Summary search (Search from content of the file!)
+                if (summaryLower.includes(query)) {
+                    score += 60;
+                    matchType = matchType || 'content';
+                    const idx = summaryLower.indexOf(query);
+                    const start = Math.max(0, idx - 25);
+                    const end = Math.min(doc._latestVer.summary.length, idx + query.length + 50);
+                    matchSnippet = '...' + doc._latestVer.summary.slice(start, end).trim() + '...';
+                } else {
+                    const summaryTokens = tokens.filter((t) => summaryLower.includes(t));
+                    if (summaryTokens.length > 0) {
+                        score += summaryTokens.length * 20;
+                        matchType = matchType || 'content';
+                        matchSnippet = doc._latestVer?.summary?.slice(0, 90) + '...';
+                    }
+                }
+
+                if (changeLower.includes(query)) {
+                    score += 30;
+                    matchType = matchType || 'content';
+                }
+
+                if (classLower.includes(query)) {
+                    score += 15;
+                }
+
+                if (semInfo?.similarity) {
+                    score += Math.round(semInfo.similarity * 70);
+                    matchType = matchType || 'semantic';
+                    if (!matchSnippet && semInfo.summarySnippet) {
+                        matchSnippet = semInfo.summarySnippet;
+                    }
+                }
+
+                return {
+                    ...doc,
+                    _relevanceScore: score,
+                    _matchType: matchType,
+                    _matchSnippet: matchSnippet,
+                    _semanticInfo: semInfo,
+                };
+            })
+            .filter((doc) => doc._relevanceScore > 0)
+            .sort((a, b) => (b._relevanceScore - a._relevanceScore) || sortComparator(a, b));
+    }, [allDocuments, allDocumentVersions, attachSearchTerm, semanticScoreMap, attachClassFilter, attachSortBy]);
 
     const inspectorDeptOptions = useMemo(() => {
         return allDepartments.map((d) => ({
@@ -1554,13 +1764,20 @@ const Inspector = ({
         if (allDocuments.length === 0) {
             useDocumentStore.getState().fetchDocuments().catch(() => {});
         }
+        if ((allDocumentVersions || []).length === 0) {
+            useDocumentStore.getState().fetchAllDocumentVersions().catch(() => {});
+        }
         setIsAttachModalOpen(true);
         setAttachSearchTerm('');
+        setSemanticScoreMap({});
+        setIsSemanticSearching(false);
     };
 
     const handleCloseAttachModal = () => {
         setIsAttachModalOpen(false);
         setAttachSearchTerm('');
+        setSemanticScoreMap({});
+        setIsSemanticSearching(false);
     };
 
     const handleSelectDocumentToAttach = (selectedDocument) => {
@@ -1729,7 +1946,9 @@ const Inspector = ({
             }
 
             const attachedDocIds = currentStaged.map((att) => att.documentId ?? att.id).filter(Boolean);
-            const metaTag = attachedDocIds.length > 0 ? `<!-- attachments:[${attachedDocIds.join(',')}] -->` : '';
+            const metaTag = attachedDocIds.length > 0
+                ? `<!-- attachments:[${attachedDocIds.join(',')}] --> <!-- att_names:[${currentStaged.map((s) => encodeURIComponent(s.name || '')).join(',')}] -->`
+                : '';
             const fullMessageText = metaTag ? `${messageText} ${metaTag}` : messageText;
 
             await addRequestMessage({
@@ -2805,7 +3024,7 @@ const Inspector = ({
     const rawTitle = activeItem.title ?? activeItem.name ?? activeItem.subject ?? 'Record Details';
     const primaryTitle = (isFolder || isUser || isDepartment || isDocumentRequest || isCoordinatorRequest)
         ? rawTitle
-        : (typeof rawTitle === 'string' ? rawTitle.replace(/\.[^/.]+$/, '').trim() || rawTitle : rawTitle);
+        : (typeof rawTitle === 'string' ? stripFileExtension(rawTitle) || rawTitle : rawTitle);
     const primarySubtitle =
         activeItem.code ??
         activeItem.universityId ??
@@ -4812,12 +5031,39 @@ const Inspector = ({
                                             const messageAttachments = (() => {
                                                 if (!message || !message.message) return [];
                                                 const match = message.message.match(/<!--\s*attachments:\[(.*?)\]\s*-->/i);
+                                                const namesMatch = message.message.match(/<!--\s*att_names:\[(.*?)\]\s*-->/i);
+                                                const savedNames = namesMatch && namesMatch[1] ? namesMatch[1].split(',').map((s) => decodeURIComponent(s.trim())) : [];
+
                                                 if (match && match[1]) {
                                                     const idList = match[1].split(',').map((s) => s.trim()).filter(Boolean);
                                                     if (idList.length > 0) {
-                                                        return requestAttachments.filter((att) => {
-                                                            const targetDocId = att.documentId ?? att.document?.id ?? att.id;
-                                                            return idList.includes(String(targetDocId)) || idList.includes(String(att.id));
+                                                        return idList.map((targetDocId, idx) => {
+                                                            const foundAtt = requestAttachments.find((att) => {
+                                                                const id = att.documentId ?? att.document?.id ?? att.id;
+                                                                return String(id) === String(targetDocId) || String(att.id) === String(targetDocId);
+                                                            });
+                                                            const matchedDoc = allDocuments.find((d) => d.id === targetDocId);
+                                                            const vers = (allDocumentVersions || []).filter((v) => (v.document?.id ?? v.documentId) === targetDocId);
+                                                            const fallbackName = savedNames[idx] || matchedDoc?.name || vers[0]?.document?.name || 'Attached document';
+
+                                                            if (foundAtt) {
+                                                                const isDocDeleted = matchedDoc?.isArchived || (!matchedDoc && !foundAtt.path);
+                                                                return {
+                                                                    ...foundAtt,
+                                                                    name: foundAtt.name || fallbackName,
+                                                                    isDeleted: isDocDeleted || foundAtt.isDeleted,
+                                                                    deletedReason: isDocDeleted ? 'repository_deleted' : null,
+                                                                };
+                                                            }
+
+                                                            // If not found in active attachments, it was unsent or removed!
+                                                            return {
+                                                                id: targetDocId,
+                                                                documentId: targetDocId,
+                                                                name: fallbackName,
+                                                                isDeleted: true,
+                                                                deletedReason: 'unsent',
+                                                            };
                                                         });
                                                     }
                                                 }
@@ -4882,41 +5128,44 @@ const Inspector = ({
 
                                                                     {messageAttachments.length > 0 && (
                                                                         <div className="mt-2 flex flex-col gap-1.5 pt-2 border-t border-white/20">
-                                                                            {messageAttachments.map((attachment) => (
+                                                                            {messageAttachments.filter((att) => !att.isDeleted).map((attachment) => (
                                                                                 <div
-                                                                                    key={attachment.id}
-                                                                                    className="p-2 rounded-lg flex items-center justify-between gap-2.5 text-xs bg-black/15 border border-white/20 text-text-inverted"
-                                                                                >
-                                                                                    <div className="flex items-center gap-2 min-w-0">
-                                                                                        <div className="p-1 rounded bg-white/20 text-text-inverted shrink-0">
-                                                                                            <FileText className="h-3.5 w-3.5" />
+                                                                                        key={attachment.id}
+                                                                                        className="p-2 rounded-lg flex items-center justify-between gap-2.5 text-xs bg-black/15 border border-white/20 text-text-inverted"
+                                                                                    >
+                                                                                        <div className="flex items-center gap-2 min-w-0">
+                                                                                            <div className="p-1 rounded bg-white/20 text-text-inverted shrink-0">
+                                                                                                <FileText className="h-3.5 w-3.5" />
+                                                                                            </div>
+                                                                                            <div className="flex flex-col min-w-0">
+                                                                                                <span
+                                                                                                    className="font-semibold truncate text-xs"
+                                                                                                    title={attachment.name}
+                                                                                                >
+                                                                                                    {attachment.name}
+                                                                                                </span>
+                                                                                                <span className="text-[10px] text-text-inverted/75">
+                                                                                                    {attachment.sizeBytes
+                                                                                                        ? formatBytes(attachment.sizeBytes)
+                                                                                                        : 'Document'}
+                                                                                                </span>
+                                                                                            </div>
                                                                                         </div>
-                                                                                        <div className="flex flex-col min-w-0">
-                                                                                            <span
-                                                                                                className="font-semibold truncate text-xs"
-                                                                                                title={attachment.name}
+                                                                                        <div className="flex items-center gap-1 shrink-0">
+                                                                                            <button
+                                                                                                type="button"
+                                                                                                onClick={() =>
+                                                                                                    handleActionClick('download', attachment)
+                                                                                                }
+                                                                                                className="p-1 rounded hover:bg-white/20 cursor-pointer text-text-inverted shrink-0 transition-colors"
+                                                                                                title="Download Attachment"
                                                                                             >
-                                                                                                {attachment.name}
-                                                                                            </span>
-                                                                                            <span className="text-[10px] text-text-inverted/75">
-                                                                                                {attachment.sizeBytes
-                                                                                                    ? formatBytes(attachment.sizeBytes)
-                                                                                                    : 'Document'}
-                                                                                            </span>
+                                                                                                <Download className="h-3.5 w-3.5" />
+                                                                                            </button>
                                                                                         </div>
                                                                                     </div>
-                                                                                    <button
-                                                                                        type="button"
-                                                                                        onClick={() =>
-                                                                                            handleActionClick('download', attachment)
-                                                                                        }
-                                                                                        className="p-1 rounded hover:bg-white/20 cursor-pointer text-text-inverted shrink-0 transition-colors"
-                                                                                        title="Download Attachment"
-                                                                                    >
-                                                                                        <Download className="h-3.5 w-3.5" />
-                                                                                    </button>
-                                                                                </div>
-                                                                            ))}
+                                                                                ))
+                                                                            }
                                                                         </div>
                                                                     )}
                                                                 </div>
@@ -4954,41 +5203,43 @@ const Inspector = ({
 
                                                                     {messageAttachments.length > 0 && (
                                                                         <div className="mt-2 flex flex-col gap-1.5 pt-2 border-t border-surface-border">
-                                                                            {messageAttachments.map((attachment) => (
+                                                                            {messageAttachments.filter((att) => !att.isDeleted).map((attachment) => (
                                                                                 <div
-                                                                                    key={attachment.id}
-                                                                                    className="p-2 rounded-lg flex items-center justify-between gap-2.5 text-xs bg-surface-hover/80 border border-surface-border text-text"
-                                                                                >
-                                                                                    <div className="flex items-center gap-2 min-w-0">
-                                                                                        <div className="p-1 rounded bg-accent/10 text-accent shrink-0">
-                                                                                            <FileText className="h-3.5 w-3.5" />
+                                                                                        key={attachment.id}
+                                                                                        className="p-2 rounded-lg flex items-center justify-between gap-2.5 text-xs bg-surface-hover/80 border border-surface-border text-text"
+                                                                                    >
+                                                                                        <div className="flex items-center gap-2 min-w-0">
+                                                                                            <div className="p-1 rounded bg-accent/10 text-accent shrink-0">
+                                                                                                <FileText className="h-3.5 w-3.5" />
+                                                                                            </div>
+                                                                                            <div className="flex flex-col min-w-0">
+                                                                                                <span
+                                                                                                    className="font-semibold truncate text-xs"
+                                                                                                    title={attachment.name}
+                                                                                                >
+                                                                                                    {attachment.name}
+                                                                                                </span>
+                                                                                                <span className="text-[10px] text-text-muted">
+                                                                                                    {attachment.sizeBytes
+                                                                                                        ? formatBytes(attachment.sizeBytes)
+                                                                                                        : 'Document'}
+                                                                                                </span>
+                                                                                            </div>
                                                                                         </div>
-                                                                                        <div className="flex flex-col min-w-0">
-                                                                                            <span
-                                                                                                className="font-semibold truncate text-xs"
-                                                                                                title={attachment.name}
+                                                                                        <div className="flex items-center gap-1 shrink-0">
+                                                                                            <button
+                                                                                                type="button"
+                                                                                                onClick={() =>
+                                                                                                    handleActionClick('download', attachment)
+                                                                                                }
+                                                                                                className="p-1 rounded hover:bg-surface cursor-pointer text-accent shrink-0 transition-colors"
+                                                                                                title="Download Attachment"
                                                                                             >
-                                                                                                {attachment.name}
-                                                                                            </span>
-                                                                                            <span className="text-[10px] text-text-muted">
-                                                                                                {attachment.sizeBytes
-                                                                                                    ? formatBytes(attachment.sizeBytes)
-                                                                                                    : 'Document'}
-                                                                                            </span>
+                                                                                                <Download className="h-3.5 w-3.5" />
+                                                                                            </button>
                                                                                         </div>
                                                                                     </div>
-                                                                                    <button
-                                                                                        type="button"
-                                                                                        onClick={() =>
-                                                                                            handleActionClick('download', attachment)
-                                                                                        }
-                                                                                        className="p-1 rounded hover:bg-surface cursor-pointer text-accent shrink-0 transition-colors"
-                                                                                        title="Download Attachment"
-                                                                                    >
-                                                                                        <Download className="h-3.5 w-3.5" />
-                                                                                    </button>
-                                                                                </div>
-                                                                            ))}
+                                                                                ))}
                                                                         </div>
                                                                     )}
                                                                 </div>
@@ -5834,7 +6085,7 @@ const Inspector = ({
                     onClose={handleCloseAttachModal}
                     title="Attach Documents from Repository"
                     description="Select institutional files to attach to this message thread."
-                    size="md"
+                    size="lg"
                     icon={Paperclip}
                     confirmLabel={stagedAttachments.length > 0 ? `Done (${stagedAttachments.length} staged)` : 'Done'}
                     onConfirm={handleCloseAttachModal}
@@ -5842,18 +6093,61 @@ const Inspector = ({
                     onCancel={handleCloseAttachModal}
                 >
                     <div className="flex flex-col gap-3 py-2">
-                        <div className="relative">
-                            <Search className="absolute left-3 top-3 h-4 w-4 text-text-muted pointer-events-none" />
-                            <input
-                                type="text"
-                                value={attachSearchTerm}
-                                onChange={(changeEvent) => setAttachSearchTerm(changeEvent.target.value)}
-                                placeholder="Search documents by name..."
-                                className="w-full pl-9 pr-3 py-2 text-xs rounded-md border border-surface-border bg-surface text-text focus:outline-hidden focus:border-accent focus:ring-1 focus:ring-accent"
-                            />
+                        <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center">
+                            <div className="relative flex-1 min-w-0">
+                                <Search className="absolute left-3 top-2.5 h-4 w-4 text-text-muted pointer-events-none" />
+                                <input
+                                    type="text"
+                                    value={attachSearchTerm}
+                                    onChange={(changeEvent) => {
+                                        const nextVal = changeEvent.target.value;
+                                        setAttachSearchTerm(nextVal);
+                                        if (nextVal.trim().length < 3) {
+                                            setSemanticScoreMap({});
+                                            setIsSemanticSearching(false);
+                                        }
+                                    }}
+                                    placeholder="Search documents by title, AI summary, or content..."
+                                    className="w-full pl-9 pr-28 py-2 text-xs rounded-md border border-surface-border bg-surface text-text focus:outline-hidden focus:border-accent focus:ring-1 focus:ring-accent"
+                                />
+                                <div className="absolute right-2.5 top-2 flex items-center gap-1.5 pointer-events-none select-none">
+                                    {isSemanticSearching ? (
+                                        <span className="flex items-center gap-1 text-[10px] text-accent animate-pulse font-medium">
+                                            <Sparkles className="h-3 w-3 animate-spin" />
+                                            Semantic AI...
+                                        </span>
+                                    ) : attachSearchTerm.trim().length >= 3 ? (
+                                        <span className="flex items-center gap-1 text-[10px] text-accent font-medium">
+                                            <Sparkles className="h-3 w-3 text-accent" />
+                                            Semantic AI
+                                        </span>
+                                    ) : null}
+                                </div>
+                            </div>
+
+                            <div className="flex items-center gap-2 shrink-0">
+                                <SelectField
+                                    value={attachSortBy}
+                                    options={ATTACH_SORT_OPTIONS}
+                                    onChange={setAttachSortBy}
+                                    leadingIcon={ArrowUpDown}
+                                    placeholder="Sort records..."
+                                    className="w-40 text-xs"
+                                    dropdownAlign="right"
+                                />
+                                <SelectField
+                                    value={attachClassFilter}
+                                    options={ATTACH_CLASSIFICATION_OPTIONS}
+                                    onChange={setAttachClassFilter}
+                                    leadingIcon={Filter}
+                                    placeholder="Filter records..."
+                                    className="w-40 text-xs"
+                                    dropdownAlign="right"
+                                />
+                            </div>
                         </div>
 
-                        <div className="flex flex-col divide-y divide-surface-border max-h-64 overflow-y-auto rounded-lg border border-surface-border bg-surface">
+                        <div className="flex flex-col divide-y divide-surface-border max-h-72 overflow-y-auto rounded-lg border border-surface-border bg-surface">
                             {attachableDocuments.length === 0 ? (
                                 <div className="p-4 text-center text-xs text-text-muted">
                                     No matching documents found in repository.
@@ -5872,15 +6166,29 @@ const Inspector = ({
                                             <div className="flex items-center gap-3 min-w-0">
                                                 <FileText className={`h-4 w-4 shrink-0 ${isStaged ? 'text-accent' : 'text-text-muted'}`} />
                                                 <div className="flex flex-col min-w-0">
-                                                    <span
-                                                        className="text-xs font-semibold text-text truncate"
-                                                        title={doc.name}
-                                                    >
-                                                        {doc.name}
-                                                    </span>
-                                                    <span className="text-xs text-text-muted">
-                                                        {doc.sizeBytes ? formatBytes(doc.sizeBytes) : 'Document'} • {doc.classification ?? constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED}
-                                                    </span>
+                                                    <div className="flex items-center gap-2">
+                                                        <span
+                                                            className="text-xs font-semibold text-text truncate max-w-xs"
+                                                            title={doc.name}
+                                                        >
+                                                            {doc.name}
+                                                        </span>
+                                                        {renderClassificationBadge(doc.classification)}
+                                                        {doc._semanticInfo && (
+                                                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[9px] font-semibold bg-accent/15 text-accent border border-accent/30">
+                                                                <Sparkles className="h-2.5 w-2.5" />
+                                                                {doc._semanticInfo.confidencePct}% match
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <div className="flex items-center gap-2 text-[11px] text-text-muted">
+                                                        <span>{doc.sizeBytes ? formatBytes(doc.sizeBytes) : 'Document'}</span>
+                                                        {doc._matchSnippet && (
+                                                            <span className="text-text-muted/80 truncate text-[10px] italic">
+                                                                • Match: {doc._matchSnippet}
+                                                            </span>
+                                                        )}
+                                                    </div>
                                                 </div>
                                             </div>
 

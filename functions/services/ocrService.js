@@ -26,6 +26,40 @@ function getVisionClient() {
     return visionClient;
 }
 
+const KNOWN_FILE_EXTENSION_PATTERN = /\.(pdf|png|jpe?g|jfif|webp|gif|bmp|tiff?|heic|heif|svg|docx?|xlsx?|xlsm|csv|pptx?|odt|ods|odp|rtf|txt|md|json|xml|html?|zip|rar|7z|tar|gz|mp3|wav|m4a|ogg|mp4|mov|avi|mkv|webm)$/i;
+
+function stripFileExtension(name) {
+    if (!name || typeof name !== 'string') return '';
+    return name.replace(KNOWN_FILE_EXTENSION_PATTERN, '').trim();
+}
+
+/**
+ * Splits lines that have collided headers (e.g. "LunFROM:", "CcuDATE:", "TO:...FROM:...")
+ * into distinct vertical slices so each field retains its own line and vertical position.
+ */
+function splitCollidedLine(item) {
+    const rawText = item.text || '';
+    const splitRegex = /(?<=[^\n])\s*(?=\b(?:TO|MEMORANDUM\s+FOR|FOR|ATTENTION|FROM|ISSUED\s+BY|DATE|DATED|SUBJECT|\bRE\b)\s*[:;\u2014-])|(?<=[A-Za-z0-9_.,])(?=(?:MEMORANDUM|OFFICE\s+ORDER|SPECIAL\s+ORDER|CIRCULAR|DATE|DATED|TO|FROM|SUBJECT)\s*[:;\u2014-])/gi;
+
+    const parts = rawText.split(splitRegex).map(p => p.trim()).filter(Boolean);
+    if (parts.length <= 1) return [item];
+
+    const box = item.box || {};
+    const totalHeight = Math.max(1, (box.maxY || 0) - (box.minY || 0));
+    const subHeight = totalHeight / parts.length;
+
+    return parts.map((part, idx) => ({
+        text: part,
+        box: {
+            minX: box.minX || 0,
+            maxX: box.maxX || 0,
+            minY: (box.minY || 0) + (idx * subHeight),
+            maxY: (box.minY || 0) + ((idx + 1) * subHeight),
+        },
+        confidence: item.confidence || 0.95,
+    }));
+}
+
 /**
  * Sanitizes Unicode strings to WinAnsi/ASCII printable range
  * to guarantee that PDF-lib Helvetica font never crashes with encoding errors.
@@ -245,9 +279,27 @@ Do not add conversational comments, headers, or markdown formatting. Only output
         }
     }
 
+    // Flatten any collided lines so headers like TO:/FROM:/DATE:/SUBJECT: each get their own vertical slot
+    const expandedLines = [];
+    for (const item of lineItems) {
+        expandedLines.push(...splitCollidedLine(item));
+    }
+
+    // Sort lines in natural top-to-bottom reading order (and left-to-right on similar Y baseline)
+    expandedLines.sort((a, b) => {
+        const yDiff = (a.box?.minY || 0) - (b.box?.minY || 0);
+        if (Math.abs(yDiff) > 8) return yDiff;
+        return (a.box?.minX || 0) - (b.box?.minX || 0);
+    });
+
+    lineItems = expandedLines;
+
     const avgConf = lineItems.length > 0 ? totalConfidence / lineItems.length : 0.90;
 
-    let normalizedFullText = fullText || '';
+    let normalizedFullText = lineItems.length > 0
+        ? lineItems.map(l => l.text).join('\n').trim()
+        : (fullText || '');
+
     if (normalizedFullText) {
         normalizedFullText = normalizedFullText
             .replace(/([A-Za-z0-9_.,])(MEMORANDUM|OFFICE\s+ORDER|SPECIAL\s+ORDER|ADMINISTRATIVE\s+ORDER|CIRCULAR|DATE|DATED|TO|MEMORANDUM\s+FOR|FOR|ATTENTION|FROM|ISSUED\s+BY|SUBJECT)\s*[:;\u2014-]/gi, '$1\n$2:')
@@ -347,6 +399,7 @@ async function createSearchablePdf(ocrResult, title = 'Scanned Document') {
                 size: fontSize,
                 font: helvetica,
                 opacity: 0,
+                lineHeight: Math.round(fontSize * 1.25),
             });
         } catch {
             // Character drawing fallback with strict ASCII
@@ -358,6 +411,7 @@ async function createSearchablePdf(ocrResult, title = 'Scanned Document') {
                     size: fontSize,
                     font: helvetica,
                     opacity: 0,
+                    lineHeight: Math.round(fontSize * 1.25),
                 });
             } catch {
                 // Ignore if line cannot be rendered
@@ -381,10 +435,9 @@ async function convertImageToSearchablePdf({
     console.log(`[CloudOCR] Processing image for "${fileName}" (${imageBuffer.length} bytes, autoWhiten=${autoWhiten})...`);
 
     const ocrResult = await processImageOcr(imageBuffer, autoWhiten);
-    const title = customTitle || fileName.replace(/\.[^/.]+$/, '');
+    const baseName = stripFileExtension(fileName) || 'document';
+    const title = customTitle || baseName;
     const pdfBuffer = await createSearchablePdf(ocrResult, title);
-
-    const baseName = fileName.replace(/\.[^/.]+$/, '') || 'document';
     const pdfFileName = `${baseName}.pdf`;
 
     console.log(`[CloudOCR] Successfully generated searchable PDF "${pdfFileName}" (${pdfBuffer.length} bytes, ${ocrResult.linesCount} lines recognized via ${ocrResult.engine})`);

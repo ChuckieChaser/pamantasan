@@ -2,6 +2,7 @@
 import { httpsCallable } from 'firebase/functions';
 import { functions } from './firebase';
 import { constants } from '../constants';
+import { stripFileExtension } from '../utils/fileNameUtils';
 
 // --- HELPERS: DYNAMIC CONTENT-DRIVEN EVALUATION ---
 
@@ -430,9 +431,21 @@ export function formatExecutiveSummary(rawSummary) {
     return formattedBody;
 }
 
+// Audience vocabulary used to judge the TO: / MEMORANDUM FOR line.
+const PUBLIC_AUDIENCE_PATTERN = /\b(?:students|student\s+body|studentry|plpians|university\s+community|campus\s+community|academic\s+community|plp\s+community|school\s+community|general\s+public|the\s+public|all\s+citizens|citizens|external\s+stakeholders|stakeholders|parents|guardians|alumni|applicants|freshmen|everyone)\b/i;
+const INTERNAL_AUDIENCE_PATTERN = /\b(?:deans?|directors?|department\s+heads?|heads?\s+of\s+(?:offices?|units?|departments?)|unit\s+heads?|program\s+chairs?|chairpersons?|chairs|faculty|professors?|instructors?|teachers|administrative\s+personnel|personnel|staff|employees|officials|vice\s+presidents?|coordinators?|registrar|treasurer|accountants?|budget\s+officers?|members\s+of\s+the\s+board|board\s+of\s+regents)\b/i;
+
+function extractAddresseeLine(raw = '') {
+    if (!raw) return '';
+    const match = raw.match(/(?:^|[\n\r]|\s)(?:to|memorandum\s+for|attention|attn\.?)\s*[:;\u2014]\s*([^\n\r]{1,300})/i);
+    if (!match) return '';
+    return match[1].split(/\b(?:from|date|dated|subject|re|thru|through)\s*[:;\u2014]/i)[0].trim();
+}
+
 export function determineDocumentClassification(textContent = '', fileName = '') {
     const raw = (textContent || '').trim();
-    const lower = (raw + ' ' + (fileName || '')).toLowerCase();
+    // Judge from document content; the filename is only a fallback when no text could be extracted
+    const lower = (raw || fileName || '').toLowerCase();
 
     if (!raw && !fileName) {
         return constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED;
@@ -498,30 +511,39 @@ export function determineDocumentClassification(textContent = '', fileName = '')
         return constants.DOCUMENT_VERSIONS_CLASSIFICATION.RESTRICTED;
     }
 
-    // --- TIER 4: General Public Advisories & Announcements (PUBLIC) ---
-    // Strictly documents intended for the general public, external stakeholders, or public advisories.
+    // --- TIER 4: Intended audience (TO: / MEMORANDUM FOR line) — decisive for PUBLIC vs PRIVATE ---
+    const addressee = extractAddresseeLine(raw);
+    if (addressee) {
+        if (PUBLIC_AUDIENCE_PATTERN.test(addressee)) {
+            return constants.DOCUMENT_VERSIONS_CLASSIFICATION.PUBLIC;
+        }
+        if (INTERNAL_AUDIENCE_PATTERN.test(addressee)) {
+            return constants.DOCUMENT_VERSIONS_CLASSIFICATION.PRIVATE;
+        }
+    }
+
+    // --- TIER 5: General Public Advisories & Student-Body Announcements (PUBLIC) ---
     const isPublicAnnouncement = (
-        /\bto\s*:\s*[^\n\r]*(?:general\s+public|all\s+citizens|external\s+stakeholders)/i.test(raw) ||
-        /\b(?:press\s+release|for\s+immediate\s+release|public\s+advisory|general\s+public\s+notice)\b/i.test(raw) ||
+        /\b(?:press\s+release|for\s+immediate\s+release|public\s+advisory|general\s+public\s+notice)\b/i.test(lower) ||
         /\b(?:suspension\s+of\s+classes|class\s+suspension|work\s+suspension|holiday\s+advisory)\b/i.test(lower) ||
         /\b(?:academic\s+calendar|student\s+handbook|commencement\s+program|university\s+manual)\b/i.test(lower) ||
-        /\b(?:newsletter|bulletin\s+board|sports\s+festival|job\s+fair|open\s+house|graduation\s+rites)\b/i.test(lower)
+        /\b(?:newsletter|bulletin\s+board|sports\s+festival|job\s+fair|open\s+house|graduation\s+rites)\b/i.test(lower) ||
+        /\b(?:from\s*[:;\u2014]\s*[^\n\r]*|office\s+of\s+the\s+)(?:plp\s+)?(?:supreme\s+student\s+council|student\s+council|central\s+student\s+government)\b/i.test(lower) ||
+        /\bpssc[\s_-]*notice\b/i.test(lower) ||
+        /\b(?:student\s+choice\s+award|student\s+(?:preference\s+)?survey|preference\s+survey|call\s+for\s+(?:participants|entries|nominations|applicants)|student\s+elections?)\b/i.test(lower)
     );
     if (isPublicAnnouncement) {
         return constants.DOCUMENT_VERSIONS_CLASSIFICATION.PUBLIC;
     }
 
-    // --- TIER 5: Internal Institutional Communications (PRIVATE) ---
-    // Memoranda, circulars, and notices addressed to university personnel (College Deans, Department Heads,
-    // Faculty Members, Administrative Personnel, Staff, Employees) are internal institutional records.
-    const isInternalPersonnelMemo = (
-        /\bto\s*:\s*[^\n\r]*(?:all\s+)?(?:college\s+deans|deans|directors|department\s+heads|faculty(?:\s+members?)?|professors|administrative\s+personnel|personnel|staff|employees)/i.test(raw) ||
+    // --- TIER 6: Internal Institutional Communications (PRIVATE) ---
+    const isInternalCommunication = (
         /\b(memorandum|circular|office\s+order|special\s+order)\b/i.test(lower) ||
         /\b(meeting\s+minutes|departmental\s+meeting|committee\s+meeting)\b/i.test(lower) ||
         /\b(course\s+syllabus|course\s+outline|curriculum\s+guide|learning\s+plan)\b/i.test(lower) ||
         /\b(purchase\s+requisition|inspection\s+report|inventory\s+list)\b/i.test(lower)
     );
-    if (isInternalPersonnelMemo) {
+    if (isInternalCommunication) {
         return constants.DOCUMENT_VERSIONS_CLASSIFICATION.PRIVATE;
     }
 
@@ -530,7 +552,7 @@ export function determineDocumentClassification(textContent = '', fileName = '')
 
 export function generateContentDrivenSummary(textContent = '', fileName = '') {
     const raw = (textContent || '').replace(/\r\n/g, '\n').trim();
-    const cleanName = (fileName || '').replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ').trim();
+    const cleanName = stripFileExtension(fileName || '').replace(/[-_]/g, ' ').trim();
 
     if (!raw) {
         return `Official institutional record concerning ${cleanName}.`;

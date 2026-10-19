@@ -87,9 +87,10 @@ DYNAMIC EXECUTIVE SUMMARIZATION RULES:
    - Default Subject Matter Guidelines (when no explicit declaration exists in the text):
      * "${DOCUMENT_VERSIONS_CLASSIFICATION.CONFIDENTIAL}": Documents with sensitive personal data, student grades, transcripts of records (TOR), personnel 201/PDS files, payroll ledgers, legal contracts, or disciplinary proceedings.
      * "${DOCUMENT_VERSIONS_CLASSIFICATION.RESTRICTED}": Faculty performance evaluations, departmental budget requests, audit reports, strategic planning drafts, board deliberation records.
-     * "${DOCUMENT_VERSIONS_CLASSIFICATION.PRIVATE}": Internal university communications — including memoranda, circulars, and notices addressed to university personnel (College Deans, Department Heads, Faculty Members, Administrative Personnel, Staff, Employees), syllabus drafts, meeting minutes, routine institutional requisitions, academic reporting directives.
-     * "${DOCUMENT_VERSIONS_CLASSIFICATION.PUBLIC}": Documents explicitly for external public consumption — campus-wide announcements, press releases, public advisories (class suspensions, holiday advisories), public academic calendars, student handbooks, general circulars for the general public.
-     * NOTE: Memoranda to internal university faculty/deans/staff are PRIVATE, never PUBLIC.
+     * "${DOCUMENT_VERSIONS_CLASSIFICATION.PRIVATE}": Internal communications addressed ONLY to university personnel (College Deans, Program Chairs, Department Heads, Faculty Members, Administrative Personnel, Staff, Employees) — memoranda, circulars, office orders, syllabus drafts, meeting minutes, routine requisitions, academic reporting directives. This applies even when the topic is a celebration, event, or schedule change.
+     * "${DOCUMENT_VERSIONS_CLASSIFICATION.PUBLIC}": Documents intended for an audience beyond university personnel — anything addressed to students (e.g. "All Enrolled Students", "Student Body"), the whole university/campus community, parents, alumni, applicants, or the general public. Includes Supreme Student Council (PSSC) notices, student surveys, voting/award/election notices, event invitations for students, campus-wide announcements, press releases, public advisories (class suspensions, holiday advisories), academic calendars, and student handbooks.
+   - AUDIENCE RULE: The addressee line (TO: / MEMORANDUM FOR) is the strongest signal for PUBLIC vs PRIVATE. Students or the community → PUBLIC. Personnel only → PRIVATE.
+   - Judge ONLY from the document content. NEVER let the file name influence the classification (the same document must get the same classification regardless of its file name).
 
 3. "changeSummary":
    - For initial uploads (v1.0): Output EXACTLY "Initial file upload".
@@ -794,6 +795,20 @@ function generateContentAwareSummary(fileName = '', textContent = '') {
     return bodySummary;
 }
 
+// Audience vocabulary used to judge the TO: / MEMORANDUM FOR line.
+const PUBLIC_AUDIENCE_PATTERN = /\b(?:students|student\s+body|studentry|plpians|university\s+community|campus\s+community|academic\s+community|plp\s+community|school\s+community|general\s+public|the\s+public|all\s+citizens|citizens|external\s+stakeholders|stakeholders|parents|guardians|alumni|applicants|freshmen|everyone)\b/i;
+const INTERNAL_AUDIENCE_PATTERN = /\b(?:deans?|directors?|department\s+heads?|heads?\s+of\s+(?:offices?|units?|departments?)|unit\s+heads?|program\s+chairs?|chairpersons?|chairs|faculty|professors?|instructors?|teachers|administrative\s+personnel|personnel|staff|employees|officials|vice\s+presidents?|coordinators?|registrar|treasurer|accountants?|budget\s+officers?|members\s+of\s+the\s+board|board\s+of\s+regents)\b/i;
+
+/**
+ * Extracts the addressee from a memo header ("TO: All Enrolled Students ..."), stopping at the next header label.
+ */
+function extractAddresseeLine(raw = '') {
+    if (!raw) return '';
+    const match = raw.match(/(?:^|[\n\r]|\s)(?:to|memorandum\s+for|attention|attn\.?)\s*[:;\u2014]\s*([^\n\r]{1,300})/i);
+    if (!match) return '';
+    return match[1].split(/\b(?:from|date|dated|subject|re|thru|through)\s*[:;\u2014]/i)[0].trim();
+}
+
 /**
  * Accurately determines document classification based on:
  * 1. Explicit in-document security declarations (highest priority)
@@ -801,14 +816,17 @@ function generateContentAwareSummary(fileName = '', textContent = '') {
  * 3. Audience and dissemination intent (broad university community → PUBLIC)
  *
  * KEY RULES:
- * - A memorandum addressed to ALL students/faculty/staff/the university community
- *   with "for information and general dissemination" → PUBLIC (not PRIVATE)
- * - Only department-internal memos with no broad addressee → PRIVATE
+ * - The addressee (TO: / MEMORANDUM FOR) decides PUBLIC vs PRIVATE: students, the university community,
+ *   parents, alumni, or the public → PUBLIC; university personnel only → PRIVATE
+ * - Student council notices, surveys, award/election notices → PUBLIC
  * - Personal data, grades, payroll → CONFIDENTIAL regardless of memo format
+ * - Content always outranks the filename (filename is used only when no text is available)
  */
 function determineDocumentClassification(textContent = '', fileName = '') {
     const raw = (textContent || '').trim();
-    const lower = (raw + ' ' + (fileName || '')).toLowerCase();
+    // Judge from document content; the filename is only a fallback when no text could be extracted
+    // (prevents "1234.png" vs "PLP-AAO-...-MEM-2026-45.png" producing different results for the same document).
+    const lower = (raw || fileName || '').toLowerCase();
 
     if (!raw && !fileName) {
         return DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED;
@@ -879,30 +897,39 @@ function determineDocumentClassification(textContent = '', fileName = '') {
         return DOCUMENT_VERSIONS_CLASSIFICATION.RESTRICTED;
     }
 
-    // --- TIER 4: General Public Advisories & Announcements (PUBLIC) ---
-    // Strictly documents intended for the general public, external stakeholders, or public advisories.
+    // --- TIER 4: Intended audience (TO: / MEMORANDUM FOR line) — decisive for PUBLIC vs PRIVATE ---
+    const addressee = extractAddresseeLine(raw);
+    if (addressee) {
+        if (PUBLIC_AUDIENCE_PATTERN.test(addressee)) {
+            return DOCUMENT_VERSIONS_CLASSIFICATION.PUBLIC;
+        }
+        if (INTERNAL_AUDIENCE_PATTERN.test(addressee)) {
+            return DOCUMENT_VERSIONS_CLASSIFICATION.PRIVATE;
+        }
+    }
+
+    // --- TIER 5: Public-facing announcements & student-body notices (PUBLIC) ---
     const isPublicAnnouncement = (
-        /\bto\s*:\s*[^\n\r]*(?:general\s+public|all\s+citizens|external\s+stakeholders)/i.test(raw) ||
-        /\b(?:press\s+release|for\s+immediate\s+release|public\s+advisory|general\s+public\s+notice)\b/i.test(raw) ||
+        /\b(?:press\s+release|for\s+immediate\s+release|public\s+advisory|general\s+public\s+notice)\b/i.test(lower) ||
         /\b(?:suspension\s+of\s+classes|class\s+suspension|work\s+suspension|holiday\s+advisory)\b/i.test(lower) ||
         /\b(?:academic\s+calendar|student\s+handbook|commencement\s+program|university\s+manual)\b/i.test(lower) ||
-        /\b(?:newsletter|bulletin\s+board|sports\s+festival|job\s+fair|open\s+house|graduation\s+rites)\b/i.test(lower)
+        /\b(?:newsletter|bulletin\s+board|sports\s+festival|job\s+fair|open\s+house|graduation\s+rites)\b/i.test(lower) ||
+        /\b(?:from\s*[:;\u2014]\s*[^\n\r]*|office\s+of\s+the\s+)(?:plp\s+)?(?:supreme\s+student\s+council|student\s+council|central\s+student\s+government)\b/i.test(lower) ||
+        /\bpssc[\s_-]*notice\b/i.test(lower) ||
+        /\b(?:student\s+choice\s+award|student\s+(?:preference\s+)?survey|preference\s+survey|call\s+for\s+(?:participants|entries|nominations|applicants)|student\s+elections?)\b/i.test(lower)
     );
     if (isPublicAnnouncement) {
         return DOCUMENT_VERSIONS_CLASSIFICATION.PUBLIC;
     }
 
-    // --- TIER 5: Internal Institutional Communications (PRIVATE) ---
-    // Memoranda, circulars, and notices addressed to university personnel (College Deans, Department Heads,
-    // Faculty Members, Administrative Personnel, Staff, Employees) are internal institutional records.
-    const isInternalPersonnelMemo = (
-        /\bto\s*:\s*[^\n\r]*(?:all\s+)?(?:college\s+deans|deans|directors|department\s+heads|faculty(?:\s+members?)?|professors|administrative\s+personnel|personnel|staff|employees)/i.test(raw) ||
+    // --- TIER 6: Internal Institutional Communications (PRIVATE) ---
+    const isInternalCommunication = (
         /\b(memorandum|circular|office\s+order|special\s+order)\b/i.test(lower) ||
         /\b(meeting\s+minutes|departmental\s+meeting|committee\s+meeting)\b/i.test(lower) ||
         /\b(course\s+syllabus|course\s+outline|curriculum\s+guide|learning\s+plan)\b/i.test(lower) ||
         /\b(purchase\s+requisition|inspection\s+report|inventory\s+list)\b/i.test(lower)
     );
-    if (isInternalPersonnelMemo) {
+    if (isInternalCommunication) {
         return DOCUMENT_VERSIONS_CLASSIFICATION.PRIVATE;
     }
 

@@ -29,6 +29,7 @@ import { formatDateTime } from './common';
 import { useToast, useKeyPress } from '../hooks';
 import { constants } from '../constants';
 import { storageService, aiService, systemEventService } from '../services';
+import { stripFileExtension } from '../utils/fileNameUtils';
 import { useDocumentStore, useAuthStore } from '../stores';
 
 
@@ -165,7 +166,7 @@ const DocumentViewerModal = ({
     const rawFileName = activeVersion?.path?.split('/')?.pop() || resolvedDoc?.name || resolvedDoc?.title || 'Document';
     const fileName = rawFileName;
     const fileExtension = useMemo(() => getFileExtension(rawFileName), [rawFileName]);
-    const cleanDisplayName = (resolvedDoc?.name || resolvedDoc?.title || rawFileName).replace(/\.[^/.]+$/, '').trim() || rawFileName;
+    const cleanDisplayName = stripFileExtension(resolvedDoc?.name || resolvedDoc?.title || rawFileName) || rawFileName;
     const isEditable = EDITABLE_EXTENSIONS.has(fileExtension);
     const isImage = IMAGE_EXTENSIONS.has(fileExtension);
     const isPdf = fileExtension === 'pdf';

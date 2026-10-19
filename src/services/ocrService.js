@@ -1,6 +1,7 @@
 // --- IMPORTS ---
 import { httpsCallable } from 'firebase/functions';
 import { functions } from './firebase';
+import { stripFileExtension } from '../utils/fileNameUtils';
 
 const SUPPORTED_IMAGE_EXTENSIONS = new Set([
     'png',
@@ -144,7 +145,7 @@ export const ocrService = {
         const result = response.data;
         if (result && result.success && result.pdfBase64) {
             const pdfBlob = base64ToBlob(result.pdfBase64, 'application/pdf');
-            const finalFileName = result.pdfFileName || `${(file.name || 'document').replace(/\.[^/.]+$/, '')}.pdf`;
+            const finalFileName = result.pdfFileName || `${stripFileExtension(file.name || 'document') || 'document'}.pdf`;
             const pdfFile = new File([pdfBlob], finalFileName, {
                 type: 'application/pdf',
                 lastModified: Date.now(),
