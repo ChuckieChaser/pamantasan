@@ -49,12 +49,6 @@ const IMAGE_EXTENSIONS = new Set([
 const VIDEO_EXTENSIONS = new Set(['mp4', 'webm', 'ogg', 'mov']);
 const AUDIO_EXTENSIONS = new Set(['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac']);
 
-const getFileExtension = (filename = '') => {
-    if (!filename) return '';
-    const parts = filename.split('.');
-    return parts.length > 1 ? parts.pop().toLowerCase() : '';
-};
-
 
 // --- COMPONENTS ---
 const DocumentViewerModal = ({
@@ -171,7 +165,6 @@ const DocumentViewerModal = ({
     const fileExtension = extensionFromDoc || extensionFromPath || (activeVersionPath.includes('.') ? activeVersionPath.split('.').pop().toLowerCase() : '') || 'pdf';
     const cleanDisplayName = stripFileExtension(cleanDocName || activeVersionPath.split('/').pop() || 'Document') || 'Document';
     const fileName = `${cleanDisplayName}.${fileExtension}`;
-    const rawFileName = fileName;
     const isEditable = EDITABLE_EXTENSIONS.has(fileExtension);
     const isImage = IMAGE_EXTENSIONS.has(fileExtension);
     const isPdf = fileExtension === 'pdf';
@@ -372,7 +365,7 @@ const DocumentViewerModal = ({
         return () => {
             isRenderCancelled = true;
         };
-    }, [isDocx, fileBlob]);
+    }, [isDocx, fileBlob, downloadUrl]);
 
     // RENDER XLSX VIA CLIENT-SIDE PARSER (AUTHENTIC EXCEL GRID)
     useEffect(() => {
@@ -640,6 +633,13 @@ const DocumentViewerModal = ({
                     ? fileBlob
                     : new Blob([fileBlob]);
                 await storageService.triggerBrowserDownload(downloadBlob, effectiveDownloadName);
+                if (resolvedDoc && currentUser?.id) {
+                    systemEventService.recordDocumentRead({
+                        document: resolvedDoc,
+                        user: currentUser,
+                        version: activeVersion?.version,
+                    }).catch(() => {});
+                }
                 showToast({
                     type: 'success',
                     title: 'Download Started',
