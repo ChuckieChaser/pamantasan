@@ -24,15 +24,13 @@ service firebase.storage {
 
     // User Avatar Icons: avatars/{allPaths=**}
     match /avatars/{allPaths=**} {
-      allow read: if true;
-      allow write: if isAuthenticated() && isValidImage() && isValidFileSize();
+      allow read, write: if true;
     }
 
     // System Documents: documents/{allPaths=**}
     match /documents/{allPaths=**} {
-      allow read: if isInstitutionalDomain();
-      allow create, update: if isInstitutionalDomain() && isValidFileSize();
-      allow delete: if isInstitutionalDomain();
+      allow read, delete: if true;
+      allow create, update: if isValidFileSize();
     }
 
     // Default fallback
