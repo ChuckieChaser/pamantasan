@@ -8,6 +8,12 @@ service firebase.storage {
       return request.auth != null;
     }
 
+    function isInstitutionalDomain() {
+      return isAuthenticated() &&
+             request.auth.token.email != null &&
+             request.auth.token.email.matches('.*@plpasig[.]edu[.]ph$');
+    }
+
     function isValidFileSize() {
       return request.resource.size <= 50 * 1024 * 1024; // 50 MB max
     }
@@ -24,7 +30,9 @@ service firebase.storage {
 
     // System Documents: documents/{allPaths=**}
     match /documents/{allPaths=**} {
-      allow read, create, update, delete: if true;
+      allow read: if isInstitutionalDomain();
+      allow create, update: if isInstitutionalDomain() && isValidFileSize();
+      allow delete: if isInstitutionalDomain();
     }
 
     // Default fallback
