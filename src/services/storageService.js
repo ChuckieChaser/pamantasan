@@ -637,7 +637,7 @@ async function triggerBrowserDownload(blob, fileName) {
 
     const dotIndex = fileName.lastIndexOf('.');
     const ext = dotIndex !== -1 ? fileName.slice(dotIndex).toLowerCase() : '';
-    let mimeType = blob.type;
+    let mimeType = blob?.type;
     if (!mimeType || mimeType === 'application/octet-stream') {
         if (ext === '.png') mimeType = 'image/png';
         else if (ext === '.jpg' || ext === '.jpeg') mimeType = 'image/jpeg';
@@ -650,6 +650,12 @@ async function triggerBrowserDownload(blob, fileName) {
         else mimeType = 'application/octet-stream';
     }
 
+    // Ensure we always have a true Blob instance (e.g. if an ArrayBuffer was passed for docx/xlsx)
+    let finalBlob = blob;
+    if (!(finalBlob instanceof Blob)) {
+        finalBlob = new Blob([finalBlob], { type: mimeType });
+    }
+
     if (typeof window.showSaveFilePicker === 'function') {
         try {
             const handle = await window.showSaveFilePicker({
@@ -660,7 +666,7 @@ async function triggerBrowserDownload(blob, fileName) {
                 }] : undefined,
             });
             const writable = await handle.createWritable();
-            await writable.write(blob);
+            await writable.write(finalBlob);
             await writable.close();
             return;
         } catch (error) {
@@ -671,7 +677,7 @@ async function triggerBrowserDownload(blob, fileName) {
         }
     }
 
-    const blobUrl = window.URL.createObjectURL(blob);
+    const blobUrl = window.URL.createObjectURL(finalBlob);
     const anchor = document.createElement('a');
     anchor.style.position = 'fixed';
     anchor.style.left = '-9999px';

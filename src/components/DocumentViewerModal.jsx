@@ -636,7 +636,10 @@ const DocumentViewerModal = ({
             }
 
             if (fileBlob) {
-                await storageService.triggerBrowserDownload(fileBlob, effectiveDownloadName);
+                const downloadBlob = fileBlob instanceof Blob
+                    ? fileBlob
+                    : new Blob([fileBlob]);
+                await storageService.triggerBrowserDownload(downloadBlob, effectiveDownloadName);
                 showToast({
                     type: 'success',
                     title: 'Download Started',
