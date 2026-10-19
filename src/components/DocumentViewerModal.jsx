@@ -29,7 +29,7 @@ import { formatDateTime } from './common';
 import { useToast, useKeyPress } from '../hooks';
 import { constants } from '../constants';
 import { storageService, aiService, systemEventService } from '../services';
-import { stripFileExtension } from '../utils/fileNameUtils';
+import { stripFileExtension, getKnownFileExtension } from '../utils/fileNameUtils';
 import { useDocumentStore, useAuthStore } from '../stores';
 
 
@@ -163,10 +163,15 @@ const DocumentViewerModal = ({
         return [...versionsForDoc].sort((a, b) => (b.version || 1) - (a.version || 1))[0];
     }, [targetVersion, resolvedDoc, documentVersions]);
 
-    const rawFileName = activeVersion?.path?.split('/')?.pop() || resolvedDoc?.name || resolvedDoc?.title || 'Document';
-    const fileName = rawFileName;
-    const fileExtension = useMemo(() => getFileExtension(rawFileName), [rawFileName]);
-    const cleanDisplayName = stripFileExtension(resolvedDoc?.name || resolvedDoc?.title || rawFileName) || rawFileName;
+    const activeVersionPath = activeVersion?.path || resolvedDoc?.path || '';
+    const extensionFromPath = activeVersionPath ? getKnownFileExtension(activeVersionPath).replace('.', '') : '';
+    const cleanDocName = resolvedDoc?.name || resolvedDoc?.title || '';
+    const extensionFromDoc = cleanDocName ? getKnownFileExtension(cleanDocName).replace('.', '') : '';
+
+    const fileExtension = extensionFromDoc || extensionFromPath || (activeVersionPath.includes('.') ? activeVersionPath.split('.').pop().toLowerCase() : '') || 'pdf';
+    const cleanDisplayName = stripFileExtension(cleanDocName || activeVersionPath.split('/').pop() || 'Document') || 'Document';
+    const fileName = `${cleanDisplayName}.${fileExtension}`;
+    const rawFileName = fileName;
     const isEditable = EDITABLE_EXTENSIONS.has(fileExtension);
     const isImage = IMAGE_EXTENSIONS.has(fileExtension);
     const isPdf = fileExtension === 'pdf';
