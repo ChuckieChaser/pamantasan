@@ -1,5 +1,6 @@
 // --- IMPORTS ---
 import { useState, useMemo, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import {
     CheckCircle2,
     XCircle,
@@ -18,7 +19,7 @@ import {
     Modal,
     formatDateTime,
 } from '../components';
-import { useToast, useAuth } from '../hooks';
+import { useToast, useAuth, useSeenItems } from '../hooks';
 import {
     useCoordinatorStore,
     useDepartmentStore,
@@ -66,11 +67,14 @@ const CoordinatorPage = ({
     ...props
 }) => {
     // STATES
+    const location = useLocation();
     const [selectedRequestItem, setSelectedRequestItem] = useState(null);
+    const [pulsingItemIds, setPulsingItemIds] = useState(new Set());
     const { currentUser: authUser } = useAuth();
     const storeUser = useAuthStore((state) => state.currentUser);
     const activeUser = currentUser ?? authUser ?? storeUser ?? useAuthStore.getState().currentUser;
     const isAdmin = constants.isAdminRole(activeUser?.role);
+    const { markItemAsSeen, getHighlightedIds } = useSeenItems('coordinator_requests', activeUser);
 
     // MODAL STATES
     const [viewingCoordinatorRequest, setViewingCoordinatorRequest] = useState(null);
@@ -246,6 +250,20 @@ const CoordinatorPage = ({
         );
     }, [formattedCoordinatorData]);
 
+    useEffect(() => {
+        if (location.state?.highlightType === 'pending') {
+            const pendingIds = pendingCoordinatorData.map((d) => d.id);
+            if (pendingIds.length > 0) {
+                setPulsingItemIds(new Set(pendingIds));
+                const timer = setTimeout(() => {
+                    setPulsingItemIds(new Set());
+                    window.history.replaceState({}, document.title);
+                }, 3500);
+                return () => clearTimeout(timer);
+            }
+        }
+    }, [location.state, pendingCoordinatorData]);
+
     const resolvedCoordinatorData = useMemo(() => {
         return formattedCoordinatorData.filter(
             (request) =>
@@ -253,6 +271,10 @@ const CoordinatorPage = ({
                 request.status === constants.COORDINATOR_REQUESTS_STATUS.REJECTED
         );
     }, [formattedCoordinatorData]);
+
+    const highlightedIds = useMemo(() => {
+        return getHighlightedIds(pendingCoordinatorData);
+    }, [getHighlightedIds, pendingCoordinatorData]);
 
     // DERIVED SELECTION: Stays reactive to store updates and formatted data
     const activeSelectedRequest = useMemo(() => {
@@ -274,6 +296,9 @@ const CoordinatorPage = ({
         const itemWithTab = item ? { ...item, _targetTab: targetTab } : null;
         setSelectedRequestItem(itemWithTab);
         onSelectRequest?.(itemWithTab, targetTab);
+        if (item) {
+            markItemAsSeen(item);
+        }
     };
 
     const handleOpenCoordinatorReview = (requestItem) => {
@@ -540,6 +565,9 @@ const CoordinatorPage = ({
                 filterOptions={COORDINATOR_FILTER_OPTIONS}
                 selectedItem={activeSelectedRequest}
                 selectedIds={selectedItems && selectedItems.length > 0 ? new Set(selectedItems.map((i) => i.id)) : undefined}
+                highlightedIds={highlightedIds}
+                onItemHover={markItemAsSeen}
+                onItemSeen={markItemAsSeen}
                 searchPlaceholder="Search request..."
                 onSelectItem={handleSelectRequest}
                 onSelectMultipleItems={onSelectMultiple}

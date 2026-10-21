@@ -314,12 +314,16 @@ const coordinatorApprovalService = {
 
             case constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_UNSHARE: {
                 const docStore = useDocumentStore.getState();
-                if (payloadData.isRecursive && payloadData.documentId && payloadData.departmentId) {
+                if (payloadData.allDepartments && payloadData.documentId) {
+                    await docStore.unshareDocumentFromAllDepartments(payloadData.documentId);
+                } else if (payloadData.isRecursive && payloadData.documentId && payloadData.departmentId) {
                     await docStore.unshareDocumentRecursive(payloadData.documentId, payloadData.departmentId);
                 } else if (payloadData.shareId) {
                     await docStore.unshareDocument(payloadData.shareId);
                 } else if (payloadData.documentId && payloadData.departmentId) {
                     await docStore.unshareDocumentRecursive(payloadData.documentId, payloadData.departmentId);
+                } else if (payloadData.documentId) {
+                    await docStore.unshareDocumentFromAllDepartments(payloadData.documentId);
                 }
                 break;
             }

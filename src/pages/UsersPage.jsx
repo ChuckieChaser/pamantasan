@@ -26,7 +26,7 @@ import {
     formatDateTime,
     resolveUserAvatar,
 } from '../components';
-import { useToast, useAuth } from '../hooks';
+import { useToast, useAuth, useSeenItems } from '../hooks';
 import { useUserStore, useDepartmentStore, useAuthStore, useCoordinatorStore } from '../stores';
 import { storageService, authService, coordinatorApprovalService } from '../services';
 import { constants } from '../constants';
@@ -156,9 +156,9 @@ const UsersPage = ({
         }
     };
     const { currentUser: authUser } = useAuth();
-    const storeUser = useAuthStore((state) => state.currentUser);
     const currentUser = propUser ?? authUser ?? storeUser ?? useAuthStore.getState().currentUser;
     const isCoordinator = constants.isCoordinatorRole(currentUser?.role);
+    const { markItemAsSeen, getHighlightedIds } = useSeenItems('users', currentUser);
 
     // EFFECTS
     const [avatarVersion, setAvatarVersion] = useState(0);
@@ -190,6 +190,9 @@ const UsersPage = ({
         const itemWithTab = item ? (targetTab ? { ...item, _targetTab: targetTab } : item) : null;
         setSelectedUser(itemWithTab);
         onSelectUser?.(itemWithTab, targetTab);
+        if (item) {
+            markItemAsSeen(item);
+        }
     };
 
     const handleOpenAddModal = () => {
@@ -934,6 +937,10 @@ const UsersPage = ({
         return formattedUserData.filter((user) => user.status !== constants.USERS_STATUS.SUSPENDED);
     }, [formattedUserData]);
 
+    const highlightedIds = useMemo(() => {
+        return getHighlightedIds(activeUserData);
+    }, [getHighlightedIds, activeUserData]);
+
     const suspendedUserData = useMemo(() => {
         return formattedUserData.filter((user) => user.status === constants.USERS_STATUS.SUSPENDED);
     }, [formattedUserData]);
@@ -974,6 +981,9 @@ const UsersPage = ({
                 filterOptions={userFilterOptions}
                 selectedItem={activeSelectedUser}
                 selectedIds={selectedItems && selectedItems.length > 0 ? new Set(selectedItems.map((i) => i.id)) : undefined}
+                highlightedIds={highlightedIds}
+                onItemHover={markItemAsSeen}
+                onItemSeen={markItemAsSeen}
                 addItemLabel="New User"
                 addItemIcon={Plus}
                 searchPlaceholder="Search user..."

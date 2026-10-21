@@ -317,7 +317,7 @@ const Menu = ({
                             className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
                         >
                             <Trash2 className={ICON_STYLE} />
-                            <span>{isMultipleSelected ? `Delete (${selectedCount})` : 'Delete Department'}</span>
+                            <span>{isMultipleSelected ? `Delete all (${selectedCount})` : 'Delete Department'}</span>
                         </button>
                     </>
                 )}
@@ -342,7 +342,7 @@ const Menu = ({
                                     className="flex items-center gap-2 px-3 py-2 rounded text-success hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
                                 >
                                     <UserCheck className={ICON_STYLE} />
-                                    <span>{isMultipleSelected ? `Unsuspend (${suspendedUsers.length})` : 'Unsuspend'}</span>
+                                    <span>{isMultipleSelected ? `Unsuspend all (${suspendedUsers.length})` : 'Unsuspend'}</span>
                                 </button>
                             )}
 
@@ -388,7 +388,7 @@ const Menu = ({
                                         className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
                                     >
                                         <UserX className={ICON_STYLE} />
-                                        <span>{isMultipleSelected ? `Suspend (${activeUsersWithoutSelf.length})` : 'Suspend'}</span>
+                                        <span>{isMultipleSelected ? `Suspend all (${activeUsersWithoutSelf.length})` : 'Suspend'}</span>
                                     </button>
                                 </>
                             )}
@@ -414,7 +414,7 @@ const Menu = ({
                                     className="flex items-center gap-2 px-3 py-2 rounded text-accent hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
                                 >
                                     <CheckCircle2 className={ICON_STYLE} />
-                                    <span>{isMultipleSelected ? `Resolve (${openDocRequests.length})` : 'Resolve Request'}</span>
+                                    <span>{isMultipleSelected ? `Resolve all (${openDocRequests.length})` : 'Resolve Request'}</span>
                                 </button>
                             )}
 
@@ -469,7 +469,7 @@ const Menu = ({
                                             className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
                                         >
                                             <XCircle className={ICON_STYLE} />
-                                            <span>{isMultipleSelected ? `Reject (${openDocRequests.length})` : 'Reject Request'}</span>
+                                            <span>{isMultipleSelected ? `Reject all (${openDocRequests.length})` : 'Reject Request'}</span>
                                         </button>
                                     )}
                                     {canDelete && (
@@ -479,7 +479,7 @@ const Menu = ({
                                             className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
                                         >
                                             <Trash2 className={ICON_STYLE} />
-                                            <span>{isMultipleSelected ? `Delete (${openDocRequests.length})` : 'Delete Request'}</span>
+                                            <span>{isMultipleSelected ? `Delete all (${openDocRequests.length})` : 'Delete Request'}</span>
                                         </button>
                                     )}
                                 </>
@@ -504,7 +504,7 @@ const Menu = ({
                                     className="flex items-center gap-2 px-3 py-2 rounded text-accent hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
                                 >
                                     <CheckCircle2 className={ICON_STYLE} />
-                                    <span>{isMultipleSelected ? `Approve (${pendingCoordRequests.length})` : 'Approve'}</span>
+                                    <span>{isMultipleSelected ? `Approve all (${pendingCoordRequests.length})` : 'Approve'}</span>
                                 </button>
                             )}
 
@@ -533,7 +533,7 @@ const Menu = ({
                                             className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
                                         >
                                             <XCircle className={ICON_STYLE} />
-                                            <span>{isMultipleSelected ? `Reject (${pendingCoordRequests.length})` : 'Reject'}</span>
+                                            <span>{isMultipleSelected ? `Reject all (${pendingCoordRequests.length})` : 'Reject'}</span>
                                         </button>
                                     )}
                                     {canDelete && (
@@ -543,7 +543,7 @@ const Menu = ({
                                             className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
                                         >
                                             <Trash2 className={ICON_STYLE} />
-                                            <span>{isMultipleSelected ? `Delete (${pendingCoordRequests.length})` : 'Delete Request'}</span>
+                                            <span>{isMultipleSelected ? `Delete all (${pendingCoordRequests.length})` : 'Delete Request'}</span>
                                         </button>
                                     )}
                                 </>
@@ -584,7 +584,7 @@ const Menu = ({
                                     className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
                                 >
                                     <Download className={ICON_STYLE} />
-                                    <span>{isMultipleSelected ? `Download All (${selectedCount})` : `Download ${targetType}`}</span>
+                                    <span>{isMultipleSelected ? `Download all (${selectedCount})` : `Download ${targetType}`}</span>
                                 </button>
 
                                 {!isMultipleSelected && (
@@ -635,7 +635,7 @@ const Menu = ({
                                         className="flex items-center gap-2 px-3 py-2 rounded text-accent hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
                                     >
                                         <Check className={ICON_STYLE} />
-                                        <span>{isMultipleSelected ? `Approve (${pendingDocs.length})` : `Approve ${targetType}`}</span>
+                                        <span>{isMultipleSelected ? `Approve all (${pendingDocs.length})` : `Approve ${targetType}`}</span>
                                     </button>
                                 )}
 
@@ -660,7 +660,7 @@ const Menu = ({
                                         className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
                                     >
                                         <RotateCcw className={ICON_STYLE} />
-                                        <span>{isMultipleSelected ? `Unapprove (${approvedDocs.length})` : `Unapprove ${targetType}`}</span>
+                                        <span>{isMultipleSelected ? `Unapprove all (${approvedDocs.length})` : `Unapprove ${targetType}`}</span>
                                     </button>
                                 )}
 
@@ -671,7 +671,7 @@ const Menu = ({
                                         className="flex items-center gap-2 px-3 py-2 rounded text-accent hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
                                     >
                                         <RotateCcw className={ICON_STYLE} />
-                                        <span>{isMultipleSelected ? `Unreject (${rejectedDocs.length})` : `Unreject ${targetType}`}</span>
+                                        <span>{isMultipleSelected ? `Unreject all (${rejectedDocs.length})` : `Unreject ${targetType}`}</span>
                                     </button>
                                 )}
 
@@ -682,7 +682,7 @@ const Menu = ({
                                     className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
                                 >
                                     <Download className={ICON_STYLE} />
-                                    <span>{isMultipleSelected ? `Download All (${selectedCount})` : `Download ${targetType}`}</span>
+                                    <span>{isMultipleSelected ? `Download all (${selectedCount})` : `Download ${targetType}`}</span>
                                 </button>
 
                                 {!isMultipleSelected && (
@@ -704,6 +704,16 @@ const Menu = ({
                                             {isFolder ? <Folder className={ICON_STYLE} /> : <Layers className={ICON_STYLE} />}
                                             <span>{isFolder ? 'View Content' : 'View Version'}</span>
                                         </button>
+                                        {!isArchived && (
+                                            <button
+                                                type="button"
+                                                onClick={(event) => onActionClick?.(event, 'view_share', item)}
+                                                className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                            >
+                                                <Share2 className={ICON_STYLE} />
+                                                <span>Open Shares</span>
+                                            </button>
+                                        )}
                                     </>
                                 )}
 
@@ -717,7 +727,7 @@ const Menu = ({
                                             className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
                                         >
                                             <XCircle className={ICON_STYLE} />
-                                            <span>{isMultipleSelected ? `Reject (${pendingDocs.length})` : `Reject ${targetType}`}</span>
+                                            <span>{isMultipleSelected ? `Reject all (${pendingDocs.length})` : `Reject ${targetType}`}</span>
                                         </button>
                                     </>
                                 )}
@@ -750,7 +760,7 @@ const Menu = ({
                                         className="flex items-center gap-2 px-3 py-2 rounded text-accent hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
                                     >
                                         <Globe className={ICON_STYLE} />
-                                        <span>{isMultipleSelected ? `Publish (${approvedUnpublishedDocs.length})` : `Publish ${targetType}`}</span>
+                                        <span>{isMultipleSelected ? `Publish all (${approvedUnpublishedDocs.length})` : `Publish ${targetType}`}</span>
                                     </button>
                                 )}
 
@@ -761,7 +771,7 @@ const Menu = ({
                                         className="flex items-center gap-2 px-3 py-2 rounded text-accent hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
                                     >
                                         <Globe className={ICON_STYLE} />
-                                        <span>{isMultipleSelected ? `Re-Publish (${publishedDocs.length})` : `Re-Publish ${targetType}`}</span>
+                                        <span>{isMultipleSelected ? `Re-Publish all (${publishedDocs.length})` : `Re-Publish ${targetType}`}</span>
                                     </button>
                                 )}
 
@@ -787,7 +797,7 @@ const Menu = ({
                                         className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
                                     >
                                         <EyeOff className={ICON_STYLE} />
-                                        <span>{isMultipleSelected ? `Unpublish (${publishedDocs.length})` : `Unpublish ${targetType}`}</span>
+                                        <span>{isMultipleSelected ? `Unpublish all (${publishedDocs.length})` : `Unpublish ${targetType}`}</span>
                                     </button>
                                 )}
 
@@ -799,7 +809,7 @@ const Menu = ({
                                         className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
                                     >
                                         <Layers className={ICON_STYLE} />
-                                        <span>{isMultipleSelected ? `Stash (${approvedNonStashedDocs.length})` : `Stash ${targetType}`}</span>
+                                        <span>{isMultipleSelected ? `Stash all (${approvedNonStashedDocs.length})` : `Stash ${targetType}`}</span>
                                     </button>
                                 )}
 
@@ -810,7 +820,7 @@ const Menu = ({
                                         className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
                                     >
                                         <RotateCcw className={ICON_STYLE} />
-                                        <span>{isMultipleSelected ? `Unstash (${stashedDocs.length})` : `Unstash ${targetType}`}</span>
+                                        <span>{isMultipleSelected ? `Unstash all (${stashedDocs.length})` : `Unstash ${targetType}`}</span>
                                     </button>
                                 )}
 
@@ -821,7 +831,7 @@ const Menu = ({
                                     className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
                                 >
                                     <Download className={ICON_STYLE} />
-                                    <span>{isMultipleSelected ? `Download All (${selectedCount})` : `Download ${targetType}`}</span>
+                                    <span>{isMultipleSelected ? `Download all (${selectedCount})` : `Download ${targetType}`}</span>
                                 </button>
 
                                 {!isMultipleSelected && (
@@ -843,6 +853,16 @@ const Menu = ({
                                             {isFolder ? <Folder className={ICON_STYLE} /> : <Layers className={ICON_STYLE} />}
                                             <span>{isFolder ? 'View Content' : 'View Version'}</span>
                                         </button>
+                                        {!isArchived && (
+                                            <button
+                                                type="button"
+                                                onClick={(event) => onActionClick?.(event, 'view_share', item)}
+                                                className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                            >
+                                                <Share2 className={ICON_STYLE} />
+                                                <span>Open Shares</span>
+                                            </button>
+                                        )}
                                     </>
                                 )}
                             </>
@@ -870,8 +890,8 @@ const Menu = ({
                                     onClick={(event) => onActionClick?.(event, 'restore', isMultipleSelected ? targetSelection : item)}
                                     className="flex items-center gap-2 px-3 py-2 rounded text-accent hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
                                 >
-                                    <Archive className={ICON_STYLE} />
-                                    <span>{isMultipleSelected ? `Unarchive (${selectedCount})` : `Unarchive ${targetType}`}</span>
+                                    <RotateCcw className={ICON_STYLE} />
+                                    <span>{isMultipleSelected ? `Restore all (${selectedCount})` : `Restore ${targetType}`}</span>
                                 </button>
                             ) : (
                                 <>
@@ -882,7 +902,7 @@ const Menu = ({
                                             className="flex items-center gap-2 px-3 py-2 rounded text-accent hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
                                         >
                                             <Share2 className={ICON_STYLE} />
-                                            <span>{isMultipleSelected ? `Share (${unsharedDocs.length})` : `Share ${targetType}`}</span>
+                                            <span>{isMultipleSelected ? `Share all (${unsharedDocs.length})` : `Share ${targetType}`}</span>
                                         </button>
                                     )}
                                     {canAdminReShare && !canAdminShare && (
@@ -892,7 +912,7 @@ const Menu = ({
                                             className="flex items-center gap-2 px-3 py-2 rounded text-accent hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
                                         >
                                             <Share2 className={ICON_STYLE} />
-                                            <span>{isMultipleSelected ? `Re-Share (${sharedDocs.length})` : `Re-Share ${targetType}`}</span>
+                                            <span>{isMultipleSelected ? `Re-Share all (${sharedDocs.length})` : `Re-Share ${targetType}`}</span>
                                         </button>
                                     )}
                                 </>
@@ -930,7 +950,7 @@ const Menu = ({
                                     className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
                                 >
                                     <RotateCcw className={ICON_STYLE} />
-                                    <span>{isMultipleSelected ? `Unshare (${sharedDocs.length})` : `Unshare ${targetType}`}</span>
+                                    <span>{isMultipleSelected ? `Unshare all (${sharedDocs.length})` : `Unshare ${targetType}`}</span>
                                 </button>
                             )}
 
@@ -941,7 +961,7 @@ const Menu = ({
                                 className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
                             >
                                 <Download className={ICON_STYLE} />
-                                <span>{isMultipleSelected ? `Download All (${selectedCount})` : `Download ${targetType}`}</span>
+                                <span>{isMultipleSelected ? `Download all (${selectedCount})` : `Download ${targetType}`}</span>
                             </button>
 
                             {!isMultipleSelected && (
@@ -962,14 +982,14 @@ const Menu = ({
                                         {isFolder ? <Folder className={ICON_STYLE} /> : <Layers className={ICON_STYLE} />}
                                         <span>{isFolder ? 'View Content' : 'View Version'}</span>
                                     </button>
-                                    {!isArchived && isShared && (
+                                    {!isArchived && (
                                         <button
                                             type="button"
                                             onClick={(event) => onActionClick?.(event, 'view_share', item)}
                                             className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
                                         >
                                             <Share2 className={ICON_STYLE} />
-                                            <span>View Share</span>
+                                            <span>Open Shares</span>
                                         </button>
                                     )}
                                 </>
@@ -986,7 +1006,7 @@ const Menu = ({
                                             className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
                                         >
                                             <Archive className={ICON_STYLE} />
-                                            <span>{isMultipleSelected ? `Archive (${unsharedDocs.length})` : `Archive ${targetType}`}</span>
+                                            <span>{isMultipleSelected ? `Archive all (${unsharedDocs.length})` : `Archive ${targetType}`}</span>
                                         </button>
                                     )}
                                     {canAdminDelete && (
@@ -996,7 +1016,7 @@ const Menu = ({
                                             className="flex items-center gap-2 px-3 py-2 rounded text-error hover:bg-error-background transition-colors cursor-pointer w-full text-left font-medium"
                                         >
                                             <Trash2 className={ICON_STYLE} />
-                                            <span>{isMultipleSelected ? `Delete (${isArchived ? selectedCount : unsharedDocs.length})` : `Delete ${targetType}`}</span>
+                                            <span>{isMultipleSelected ? `Delete all (${isArchived ? selectedCount : unsharedDocs.length})` : `Delete ${targetType}`}</span>
                                         </button>
                                     )}
                                 </>

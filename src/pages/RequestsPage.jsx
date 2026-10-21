@@ -1,5 +1,6 @@
 // --- IMPORTS ---
 import { useState, useMemo, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import {
     Check,
     CheckCircle2,
@@ -35,7 +36,7 @@ import {
     formatDateTime,
     resolveUserAvatar,
 } from '../components';
-import { useToast, useAuth } from '../hooks';
+import { useToast, useAuth, useSeenItems } from '../hooks';
 import {
     useDepartmentStore,
     useDocumentStore,
@@ -145,7 +146,9 @@ const RequestsPage = ({
     const isAdmin = constants.isAdminRole(currentUser?.role);
 
     // STATES
+    const location = useLocation();
     const [selectedRequestItem, setSelectedRequestItem] = useState(null);
+    const [pulsingItemIds, setPulsingItemIds] = useState(new Set());
 
     // DOCUMENT MODAL STATES
     const [viewingDocumentRequest, setViewingDocumentRequest] = useState(null);
@@ -209,6 +212,7 @@ const RequestsPage = ({
     const activeUser = currentUser ?? authUser;
     const isStaff = constants.isStaffRole(activeUser?.role);
     const canCreateRequest = !isStaff;
+    const { markItemAsSeen, getHighlightedIds } = useSeenItems('document_requests', activeUser);
 
     // LISTEN FOR EXTERNAL TRIGGERS (E.G. FROM INSPECTOR QUICK ACTIONS)
     useEffect(() => {
@@ -449,6 +453,10 @@ const RequestsPage = ({
             (request) => request.status === constants.DOCUMENT_REQUESTS_STATUS.OPEN || request.status === 'OPEN'
         );
     }, [formattedDocumentData]);
+
+    const highlightedIds = useMemo(() => {
+        return getHighlightedIds(pendingDocumentData);
+    }, [getHighlightedIds, pendingDocumentData]);
 
     const closedDocumentData = useMemo(() => {
         return formattedDocumentData.filter(
@@ -706,6 +714,9 @@ const RequestsPage = ({
         const itemWithTab = item ? (targetTab ? { ...item, _targetTab: targetTab } : item) : null;
         setSelectedRequestItem(itemWithTab);
         onSelectRequest?.(itemWithTab, targetTab);
+        if (item) {
+            markItemAsSeen(item);
+        }
     };
 
     const handleOpenAttachModal = () => {
@@ -1273,6 +1284,9 @@ const RequestsPage = ({
                 filterOptions={DOCUMENT_FILTER_OPTIONS}
                 selectedItem={activeSelectedRequest}
                 selectedIds={selectedItems && selectedItems.length > 0 ? new Set(selectedItems.map((i) => i.id)) : undefined}
+                highlightedIds={highlightedIds}
+                onItemHover={markItemAsSeen}
+                onItemSeen={markItemAsSeen}
                 addItemLabel={canCreateRequest ? "New Request" : undefined}
                 addItemIcon={canCreateRequest ? Plus : undefined}
                 searchPlaceholder="Search request..."

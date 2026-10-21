@@ -43,7 +43,9 @@ import {
     computeAllTimeSlots,
     resolveUserAvatar,
     formatDateTime,
+    getMimeTypeFromFilename,
 } from '../components';
+import { renderItemIcon } from '../components/browser/common';
 import {
     useDocumentStore,
     useDepartmentStore,
@@ -515,29 +517,7 @@ const DashboardPage = ({
     // NAVIGATION
     const navigate = useNavigate();
 
-    // LOCAL STATE FOR LIVE AUDIT TRAIL & ANALYTICS VIEW
-    const [auditFilters, setAuditFilters] = useState([]);
-    const [auditSearch, setAuditSearch] = useState('');
-    const [auditSort, setAuditSort] = useState('date-desc');
-    const [auditPage, setAuditPage] = useState(1);
-    const [auditPageSize] = useState(DEFAULT_AUDIT_PAGE_SIZE);
-    const [viewingAuditLog, setViewingAuditLog] = useState(null);
-    const [showRawJson, setShowRawJson] = useState(false);
-    const [hasCopiedJson, setHasCopiedJson] = useState(false);
-    const [analyticsSortBy, setAnalyticsSortBy] = useState('READS'); // 'READS' | 'RECENT'
-    const [analysisSearch, setAnalysisSearch] = useState('');
-    const [pendingRequestType, setPendingRequestType] = useState('DOCUMENT'); // 'DOCUMENT' | 'COORDINATOR'
-    const [pendingSearch, setPendingSearch] = useState('');
-    const [specializedSearch, setSpecializedSearch] = useState('');
-
-    // RESPONSIVE CONTAINER TIERS FOR CARDS (CONTAINER-QUERY BEHAVIOR LIKE BROWSER)
-    const [bannerRef, bannerTier] = useContainerTier({ full: 960, half: 520, quarter: 520 });
-    const [pendingCardRef, pendingTier] = useContainerTier({ full: 680, half: 540, quarter: 440 });
-    const [analysisCardRef, analysisTier] = useContainerTier({ full: 680, half: 540, quarter: 440 });
-    const [auditCardRef, auditTier] = useContainerTier({ full: 1040, half: 720, quarter: 500 });
-    const [specializedCardRef, specializedTier] = useContainerTier({ full: 620, half: 480, quarter: 360 });
-
-    // DERIVED VALUES
+    // AUTH & ROLE RESOLUTION
     const { currentUser: authUser } = useAuth();
     const storeUser = useAuthStore((state) => state.currentUser);
     const activeUser = currentUser ?? authUser ?? storeUser ?? useAuthStore.getState().currentUser;
@@ -547,9 +527,99 @@ const DashboardPage = ({
     const isDirector = isDirectorRole(activeUser?.role);
     const isMember = isMemberRole(activeUser?.role);
     const isSpecializedRole = isOfficer || isDirector || isMember;
-    const activeUserId = activeUser?.id;
+    const activeUserId = activeUser?.id || (typeof localStorage !== 'undefined' ? localStorage.getItem('pamantasan_auth_user_id') : null) || 'anonymous';
     const userDeptId = activeUser?.departmentId || activeUser?.department?.id;
     const greeting = useMemo(() => getTimeOfDayGreeting(), []);
+
+    // LOCAL STATE FOR LIVE AUDIT TRAIL & ANALYTICS VIEW
+    const [auditFilters, setAuditFilters] = useState([]);
+    const auditSortKey = `${activeUserId}_dashboard_audit_sort`;
+    const analyticsSortKey = `${activeUserId}_dashboard_analytics_sort`;
+    const pendingTypeKey = `${activeUserId}_dashboard_pending_type`;
+
+    const [auditSearch, setAuditSearch] = useState('');
+    const [auditSort, setAuditSort] = useState(() => {
+        if (typeof window !== 'undefined') {
+            try {
+                const saved = localStorage.getItem(auditSortKey);
+                if (saved) return saved;
+            } catch (e) {}
+        }
+        return 'date-desc';
+    });
+    const [auditPage, setAuditPage] = useState(1);
+    const [auditPageSize] = useState(DEFAULT_AUDIT_PAGE_SIZE);
+    const [viewingAuditLog, setViewingAuditLog] = useState(null);
+    const [showRawJson, setShowRawJson] = useState(false);
+    const [hasCopiedJson, setHasCopiedJson] = useState(false);
+    const [analyticsSortBy, setAnalyticsSortBy] = useState(() => {
+        if (typeof window !== 'undefined') {
+            try {
+                const saved = localStorage.getItem(analyticsSortKey);
+                if (saved && (saved === 'READS' || saved === 'RECENT')) return saved;
+            } catch (e) {}
+        }
+        return 'READS';
+    });
+    const [analysisSearch, setAnalysisSearch] = useState('');
+    const [pendingRequestType, setPendingRequestType] = useState(() => {
+        if (typeof window !== 'undefined') {
+            try {
+                const saved = localStorage.getItem(pendingTypeKey);
+                if (saved && (saved === 'DOCUMENT' || saved === 'COORDINATOR')) return saved;
+            } catch (e) {}
+        }
+        return 'DOCUMENT';
+    });
+    const [pendingSearch, setPendingSearch] = useState('');
+    const [specializedSearch, setSpecializedSearch] = useState('');
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        try {
+            const savedAuditSort = localStorage.getItem(auditSortKey);
+            setAuditSort(savedAuditSort || 'date-desc');
+            const savedAnalyticsSort = localStorage.getItem(analyticsSortKey);
+            setAnalyticsSortBy(savedAnalyticsSort && (savedAnalyticsSort === 'READS' || savedAnalyticsSort === 'RECENT') ? savedAnalyticsSort : 'READS');
+            const savedPendingType = localStorage.getItem(pendingTypeKey);
+            setPendingRequestType(savedPendingType && (savedPendingType === 'DOCUMENT' || savedPendingType === 'COORDINATOR') ? savedPendingType : 'DOCUMENT');
+        } catch (e) {}
+    }, [auditSortKey, analyticsSortKey, pendingTypeKey]);
+
+    const handleAuditSortChange = (newSort) => {
+        setAuditSort(newSort);
+        if (typeof window !== 'undefined') {
+            try {
+                localStorage.setItem(auditSortKey, newSort);
+            } catch (e) {}
+        }
+        setAuditPage(1);
+    };
+
+    const handleAnalyticsSortChange = (newVal) => {
+        setAnalyticsSortBy(newVal);
+        if (typeof window !== 'undefined') {
+            try {
+                localStorage.setItem(analyticsSortKey, newVal);
+            } catch (e) {}
+        }
+    };
+
+    const handlePendingRequestTypeChange = (newVal) => {
+        setPendingRequestType(newVal);
+        if (typeof window !== 'undefined') {
+            try {
+                localStorage.setItem(pendingTypeKey, newVal);
+            } catch (e) {}
+        }
+    };
+
+    // RESPONSIVE CONTAINER TIERS FOR CARDS (CONTAINER-QUERY BEHAVIOR LIKE BROWSER)
+    const [bannerRef, bannerTier] = useContainerTier({ full: 960, half: 520, quarter: 520 });
+    const [pendingCardRef, pendingTier] = useContainerTier({ full: 680, half: 540, quarter: 440 });
+    const [analysisCardRef, analysisTier] = useContainerTier({ full: 680, half: 540, quarter: 440 });
+    const [auditCardRef, auditTier] = useContainerTier({ full: 1040, half: 720, quarter: 500 });
+    const [specializedCardRef, specializedTier] = useContainerTier({ full: 620, half: 480, quarter: 360 });
 
     // FETCH DATA (ONLY FETCH UNINITIALIZED STORES TO PREVENT NETWORK THRASHING & LAG)
     useEffect(() => {
@@ -691,11 +761,93 @@ const DashboardPage = ({
             const classification = CLASSIFICATION_STYLES[rawClassification] ? rawClassification : 'UNCLASSIFIED';
             const classificationLabel = CLASSIFICATION_LABELS[classification] || 'Unclassified';
 
-            // Resolve sharer name
-            const sharerUser = primaryShare?.sharer;
-            const sharerName = sharerUser
-                ? `${sharerUser.firstName ?? ''} ${sharerUser.lastName ?? ''}`.trim() || sharerUser.name
-                : 'Central Records Office';
+            // Resolve names (sharer for Officer, approver for Director, publisher for Member)
+            const formatUserFullName = (user) => {
+                if (!user) return null;
+                const full = `${user.firstName ?? ''} ${user.lastName ?? ''}`.trim();
+                return full || user.name || user.email || null;
+            };
+
+            const resolveUserFromIdOrObject = (userOrId) => {
+                if (!userOrId) return null;
+                if (typeof userOrId === 'object') {
+                    const name = formatUserFullName(userOrId);
+                    if (name) return name;
+                }
+                const targetId = typeof userOrId === 'object' ? userOrId.id : userOrId;
+                const cleanTarget = cleanId(targetId);
+                const matched = (users || []).find((u) => cleanId(u.id) === cleanTarget);
+                return formatUserFullName(matched);
+            };
+
+            // Resolve sharer name (for Officer view: shared by {name of the sharer})
+            const sharerName = resolveUserFromIdOrObject(primaryShare?.sharer) ||
+                resolveUserFromIdOrObject(primaryShare?.sharerId) ||
+                resolveUserFromIdOrObject(latestVer?.uploader) ||
+                resolveUserFromIdOrObject(latestVer?.uploaderId) ||
+                resolveUserFromIdOrObject(doc.uploaderId) ||
+                'Central Records Office';
+
+            // Resolve approver name (for Director view: approved by {name of the approver})
+            let approverName = resolveUserFromIdOrObject(latestVer?.approver) ||
+                resolveUserFromIdOrObject(latestVer?.approverId);
+            if (!approverName) {
+                const approvalLog = (auditLogs || []).find((log) => {
+                    const actionUpper = String(log.action || '').toUpperCase();
+                    if (!actionUpper.includes('APPROV')) return false;
+                    const matchesEntity = cleanId(log.entityId) === cleanId(primaryShare?.id) || cleanId(log.entityId) === docClean;
+                    const matchesData = cleanId(log.data?._documentId) === docClean || cleanId(log.data?._shareId) === cleanId(primaryShare?.id);
+                    return matchesEntity || matchesData;
+                });
+                if (approvalLog) {
+                    approverName = resolveUserFromIdOrObject(approvalLog.actor) || resolveUserFromIdOrObject(approvalLog.actorId);
+                }
+            }
+            if (!approverName) {
+                const deptOfficer = (users || []).find(
+                    (u) => cleanId(u.departmentId ?? u.department?.id) === userDeptClean && constants.isOfficerRole(u.role)
+                );
+                if (deptOfficer) {
+                    approverName = formatUserFullName(deptOfficer);
+                }
+            }
+            if (!approverName) {
+                approverName = 'Department Officer';
+            }
+
+            // Resolve publisher name (for Member view: published by {name of the publisher})
+            let publisherName = resolveUserFromIdOrObject(latestVer?.publisher) ||
+                resolveUserFromIdOrObject(latestVer?.publisherId) ||
+                resolveUserFromIdOrObject(primaryShare?.publisherId);
+            if (!publisherName && primaryShare?.sharerId) {
+                const candidateUser = (users || []).find((u) => cleanId(u.id) === cleanId(primaryShare.sharerId));
+                if (candidateUser && (constants.isDirectorRole(candidateUser.role) || constants.isStaffRole(candidateUser.role))) {
+                    publisherName = formatUserFullName(candidateUser);
+                }
+            }
+            if (!publisherName) {
+                const publishLog = (auditLogs || []).find((log) => {
+                    const actionUpper = String(log.action || '').toUpperCase();
+                    if (!actionUpper.includes('PUBLISH')) return false;
+                    const matchesEntity = cleanId(log.entityId) === cleanId(primaryShare?.id) || cleanId(log.entityId) === docClean;
+                    const matchesData = cleanId(log.data?._documentId) === docClean || cleanId(log.data?._shareId) === cleanId(primaryShare?.id);
+                    return matchesEntity || matchesData;
+                });
+                if (publishLog) {
+                    publisherName = resolveUserFromIdOrObject(publishLog.actor) || resolveUserFromIdOrObject(publishLog.actorId);
+                }
+            }
+            if (!publisherName) {
+                const deptDirector = (users || []).find(
+                    (u) => cleanId(u.departmentId ?? u.department?.id) === userDeptClean && constants.isDirectorRole(u.role)
+                );
+                if (deptDirector) {
+                    publisherName = formatUserFullName(deptDirector);
+                }
+            }
+            if (!publisherName) {
+                publisherName = 'Department Director';
+            }
 
             // Format date
             const shareDateRaw = primaryShare?.updatedAt || primaryShare?.createdAt || doc.updatedAt || doc.createdAt;
@@ -706,16 +858,23 @@ const DashboardPage = ({
                     : shareDateObj.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }))
                 : 'Recent';
 
+            const effectiveMime = latestVer?.mimeType || (doc.name ? getMimeTypeFromFilename(doc.name) : 'application/pdf');
+
             const itemPayload = {
                 id: doc.id,
                 title: doc.name || doc.title || 'Institutional Record',
+                fileName: doc.name || doc.title || null,
+                name: doc.name || doc.title || null,
                 extension: doc.name ? doc.name.split('.').pop() : 'pdf',
+                mimeType: effectiveMime,
                 parentFolderName,
                 isInherited,
                 status: resolvedStatus,
                 primaryShare,
                 effectiveShares,
                 sharerName,
+                approverName,
+                publisherName,
                 timestamp: formattedDate,
                 rawDate: shareDateObj ? shareDateObj.getTime() : 0,
                 classification,
@@ -767,7 +926,7 @@ const DashboardPage = ({
             directorPendingDocs: approvedPendingPubList,
             memberPublishedDocs: publishedList,
         };
-    }, [documents, documentShares, documentVersions, isStaff, isMember, userDeptId, activeUser?.id]);
+    }, [documents, documentShares, documentVersions, users, auditLogs, isStaff, isMember, userDeptId, activeUser?.id]);
 
     const activeSpecializedList = useMemo(() => {
         let sourceList;
@@ -783,6 +942,8 @@ const DashboardPage = ({
                 (item.title || '').toLowerCase().includes(query) ||
                 (item.parentFolderName || '').toLowerCase().includes(query) ||
                 (item.sharerName || '').toLowerCase().includes(query) ||
+                (item.approverName || '').toLowerCase().includes(query) ||
+                (item.publisherName || '').toLowerCase().includes(query) ||
                 (item.classificationLabel || '').toLowerCase().includes(query) ||
                 (item.extension || '').toLowerCase().includes(query)
             );
@@ -1716,7 +1877,8 @@ const DashboardPage = ({
 
                     {/* CARD 2: PENDING APPROVAL */}
                     <div
-                        className="p-3.5 sm:p-4 rounded-xl bg-surface border border-surface-border hover:border-warning/50 hover:shadow-md transition-all duration-200 flex flex-col justify-between gap-2.5 group"
+                        onClick={() => onNavigate?.('documents')}
+                        className="p-3.5 sm:p-4 rounded-xl bg-surface border border-surface-border hover:border-warning/50 hover:shadow-md transition-all duration-200 cursor-pointer flex flex-col justify-between gap-2.5 group"
                     >
                         <div className="flex items-center justify-between">
                             <span className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">
@@ -1819,7 +1981,8 @@ const DashboardPage = ({
 
                     {/* CARD 2: PENDING PUBLICATION */}
                     <div
-                        className="p-3.5 sm:p-4 rounded-xl bg-surface border border-surface-border hover:border-sky-500/50 hover:shadow-md transition-all duration-200 flex flex-col justify-between gap-2.5 group"
+                        onClick={() => onNavigate?.('documents')}
+                        className="p-3.5 sm:p-4 rounded-xl bg-surface border border-surface-border hover:border-sky-500/50 hover:shadow-md transition-all duration-200 cursor-pointer flex flex-col justify-between gap-2.5 group"
                     >
                         <div className="flex items-center justify-between">
                             <span className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">
@@ -2175,18 +2338,15 @@ const DashboardPage = ({
                                     }}
                                     className="py-2.5 px-3.5 sm:py-3 sm:px-4 rounded-xl border border-surface-border bg-surface hover:bg-surface-hover/70 hover:border-accent/40 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-4 cursor-pointer group shadow-2xs shrink-0"
                                 >
-                                    {/* Left: Document Icon + Name & Folder/Sharer details */}
+                                    {/* Left: Document Icon (matching mimetype) + Name & Folder/Actor details */}
                                     <div className="flex items-center gap-3 min-w-0 flex-1">
-                                        <div className="p-2 rounded-lg bg-surface-hover/80 border border-surface-border text-text-muted group-hover:text-accent group-hover:border-accent/40 transition-colors shrink-0">
-                                            <FileText className="h-4 w-4" />
+                                        <div className="p-2 rounded-lg bg-surface-hover/80 border border-surface-border text-text-muted group-hover:text-accent group-hover:border-accent/40 transition-colors shrink-0 flex items-center justify-center">
+                                            {renderItemIcon(item, 'documents', 'h-4 w-4')}
                                         </div>
                                         <div className="flex flex-col gap-1 min-w-0 flex-1">
                                             <div className="flex items-center gap-2 flex-wrap min-w-0">
                                                 <span className="text-xs sm:text-sm font-bold text-text truncate group-hover:text-accent transition-colors" title={item.title}>
                                                     {item.title}
-                                                </span>
-                                                <span className="text-[10px] font-mono uppercase px-1.5 py-0.2 rounded bg-surface-hover text-text-muted border border-surface-border shrink-0">
-                                                    {item.extension}
                                                 </span>
                                                 {item.classification && (
                                                     <span className={`text-[10px] font-semibold px-2 py-0.2 rounded-full border shrink-0 ${CLASSIFICATION_STYLES[item.classification] || CLASSIFICATION_STYLES.UNCLASSIFIED}`}>
@@ -2204,7 +2364,11 @@ const DashboardPage = ({
                                                     </>
                                                 )}
                                                 <span className="truncate">
-                                                    {isOfficer ? `Shared by ${item.sharerName}` : isDirector ? `Reviewed by ${item.sharerName}` : `Shared with ${userUnitName}`}
+                                                    {isOfficer
+                                                        ? `Shared by ${item.sharerName}`
+                                                        : isDirector
+                                                        ? `Approved by ${item.approverName}`
+                                                        : `Published by ${item.publisherName}`}
                                                 </span>
                                             </div>
                                         </div>
@@ -2277,7 +2441,7 @@ const DashboardPage = ({
                             }`}>
                                 <button
                                     type="button"
-                                    onClick={() => setPendingRequestType('DOCUMENT')}
+                                    onClick={() => handlePendingRequestTypeChange('DOCUMENT')}
                                     className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer flex items-center justify-center gap-1.5 ${
                                         pendingRequestType === 'DOCUMENT'
                                             ? 'bg-accent text-text-inverted font-semibold shadow-2xs'
@@ -2297,7 +2461,7 @@ const DashboardPage = ({
                                 </button>
                                 <button
                                     type="button"
-                                    onClick={() => setPendingRequestType('COORDINATOR')}
+                                    onClick={() => handlePendingRequestTypeChange('COORDINATOR')}
                                     className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer flex items-center justify-center gap-1.5 ${
                                         pendingRequestType === 'COORDINATOR'
                                             ? 'bg-accent text-text-inverted font-semibold shadow-2xs'
@@ -2458,7 +2622,7 @@ const DashboardPage = ({
                             }`}>
                                 <button
                                     type="button"
-                                    onClick={() => setAnalyticsSortBy('READS')}
+                                    onClick={() => handleAnalyticsSortChange('READS')}
                                     className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer text-center ${
                                         analyticsSortBy === 'READS'
                                             ? 'bg-accent text-text-inverted font-semibold shadow-2xs'
@@ -2469,7 +2633,7 @@ const DashboardPage = ({
                                 </button>
                                 <button
                                     type="button"
-                                    onClick={() => setAnalyticsSortBy('RECENT')}
+                                    onClick={() => handleAnalyticsSortChange('RECENT')}
                                     className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer text-center ${
                                         analyticsSortBy === 'RECENT'
                                             ? 'bg-accent text-text-inverted font-semibold shadow-2xs'
@@ -2680,10 +2844,7 @@ const DashboardPage = ({
                         <SelectField
                             value={auditSort}
                             options={AUDIT_SORT_OPTIONS}
-                            onChange={(newSort) => {
-                                setAuditSort(newSort);
-                                setAuditPage(1);
-                            }}
+                            onChange={handleAuditSortChange}
                             leadingIcon={Clock}
                             placeholder="Sort by..."
                             dropdownAlign="right"
@@ -2707,7 +2868,7 @@ const DashboardPage = ({
 
                     if (auditTier === 'full') {
                         return (
-                            <div className="flex items-center justify-between gap-3 border-b border-surface-border pb-3">
+                            <div className="relative z-20 flex items-center justify-between gap-3 border-b border-surface-border pb-3">
                                 {headerNode}
                                 <div className="flex items-center gap-2.5 shrink-0 ml-auto">
                                     <div className="w-56 sm:w-64 md:w-72 shrink-0">{searchNode}</div>
@@ -2720,7 +2881,7 @@ const DashboardPage = ({
 
                     if (auditTier === 'half') {
                         return (
-                            <div className="flex flex-col gap-2.5 border-b border-surface-border pb-3 w-full">
+                            <div className="relative z-20 flex flex-col gap-2.5 border-b border-surface-border pb-3 w-full">
                                 <div className="flex items-center justify-between w-full">
                                     {headerNode}
                                     <span className="inline-flex items-center gap-1.5 text-[11px] px-2.5 py-0.5 rounded-full bg-surface-hover/90 text-text-muted font-medium border border-surface-border shrink-0 shadow-2xs">
@@ -2739,7 +2900,7 @@ const DashboardPage = ({
 
                     if (auditTier === 'quarter') {
                         return (
-                            <div className="flex flex-col gap-2.5 border-b border-surface-border pb-3 w-full">
+                            <div className="relative z-20 flex flex-col gap-2.5 border-b border-surface-border pb-3 w-full">
                                 <div className="flex items-center justify-between w-full">
                                     {headerNode}
                                     <span className="inline-flex items-center gap-1.5 text-[11px] px-2.5 py-0.5 rounded-full bg-surface-hover/90 text-text-muted font-medium border border-surface-border shrink-0 shadow-2xs">
@@ -2758,7 +2919,7 @@ const DashboardPage = ({
 
                     // Mobile tier
                     return (
-                        <div className="flex flex-col gap-2 border-b border-surface-border pb-3 w-full">
+                        <div className="relative z-20 flex flex-col gap-2 border-b border-surface-border pb-3 w-full">
                             <div className="w-full flex items-center justify-between">
                                 {headerNode}
                                 <span className="inline-flex items-center gap-1.5 text-[11px] px-2 py-0.5 rounded-full bg-surface-hover/90 text-text-muted font-medium border border-surface-border shrink-0">

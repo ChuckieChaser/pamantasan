@@ -821,7 +821,7 @@ const ComboField = ({
     return (
         <div
             ref={containerRef}
-            className={`${FIELD_WRAPPER_STYLE} relative`}
+            className={`${FIELD_WRAPPER_STYLE} relative ${isOpen ? 'z-50' : ''}`}
             {...props}
         >
             {label && (

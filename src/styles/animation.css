@@ -46,3 +46,42 @@
 .pause-animation {
     animation-play-state: paused !important;
 }
+
+/* --- ROW HIGHLIGHT PULSE ANIMATIONS --- */
+@keyframes pulse-row-highlight {
+    0% {
+        opacity: 0.9;
+    }
+    15% {
+        opacity: 1;
+    }
+    85% {
+        opacity: 1;
+    }
+    100% {
+        opacity: 0.95;
+    }
+}
+
+@keyframes pulse-row-error {
+    0% {
+        opacity: 0.9;
+    }
+    15% {
+        opacity: 1;
+    }
+    85% {
+        opacity: 1;
+    }
+    100% {
+        opacity: 0.95;
+    }
+}
+
+.animate-pulse-row-highlight {
+    animation: pulse-row-highlight 3.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-pulse-row-error {
+    animation: pulse-row-error 3.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}

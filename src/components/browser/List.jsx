@@ -14,25 +14,48 @@ const List = ({
     resourceName,
     selectedId,
     selectedIds = new Set(),
+    highlightedIds = new Set(),
     onItemClick,
     onToggleActionMenu,
     onToggleSelect,
     onContextMenu,
+    onItemHover,
     className,
     ...props
 }) => {
     // RENDER
     return (
-        <div className={`flex flex-col gap-2 max-h-[640px] overflow-y-auto pr-1 ${className ?? ''}`.trim()} {...props}>
+        <div className={`flex flex-col gap-2 max-h-[680px] overflow-y-auto pr-1 ${className ?? ''}`.trim()} {...props}>
             {data.map((item) => {
                 const isChecked = selectedIds.has(item.id);
                 const isSelected = selectedId === item.id || isChecked;
+                const isHighlighted = highlightedIds instanceof Set
+                    ? highlightedIds.has(item.id)
+                    : (Array.isArray(highlightedIds) && highlightedIds.includes(item.id));
+                const isSoftError = Boolean(item.isRejected || item.hasRejectedChild);
+                const isWarning = Boolean(!isSoftError && !isHighlighted && (item.isWarning || item.isPendingAction || item.hasPendingActionChild));
+
+                let itemClass = `group flex items-center justify-between p-3 sm:p-3.5 rounded-xl border transition-colors duration-200 cursor-pointer select-none gap-3 min-w-0`;
+                if (isChecked) {
+                    itemClass += ' bg-accent/15 border-accent/60 shadow-2xs';
+                } else if (isSelected) {
+                    itemClass += ' bg-accent/10 border-accent/70 shadow-2xs';
+                } else if (isSoftError) {
+                    itemClass += ' bg-error-soft border-error/30 hover:bg-error-soft-hover hover:border-error/50 shadow-2xs';
+                } else if (isHighlighted) {
+                    itemClass += ' bg-accent-soft border-accent/30 hover:border-surface-border/90 hover:bg-surface-hover/50 hover:shadow-2xs';
+                } else if (isWarning) {
+                    itemClass += ' bg-warning-soft border-warning/30 hover:bg-warning-soft-hover hover:border-warning/50 shadow-2xs';
+                } else {
+                    itemClass += ' bg-surface border-surface-border hover:border-surface-border/90 hover:bg-surface-hover/50 hover:shadow-2xs';
+                }
 
                 return (
                     <div
                         key={item.id}
                         data-record-id={item.id}
                         data-selected={isSelected ? 'true' : 'false'}
+                        onMouseEnter={() => onItemHover?.(item)}
                         onClick={() => {
                             if (selectedIds.size > 0) {
                                 onToggleSelect?.(item);
@@ -44,12 +67,7 @@ const List = ({
                             event.preventDefault();
                             onContextMenu?.(event, item);
                         }}
-                        className={`group flex items-center justify-between p-3 sm:p-3.5 rounded-xl border transition-all duration-150 cursor-pointer select-none gap-3 min-w-0 ${isChecked
-                            ? 'bg-accent/15 border-accent/60 shadow-2xs'
-                            : isSelected
-                            ? 'bg-accent/10 border-accent/70 shadow-2xs'
-                            : 'bg-surface border-surface-border hover:border-surface-border/90 hover:bg-surface-hover/50 hover:shadow-2xs'
-                        }`}
+                        className={itemClass}
                     >
                         <div className="flex items-center gap-3 min-w-0 flex-1">
                             <div

@@ -8,3 +8,4 @@ export { useKeyPress } from './useKeyPress';
 export { useInactivityTimeout } from './useInactivityTimeout';
 export { useSmartPosition } from './useSmartPosition';
 export { useToast } from './useToast';
+export { useSeenDocuments, useSeenItems } from './useSeenDocuments';

@@ -400,7 +400,7 @@ const Inspector = ({
                 const explicitTab = targetTab || item?._targetTab;
                 if (explicitTab) {
                     const resolvedTab = normalizeTab(explicitTab);
-                    const target = isMember && resolvedTab === 'share' ? 'information' : resolvedTab;
+                    const target = (resolvedTab === 'share' && isMember) ? 'information' : resolvedTab;
                     setActiveTab(target);
                     onTabChange?.(target);
                 }
@@ -636,9 +636,11 @@ const Inspector = ({
             };
         }
         if (isDocument) {
-            const matchedDoc = allDocuments.find((doc) => doc.id === item.id);
+            const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
+            const itemCleanId = cleanId(item.id);
+            const matchedDoc = allDocuments.find((doc) => cleanId(doc.id) === itemCleanId);
             const docVersions = allDocumentVersions.filter(
-                (v) => (v.document?.id ?? v.documentId) === item.id
+                (v) => cleanId(v.document?.id ?? v.documentId) === itemCleanId
             );
             const sortedVersions = [...docVersions].sort(
                 (a, b) => (b.versionNumber ?? b.version ?? 0) - (a.versionNumber ?? a.version ?? 0)
@@ -650,10 +652,17 @@ const Inspector = ({
                 ? (new Date(docUpdatedAt).getTime() >= new Date(verUpdatedAt).getTime() ? docUpdatedAt : verUpdatedAt)
                 : (docUpdatedAt || verUpdatedAt || matchedDoc?.createdAt || item.createdAt);
 
+            const liveShares = allDocumentShares.filter((s) => cleanId(s.document?.id ?? s.documentId) === itemCleanId);
+            const isLiveShared = liveShares.length > 0;
+            const liveStatus = isLiveShared
+                ? (liveShares[0]?.status || 'SHARED')
+                : (matchedDoc?.isArchived ? 'ARCHIVED' : (matchedDoc?.status === 'SHARED' ? 'PRIVATE' : (matchedDoc?.status || 'PRIVATE')));
+
             return {
                 ...item,
                 name: matchedDoc?.name ?? item.name ?? item.title,
                 title: matchedDoc?.name ?? item.title ?? item.name,
+                status: liveStatus,
                 comment: matchedDoc?.comment ?? item.comment ?? null,
                 summary: latestVer?.summary ?? item.summary ?? null,
                 classification: item.isFolder
@@ -672,7 +681,15 @@ const Inspector = ({
             };
         }
         if (isFolder) {
-            const matchedDoc = allDocuments.find((doc) => doc.id === item.id);
+            const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
+            const itemCleanId = cleanId(item.id);
+            const matchedDoc = allDocuments.find((doc) => cleanId(doc.id) === itemCleanId);
+            const liveShares = allDocumentShares.filter((s) => cleanId(s.document?.id ?? s.documentId) === itemCleanId);
+            const isLiveShared = liveShares.length > 0;
+            const liveStatus = isLiveShared
+                ? (liveShares[0]?.status || 'SHARED')
+                : (matchedDoc?.isArchived ? 'ARCHIVED' : (matchedDoc?.status === 'SHARED' ? 'PRIVATE' : (matchedDoc?.status || 'PRIVATE')));
+
             const getFolderSizeBytes = (folderId) => {
                 let total = 0;
                 const children = allDocuments.filter(
@@ -699,6 +716,7 @@ const Inspector = ({
                 ...item,
                 name: matchedDoc?.name ?? item.name ?? item.title,
                 title: matchedDoc?.name ?? item.title ?? item.name,
+                status: liveStatus,
                 comment: matchedDoc?.comment ?? item.comment ?? null,
                 summary: null,
                 classification: null,
@@ -806,6 +824,28 @@ const Inspector = ({
         });
         if (direct.length > 0) return direct;
 
+        // If direct is empty, check if document is known in the store. If so, it has NO direct shares.
+        // Check inherited shares from parent folder only.
+        const docInStore = allDocuments.find((d) => cleanId(d.id) === itemCleanId);
+        if (docInStore || allDocumentShares.length > 0) {
+            let pId = (docInStore?.parentId ?? item.parentId ?? docInStore?.parentFolderId ?? item.parentFolderId);
+            while (pId && pId !== 'root') {
+                const pCleanId = cleanId(pId);
+                const parentDoc = allDocuments.find((d) => cleanId(d.id) === pCleanId);
+                if (!parentDoc) break;
+                const parentShares = allDocumentShares.filter((s) => {
+                    const sDocId = cleanId(s.document?.id ?? s.documentId);
+                    return sDocId === pCleanId;
+                });
+                if (parentShares.length > 0) {
+                    return parentShares;
+                }
+                pId = parentDoc.parentId ?? parentDoc.parentFolderId;
+            }
+            // Truly unshared! Return []
+            return [];
+        }
+
         if (Array.isArray(item.shares) && item.shares.length > 0) {
             return item.shares;
         }
@@ -813,55 +853,92 @@ const Inspector = ({
             return [item.share];
         }
 
-        // Inherited shares from parent folder
-        let pId = item.parentId ?? item.parentFolderId;
-        while (pId && pId !== 'root') {
-            const pCleanId = cleanId(pId);
-            const parentDoc = allDocuments.find((d) => cleanId(d.id) === pCleanId);
-            if (!parentDoc) break;
-            const parentShares = allDocumentShares.filter((s) => {
-                const sDocId = cleanId(s.document?.id ?? s.documentId);
-                return sDocId === pCleanId;
-            });
-            if (parentShares.length > 0) {
-                return parentShares;
-            }
-            pId = parentDoc.parentId ?? parentDoc.parentFolderId;
-        }
-
-        if (item.status && item.status !== '—') {
-            return [{
-                id: `synthetic-${item.id}`,
-                status: item.status,
-                department: { name: userDepartmentDisplay || 'Current Department' },
-                createdAt: item.createdAt || new Date().toISOString(),
-            }];
-        }
-
         return [];
     }, [item, isDocument, isFolder, allDocumentShares, allDocuments, userDepartmentDisplay]);
 
     const departmentShares = useMemo(() => {
+        if (isMember) return [];
         const list = documentShares.filter((s) => !s.recipientId && !s.recipient?.id && !s.recipient);
         if (isAdmin) return list;
+
         const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
-        const userDeptClean = cleanId(activeUser?.departmentId ?? activeUser?.department?.id ?? activeUser?.department);
+        const rawUserDept = activeUser?.departmentId ?? activeUser?.department?.id ?? activeUser?.department;
+        const matchedUserDept = allDepartments.find((d) =>
+            cleanId(d.id) === cleanId(rawUserDept) ||
+            (typeof rawUserDept === 'string' && d.name?.toLowerCase() === rawUserDept.toLowerCase()) ||
+            (typeof rawUserDept === 'string' && d.code?.toLowerCase() === rawUserDept.toLowerCase())
+        );
+        const userDeptCleanId = cleanId(matchedUserDept?.id ?? activeUser?.departmentId ?? activeUser?.department?.id);
+        const userDeptCleanName = matchedUserDept?.name?.toLowerCase() ?? (typeof activeUser?.department === 'string' ? activeUser.department.toLowerCase() : null);
+
+        if (!userDeptCleanId && !userDeptCleanName) return [];
+
         return list.filter((s) => {
-            const sDeptClean = cleanId(s.department?.id ?? s.departmentId);
-            return userDeptClean && sDeptClean === userDeptClean;
+            const rawSDept = s.department?.id ?? s.departmentId ?? (typeof s.department === 'string' ? s.department : null);
+            const matchedSDept = allDepartments.find((d) =>
+                cleanId(d.id) === cleanId(rawSDept) ||
+                (typeof rawSDept === 'string' && d.name?.toLowerCase() === rawSDept.toLowerCase()) ||
+                (typeof rawSDept === 'string' && d.code?.toLowerCase() === rawSDept.toLowerCase()) ||
+                (s.department?.name && d.name?.toLowerCase() === s.department.name.toLowerCase())
+            );
+            const sDeptCleanId = cleanId(matchedSDept?.id ?? rawSDept);
+            const sDeptCleanName = matchedSDept?.name?.toLowerCase() ?? s.department?.name?.toLowerCase();
+
+            return Boolean(
+                (userDeptCleanId && sDeptCleanId && userDeptCleanId === sDeptCleanId) ||
+                (userDeptCleanName && sDeptCleanName && userDeptCleanName === sDeptCleanName)
+            );
         });
-    }, [documentShares, isAdmin, activeUser]);
+    }, [documentShares, isAdmin, isMember, activeUser, allDepartments]);
 
     const userShares = useMemo(() => {
+        if (isMember) return [];
         const list = documentShares.filter((s) => Boolean(s.recipientId || s.recipient?.id || s.recipient));
         if (isAdmin) return list;
+
         const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
-        const userDeptClean = cleanId(activeUser?.departmentId ?? activeUser?.department?.id ?? activeUser?.department);
+        const rawUserDept = activeUser?.departmentId ?? activeUser?.department?.id ?? activeUser?.department;
+        const matchedUserDept = allDepartments.find((d) =>
+            cleanId(d.id) === cleanId(rawUserDept) ||
+            (typeof rawUserDept === 'string' && d.name?.toLowerCase() === rawUserDept.toLowerCase()) ||
+            (typeof rawUserDept === 'string' && d.code?.toLowerCase() === rawUserDept.toLowerCase())
+        );
+        const userDeptCleanId = cleanId(matchedUserDept?.id ?? activeUser?.departmentId ?? activeUser?.department?.id);
+        const userDeptCleanName = matchedUserDept?.name?.toLowerCase() ?? (typeof activeUser?.department === 'string' ? activeUser.department.toLowerCase() : null);
+
+        if (!userDeptCleanId && !userDeptCleanName) return [];
+
         return list.filter((s) => {
-            const sDeptClean = cleanId(s.department?.id ?? s.departmentId);
-            return userDeptClean && sDeptClean === userDeptClean;
+            const rawSDept = s.department?.id ?? s.departmentId ?? (typeof s.department === 'string' ? s.department : null);
+            let matchedSDept = allDepartments.find((d) =>
+                cleanId(d.id) === cleanId(rawSDept) ||
+                (typeof rawSDept === 'string' && d.name?.toLowerCase() === rawSDept.toLowerCase()) ||
+                (typeof rawSDept === 'string' && d.code?.toLowerCase() === rawSDept.toLowerCase()) ||
+                (s.department?.name && d.name?.toLowerCase() === s.department.name.toLowerCase())
+            );
+
+            if (!matchedSDept) {
+                const recipientId = s.recipientId ?? s.recipient?.id;
+                const recUser = allUsers.find((u) => u.id === recipientId);
+                const recDeptId = recUser?.departmentId ?? recUser?.department?.id ?? recUser?.department;
+                if (recDeptId) {
+                    matchedSDept = allDepartments.find((d) =>
+                        cleanId(d.id) === cleanId(recDeptId) ||
+                        (typeof recDeptId === 'string' && d.name?.toLowerCase() === recDeptId.toLowerCase()) ||
+                        (typeof recDeptId === 'string' && d.code?.toLowerCase() === recDeptId.toLowerCase())
+                    );
+                }
+            }
+
+            const sDeptCleanId = cleanId(matchedSDept?.id ?? rawSDept);
+            const sDeptCleanName = matchedSDept?.name?.toLowerCase() ?? s.department?.name?.toLowerCase();
+
+            return Boolean(
+                (userDeptCleanId && sDeptCleanId && userDeptCleanId === sDeptCleanId) ||
+                (userDeptCleanName && sDeptCleanName && userDeptCleanName === sDeptCleanName)
+            );
         });
-    }, [documentShares, isAdmin, activeUser]);
+    }, [documentShares, isAdmin, isMember, activeUser, allDepartments, allUsers]);
 
     const pendingStatusRequest = useMemo(() => {
         if (!activeItem || !isDocumentRequest) return null;
@@ -1414,6 +1491,10 @@ const Inspector = ({
         }
         try {
             await onAction?.(actionKey, targetItem);
+            if (item?.id && (isDocument || isFolder)) {
+                useDocumentStore.getState().fetchDocumentShares(item.id).catch(() => {});
+                useDocumentStore.getState().fetchDocumentVersions(item.id).catch(() => {});
+            }
         } finally {
             if (!shouldSkipLoading) {
                 setActiveActionLoading(null);
@@ -1464,6 +1545,9 @@ const Inspector = ({
         try {
             await handleActionClick(actionKey, targetItem);
             setInspectorConfirmAction(null);
+            if (actionKey === 'restore' || actionKey === 'archive' || actionKey === 'delete') {
+                onClearSelection?.();
+            }
         } catch (err) {
             console.error(`Failed inspector action ${actionKey}:`, err);
         }
@@ -1531,8 +1615,11 @@ const Inspector = ({
                     description: `Replaced current version file for ${reshareModal.targetDeptName} and reset status to Pending Approval.`,
                 });
             }
+            await useDocumentStore.getState().fetchDocumentShares(reshareModal.docId).catch(() => {});
+            await useDocumentStore.getState().fetchDocumentVersions(reshareModal.docId).catch(() => {});
+            await useDocumentStore.getState().fetchDocuments().catch(() => {});
             if (activeUser) {
-                useDocumentStore.getState().syncAllDocumentShares(activeUser, allDepartments).catch(() => {});
+                useDocumentStore.getState().syncAllDocumentShares(activeUser, allDepartments, true).catch(() => {});
             }
             setReshareModal(null);
             setReshareFile(null);
@@ -2068,8 +2155,13 @@ const Inspector = ({
                 return;
             }
 
-            if (['approve', 'unapprove', 'unreject', 'unpublish', 'stash', 'unstash', 'unshare', 'suspend', 'unsuspend', 'resolve', 'archive', 'delete'].includes(actionKey)) {
+            if (['approve', 'unapprove', 'unreject', 'unpublish', 'stash', 'unstash', 'unshare', 'suspend', 'unsuspend', 'resolve', 'restore', 'archive'].includes(actionKey)) {
                 const count = targetList.length;
+                const isSingle = count === 1;
+                const firstItem = targetList[0];
+                const isFirstFolder = Boolean(firstItem?.isFolder);
+                const singleName = firstItem?.title || firstItem?.name || (isFirstFolder ? 'Folder' : 'Document');
+
                 const titles = {
                     approve: `Approve Files (${count})`,
                     unapprove: `Revoke Approval (${count})`,
@@ -2078,9 +2170,10 @@ const Inspector = ({
                     unpublish: `Unpublish Files (${count})`,
                     stash: `Stash Files (${count})`,
                     unstash: `Unstash Files (${count})`,
-                    unshare: `Unshare Files (${count})`,
-                    archive: isArchivedSelection ? `Unarchive Files (${count})` : `Archive Files (${count})`,
-                    delete: `Delete Items (${count})`,
+                    unshare: `Unshare all (${count})`,
+                    archive: isArchivedSelection ? `Restore all (${count})` : `Archive all (${count})`,
+                    restore: `Restore all (${count})`,
+                    delete: `Delete all (${count})`,
                     suspend: `Suspend User Accounts (${count})`,
                     unsuspend: `Unsuspend User Accounts (${count})`,
                     resolve: `Resolve Requests (${count})`,
@@ -2093,10 +2186,13 @@ const Inspector = ({
                     unpublish: `Are you sure you want to unpublish ${count} selected file(s) from faculty and department members?`,
                     stash: `Are you sure you want to stash ${count} selected file(s)? They will be held at upper management level.`,
                     unstash: `Are you sure you want to unstash ${count} selected file(s) and restore them to approved status?`,
-                    unshare: `Are you sure you want to remove departmental shares for ${count} selected file(s)?`,
+                    unshare: count > 1
+                        ? `Are you sure you want to remove all departmental and member shares for ${count} selected files?`
+                        : `Are you sure you want to remove all departmental and member shares for this item?`,
                     archive: isArchivedSelection
-                        ? `Are you sure you want to restore ${count} selected file(s) from the archive?`
+                        ? `Are you sure you want to restore ${count} selected item(s) from the archive to the active repository?`
                         : `Are you sure you want to move ${count} selected file(s) to the archive?`,
+                    restore: `Are you sure you want to restore ${count} selected item(s) from the archive to the active repository?`,
                     delete: `Are you sure you want to permanently delete ${count} selected item(s)? This action cannot be undone.`,
                     suspend: `Are you sure you want to suspend ${count} selected user account(s)? The users will be prohibited from authentication.`,
                     unsuspend: `Are you sure you want to re-activate ${count} selected user account(s)? The users will regain institutional access.`,
@@ -2110,9 +2206,10 @@ const Inspector = ({
                     unpublish: count > 1 ? `Unpublish (${count})` : 'Unpublish',
                     stash: count > 1 ? `Stash (${count})` : 'Stash',
                     unstash: count > 1 ? `Unstash (${count})` : 'Unstash',
-                    unshare: count > 1 ? `Unshare (${count})` : 'Unshare',
-                    archive: isArchivedSelection ? (count > 1 ? `Unarchive (${count})` : 'Unarchive') : (count > 1 ? `Archive (${count})` : 'Archive'),
-                    delete: count > 1 ? `Delete (${count})` : 'Delete',
+                    unshare: `Unshare all (${count})`,
+                    archive: isArchivedSelection ? `Restore all (${count})` : `Archive all (${count})`,
+                    restore: `Restore all (${count})`,
+                    delete: `Delete all (${count})`,
                     suspend: count > 1 ? `Suspend (${count})` : 'Suspend',
                     unsuspend: count > 1 ? `Unsuspend (${count})` : 'Unsuspend',
                     resolve: count > 1 ? `Resolve (${count})` : 'Resolve',
@@ -2127,6 +2224,7 @@ const Inspector = ({
                     unstash: 'primary',
                     unshare: 'destructive',
                     archive: 'secondary',
+                    restore: 'primary',
                     delete: 'destructive',
                     suspend: 'destructive',
                     unsuspend: 'primary',
@@ -2147,6 +2245,7 @@ const Inspector = ({
             setActiveActionLoading(actionKey);
             try {
                 await onAction?.(actionKey, targetList);
+                useDocumentStore.getState().fetchDocuments().catch(() => {});
             } finally {
                 setActiveActionLoading(null);
             }
@@ -2775,9 +2874,9 @@ const Inspector = ({
                                         <Button
                                             variant="primary"
                                             leadingIcon={RotateCcw}
-                                            isLoading={activeActionLoading === 'archive'}
+                                            isLoading={activeActionLoading === 'restore'}
                                             isDisabled={Boolean(activeActionLoading)}
-                                            onClick={() => handleBatchActionClick('archive')}
+                                            onClick={() => handleBatchActionClick('restore')}
                                             onMouseEnter={() => setHoveredActionFilter(() => () => true)}
                                             onMouseLeave={() => setHoveredActionFilter(null)}
                                             className="justify-center truncate text-xs"
@@ -2924,7 +3023,7 @@ const Inspector = ({
                         onClose={() => setInspectorConfirmAction(null)}
                         title={inspectorConfirmAction.title}
                         description={inspectorConfirmAction.message}
-                        icon={inspectorConfirmAction.actionKey === 'stash' ? Clock : CheckCircle2}
+                        icon={inspectorConfirmAction.actionKey === 'stash' ? Clock : (['restore', 'unshare'].includes(inspectorConfirmAction.actionKey) ? RotateCcw : CheckCircle2)}
                         size="sm"
                         confirmOnClose={false}
                         primaryAction={{
@@ -3133,6 +3232,11 @@ const Inspector = ({
                             <Badge
                                 variant={ROLE_BADGE_VARIANT[item.role] ?? 'neutral'}
                                 label={item.role}
+                            />
+                        ) : (isDocument || isFolder) && activeItem?.status && activeItem.status !== '—' ? (
+                            <Badge
+                                variant={STATUS_BADGE_VARIANT[activeItem.status] ?? 'neutral'}
+                                label={activeItem.status}
                             />
                         ) : (!isDocument && !isFolder && item.status) ? (
                             <Badge
@@ -3801,6 +3905,139 @@ const Inspector = ({
                                         ) ?? shareItem.department;
                                         const publisherName = resolvePublisherName(shareItem);
 
+                                        const deptId = shareDepartment?.id ?? shareItem.department?.id ?? shareItem.departmentId;
+                                        const isFold = Boolean(item?.isFolder || item?.mimeType === 'folder');
+                                        const userMap = new Map((allUsers || []).map((u) => [String(u.id), u]));
+
+                                        let deptReadCount = 0;
+                                        let deptAuditLogs = [];
+                                        let uniqueReadersCount = 0;
+
+                                        if (isFold) {
+                                            const rawDescendantIds = getRecursiveDescendantDocIds(item?.id, allDocuments);
+                                            const descendantIds = new Set();
+                                            rawDescendantIds.forEach((id) => {
+                                                descendantIds.add(id);
+                                                descendantIds.add(cleanId(id));
+                                            });
+
+                                            const childDocDeptReadersMap = new Map();
+                                            const deptUniqueUsers = new Set();
+                                            const deptLogs = [];
+
+                                            (allAuditLogs || []).forEach((log) => {
+                                                const docId = log?.entityId || log?.document?.id || log?.documentId;
+                                                if (!docId || (!descendantIds.has(docId) && !descendantIds.has(cleanId(docId)))) return;
+                                                const isReadAction = ['READ', 'VIEW', 'VIEWED', 'DOWNLOAD', 'DOWNLOADED', 'ACCESS', 'ACCESSED'].includes(String(log?.action || '').toUpperCase());
+                                                if (!isReadAction) return;
+
+                                                const actorId = String(log?.actor?.id ?? log?.actorId ?? '');
+                                                if (!actorId) return;
+
+                                                let actorUser = userMap.get(actorId) || log?.actor;
+                                                let actorRole = actorUser?.role;
+                                                let logDeptId = actorUser?.departmentId;
+
+                                                if (typeof log?.data === 'string') {
+                                                    try {
+                                                        const parsed = JSON.parse(log.data);
+                                                        actorRole = actorRole || parsed.role || parsed.actorRole;
+                                                        logDeptId = logDeptId || parsed.departmentId || parsed._actorDepartmentId || parsed.new?._departmentId;
+                                                        if (!actorUser) {
+                                                            actorUser = { id: actorId, role: actorRole, departmentId: logDeptId };
+                                                        }
+                                                    } catch {
+                                                        // ignore malformed log data
+                                                    }
+                                                }
+
+                                                if (isStaffRole(actorRole) || isRmoUser({ ...(actorUser || {}), role: actorRole }, allDepartments)) return;
+
+                                                if (deptId && logDeptId && cleanId(logDeptId) === cleanId(deptId)) {
+                                                    const normalizedDocId = cleanId(docId);
+                                                    if (!childDocDeptReadersMap.has(normalizedDocId)) {
+                                                        childDocDeptReadersMap.set(normalizedDocId, new Set());
+                                                    }
+                                                    if (!childDocDeptReadersMap.get(normalizedDocId).has(actorId)) {
+                                                        childDocDeptReadersMap.get(normalizedDocId).add(actorId);
+                                                        deptLogs.push(log);
+                                                    }
+                                                    deptUniqueUsers.add(actorId);
+                                                }
+                                            });
+
+                                            let totalDeptReads = 0;
+                                            childDocDeptReadersMap.forEach((readersSet) => {
+                                                totalDeptReads += readersSet.size;
+                                            });
+                                            deptReadCount = totalDeptReads;
+                                            uniqueReadersCount = deptUniqueUsers.size;
+                                            deptAuditLogs = deptLogs;
+                                        } else {
+                                            const targetDocId = item?.id;
+                                            const cleanTargetId = cleanId(targetDocId);
+                                            const nonRmoUserFirstReadLogs = new Map();
+
+                                            (allAuditLogs || []).forEach((log) => {
+                                                const docId = log?.entityId || log?.document?.id || log?.documentId;
+                                                const isDoc = docId && cleanId(docId) === cleanTargetId;
+                                                const isReadAction = ['READ', 'VIEW', 'VIEWED', 'DOWNLOAD', 'DOWNLOADED', 'ACCESS', 'ACCESSED'].includes(String(log?.action || '').toUpperCase());
+                                                if (!isDoc || !isReadAction) return;
+
+                                                const actorId = String(log?.actor?.id ?? log?.actorId ?? '');
+                                                if (!actorId) return;
+
+                                                let actorUser = userMap.get(actorId) || log?.actor;
+                                                let actorRole = actorUser?.role;
+                                                let logDeptId = actorUser?.departmentId;
+
+                                                if (typeof log?.data === 'string') {
+                                                    try {
+                                                        const parsed = JSON.parse(log.data);
+                                                        actorRole = actorRole || parsed.role || parsed.actorRole;
+                                                        logDeptId = logDeptId || parsed.departmentId || parsed._actorDepartmentId || parsed.new?._departmentId;
+                                                        if (!actorUser) {
+                                                            actorUser = { id: actorId, role: actorRole, departmentId: logDeptId };
+                                                        }
+                                                    } catch {
+                                                        // ignore malformed log data
+                                                    }
+                                                }
+
+                                                if (isStaffRole(actorRole) || isRmoUser({ ...(actorUser || {}), role: actorRole }, allDepartments)) return;
+
+                                                if (deptId && logDeptId && cleanId(logDeptId) === cleanId(deptId)) {
+                                                    if (!nonRmoUserFirstReadLogs.has(actorId)) {
+                                                        nonRmoUserFirstReadLogs.set(actorId, log);
+                                                    }
+                                                }
+                                            });
+
+                                            deptReadCount = nonRmoUserFirstReadLogs.size;
+                                            uniqueReadersCount = nonRmoUserFirstReadLogs.size;
+                                            deptAuditLogs = Array.from(nonRmoUserFirstReadLogs.values());
+                                        }
+
+                                        const deptFaculty = (allUsers || []).filter(
+                                            (u) => cleanId(u.departmentId) === targetDeptClean && constants.isMemberRole(u.role)
+                                        );
+                                        const totalDeptMembers = deptFaculty.length > 0 ? deptFaculty.length : (uniqueReadersCount || 1);
+
+                                        const deptUserShares = userShares.filter((us) => {
+                                            const usDeptClean = cleanId(us.department?.id ?? us.departmentId);
+                                            if (usDeptClean && usDeptClean === targetDeptClean) return true;
+                                            const recipientId = us.recipientId ?? us.recipient?.id;
+                                            const recUser = allUsers.find((u) => u.id === recipientId);
+                                            const recDeptClean = cleanId(recUser?.departmentId ?? recUser?.department?.id);
+                                            return recDeptClean && recDeptClean === targetDeptClean;
+                                        });
+
+                                        const isDeptPublished = String(shareItem.status || '').toUpperCase() === constants.DOCUMENT_SHARES_STATUS.PUBLISHED;
+                                        const isAllMembersPublished = isDeptPublished && (
+                                            deptUserShares.length === 0 ||
+                                            (deptFaculty.length > 0 && deptUserShares.length >= deptFaculty.length)
+                                        );
+
                                         return (
                                             <div
                                                 key={shareItem.id}
@@ -4083,142 +4320,158 @@ const Inspector = ({
                                                 })()}
 
                                                 {/* DEPARTMENT READERSHIP STATISTIC & READERSHIP CHART */}
-                                                {(() => {
-                                                    const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
-                                                    const deptId = shareDepartment?.id ?? shareItem.department?.id ?? shareItem.departmentId;
-                                                    const isFold = Boolean(item?.isFolder || item?.mimeType === 'folder');
-                                                    const userMap = new Map((allUsers || []).map((u) => [String(u.id), u]));
+                                                <div className="p-2.5 rounded-md border border-surface-border bg-surface/50 flex flex-col gap-1.5">
+                                                    <div className="flex items-center justify-between text-[11px]">
+                                                        <span className="font-semibold text-text-muted flex items-center gap-1.5">
+                                                            <Eye className="h-3 w-3 text-accent" />
+                                                            <span>Unit Readership</span>
+                                                        </span>
+                                                        <span className="text-[10px] font-medium text-text">
+                                                            {deptReadCount} {deptReadCount === 1 ? 'read' : 'reads'}
+                                                            {isFold ? ' (combined)' : ''}
+                                                            {isFold && uniqueReadersCount > 0 ? ` • ${uniqueReadersCount} unique ${uniqueReadersCount === 1 ? 'reader' : 'readers'}` : ''}
+                                                        </span>
+                                                    </div>
+                                                    <div className="w-full pt-1">
+                                                        <ReadershipChart logs={deptAuditLogs} compact={true} showPeak={false} />
+                                                    </div>
+                                                </div>
 
-                                                    let deptReadCount;
-                                                    let deptAuditLogs;
-                                                    let uniqueReadersCount;
-
-                                                    if (isFold) {
-                                                        const rawDescendantIds = getRecursiveDescendantDocIds(item?.id, allDocuments);
-                                                        const descendantIds = new Set();
-                                                        rawDescendantIds.forEach((id) => {
-                                                            descendantIds.add(id);
-                                                            descendantIds.add(cleanId(id));
-                                                        });
-
-                                                        const childDocDeptReadersMap = new Map();
-                                                        const deptUniqueUsers = new Set();
-                                                        const deptLogs = [];
-
-                                                        (allAuditLogs || []).forEach((log) => {
-                                                            const docId = log?.entityId || log?.document?.id || log?.documentId;
-                                                            if (!docId || (!descendantIds.has(docId) && !descendantIds.has(cleanId(docId)))) return;
-                                                            const isReadAction = ['READ', 'VIEW', 'VIEWED', 'DOWNLOAD', 'DOWNLOADED', 'ACCESS', 'ACCESSED'].includes(String(log?.action || '').toUpperCase());
-                                                            if (!isReadAction) return;
-
-                                                            const actorId = String(log?.actor?.id ?? log?.actorId ?? '');
-                                                            if (!actorId) return;
-
-                                                            let actorUser = userMap.get(actorId) || log?.actor;
-                                                            let actorRole = actorUser?.role;
-                                                            let logDeptId = actorUser?.departmentId;
-
-                                                            if (typeof log?.data === 'string') {
-                                                                try {
-                                                                    const parsed = JSON.parse(log.data);
-                                                                    actorRole = actorRole || parsed.role || parsed.actorRole;
-                                                                    logDeptId = logDeptId || parsed.departmentId || parsed._actorDepartmentId || parsed.new?._departmentId;
-                                                                    if (!actorUser) {
-                                                                        actorUser = { id: actorId, role: actorRole, departmentId: logDeptId };
-                                                                    }
-                                                                } catch {
-                                                                    // ignore malformed log data
-                                                                }
-                                                            }
-
-                                                            // Exclude Administrator, Coordinator, and RMO reads
-                                                            if (isStaffRole(actorRole) || isRmoUser({ ...(actorUser || {}), role: actorRole }, allDepartments)) return;
-
-                                                            if (deptId && logDeptId && cleanId(logDeptId) === cleanId(deptId)) {
-                                                                const normalizedDocId = cleanId(docId);
-                                                                if (!childDocDeptReadersMap.has(normalizedDocId)) {
-                                                                    childDocDeptReadersMap.set(normalizedDocId, new Set());
-                                                                }
-                                                                if (!childDocDeptReadersMap.get(normalizedDocId).has(actorId)) {
-                                                                    childDocDeptReadersMap.get(normalizedDocId).add(actorId);
-                                                                    deptLogs.push(log);
-                                                                }
-                                                                deptUniqueUsers.add(actorId);
-                                                            }
-                                                        });
-
-                                                        let totalDeptReads = 0;
-                                                        childDocDeptReadersMap.forEach((readersSet) => {
-                                                            totalDeptReads += readersSet.size;
-                                                        });
-                                                        deptReadCount = totalDeptReads;
-                                                        uniqueReadersCount = deptUniqueUsers.size;
-                                                        deptAuditLogs = deptLogs;
-                                                    } else {
-                                                        const targetDocId = item?.id;
-                                                        const cleanTargetId = cleanId(targetDocId);
-                                                        const nonRmoUserFirstReadLogs = new Map();
-
-                                                        (allAuditLogs || []).forEach((log) => {
-                                                            const docId = log?.entityId || log?.document?.id || log?.documentId;
-                                                            const isDoc = docId && cleanId(docId) === cleanTargetId;
-                                                            const isReadAction = ['READ', 'VIEW', 'VIEWED', 'DOWNLOAD', 'DOWNLOADED', 'ACCESS', 'ACCESSED'].includes(String(log?.action || '').toUpperCase());
-                                                            if (!isDoc || !isReadAction) return;
-
-                                                            const actorId = String(log?.actor?.id ?? log?.actorId ?? '');
-                                                            if (!actorId) return;
-
-                                                            let actorUser = userMap.get(actorId) || log?.actor;
-                                                            let actorRole = actorUser?.role;
-                                                            let logDeptId = actorUser?.departmentId;
-
-                                                            if (typeof log?.data === 'string') {
-                                                                try {
-                                                                    const parsed = JSON.parse(log.data);
-                                                                    actorRole = actorRole || parsed.role || parsed.actorRole;
-                                                                    logDeptId = logDeptId || parsed.departmentId || parsed._actorDepartmentId || parsed.new?._departmentId;
-                                                                    if (!actorUser) {
-                                                                        actorUser = { id: actorId, role: actorRole, departmentId: logDeptId };
-                                                                    }
-                                                                } catch {
-                                                                    // ignore malformed log data
-                                                                }
-                                                            }
-
-                                                            // Exclude Administrator, Coordinator, and RMO reads
-                                                            if (isStaffRole(actorRole) || isRmoUser({ ...(actorUser || {}), role: actorRole }, allDepartments)) return;
-
-                                                            if (deptId && logDeptId && cleanId(logDeptId) === cleanId(deptId)) {
-                                                                if (!nonRmoUserFirstReadLogs.has(actorId)) {
-                                                                    nonRmoUserFirstReadLogs.set(actorId, log);
-                                                                }
-                                                            }
-                                                        });
-
-                                                        deptReadCount = nonRmoUserFirstReadLogs.size;
-                                                        uniqueReadersCount = nonRmoUserFirstReadLogs.size;
-                                                        deptAuditLogs = Array.from(nonRmoUserFirstReadLogs.values());
-                                                    }
-
-                                                    return (
-                                                        <div className="p-2.5 rounded-md border border-surface-border bg-surface/50 flex flex-col gap-1.5">
-                                                            <div className="flex items-center justify-between text-[11px]">
-                                                                <span className="font-semibold text-text-muted flex items-center gap-1.5">
-                                                                    <Eye className="h-3 w-3 text-accent" />
-                                                                    <span>Unit Readership</span>
-                                                                </span>
-                                                                <span className="text-[10px] font-medium text-text">
-                                                                    {deptReadCount} {deptReadCount === 1 ? 'read' : 'reads'}
-                                                                    {isFold ? ' (combined)' : ''}
-                                                                    {isFold && uniqueReadersCount > 0 ? ` • ${uniqueReadersCount} unique ${uniqueReadersCount === 1 ? 'reader' : 'readers'}` : ''}
-                                                                </span>
-                                                            </div>
-                                                            <div className="w-full pt-1">
-                                                                <ReadershipChart logs={deptAuditLogs} compact={true} showPeak={false} />
-                                                            </div>
+                                                {/* MEMBER ACCESS SUBSECTION */}
+                                                {(isAllMembersPublished || deptUserShares.length > 0) && (
+                                                    <div className="flex flex-col gap-1.5 pt-1 border-t border-surface-border">
+                                                        <div className="flex items-center justify-between text-[11px] font-semibold text-text-muted select-none">
+                                                            <span>Member Distribution</span>
+                                                            <span className="text-[10px] font-medium text-text-muted/80">
+                                                                {isAllMembersPublished ? 'Converged Access' : `${deptUserShares.length} Selected`}
+                                                            </span>
                                                         </div>
-                                                    );
-                                                })()}
+                                                        {isAllMembersPublished ? (
+                                                            <div className="px-2.5 py-2 rounded-md border border-surface-border bg-surface/50 flex items-center justify-between gap-2">
+                                                                <div className="flex items-center gap-2 min-w-0">
+                                                                    <div className="w-6 h-6 rounded-full bg-accent/15 text-accent flex items-center justify-center shrink-0">
+                                                                        <Users className="h-3.5 w-3.5" />
+                                                                    </div>
+                                                                    <div className="flex flex-col min-w-0">
+                                                                        <span className="font-semibold text-xs text-text truncate leading-tight">
+                                                                            {shareDepartment?.code ? `${shareDepartment.code} Members` : `${shareDepartment?.name || 'Department'} Members`}
+                                                                        </span>
+                                                                        <span className="text-[10px] text-text-muted truncate leading-tight">
+                                                                            All {totalDeptMembers} Department Members
+                                                                        </span>
+                                                                    </div>
+                                                                </div>
+                                                                <div className="flex items-center gap-1.5 shrink-0">
+                                                                    <div className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-accent/15 text-accent border border-accent/20">
+                                                                        {uniqueReadersCount} / {totalDeptMembers} read
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        ) : (
+                                                            <div className="flex flex-col gap-1.5">
+                                                                {deptUserShares.map((uShare) => {
+                                                                    const recId = uShare.recipient?.id ?? uShare.recipientId;
+                                                                    const recClean = cleanId(recId);
+                                                                    const recipientUser = allUsers.find((u) => cleanId(u.id) === recClean) ?? uShare.recipient;
+                                                                    const recipientName = recipientUser
+                                                                        ? `${recipientUser.firstName || ''} ${recipientUser.lastName || ''}`.trim() || recipientUser.name || 'User'
+                                                                        : 'User';
+
+                                                                    const isRecipientRead = Boolean(
+                                                                        uShare.isRead ||
+                                                                        String(uShare.status || '').toUpperCase() === 'READ' ||
+                                                                        uShare.readAt ||
+                                                                        allAuditLogs.some(
+                                                                            (log) =>
+                                                                                (log.actor?.id === recId || log.actorId === recId) &&
+                                                                                (log.entityId === item.id || log.document?.id === item.id) &&
+                                                                                ['READ', 'VIEW', 'DOWNLOAD', 'OPEN'].includes(String(log.action || '').toUpperCase())
+                                                                        )
+                                                                    );
+
+                                                                    const uPublisherName = resolvePublisherName(uShare);
+
+                                                                    return (
+                                                                        <div
+                                                                            key={uShare.id}
+                                                                            className="px-2.5 py-2 rounded-md border border-surface-border bg-surface/50 hover:bg-surface transition-colors flex flex-col gap-1.5"
+                                                                        >
+                                                                            <div className="flex items-center justify-between gap-2">
+                                                                                <div className="flex items-center gap-2 min-w-0">
+                                                                                    <Avatar
+                                                                                        src={resolveUserAvatar(recipientUser, activeUser)}
+                                                                                        user={recipientUser}
+                                                                                        alt={recipientName}
+                                                                                        size="small"
+                                                                                    />
+                                                                                    <div className="flex flex-col min-w-0">
+                                                                                        <span className="font-semibold text-xs text-text truncate leading-tight" title={recipientName}>
+                                                                                            {recipientName}
+                                                                                        </span>
+                                                                                        {recipientUser?.email && (
+                                                                                            <span className="text-[10px] text-text-muted truncate leading-tight" title={recipientUser.email}>
+                                                                                                {recipientUser.email}
+                                                                                            </span>
+                                                                                        )}
+                                                                                    </div>
+                                                                                </div>
+
+                                                                                {/* COMPACT 2-NODE TRACKING: SENT -> READ */}
+                                                                                <div className="flex items-center w-24 shrink-0">
+                                                                                    <div
+                                                                                        className="flex items-center justify-center px-1.5 py-0.5 rounded text-[9px] select-none shrink-0 bg-accent text-text-inverted border border-accent font-semibold shadow-2xs"
+                                                                                        title="Sent"
+                                                                                    >
+                                                                                        <span>Sent</span>
+                                                                                    </div>
+
+                                                                                    <div
+                                                                                        className="flex-1 h-0.5 min-w-2 transition-all duration-300 rounded-full"
+                                                                                        style={
+                                                                                            isRecipientRead
+                                                                                                ? { backgroundColor: 'var(--color-accent)' }
+                                                                                                : { background: 'linear-gradient(to right, var(--color-accent), var(--color-warning))' }
+                                                                                        }
+                                                                                    />
+
+                                                                                    <div
+                                                                                        className={`flex items-center justify-center px-1.5 py-0.5 rounded text-[9px] select-none shrink-0 transition-all ${
+                                                                                            isRecipientRead
+                                                                                                ? 'bg-accent text-text-inverted border border-accent font-semibold shadow-2xs'
+                                                                                                : 'bg-warning text-text-inverted border border-warning font-bold ring-1 ring-warning/30 shadow-2xs animate-pulse'
+                                                                                        }`}
+                                                                                        title={isRecipientRead ? 'Read' : 'Pending read'}
+                                                                                    >
+                                                                                        <span>Read</span>
+                                                                                    </div>
+                                                                                </div>
+                                                                            </div>
+
+                                                                            {/* COMPACT FOOTER */}
+                                                                            <div className="flex items-center justify-between text-[10px] text-text-muted pt-1 border-t border-surface-border/60 leading-none">
+                                                                                <span className="truncate">
+                                                                                    Shared by {uPublisherName} • {formatTimestamp(uShare.createdAt)}
+                                                                                </span>
+                                                                                {isDirector && !isStaff && (
+                                                                                    <button
+                                                                                        type="button"
+                                                                                        onClick={(e) => {
+                                                                                            e.stopPropagation();
+                                                                                            handleActionClick('unpublish', uShare);
+                                                                                        }}
+                                                                                        className="text-error hover:underline cursor-pointer font-medium ml-2 shrink-0"
+                                                                                    >
+                                                                                        Unpublish
+                                                                                    </button>
+                                                                                )}
+                                                                            </div>
+                                                                        </div>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                )}
 
                                                 <div className="flex items-center justify-between text-xs text-text-muted pt-1 border-t border-surface-border">
                                                     <span>
@@ -4246,116 +4499,130 @@ const Inspector = ({
                                     </div>
                                 )}
 
-                                {/* DIVIDER */}
-                                {departmentShares.length > 0 && userShares.length > 0 && (
-                                    <div className="border-t border-surface-border my-1" />
-                                )}
+                                {/* ORPHAN USER SHARES (Fallback if not mapped to any department share) */}
+                                {(() => {
+                                    const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
+                                    const deptIdsSet = new Set(
+                                        departmentShares.map((ds) => cleanId(ds.department?.id ?? ds.departmentId)).filter(Boolean)
+                                    );
+                                    const orphanUserShares = userShares.filter((us) => {
+                                        const usDeptClean = cleanId(us.department?.id ?? us.departmentId);
+                                        if (usDeptClean && deptIdsSet.has(usDeptClean)) return false;
+                                        const recipientId = us.recipientId ?? us.recipient?.id;
+                                        const recUser = allUsers.find((u) => cleanId(u.id) === cleanId(recipientId));
+                                        const recDeptClean = cleanId(recUser?.departmentId ?? recUser?.department?.id);
+                                        if (recDeptClean && deptIdsSet.has(recDeptClean)) return false;
+                                        return true;
+                                    });
 
-                                {/* USERS SHARES */}
-                                {userShares.length > 0 && (
-                                    <div className="flex flex-col gap-1.5">
-                                    {userShares.map((shareItem) => {
-                                        const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
-                                        const recId = shareItem.recipient?.id ?? shareItem.recipientId;
-                                        const recClean = cleanId(recId);
-                                        const recipientUser = allUsers.find((u) => cleanId(u.id) === recClean) ?? shareItem.recipient;
-                                        const recipientName = recipientUser
-                                            ? `${recipientUser.firstName || ''} ${recipientUser.lastName || ''}`.trim() || recipientUser.name || 'User'
-                                            : 'User';
+                                    if (orphanUserShares.length === 0) return null;
+                                    return (
+                                        <div className="flex flex-col gap-1.5 pt-2 border-t border-surface-border">
+                                            <span className="text-[11px] font-semibold text-text-muted select-none">
+                                                Direct Member Shares
+                                            </span>
+                                            {orphanUserShares.map((shareItem) => {
+                                                const recId = shareItem.recipient?.id ?? shareItem.recipientId;
+                                                const recClean = cleanId(recId);
+                                                const recipientUser = allUsers.find((u) => cleanId(u.id) === recClean) ?? shareItem.recipient;
+                                                const recipientName = recipientUser
+                                                    ? `${recipientUser.firstName || ''} ${recipientUser.lastName || ''}`.trim() || recipientUser.name || 'User'
+                                                    : 'User';
 
-                                        const isRecipientRead = Boolean(
-                                            shareItem.isRead ||
-                                            String(shareItem.status || '').toUpperCase() === 'READ' ||
-                                            shareItem.readAt ||
-                                            allAuditLogs.some(
-                                                (log) =>
-                                                    (log.actor?.id === recId || log.actorId === recId) &&
-                                                    (log.entityId === item.id || log.document?.id === item.id) &&
-                                                    ['READ', 'VIEW', 'DOWNLOAD', 'OPEN'].includes(String(log.action || '').toUpperCase())
-                                            )
-                                        );
+                                                const isRecipientRead = Boolean(
+                                                    shareItem.isRead ||
+                                                    String(shareItem.status || '').toUpperCase() === 'READ' ||
+                                                    shareItem.readAt ||
+                                                    allAuditLogs.some(
+                                                        (log) =>
+                                                            (log.actor?.id === recId || log.actorId === recId) &&
+                                                            (log.entityId === item.id || log.document?.id === item.id) &&
+                                                            ['READ', 'VIEW', 'DOWNLOAD', 'OPEN'].includes(String(log.action || '').toUpperCase())
+                                                    )
+                                                );
 
-                                        const publisherName = resolvePublisherName(shareItem);
+                                                const publisherName = resolvePublisherName(shareItem);
 
-                                        return (
-                                            <div
-                                                key={shareItem.id}
-                                                className="px-2.5 py-2 rounded-md border border-surface-border bg-surface-hover/70 hover:bg-surface-hover transition-colors flex flex-col gap-1.5"
-                                            >
-                                                <div className="flex items-center justify-between gap-2">
-                                                    <div className="flex items-center gap-2 min-w-0">
-                                                        <Avatar
-                                                            src={resolveUserAvatar(recipientUser, activeUser)}
-                                                            user={recipientUser}
-                                                            alt={recipientName}
-                                                            size="small"
-                                                        />
-                                                        <div className="flex flex-col min-w-0">
-                                                            <span className="font-semibold text-xs text-text truncate leading-tight" title={recipientName}>
-                                                                {recipientName}
+                                                return (
+                                                    <div
+                                                        key={shareItem.id}
+                                                        className="px-2.5 py-2 rounded-md border border-surface-border bg-surface-hover/70 hover:bg-surface-hover transition-colors flex flex-col gap-1.5"
+                                                    >
+                                                        <div className="flex items-center justify-between gap-2">
+                                                            <div className="flex items-center gap-2 min-w-0">
+                                                                <Avatar
+                                                                    src={resolveUserAvatar(recipientUser, activeUser)}
+                                                                    user={recipientUser}
+                                                                    alt={recipientName}
+                                                                    size="small"
+                                                                />
+                                                                <div className="flex flex-col min-w-0">
+                                                                    <span className="font-semibold text-xs text-text truncate leading-tight" title={recipientName}>
+                                                                        {recipientName}
+                                                                    </span>
+                                                                    {recipientUser?.email && (
+                                                                        <span className="text-[10px] text-text-muted truncate leading-tight" title={recipientUser.email}>
+                                                                            {recipientUser.email}
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+
+                                                            {/* COMPACT 2-NODE TRACKING: SENT -> READ */}
+                                                            <div className="flex items-center w-24 shrink-0">
+                                                                <div
+                                                                    className="flex items-center justify-center px-1.5 py-0.5 rounded text-[9px] select-none shrink-0 bg-accent text-text-inverted border border-accent font-semibold shadow-2xs"
+                                                                    title="Sent"
+                                                                >
+                                                                    <span>Sent</span>
+                                                                </div>
+
+                                                                <div
+                                                                    className="flex-1 h-0.5 min-w-2 transition-all duration-300 rounded-full"
+                                                                    style={
+                                                                        isRecipientRead
+                                                                            ? { backgroundColor: 'var(--color-accent)' }
+                                                                            : { background: 'linear-gradient(to right, var(--color-accent), var(--color-warning))' }
+                                                                    }
+                                                                />
+
+                                                                <div
+                                                                    className={`flex items-center justify-center px-1.5 py-0.5 rounded text-[9px] select-none shrink-0 transition-all ${
+                                                                        isRecipientRead
+                                                                            ? 'bg-accent text-text-inverted border border-accent font-semibold shadow-2xs'
+                                                                            : 'bg-warning text-text-inverted border border-warning font-bold ring-1 ring-warning/30 shadow-2xs animate-pulse'
+                                                                    }`}
+                                                                    title={isRecipientRead ? 'Read' : 'Pending read'}
+                                                                >
+                                                                    <span>Read</span>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+
+                                                        {/* COMPACT FOOTER */}
+                                                        <div className="flex items-center justify-between text-[10px] text-text-muted pt-1 border-t border-surface-border/60 leading-none">
+                                                            <span className="truncate">
+                                                                Shared by {publisherName} • {formatTimestamp(shareItem.createdAt)}
                                                             </span>
-                                                            {recipientUser?.email && (
-                                                                <span className="text-[10px] text-text-muted truncate leading-tight" title={recipientUser.email}>
-                                                                    {recipientUser.email}
-                                                                </span>
+                                                            {isDirector && !isStaff && (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        handleActionClick('unpublish', shareItem);
+                                                                    }}
+                                                                    className="text-error hover:underline cursor-pointer font-medium ml-2 shrink-0"
+                                                                >
+                                                                    Unpublish
+                                                                </button>
                                                             )}
                                                         </div>
                                                     </div>
-
-                                                    {/* COMPACT 2-NODE TRACKING: SENT -> READ */}
-                                                    <div className="flex items-center w-24 shrink-0">
-                                                        <div
-                                                            className="flex items-center justify-center px-1.5 py-0.5 rounded text-[9px] select-none shrink-0 bg-accent text-text-inverted border border-accent font-semibold shadow-2xs"
-                                                            title="Sent"
-                                                        >
-                                                            <span>Sent</span>
-                                                        </div>
-
-                                                        <div
-                                                            className="flex-1 h-0.5 min-w-2 transition-all duration-300 rounded-full"
-                                                            style={
-                                                                isRecipientRead
-                                                                    ? { backgroundColor: 'var(--color-accent)' }
-                                                                    : { background: 'linear-gradient(to right, var(--color-accent), var(--color-warning))' }
-                                                            }
-                                                        />
-
-                                                        <div
-                                                            className={`flex items-center justify-center px-1.5 py-0.5 rounded text-[9px] select-none shrink-0 transition-all ${
-                                                                isRecipientRead
-                                                                    ? 'bg-accent text-text-inverted border border-accent font-semibold shadow-2xs'
-                                                                    : 'bg-warning text-text-inverted border border-warning font-bold ring-1 ring-warning/30 shadow-2xs animate-pulse'
-                                                        }`}
-                                                            title={isRecipientRead ? 'Read' : 'Pending read'}
-                                                        >
-                                                            <span>Read</span>
-                                                        </div>
-                                                    </div>
-                                                </div>
-
-                                                {/* COMPACT FOOTER */}
-                                                <div className="flex items-center justify-between text-[10px] text-text-muted pt-1 border-t border-surface-border/60 leading-none">
-                                                    <span className="truncate">
-                                                        Shared by {publisherName} • {formatTimestamp(shareItem.createdAt)}
-                                                    </span>
-                                                    {isDirector && !isStaff && (
-                                                        <button
-                                                            type="button"
-                                                            onClick={(e) => {
-                                                                e.stopPropagation();
-                                                                handleActionClick('unpublish', shareItem);
-                                                            }}
-                                                            className="text-error hover:underline cursor-pointer font-medium ml-2 shrink-0"
-                                                        >
-                                                            Unpublish
-                                                        </button>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
-                                    </div>
-                                )}
+                                                );
+                                            })}
+                                        </div>
+                                    );
+                                })()}
                             </div>
                         )}
                     </div>
@@ -5819,7 +6086,14 @@ const Inspector = ({
                                     leadingIcon={RotateCcw}
                                     isLoading={activeActionLoading === 'restore'}
                                     isDisabled={Boolean(activeActionLoading)}
-                                    onClick={() => handleActionClick('restore')}
+                                    onClick={() => setInspectorConfirmAction({
+                                        actionKey: 'restore',
+                                        targetItem: item,
+                                        title: item.isFolder ? 'Restore Folder' : 'Restore Document',
+                                        message: `Are you sure you want to restore ${item.isFolder ? 'folder' : 'document'} "${item.name || item.title || (item.isFolder ? 'this folder' : 'this document')}" to the active repository?`,
+                                        primaryLabel: item.isFolder ? 'Restore Folder' : 'Restore Document',
+                                        variant: 'primary',
+                                    })}
                                     className="justify-center truncate px-2"
                                 >
                                     Restore
@@ -5858,9 +6132,9 @@ const Inspector = ({
                                         actionKey: 'unshare',
                                         targetItem: item,
                                         title: `Unshare ${item.isFolder ? 'Folder' : 'Document'}`,
-                                        message: `Are you sure you want to remove departmental sharing for "${item.name || item.title || 'this item'}"?`,
-                                        primaryLabel: 'Unshare Item',
-                                        variant: 'secondary',
+                                        message: `Are you sure you want to remove all departmental and member shares for "${item.name || item.title || 'this item'}"?`,
+                                        primaryLabel: 'Unshare',
+                                        variant: 'destructive',
                                     })}
                                     className="justify-center truncate px-2"
                                 >
@@ -6485,7 +6759,7 @@ const Inspector = ({
                     onClose={() => setInspectorConfirmAction(null)}
                     title={inspectorConfirmAction.title}
                     description={inspectorConfirmAction.message}
-                    icon={inspectorConfirmAction.actionKey === 'stash' ? Clock : CheckCircle2}
+                    icon={inspectorConfirmAction.actionKey === 'stash' ? Clock : (['restore', 'unshare'].includes(inspectorConfirmAction.actionKey) ? RotateCcw : CheckCircle2)}
                     size="sm"
                     confirmOnClose={false}
                     primaryAction={{

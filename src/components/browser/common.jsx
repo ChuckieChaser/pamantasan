@@ -272,118 +272,118 @@ const getSpecificMimeLabel = (mimeType, candidateNameOrExt) => {
         return 'Directory';
     }
 
-    // 2. Documents (without "Document" suffix)
+    // 2. Documents
     if (mime === 'application/pdf' || ext === 'pdf') {
         return 'PDF';
     }
     if (mime.includes('wordprocessingml') || ext === 'docx') {
-        return 'Word (.docx)';
+        return 'DOCX';
     }
     if (mime.includes('msword') || ext === 'doc') {
-        return 'Word (.doc)';
+        return 'DOC';
     }
     if (ext === 'odt') {
-        return 'OpenDocument Text (.odt)';
+        return 'ODT';
     }
     if (mime === 'text/plain' || ext === 'txt' || ext === 'text') {
-        return 'Plain Text (.txt)';
+        return 'TXT';
     }
     if (mime === 'text/markdown' || ext === 'md' || ext === 'markdown') {
-        return 'Markdown (.md)';
+        return 'MD';
     }
     if (ext === 'rtf') {
-        return 'Rich Text (.rtf)';
+        return 'RTF';
     }
 
     // 3. Spreadsheets
     if (mime.includes('spreadsheetml') || ext === 'xlsx') {
-        return 'Excel (.xlsx)';
+        return 'XLSX';
     }
     if (mime.includes('ms-excel') || ext === 'xls') {
-        return 'Excel (.xls)';
+        return 'XLS';
     }
     if (mime === 'text/csv' || mime === 'application/csv' || ext === 'csv') {
-        return 'CSV Spreadsheet';
+        return 'CSV';
     }
     if (ext === 'ods') {
-        return 'OpenDocument Sheet (.ods)';
+        return 'ODS';
     }
 
     // 4. Presentations
     if (mime.includes('presentationml') || ext === 'pptx') {
-        return 'PowerPoint (.pptx)';
+        return 'PPTX';
     }
     if (mime.includes('ms-powerpoint') || ext === 'ppt') {
-        return 'PowerPoint (.ppt)';
+        return 'PPT';
     }
     if (ext === 'odp') {
-        return 'OpenDocument Presentation (.odp)';
+        return 'ODP';
     }
     if (ext === 'key') {
-        return 'Keynote Presentation';
+        return 'KEY';
     }
 
     // 5. Images
     if (mime === 'image/png' || ext === 'png') {
-        return 'PNG Image';
+        return 'PNG';
     }
     if (mime === 'image/jpeg' || mime === 'image/jpg' || ext === 'jpg' || ext === 'jpeg') {
-        return 'JPEG Image';
+        return 'JPG';
     }
     if (mime === 'image/webp' || ext === 'webp') {
-        return 'WebP Image';
+        return 'WEBP';
     }
     if (mime === 'image/gif' || ext === 'gif') {
-        return 'GIF Image';
+        return 'GIF';
     }
     if (mime === 'image/svg+xml' || ext === 'svg') {
-        return 'SVG Vector';
+        return 'SVG';
     }
     if (mime.startsWith('image/')) {
-        return `${ext ? ext.toUpperCase() + ' ' : ''}Image`;
+        return ext ? ext.toUpperCase() : 'IMAGE';
     }
 
-    // 6. Audio (Separated specifically from Video)
+    // 6. Audio
     if (mime === 'audio/mpeg' || mime === 'audio/mp3' || ext === 'mp3') {
-        return 'MP3 Audio';
+        return 'MP3';
     }
     if (mime === 'audio/wav' || ext === 'wav') {
-        return 'WAV Audio';
+        return 'WAV';
     }
     if (mime === 'audio/ogg' || ext === 'ogg') {
-        return 'OGG Audio';
+        return 'OGG';
     }
     if (mime === 'audio/flac' || ext === 'flac') {
-        return 'FLAC Audio';
+        return 'FLAC';
     }
     if (mime === 'audio/aac' || ext === 'aac') {
-        return 'AAC Audio';
+        return 'AAC';
     }
     if (mime === 'audio/m4a' || ext === 'm4a') {
-        return 'M4A Audio';
+        return 'M4A';
     }
     if (mime.startsWith('audio/')) {
-        return `${ext ? ext.toUpperCase() + ' ' : ''}Audio Recording`;
+        return ext ? ext.toUpperCase() : 'AUDIO';
     }
 
-    // 7. Video (Separated specifically from Audio)
+    // 7. Video
     if (mime === 'video/mp4' || ext === 'mp4') {
-        return 'MP4 Video';
+        return 'MP4';
     }
     if (mime === 'video/webm' || ext === 'webm') {
-        return 'WebM Video';
+        return 'WEBM';
     }
     if (mime === 'video/quicktime' || ext === 'mov') {
-        return 'QuickTime Video (.mov)';
+        return 'MOV';
     }
     if (mime === 'video/x-msvideo' || ext === 'avi') {
-        return 'AVI Video';
+        return 'AVI';
     }
     if (ext === 'mkv') {
-        return 'MKV Video';
+        return 'MKV';
     }
     if (mime.startsWith('video/')) {
-        return `${ext ? ext.toUpperCase() + ' ' : ''}Video Recording`;
+        return ext ? ext.toUpperCase() : 'VIDEO';
     }
 
     // 8. Code & Data
@@ -394,58 +394,58 @@ const getSpecificMimeLabel = (mimeType, candidateNameOrExt) => {
         return 'XML';
     }
     if (mime.includes('javascript') || ext === 'js' || ext === 'mjs' || ext === 'cjs') {
-        return 'JavaScript';
+        return 'JS';
     }
     if (ext === 'jsx') {
-        return 'React JSX';
+        return 'JSX';
     }
     if (mime.includes('typescript') || ext === 'ts') {
-        return 'TypeScript';
+        return 'TS';
     }
     if (ext === 'tsx') {
-        return 'React TSX';
+        return 'TSX';
     }
     if (mime === 'text/html' || ext === 'html' || ext === 'htm') {
         return 'HTML';
     }
     if (mime === 'text/css' || ext === 'css' || ext === 'scss' || ext === 'sass' || ext === 'less') {
-        return 'CSS Stylesheet';
+        return ext ? ext.toUpperCase() : 'CSS';
     }
     if (mime === 'text/x-python' || ext === 'py') {
-        return 'Python Script';
+        return 'PY';
     }
     if (mime === 'application/x-sh' || ext === 'sh' || ext === 'bash') {
-        return 'Shell Script';
+        return 'SH';
     }
     if (mime.includes('yaml') || ext === 'yaml' || ext === 'yml') {
         return 'YAML';
     }
     if (mime.includes('sql') || ext === 'sql') {
-        return 'SQL Query';
+        return 'SQL';
     }
 
     // 9. Archives
     if (mime === 'application/zip' || ext === 'zip') {
-        return 'ZIP Archive';
+        return 'ZIP';
     }
     if (mime === 'application/x-tar' || ext === 'tar') {
-        return 'TAR Archive';
+        return 'TAR';
     }
     if (mime === 'application/gzip' || ext === 'gz' || ext === 'tgz') {
-        return 'GZip Archive';
+        return 'GZ';
     }
     if (mime === 'application/x-7z-compressed' || ext === '7z') {
-        return '7-Zip Archive';
+        return '7Z';
     }
     if (mime.includes('rar') || ext === 'rar') {
-        return 'RAR Archive';
+        return 'RAR';
     }
 
     if (ext) {
-        return `${ext.toUpperCase()} File`;
+        return ext.toUpperCase();
     }
 
-    return mime || 'File';
+    return 'FILE';
 };
 
 const renderItemIcon = (item = {}, resourceName, customClassName = LARGE_ICON_STYLE) => {

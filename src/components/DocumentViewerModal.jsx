@@ -38,8 +38,13 @@ const ICON_STYLE = 'h-5 w-5 shrink-0';
 const SMALL_ICON_STYLE = 'h-4 w-4 shrink-0';
 
 const EDITABLE_EXTENSIONS = new Set([
-    'txt', 'md', 'json', 'csv', 'log', 'js', 'jsx', 'ts', 'tsx',
-    'html', 'css', 'scss', 'sql', 'py', 'sh', 'env', 'xml', 'yaml', 'yml',
+    'txt', 'text', 'md', 'markdown', 'json', 'csv', 'log', 'js', 'jsx', 'ts', 'tsx',
+    'html', 'htm', 'css', 'scss', 'sql', 'py', 'sh', 'bash', 'env', 'xml', 'yaml', 'yml',
+    'ini', 'conf', 'config', 'properties', 'diff', 'patch',
+]);
+
+const OFFICE_FALLBACK_EXTENSIONS = new Set([
+    'ppt', 'pptx', 'doc', 'odt', 'odp', 'ods', 'rtf', 'key', 'numbers', 'pages',
 ]);
 
 const IMAGE_EXTENSIONS = new Set([
@@ -170,6 +175,7 @@ const DocumentViewerModal = ({
     const isPdf = fileExtension === 'pdf';
     const isDocx = fileExtension === 'docx';
     const isSpreadsheet = fileExtension === 'xlsx' || fileExtension === 'xls';
+    const isOfficeDoc = OFFICE_FALLBACK_EXTENSIONS.has(fileExtension);
     const isVideo = VIDEO_EXTENSIONS.has(fileExtension);
     const isAudio = AUDIO_EXTENSIONS.has(fileExtension);
     const isArchived = Boolean(resolvedDoc?.isArchived);
@@ -1046,11 +1052,11 @@ const DocumentViewerModal = ({
                     {/* CONTENT RENDERERS */}
                     {!isLoading && !loadError && (
                         <>
-                            {/* GOOGLE DOCS VIEWER / MOBILE PREVIEW FALLBACK */}
-                            {useGoogleViewerFallback && downloadUrl && (
+                            {/* GOOGLE DOCS VIEWER / OFFICE / MOBILE PREVIEW FALLBACK */}
+                            {(useGoogleViewerFallback || (isOfficeDoc && downloadUrl)) && downloadUrl && (
                                 <div className="w-full h-full flex flex-col relative rounded-lg overflow-hidden bg-zinc-900">
                                     <div className="flex items-center justify-between px-3 py-2 bg-surface-hover border-b border-surface-border text-xs shrink-0 select-none">
-                                        <span className="text-text-muted truncate">Mobile Preview ({fileExtension.toUpperCase() || 'Document'})</span>
+                                        <span className="text-text-muted truncate">Preview ({fileExtension.toUpperCase() || 'Document'})</span>
                                         <a
                                             href={downloadUrl}
                                             target="_blank"
@@ -1070,7 +1076,7 @@ const DocumentViewerModal = ({
                             )}
 
                             {/* A. PDF EMBED */}
-                            {!useGoogleViewerFallback && isPdf && downloadUrl && (
+                            {!useGoogleViewerFallback && !isOfficeDoc && isPdf && downloadUrl && (
                                 <div className="w-full h-full flex flex-col relative rounded-lg overflow-hidden bg-zinc-900">
                                     {/* MOBILE PDF HELPER BAR */}
                                     {isMobileDevice && (
@@ -1389,8 +1395,8 @@ const DocumentViewerModal = ({
                                 </div>
                             )}
 
-                            {/* H. UNSUPPORTED / BINARY FALLBACK (PPTX, ZIP, ETC.) */}
-                            {!useGoogleViewerFallback && !isPdf && !isDocx && !isSpreadsheet && !isEditable && !isImage && !isVideo && !isAudio && (
+                            {/* H. UNSUPPORTED / BINARY FALLBACK (ZIP, ETC.) */}
+                            {!useGoogleViewerFallback && !isOfficeDoc && !isPdf && !isDocx && !isSpreadsheet && !isEditable && !isImage && !isVideo && !isAudio && (
                                 <div className="w-full h-full flex items-center justify-center p-4">
                                     <div className="flex flex-col items-center justify-center gap-5 p-8 text-center max-w-md bg-surface rounded-xl border border-surface-border shadow-md">
                                         <div className="p-4 rounded-full bg-surface-hover text-text-muted">

@@ -32,6 +32,7 @@
     --color-accent-hover: var(--color-emerald-700);
     --color-accent-background: var(--color-emerald-50);
     --color-accent-border: var(--color-emerald-200);
+    --color-accent-soft: color-mix(in srgb, var(--color-accent) 8%, var(--color-surface));
 
     --color-information: var(--color-indigo-600);
     --color-information-hover: var(--color-indigo-700);
@@ -42,11 +43,15 @@
     --color-warning-hover: var(--color-amber-700);
     --color-warning-background: var(--color-amber-50);
     --color-warning-border: var(--color-amber-200);
+    --color-warning-soft: color-mix(in srgb, var(--color-warning) 8%, var(--color-surface));
+    --color-warning-soft-hover: color-mix(in srgb, var(--color-warning) 14%, var(--color-surface));
 
     --color-error: var(--color-rose-600);
     --color-error-hover: var(--color-rose-700);
     --color-error-background: var(--color-rose-50);
     --color-error-border: var(--color-rose-200);
+    --color-error-soft: color-mix(in srgb, var(--color-error) 8%, var(--color-surface));
+    --color-error-soft-hover: color-mix(in srgb, var(--color-error) 14%, var(--color-surface));
 
     /* TYPOGRAPHY NAMESPACE */
     --font-serif: 'Fraunces', Georgia, serif;
@@ -85,3 +90,46 @@
         --color-error-border: var(--color-rose-800);
     }
 }
+
+@layer utilities {
+    .bg-accent-soft {
+        background-color: color-mix(in srgb, var(--color-accent) 8%, var(--color-surface));
+    }
+    .hover\:bg-accent-soft:hover {
+        background-color: color-mix(in srgb, var(--color-accent) 8%, var(--color-surface));
+    }
+    .group:hover .group-hover\:bg-accent-soft {
+        background-color: color-mix(in srgb, var(--color-accent) 8%, var(--color-surface));
+    }
+    .hover\:bg-accent-soft-hover:hover {
+        background-color: color-mix(in srgb, var(--color-accent) 14%, var(--color-surface));
+    }
+    .group:hover .group-hover\:bg-accent-soft-hover {
+        background-color: color-mix(in srgb, var(--color-accent) 14%, var(--color-surface));
+    }
+    .bg-error-soft {
+        background-color: color-mix(in srgb, var(--color-error) 8%, var(--color-surface));
+    }
+    .hover\:bg-error-soft-hover:hover {
+        background-color: color-mix(in srgb, var(--color-error) 14%, var(--color-surface));
+    }
+    .group:hover .group-hover\:bg-error-soft-hover {
+        background-color: color-mix(in srgb, var(--color-error) 14%, var(--color-surface));
+    }
+    .bg-warning-soft {
+        background-color: color-mix(in srgb, var(--color-warning) 8%, var(--color-surface));
+    }
+    .hover\:bg-warning-soft:hover {
+        background-color: color-mix(in srgb, var(--color-warning) 8%, var(--color-surface));
+    }
+    .group:hover .group-hover\:bg-warning-soft {
+        background-color: color-mix(in srgb, var(--color-warning) 8%, var(--color-surface));
+    }
+    .hover\:bg-warning-soft-hover:hover {
+        background-color: color-mix(in srgb, var(--color-warning) 14%, var(--color-surface));
+    }
+    .group:hover .group-hover\:bg-warning-soft-hover {
+        background-color: color-mix(in srgb, var(--color-warning) 14%, var(--color-surface));
+    }
+}
+

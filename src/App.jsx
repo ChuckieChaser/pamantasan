@@ -172,6 +172,12 @@ const AppContent = () => {
         }
     }, [currentUser, departments, syncAllDocumentShares]);
 
+    const documents = useDocumentStore((state) => state.documents);
+    const documentShares = useDocumentStore((state) => state.documentShares);
+    const documentVersions = useDocumentStore((state) => state.documentVersions);
+    const documentRequests = useDocumentStore((state) => state.documentRequests);
+    const coordinatorRequests = useCoordinatorStore((state) => state.coordinatorRequests);
+
     // REACTIVE SYNC FOR SELECTED ITEM WHEN STORE DEPARTMENTS UPDATE
     useEffect(() => {
         if (!selectedItem?.id) {
@@ -259,6 +265,93 @@ const AppContent = () => {
             });
         }
     }, [users, selectedItem?.id]);
+
+    // REACTIVE SYNC FOR SELECTED ITEM WHEN STORE DOCUMENTS / SHARES / VERSIONS UPDATE
+    useEffect(() => {
+        if (!selectedItem?.id) {
+            return;
+        }
+
+        const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
+        const selCleanId = cleanId(selectedItem.id);
+
+        const matchingDoc = (documents || []).find((doc) => cleanId(doc?.id) === selCleanId);
+        if (matchingDoc) {
+            queueMicrotask(() => {
+                setSelectedItem((previous) => {
+                    if (!previous || cleanId(previous.id) !== selCleanId) {
+                        return previous;
+                    }
+
+                    const shares = (documentShares || []).filter((s) => {
+                        const sDocId = cleanId(s.document?.id ?? s.documentId);
+                        return sDocId === selCleanId;
+                    });
+
+                    const isShared = shares.length > 0;
+                    const primaryShare = shares[0] || null;
+
+                    const matchingVersions = (documentVersions || []).filter(
+                        (v) => cleanId(v.document?.id ?? v.documentId) === selCleanId
+                    );
+                    const sortedVersions = [...matchingVersions].sort(
+                        (a, b) => (b.versionNumber ?? b.version ?? 0) - (a.versionNumber ?? a.version ?? 0)
+                    );
+                    const latestVer = sortedVersions[0];
+
+                    const newName = matchingDoc.name ?? previous.name ?? previous.title;
+                    const newStatus = isShared
+                        ? (primaryShare?.status || 'SHARED')
+                        : (matchingDoc.isArchived ? 'ARCHIVED' : (matchingDoc.status === 'SHARED' ? 'PRIVATE' : (matchingDoc.status || 'PRIVATE')));
+
+                    return {
+                        ...previous,
+                        ...matchingDoc,
+                        name: newName,
+                        title: newName,
+                        status: newStatus,
+                        shares: shares,
+                        share: primaryShare,
+                        latestVersion: latestVer || previous.latestVersion,
+                        updatedAt: matchingDoc.updatedAt ?? previous.updatedAt,
+                    };
+                });
+            });
+            return;
+        }
+
+        const matchingDocReq = (documentRequests || []).find((req) => cleanId(req?.id) === selCleanId);
+        if (matchingDocReq) {
+            queueMicrotask(() => {
+                setSelectedItem((previous) => {
+                    if (!previous || cleanId(previous.id) !== selCleanId) return previous;
+                    return {
+                        ...previous,
+                        ...matchingDocReq,
+                        status: matchingDocReq.status ?? previous.status,
+                        updatedAt: matchingDocReq.updatedAt ?? previous.updatedAt,
+                    };
+                });
+            });
+            return;
+        }
+
+        const matchingCoordReq = (coordinatorRequests || []).find((req) => cleanId(req?.id) === selCleanId);
+        if (matchingCoordReq) {
+            queueMicrotask(() => {
+                setSelectedItem((previous) => {
+                    if (!previous || cleanId(previous.id) !== selCleanId) return previous;
+                    return {
+                        ...previous,
+                        ...matchingCoordReq,
+                        status: matchingCoordReq.status ?? previous.status,
+                        updatedAt: matchingCoordReq.updatedAt ?? previous.updatedAt,
+                    };
+                });
+            });
+            return;
+        }
+    }, [documents, documentShares, documentVersions, documentRequests, coordinatorRequests, selectedItem?.id]);
 
     // DERIVED VALUES: NAVIGATION & PERMISSIONS
     const activeNavigationKey = useMemo(() => {
@@ -435,7 +528,7 @@ const AppContent = () => {
         enabled: Boolean(currentUser?.id),
     });
 
-    const handleNavigationChange = (navigationKey) => {
+    const handleNavigationChange = (navigationKey, navState = null) => {
         setSelectedItem(null);
         setSelectedItems([]);
         setInspectorTab('information');
@@ -443,7 +536,7 @@ const AppContent = () => {
             navigationKey === 'request_document' || navigationKey === 'requests'
                 ? '/requests'
                 : `/${navigationKey}`;
-        navigate(targetPath);
+        navigate(targetPath, navState ? { state: navState } : undefined);
     };
 
     const handleToggleDetailPanel = () => {
@@ -888,56 +981,20 @@ const AppContent = () => {
                             }
                             successCount++;
                         } else if (actionKey === 'unshare') {
-                            const docClean = cleanId(doc.id);
-                            const matchingShares = userDeptClean
-                                ? allShares.filter((s) => cleanId(s.document?.id ?? s.documentId) === docClean && cleanId(s.department?.id ?? s.departmentId) === userDeptClean)
-                                : allShares.filter((s) => cleanId(s.document?.id ?? s.documentId) === docClean);
-
-                            if (matchingShares.length > 0) {
-                                for (const mShare of matchingShares) {
-                                    const mDeptId = mShare.department?.id ?? mShare.departmentId;
-                                    if (constants.isCoordinatorRole(currentUser?.role)) {
-                                        const unsharePayload = {
-                                            shareId: mShare.id,
-                                            documentId: doc?.id,
-                                            departmentId: mDeptId,
-                                            isRecursive: Boolean(doc?.isFolder),
-                                        };
-                                        const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
-                                        await coordinatorApprovalService.submitCoordinatorRequest({
-                                            action: constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_UNSHARE,
-                                            requesterId,
-                                            data: unsharePayload,
-                                        });
-                                    } else {
-                                        if (doc?.isFolder && mDeptId) {
-                                            await store.unshareDocumentRecursive(doc.id, mDeptId);
-                                        } else if (mShare.id) {
-                                            await store.unshareDocument(mShare.id);
-                                        }
-                                    }
-                                }
-                            } else if (shareId) {
-                                if (constants.isCoordinatorRole(currentUser?.role)) {
-                                    const unsharePayload = {
-                                        shareId: shareId,
-                                        documentId: doc?.id,
-                                        departmentId: deptId,
-                                        isRecursive: Boolean(doc?.isFolder),
-                                    };
-                                    const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
-                                    await coordinatorApprovalService.submitCoordinatorRequest({
-                                        action: constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_UNSHARE,
-                                        requesterId,
-                                        data: unsharePayload,
-                                    });
-                                } else {
-                                    if (doc?.isFolder && deptId) {
-                                        await store.unshareDocumentRecursive(doc.id, deptId);
-                                    } else {
-                                        await store.unshareDocument(shareId);
-                                    }
-                                }
+                            if (constants.isCoordinatorRole(currentUser?.role)) {
+                                const unsharePayload = {
+                                    documentId: doc?.id,
+                                    allDepartments: true,
+                                    isRecursive: Boolean(doc?.isFolder),
+                                };
+                                const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
+                                await coordinatorApprovalService.submitCoordinatorRequest({
+                                    action: constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_UNSHARE,
+                                    requesterId,
+                                    data: unsharePayload,
+                                });
+                            } else {
+                                await store.unshareDocumentFromAllDepartments(doc.id);
                             }
                             successCount++;
                         }
@@ -957,6 +1014,82 @@ const AppContent = () => {
 
             const targetDoc = targetDocs[0];
             const allShares = useDocumentStore.getState().documentShares || [];
+
+            if (actionKey === 'unshare') {
+                const store = useDocumentStore.getState();
+                const docTitle = targetDoc?.name || targetDoc?.title || selectedItem?.name || selectedItem?.title || 'document';
+                const isExplicitShareRecord = Boolean(targetDoc?.documentId && targetDoc?.departmentId && targetDoc?.id !== targetDoc?.documentId);
+
+                if (isExplicitShareRecord) {
+                    if (constants.isCoordinatorRole(currentUser?.role)) {
+                        const unsharePayload = {
+                            shareId: targetDoc.id,
+                            documentId: targetDoc.documentId,
+                            departmentId: targetDoc.departmentId,
+                            isRecursive: false,
+                        };
+                        const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
+                        await coordinatorApprovalService.submitCoordinatorRequest({
+                            action: constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_UNSHARE,
+                            requesterId,
+                            data: unsharePayload,
+                        });
+                        useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
+                        showToast({
+                            type: 'success',
+                            title: 'Request Submitted',
+                            description: `Unshare request for departmental share sent for Administrator approval.`,
+                        });
+                        return;
+                    }
+
+                    await store.unshareDocument(targetDoc.id);
+                    showToast({
+                        type: 'success',
+                        title: 'Share Deleted',
+                        description: `Deleted departmental share.`,
+                    });
+                    if (currentUser) {
+                        store.syncAllDocumentShares(currentUser, departments).catch(() => {});
+                    }
+                    return;
+                }
+
+                if (constants.isCoordinatorRole(currentUser?.role)) {
+                    const unsharePayload = {
+                        documentId: targetDoc?.id,
+                        allDepartments: true,
+                        isRecursive: Boolean(targetDoc?.isFolder),
+                    };
+                    const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
+                    await coordinatorApprovalService.submitCoordinatorRequest({
+                        action: constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_UNSHARE,
+                        requesterId,
+                        data: unsharePayload,
+                    });
+                    useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
+                    showToast({
+                        type: 'success',
+                        title: 'Request Submitted',
+                        description: `Unshare request for "${docTitle}" sent for Administrator approval.`,
+                    });
+                    return;
+                }
+
+                await store.unshareDocumentFromAllDepartments(targetDoc.id);
+                showToast({
+                    type: 'success',
+                    title: 'Document Unshared',
+                    description: targetDoc?.isFolder
+                        ? `Deleted all departmental and member shares for folder "${docTitle}" and all nested contents.`
+                        : `Deleted all departmental and member shares for "${docTitle}".`,
+                });
+                if (currentUser) {
+                    store.syncAllDocumentShares(currentUser, departments).catch(() => {});
+                }
+                return;
+            }
+
             let shareRecord = targetDoc?.share;
 
             if (!shareRecord) {
@@ -1115,48 +1248,6 @@ const AppContent = () => {
                         title: targetDoc?.isFolder ? 'Folder Unstashed' : 'Document Unstashed',
                         description: `Restored "${docTitle}" to approved state.`,
                     });
-                } else if (actionKey === 'unshare') {
-                    if (constants.isCoordinatorRole(currentUser?.role)) {
-                        const unsharePayload = {
-                            shareId: shareId,
-                            documentId: targetDoc?.id,
-                            departmentId: deptId,
-                            isRecursive: Boolean(targetDoc?.isFolder),
-                        };
-
-                        const requesterId = currentUser?.id ?? useAuthStore.getState().currentUser?.id;
-                        await coordinatorApprovalService.submitCoordinatorRequest({
-                            action: constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_UNSHARE,
-                            requesterId,
-                            data: unsharePayload,
-                        });
-                        useCoordinatorStore.getState().fetchCoordinatorRequests().catch(() => {});
-
-                        showToast({
-                            type: 'success',
-                            title: 'Request Submitted',
-                            description: `Unshare request for "${docTitle}" sent for Administrator approval.`,
-                        });
-                        return;
-                    }
-
-                    if (targetDoc?.isFolder && deptId) {
-                        await store.unshareDocumentRecursive(targetDoc.id, deptId);
-                        showToast({
-                            type: 'success',
-                            title: 'Share Deleted',
-                            description: `Deleted folder "${docTitle}" and all nested contents from department.`,
-                        });
-                    } else {
-                        await store.unshareDocument(shareId);
-                        showToast({
-                            type: 'success',
-                            title: 'Share Deleted',
-                            description: isUserShare
-                                ? `Deleted user share for "${docTitle}".`
-                                : `Deleted department share for "${docTitle}".`,
-                        });
-                    }
                 }
                 if (currentUser) {
                     store.syncAllDocumentShares(currentUser, departments).catch(() => {});
@@ -1189,17 +1280,20 @@ const AppContent = () => {
         }
 
         if (actionKey === 'restore') {
-            const allDocs = useDocumentStore.getState().documents || [];
-            const targetParentId = item?.parentId && item.parentId !== 'root' ? item.parentId : null;
-            const parentDoc = targetParentId ? allDocs.find((d) => d.id === targetParentId) : null;
+            const itemsToRestore = Array.isArray(item) ? item : (item?.id ? [item] : (selectedItems.length > 0 ? selectedItems : (selectedItem ? [selectedItem] : [])));
+            if (itemsToRestore.length === 0) return;
 
-            // CHILD RESTORE GUARD: If parent folder is archived, prompt modal
-            if (parentDoc && parentDoc.isArchived) {
-                setRestoreConflictModalItem({ item, parentFolder: parentDoc });
-                return;
+            const allDocs = useDocumentStore.getState().documents || [];
+            for (const single of itemsToRestore) {
+                const targetParentId = single?.parentId && single.parentId !== 'root' ? single.parentId : null;
+                const parentDoc = targetParentId ? allDocs.find((d) => d.id === targetParentId) : null;
+                if (parentDoc && parentDoc.isArchived) {
+                    setRestoreConflictModalItem({ item: single, parentFolder: parentDoc });
+                    return;
+                }
             }
 
-            await performRestoreItem(item);
+            await performRestoreItem(itemsToRestore);
             return;
         }
 
@@ -1445,16 +1539,23 @@ const AppContent = () => {
 
 
     const performRestoreItem = async (item) => {
+        const itemsToRestore = Array.isArray(item) ? item : (item?.id ? [item] : []);
+        if (itemsToRestore.length === 0) return;
         try {
-            if (item?.id) {
-                await useDocumentStore.getState().archiveDocument(item.id, false);
+            for (const single of itemsToRestore) {
+                if (single?.id) {
+                    await useDocumentStore.getState().archiveDocument(single.id, false);
+                }
             }
-            setSelectedItems((prev) => (Array.isArray(prev) ? prev.filter((p) => p.id !== item?.id) : []));
-            setSelectedItem((prev) => (prev?.id === item?.id ? { ...prev, isArchived: false } : prev));
+            const restoredIds = new Set(itemsToRestore.map((it) => it.id));
+            setSelectedItems((prev) => (Array.isArray(prev) ? prev.filter((p) => !restoredIds.has(p.id)) : []));
+            setSelectedItem((prev) => (prev && restoredIds.has(prev.id) ? null : prev));
             showToast({
                 type: 'success',
-                title: item?.isFolder ? 'Folder Restored' : 'Document Restored',
-                description: `${item?.name ?? item?.title} restored to active repository.`,
+                title: itemsToRestore.length > 1 ? 'Items Restored' : (itemsToRestore[0]?.isFolder ? 'Folder Restored' : 'Document Restored'),
+                description: itemsToRestore.length > 1
+                    ? `${itemsToRestore.length} items restored to active repository.`
+                    : `"${itemsToRestore[0]?.name ?? itemsToRestore[0]?.title}" restored to active repository.`,
             });
         } catch (error) {
             showToast({
@@ -1484,8 +1585,8 @@ const AppContent = () => {
                 await useDocumentStore.getState().archiveDocument(item.id, false);
             }
 
-            setSelectedItems((prev) => (Array.isArray(prev) ? prev.filter((p) => p.id !== item?.id) : []));
-            setSelectedItem((prev) => (prev?.id === item?.id ? { ...prev, isArchived: false } : prev));
+            setSelectedItems([]);
+            setSelectedItem(null);
             showToast({
                 type: 'success',
                 title: 'Items Restored',
@@ -1735,7 +1836,7 @@ const AppContent = () => {
                 isOpen={Boolean(restoreConflictModalItem)}
                 onClose={() => setRestoreConflictModalItem(null)}
                 title="Archived Parent Folder Conflict"
-                description={`The original parent folder "${restoreConflictModalItem.parentFolder?.name || restoreConflictModalItem.parentFolder?.title || 'Parent Folder'}" is currently archived. To unarchive this item, its parent folder must also be restored.`}
+                description={`The original parent folder "${restoreConflictModalItem.parentFolder?.name || restoreConflictModalItem.parentFolder?.title || 'Parent Folder'}" is currently archived. To restore this item, its parent folder must also be restored.`}
                 icon={AlertTriangle}
                 variant="warning"
                 size="sm"
@@ -1746,7 +1847,7 @@ const AppContent = () => {
                     setRestoreConflictModalItem(null);
                     await handleRestoreWithParent(item, parentFolder);
                 }}
-                confirmLabel="Unarchive Parent & File"
+                confirmLabel="Restore Parent & File"
                 cancelLabel="Cancel"
             />
         )}

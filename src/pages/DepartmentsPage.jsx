@@ -16,7 +16,7 @@ import {
     formatDateTime,
 } from '../components';
 import { useDepartmentStore, useUserStore, useAuthStore, useCoordinatorStore } from '../stores';
-import { useToast, useAuth } from '../hooks';
+import { useToast, useAuth, useSeenItems } from '../hooks';
 import { coordinatorApprovalService } from '../services';
 import { constants } from '../constants';
 
@@ -56,6 +56,7 @@ const DepartmentsPage = ({
     const storeUser = useAuthStore((state) => state.currentUser);
     const currentUser = propUser ?? authUser ?? storeUser ?? useAuthStore.getState().currentUser;
     const isCoordinator = constants.isCoordinatorRole(currentUser?.role);
+    const { markItemAsSeen, getHighlightedIds } = useSeenItems('departments', currentUser);
 
     // STATES
     const [selectedDepartment, setSelectedDepartment] = useState(null);
@@ -97,6 +98,9 @@ const DepartmentsPage = ({
         const itemWithTab = item ? (targetTab ? { ...item, _targetTab: targetTab } : item) : null;
         setSelectedDepartment(itemWithTab);
         onSelectDepartment?.(itemWithTab, targetTab);
+        if (item) {
+            markItemAsSeen(item);
+        }
     };
 
     const handleOpenAddModal = () => {
@@ -471,6 +475,10 @@ const DepartmentsPage = ({
         });
     }, [departments, users]);
 
+    const highlightedIds = useMemo(() => {
+        return getHighlightedIds(formattedDepartmentData);
+    }, [getHighlightedIds, formattedDepartmentData]);
+
     // RENDER
     return (
         <Container
@@ -487,6 +495,9 @@ const DepartmentsPage = ({
                 sortOptions={DEPARTMENT_SORT_OPTIONS}
                 selectedItem={activeSelectedDepartment}
                 selectedIds={selectedItems && selectedItems.length > 0 ? new Set(selectedItems.map((i) => i.id)) : undefined}
+                highlightedIds={highlightedIds}
+                onItemHover={markItemAsSeen}
+                onItemSeen={markItemAsSeen}
                 addItemLabel="New Department"
                 addItemIcon={Plus}
                 searchPlaceholder="Search department..."

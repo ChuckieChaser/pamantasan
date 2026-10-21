@@ -22,6 +22,8 @@ const Table = ({
     onToggleSelect,
     onToggleSelectAll,
     onContextMenu,
+    highlightedIds = null,
+    onItemHover,
     className,
     ...props
 }) => {
@@ -43,7 +45,7 @@ const Table = ({
 
     // RENDER
     return (
-        <div className={`w-full overflow-x-auto overflow-y-auto max-h-[485px] rounded-xl border border-surface-border bg-surface shadow-2xs ${className ?? ''}`.trim()} {...props}>
+        <div className={`w-full overflow-x-auto overflow-y-auto max-h-[680px] rounded-xl border border-surface-border bg-surface shadow-2xs ${className ?? ''}`.trim()} {...props}>
             <table className="w-max min-w-full text-left text-xs sm:text-sm border-separate border-spacing-0">
                 <thead className="sticky top-0 z-30 bg-surface shadow-2xs">
                     <tr className="font-semibold text-xs sm:text-sm text-text select-none h-10 sm:h-11">
@@ -75,15 +77,41 @@ const Table = ({
                     {data.map((item) => {
                         const isChecked = selectedIds.has(item.id);
                         const isSelected = selectedId === item.id || isChecked;
+                        const isSoftError = Boolean(item.isRejected || item.hasRejectedChild);
+                        const isHighlighted = Boolean(
+                            highlightedIds &&
+                            (highlightedIds instanceof Set
+                                ? highlightedIds.has(item.id)
+                                : (Array.isArray(highlightedIds) && highlightedIds.includes(item.id)))
+                        );
+                        const isWarning = Boolean(!isSoftError && !isHighlighted && (item.isWarning || item.isPendingAction || item.hasPendingActionChild));
+
                         const stickyCellBg = isChecked || isSelected
                             ? 'bg-accent-background'
+                            : isSoftError
+                            ? 'bg-error-soft group-hover:bg-error-soft-hover'
+                            : isHighlighted
+                            ? 'bg-accent-soft group-hover:bg-accent-soft-hover'
+                            : isWarning
+                            ? 'bg-warning-soft group-hover:bg-warning-soft-hover'
                             : 'bg-surface group-hover:bg-surface-hover';
+
+                        const rowBgClass = isChecked || isSelected
+                            ? 'bg-accent-background text-text font-medium'
+                            : isSoftError
+                            ? 'bg-error-soft hover:bg-error-soft-hover text-text'
+                            : isHighlighted
+                            ? 'bg-accent-soft hover:bg-accent-soft-hover text-text'
+                            : isWarning
+                            ? 'bg-warning-soft hover:bg-warning-soft-hover text-text'
+                            : 'hover:bg-surface-hover text-text';
 
                         return (
                             <tr
                                 key={item.id}
                                 data-record-id={item.id}
                                 data-selected={isSelected ? 'true' : 'false'}
+                                onMouseEnter={() => onItemHover?.(item)}
                                 onClick={() => {
                                     if (selectedIds.size > 0) {
                                         onToggleSelect?.(item);
@@ -100,11 +128,7 @@ const Table = ({
                                     event.preventDefault();
                                     onContextMenu?.(event, item);
                                 }}
-                                className={`group cursor-pointer transition-colors duration-150 select-none h-10 sm:h-11 ${
-                                    isChecked || isSelected
-                                        ? 'bg-accent-background text-text font-medium'
-                                        : 'hover:bg-surface-hover text-text'
-                                }`}
+                                className={`group cursor-pointer transition-colors duration-200 select-none h-10 sm:h-11 ${rowBgClass}`}
                             >
                                 <td
                                     className={`sticky left-0 z-20 w-[44px] min-w-[44px] max-w-[44px] px-3 py-2 sm:py-2.5 text-center align-middle border-b border-surface-border transition-colors ${stickyCellBg}`}

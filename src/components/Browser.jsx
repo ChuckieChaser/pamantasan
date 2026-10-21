@@ -5,6 +5,7 @@ import {
     ArrowDownAZ,
     ArrowUpAZ,
     ArrowUpDown,
+    CheckCheck,
     ChevronRight,
     Clock,
     FileType,
@@ -18,6 +19,7 @@ import {
     X,
 } from 'lucide-react';
 import { useDoubleClick } from '../hooks';
+import { useAuthStore } from '../stores';
 import { Button } from './Button';
 import { ComboField, SearchField, SelectField } from './Fields';
 import { ToggleSelection, ViewSelection } from './Selections';
@@ -51,6 +53,18 @@ const VIEW_OPTIONS = [
 ];
 
 
+const getStorageKeyPrefix = (resName) => {
+    const raw = String(resName || 'documents').toLowerCase().trim();
+    if (raw.startsWith('user')) return 'user';
+    if (raw.startsWith('doc') && !raw.includes('req')) return 'document';
+    if (raw.startsWith('dept') || raw.startsWith('department')) return 'department';
+    if (raw.includes('req') && !raw.startsWith('coord')) return 'request';
+    if (raw.startsWith('coord')) return 'coordinator';
+    if (raw.startsWith('archive')) return 'archive';
+    return raw;
+};
+
+
 // --- COMPONENTS ---
 const Browser = ({
     resourceName = 'documents',
@@ -64,6 +78,7 @@ const Browser = ({
     breadcrumbs = null,
     selectedItem = null,
     selectedIds: selectedIdsProp,
+    highlightedIds = null,
     addItemLabel = 'Add New',
     addItemIcon = Plus,
     searchPlaceholder = 'Search records...',
@@ -82,14 +97,39 @@ const Browser = ({
     onOpenItem,
     onItemAction,
     onToggleArchived,
+    onItemHover,
+    onItemSeen,
     className,
     ...props
 }) => {
+    const handleItemSeen = onItemSeen || onItemHover;
+    const currentUser = useAuthStore((state) => state.currentUser);
+    const activeUserId = currentUser?.id || (typeof localStorage !== 'undefined' ? localStorage.getItem('pamantasan_auth_user_id') : null) || 'anonymous';
+    const storagePrefix = getStorageKeyPrefix(resourceName);
+    const viewStorageKey = `${activeUserId}_${storagePrefix}_view`;
+    const sortStorageKey = `${activeUserId}_${storagePrefix}_sort`;
+
     // STATES
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedFilters, setSelectedFilters] = useState([]);
-    const [internalSortBy, setInternalSortBy] = useState(sortBy ?? 'name-asc');
-    const [currentView, setCurrentView] = useState(initialView);
+    const [internalSortBy, setInternalSortBy] = useState(() => {
+        if (typeof window !== 'undefined') {
+            try {
+                const saved = localStorage.getItem(sortStorageKey);
+                if (saved) return saved;
+            } catch (e) {}
+        }
+        return sortBy ?? 'name-asc';
+    });
+    const [currentView, setCurrentView] = useState(() => {
+        if (typeof window !== 'undefined') {
+            try {
+                const saved = localStorage.getItem(viewStorageKey);
+                if (saved && ['table', 'list', 'grid'].includes(saved)) return saved;
+            } catch (e) {}
+        }
+        return initialView;
+    });
     const [internalSelectedId, setInternalSelectedId] = useState(null);
     const [internalSelectedIds, setInternalSelectedIds] = useState(() => new Set());
     const [activeActionMenu, setActiveActionMenu] = useState(null);
@@ -109,6 +149,30 @@ const Browser = ({
             setInternalSelectedIds(next);
         }
     }, [selectedIdsProp]);
+
+    // REACTIVE SYNC FOR PERSISTED VIEW AND SORT WHEN RESOURCE OR ACTIVE USER CHANGES
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        try {
+            const savedView = localStorage.getItem(viewStorageKey);
+            if (savedView && ['table', 'list', 'grid'].includes(savedView)) {
+                setCurrentView(savedView);
+            } else {
+                setCurrentView(initialView);
+            }
+            const savedSort = localStorage.getItem(sortStorageKey);
+            if (savedSort) {
+                setInternalSortBy(savedSort);
+                onSortChange?.(savedSort);
+            } else {
+                const defSort = sortBy ?? 'name-asc';
+                setInternalSortBy(defSort);
+                onSortChange?.(defSort);
+            }
+        } catch (e) {}
+    }, [viewStorageKey, sortStorageKey, initialView, sortBy]);
+
+
 
 
 
@@ -171,10 +235,12 @@ const Browser = ({
     // SELECTION TOGGLERS
     const handleToggleSelect = (item) => {
         const next = new Set(activeSelectedIds);
-        if (next.has(item.id)) {
-            next.delete(item.id);
-        } else {
+        const isChecking = !next.has(item.id);
+        if (isChecking) {
             next.add(item.id);
+            handleItemSeen?.(item);
+        } else {
+            next.delete(item.id);
         }
         setInternalSelectedIds(next);
         onToggleSelectProp?.(item);
@@ -203,6 +269,7 @@ const Browser = ({
             filteredData.forEach((item) => next.delete(item.id));
         } else {
             filteredData.forEach((item) => next.add(item.id));
+            handleItemSeen?.(filteredData);
         }
         setInternalSelectedIds(next);
         onToggleSelectAllProp?.(Array.from(next));
@@ -224,6 +291,30 @@ const Browser = ({
         }
     };
 
+    const handleSelectAllExplicit = () => {
+        const next = new Set(activeSelectedIds);
+        filteredData.forEach((item) => next.add(item.id));
+        setInternalSelectedIds(next);
+        onToggleSelectAllProp?.(Array.from(next));
+
+        const selectedList = data.filter((d) => next.has(d.id));
+        if (next.size === 0) {
+            setInternalSelectedId(null);
+            onSelectItem?.(null);
+            onSelectMultipleItems?.([]);
+        } else if (next.size === 1) {
+            const singleItem = selectedList[0];
+            setInternalSelectedId(singleItem.id);
+            onSelectItem?.(singleItem);
+            onSelectMultipleItems?.([singleItem]);
+        } else {
+            setInternalSelectedId(null);
+            onSelectItem?.(null);
+            onSelectMultipleItems?.(selectedList);
+        }
+        handleItemSeen?.(filteredData);
+    };
+
     const handleClearSelection = () => {
         setInternalSelectedIds(new Set());
         onClearSelectionProp?.();
@@ -242,8 +333,10 @@ const Browser = ({
             setInternalSelectedId(item.id);
             setInternalSelectedIds(new Set());
             onSelectItem?.(item);
+            handleItemSeen?.(item);
         },
         onDoubleClick: (item) => {
+            handleItemSeen?.(item);
             onDoubleClickItem?.(item);
             onOpenItem?.(item);
         },
@@ -260,6 +353,11 @@ const Browser = ({
 
     const handleSortChange = (newSort) => {
         setInternalSortBy(newSort);
+        if (typeof window !== 'undefined') {
+            try {
+                localStorage.setItem(sortStorageKey, newSort);
+            } catch (e) {}
+        }
         onSortChange?.(newSort);
     };
 
@@ -269,6 +367,11 @@ const Browser = ({
 
     const handleViewChange = (viewValue) => {
         setCurrentView(viewValue);
+        if (typeof window !== 'undefined') {
+            try {
+                localStorage.setItem(viewStorageKey, viewValue);
+            } catch (e) {}
+        }
     };
 
     const handleAddClick = () => {
@@ -584,26 +687,33 @@ const Browser = ({
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-surface-border/80 pb-3">
                 <div className="flex flex-col gap-1.5 min-w-0">
                     {breadcrumbs && breadcrumbs.length > 0 && (
-                        <nav className="flex items-center gap-1 text-xs text-text-muted select-none flex-wrap mb-0.5">
+                        <nav className="flex items-center gap-1.5 text-xs text-text-muted select-none flex-wrap mb-0.5">
+                            <button
+                                type="button"
+                                onClick={() => onBreadcrumbClick?.(breadcrumbs[0], 0)}
+                                className="inline-flex items-center justify-center p-1 rounded-md text-text-muted hover:text-accent hover:bg-surface-hover/80 transition-colors cursor-pointer"
+                                title="Repository Root"
+                                aria-label="Go to root directory"
+                            >
+                                <Home className="h-3.5 w-3.5 shrink-0" />
+                            </button>
+                            <span className="text-surface-border select-none font-light mx-0.5">|</span>
                             {breadcrumbs.map((breadcrumb, index) => {
                                 const isLast = index === breadcrumbs.length - 1;
-                                const isFirst = index === 0;
 
                                 return (
                                     <div key={breadcrumb.id ?? index} className="inline-flex items-center gap-1">
                                         {index > 0 && <ChevronRight className="h-3 w-3 shrink-0 text-text-muted/50" />}
                                         {isLast ? (
-                                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-accent/10 text-accent font-semibold text-xs border border-accent/20 truncate max-w-56 shadow-2xs">
-                                                {isFirst && <Home className="h-3 w-3 shrink-0 text-accent" />}
+                                            <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-accent/10 text-accent font-semibold text-xs border border-accent/20 truncate max-w-56 shadow-2xs">
                                                 <span className="truncate">{breadcrumb.label}</span>
                                             </span>
                                         ) : (
                                             <button
                                                 type="button"
                                                 onClick={() => onBreadcrumbClick?.(breadcrumb, index)}
-                                                className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-text-muted hover:text-text hover:bg-surface-hover/80 transition-colors cursor-pointer text-xs truncate max-w-40 font-medium"
+                                                className="inline-flex items-center px-1.5 py-0.5 rounded-md text-text-muted hover:text-text hover:bg-surface-hover/80 transition-colors cursor-pointer text-xs truncate max-w-44 font-medium"
                                             >
-                                                {isFirst && <Home className="h-3 w-3 shrink-0 text-text-muted" />}
                                                 <span className="truncate">{breadcrumb.label}</span>
                                             </button>
                                         )}
@@ -646,7 +756,7 @@ const Browser = ({
             </div>
 
             {/* ACTION TOOLBAR: SEARCH, SORT SELECT, COMBO FILTERS, VIEW SELECTOR, AND ARCHIVE TOGGLE */}
-            <div ref={toolbarRef} className="relative z-30 flex flex-col gap-2 bg-surface/90 backdrop-blur-md p-2 sm:p-2.5 rounded-xl border border-surface-border shadow-2xs">
+            <div ref={toolbarRef} className="relative z-50 flex flex-col gap-2 bg-surface/90 backdrop-blur-md p-2 sm:p-2.5 rounded-xl border border-surface-border shadow-2xs">
                 {(() => {
                     const hasSort = sortOptions && sortOptions.length > 0;
                     const hasFilter = filterOptions && filterOptions.length > 0;
@@ -874,31 +984,46 @@ const Browser = ({
             </div>
 
             {/* ANDROID-STYLE MULTI-SELECTION BANNER */}
-            {activeSelectedIds.size > 0 && (
-                <div className="flex items-center justify-between px-3.5 py-2.5 rounded-xl bg-accent/10 border border-accent/30 text-accent text-xs sm:text-sm font-medium shadow-2xs animate-fade-in select-none">
-                    <div className="flex items-center gap-2.5">
-                        <Checkbox
-                            checked={filteredData.length > 0 && filteredData.every((item) => activeSelectedIds.has(item.id))}
-                            indeterminate={filteredData.some((item) => activeSelectedIds.has(item.id)) && !(filteredData.length > 0 && filteredData.every((item) => activeSelectedIds.has(item.id)))}
-                            onChange={handleToggleSelectAll}
-                            title="Select all / Deselect all"
-                            aria-label="Select all or deselect all"
-                        />
-                        <span>
-                            {activeSelectedIds.size} {resourceName === 'users' ? (activeSelectedIds.size === 1 ? 'user selected' : 'users selected') : resourceName === 'departments' ? (activeSelectedIds.size === 1 ? 'department selected' : 'departments selected') : (activeSelectedIds.size === 1 ? 'file selected' : 'files selected')}
-                        </span>
+            {activeSelectedIds.size > 0 && (() => {
+                const allFilteredSelected = filteredData.length > 0 && filteredData.every((item) => activeSelectedIds.has(item.id));
+                const isSomeFilteredSelected = filteredData.some((item) => activeSelectedIds.has(item.id)) && !allFilteredSelected;
+                return (
+                    <div className="flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-xl bg-accent/10 border border-accent/30 text-accent text-xs sm:text-sm font-medium shadow-2xs animate-fade-in select-none">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                            <Checkbox
+                                checked={allFilteredSelected}
+                                indeterminate={isSomeFilteredSelected}
+                                onChange={handleToggleSelectAll}
+                                title={allFilteredSelected ? 'Deselect all' : 'Select all'}
+                                aria-label="Select all or deselect all"
+                            />
+                            <span className="truncate">
+                                {activeSelectedIds.size} {resourceName === 'users' ? (activeSelectedIds.size === 1 ? 'user selected' : 'users selected') : resourceName === 'departments' ? (activeSelectedIds.size === 1 ? 'department selected' : 'departments selected') : (activeSelectedIds.size === 1 ? 'file selected' : 'files selected')}
+                            </span>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                            <button
+                                type="button"
+                                onClick={allFilteredSelected ? handleClearSelection : handleSelectAllExplicit}
+                                className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-accent/15 hover:bg-accent/25 text-accent transition-colors cursor-pointer flex items-center gap-1.5"
+                                title={allFilteredSelected ? 'Deselect all' : 'Select all'}
+                            >
+                                <CheckCheck className="h-3.5 w-3.5" />
+                                <span>{allFilteredSelected ? 'Deselect all' : 'Select all'}</span>
+                            </button>
+                            <button
+                                type="button"
+                                onClick={handleClearSelection}
+                                className="p-1 rounded-lg text-accent hover:bg-accent/15 transition-colors cursor-pointer"
+                                title="Deselect all"
+                                aria-label="Deselect all"
+                            >
+                                <X className="h-4 w-4" />
+                            </button>
+                        </div>
                     </div>
-                    <button
-                        type="button"
-                        onClick={handleClearSelection}
-                        className="p-1 rounded-lg text-accent hover:bg-accent/15 transition-colors cursor-pointer"
-                        title="Deselect all"
-                        aria-label="Deselect all"
-                    >
-                        <X className="h-4 w-4" />
-                    </button>
-                </div>
-            )}
+                );
+            })()}
 
             {/* MAIN CONTENT AREA: VIEW RENDERER */}
             {filteredData.length === 0 ? (
@@ -937,10 +1062,12 @@ const Browser = ({
                     resourceName={resourceName}
                     selectedId={selectedId}
                     selectedIds={activeSelectedIds}
+                    highlightedIds={highlightedIds}
                     onItemClick={handleItemInteraction}
                     onToggleActionMenu={handleToggleActionMenu}
                     onToggleSelect={handleToggleSelect}
                     onContextMenu={handleContextMenu}
+                    onItemHover={handleItemSeen}
                 />
             ) : currentView === 'list' ? (
                 <List
@@ -948,10 +1075,12 @@ const Browser = ({
                     resourceName={resourceName}
                     selectedId={selectedId}
                     selectedIds={activeSelectedIds}
+                    highlightedIds={highlightedIds}
                     onItemClick={handleItemInteraction}
                     onToggleActionMenu={handleToggleActionMenu}
                     onToggleSelect={handleToggleSelect}
                     onContextMenu={handleContextMenu}
+                    onItemHover={handleItemSeen}
                 />
             ) : (
                 <Table
@@ -960,12 +1089,14 @@ const Browser = ({
                     resourceName={resourceName}
                     selectedId={selectedId}
                     selectedIds={activeSelectedIds}
+                    highlightedIds={highlightedIds}
                     onItemClick={handleItemInteraction}
                     onItemDoubleClick={handleItemInteraction}
                     onToggleActionMenu={handleToggleActionMenu}
                     onToggleSelect={handleToggleSelect}
                     onToggleSelectAll={handleToggleSelectAll}
                     onContextMenu={handleContextMenu}
+                    onItemHover={handleItemSeen}
                 />
             )}
 

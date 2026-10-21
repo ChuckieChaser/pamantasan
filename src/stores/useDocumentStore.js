@@ -1011,11 +1011,11 @@ const useDocumentStore = create((set, get) => ({
         set({ publishModalDocument: doc });
     },
 
-    syncAllDocumentShares: async (currentUser, departments = []) => {
+    syncAllDocumentShares: async (currentUser, departments = [], force = false) => {
         if (!currentUser) return [];
 
-        // Throttle rapid repeated syncs (20 second window)
-        if (Date.now() - lastSyncSharesTimestamp < 20000) {
+        // Throttle rapid repeated syncs (20 second window) unless forced
+        if (!force && Date.now() - lastSyncSharesTimestamp < 20000) {
             return get().documentShares || [];
         }
 
@@ -1354,6 +1354,91 @@ const useDocumentStore = create((set, get) => ({
             return deletedIds.size;
         } catch (error) {
             console.error('Failed to recursively unshare document:', error);
+            throw error;
+        }
+    },
+
+    unshareDocumentFromAllDepartments: async (rootDocId) => {
+        try {
+            const cleanId = (uid) => (typeof uid === 'string' ? uid.replace(/-/g, '').toLowerCase() : uid);
+            const allDocs = get().documents || [];
+            const targetDoc = allDocs.find((d) => d.id === rootDocId);
+            const targetDocIds = targetDoc?.isFolder
+                ? [rootDocId, ...getRecursiveDescendantDocIds(rootDocId, allDocs)]
+                : [rootDocId];
+            const targetCleanDocIds = new Set(targetDocIds.map(cleanId));
+
+            // 1. Gather all matching shares from current in-memory store
+            const currentShares = get().documentShares || [];
+            const sharesToDeleteMap = new Map();
+
+            currentShares.forEach((s) => {
+                const sDocClean = cleanId(s.document?.id ?? s.documentId);
+                if (targetCleanDocIds.has(sDocClean) && s.id) {
+                    sharesToDeleteMap.set(s.id, s);
+                }
+            });
+
+            // 2. Fetch fresh shares directly from database for each target doc to ensure all department & member rows are discovered
+            const freshFetches = await Promise.allSettled(
+                targetDocIds.map((docId) => documentService.fetchDocumentShares(docId))
+            );
+            freshFetches.forEach((res) => {
+                if (res.status === 'fulfilled' && Array.isArray(res.value)) {
+                    res.value.forEach((s) => {
+                        if (s.id) {
+                            sharesToDeleteMap.set(s.id, s);
+                        }
+                    });
+                }
+            });
+
+            const sharesToDelete = Array.from(sharesToDeleteMap.values());
+            if (sharesToDelete.length === 0) {
+                return 0;
+            }
+
+            // 3. Delete each share row in the database (cascading across departments and members)
+            const results = await Promise.allSettled(
+                sharesToDelete.map((s) => documentService.deleteDocumentShare(s.id))
+            );
+
+            const deletedIds = new Set();
+            results.forEach((res, idx) => {
+                if (res.status === 'fulfilled' && res.value) {
+                    deletedIds.add(sharesToDelete[idx].id);
+                }
+            });
+
+            // 4. Update in-memory state
+            set((state) => ({
+                documentShares: (state.documentShares || []).filter((s) => !deletedIds.has(s.id)),
+            }));
+
+            // 5. Record system event
+            systemEventService.recordSystemEvent({
+                entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_SHARE,
+                entityId: rootDocId,
+                action: constants.AUDIT_LOGS_ACTION.UNSHARED,
+                data: {
+                    old: {
+                        documentName: targetDoc?.name,
+                        deletedCount: deletedIds.size,
+                        _rootDocId: rootDocId,
+                    },
+                    new: null,
+                    title: targetDoc?.name ? `${targetDoc.name} Unshared from All Departments` : 'Document Unshared',
+                    targetName: targetDoc?.name || 'Document',
+                    documentName: targetDoc?.name,
+                    _documentId: rootDocId,
+                },
+                targetRoles: ['DIRECTOR', 'OFFICER', 'ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF'],
+                isMajor: true,
+            }).catch(() => {});
+
+            return deletedIds.size;
+        } catch (error) {
+            console.error('Failed to unshare document from all departments:', error);
             throw error;
         }
     },

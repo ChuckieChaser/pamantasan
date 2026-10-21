@@ -17,10 +17,12 @@ const Grid = ({
     resourceName,
     selectedId,
     selectedIds = new Set(),
+    highlightedIds = new Set(),
     onItemClick,
     onToggleActionMenu,
     onToggleSelect,
     onContextMenu,
+    onItemHover,
     className,
     ...props
 }) => {
@@ -30,6 +32,26 @@ const Grid = ({
             {data.map((item) => {
                 const isChecked = selectedIds.has(item.id);
                 const isSelected = selectedId === item.id || isChecked;
+                const isHighlighted = highlightedIds instanceof Set
+                    ? highlightedIds.has(item.id)
+                    : (Array.isArray(highlightedIds) && highlightedIds.includes(item.id));
+                const isSoftError = Boolean(item.isRejected || item.hasRejectedChild);
+                const isWarning = Boolean(!isSoftError && !isHighlighted && (item.isWarning || item.isPendingAction || item.hasPendingActionChild));
+
+                let cardClass = `p-3.5 sm:p-4 gap-3 justify-between transition-colors duration-200 cursor-pointer group select-none min-w-0 rounded-xl`;
+                if (isChecked) {
+                    cardClass += ' bg-accent/15 border-accent/60 shadow-2xs';
+                } else if (isSelected) {
+                    cardClass += ' bg-accent/10 border-accent/70 shadow-2xs';
+                } else if (isSoftError) {
+                    cardClass += ' bg-error-soft border-error/30 hover:bg-error-soft-hover hover:border-error/50 shadow-2xs';
+                } else if (isHighlighted) {
+                    cardClass += ' bg-accent-soft border-accent/30 hover:border-surface-border/90 hover:bg-surface-hover/30 hover:shadow-2xs';
+                } else if (isWarning) {
+                    cardClass += ' bg-warning-soft border-warning/30 hover:bg-warning-soft-hover hover:border-warning/50 shadow-2xs';
+                } else {
+                    cardClass += ' bg-surface border-surface-border hover:border-surface-border/90 hover:shadow-2xs hover:bg-surface-hover/30';
+                }
 
                 return (
                     <Container
@@ -37,6 +59,7 @@ const Grid = ({
                         data-record-id={item.id}
                         data-selected={isSelected ? 'true' : 'false'}
                         variant="card"
+                        onMouseEnter={() => onItemHover?.(item)}
                         onClick={() => {
                             if (selectedIds.size > 0) {
                                 onToggleSelect?.(item);
@@ -48,12 +71,7 @@ const Grid = ({
                             event.preventDefault();
                             onContextMenu?.(event, item);
                         }}
-                        className={`p-3.5 sm:p-4 gap-3 justify-between transition-all duration-150 cursor-pointer group select-none min-w-0 rounded-xl ${isChecked
-                            ? 'bg-accent/15 border-accent/60 shadow-2xs'
-                            : isSelected
-                            ? 'bg-accent/10 border-accent/70 shadow-2xs'
-                            : 'bg-surface border-surface-border hover:border-surface-border/90 hover:shadow-2xs hover:bg-surface-hover/30'
-                        }`}
+                        className={cardClass}
                     >
                         <div className="flex items-start justify-between gap-2.5 min-w-0">
                             <div className="flex items-center gap-2.5 min-w-0 flex-1">

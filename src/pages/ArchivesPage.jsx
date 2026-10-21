@@ -2,6 +2,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import {
     AlertTriangle,
+    RotateCcw,
     Trash2,
 } from 'lucide-react';
 import {
@@ -12,7 +13,7 @@ import {
     getMimeTypeFromFilename,
 } from '../components';
 import { getSpecificMimeLabel } from '../components/browser/common';
-import { useToast, useAuth } from '../hooks';
+import { useToast, useAuth, useSeenItems } from '../hooks';
 import { constants } from '../constants';
 import { useDocumentStore, useDepartmentStore, useCoordinatorStore, useAuthStore } from '../stores';
 import { storageService, coordinatorApprovalService, systemEventService } from '../services';
@@ -44,6 +45,7 @@ const ArchivesPage = ({
     const storeUser = useAuthStore((state) => state.currentUser);
     const currentUser = propUser ?? authUser ?? storeUser ?? useAuthStore.getState().currentUser;
     const isCoordinator = constants.isCoordinatorRole(currentUser?.role);
+    const { markItemAsSeen, getHighlightedIds } = useSeenItems('archives', currentUser);
     // STORES
     const documents = useDocumentStore((state) => state.documents);
     const documentVersions = useDocumentStore((state) => state.documentVersions ?? state.versions ?? []);
@@ -55,6 +57,8 @@ const ArchivesPage = ({
     const [selectedDocument, setSelectedDocument] = useState(null);
     const [restoreConflictModalItem, setRestoreConflictModalItem] = useState(null);
     const [isRestoringConflict, setIsRestoringConflict] = useState(false);
+    const [restoringItem, setRestoringItem] = useState(null);
+    const [isRestoringItem, setIsRestoringItem] = useState(false);
     const [deletingItem, setDeletingItem] = useState(null);
     const [isDeletingItemLoading, setIsDeletingItemLoading] = useState(false);
 
@@ -135,6 +139,10 @@ const ArchivesPage = ({
         });
     }, [repositoryItems]);
 
+    const highlightedIds = useMemo(() => {
+        return getHighlightedIds(archivedItems);
+    }, [getHighlightedIds, archivedItems]);
+
     // DYNAMIC FILTER OPTIONS
     const dynamicFilterOptions = useMemo(() => {
         const deptOptions = departments.map((dept) => ({
@@ -170,6 +178,9 @@ const ArchivesPage = ({
     const handleItemSelect = (item) => {
         setSelectedDocument(item);
         onSelectDocument?.(item);
+        if (item) {
+            markItemAsSeen(item);
+        }
     };
 
     const handleItemDoubleClick = (item) => {
@@ -217,13 +228,10 @@ const ArchivesPage = ({
 
             await useDocumentStore.getState().archiveDocument(item.id, false);
             if (selectedDocument?.id === item.id) {
-                const updated = {
-                    ...selectedDocument,
-                    isArchived: false,
-                };
-                setSelectedDocument(updated);
-                onSelectDocument?.(updated);
+                setSelectedDocument(null);
+                onSelectDocument?.(null);
             }
+            onSelectMultiple?.((prev) => (Array.isArray(prev) ? prev.filter((p) => p.id !== item.id) : []));
             showToast({
                 type: 'success',
                 title: item.isFolder ? 'Folder Restored' : 'Document Restored',
@@ -256,10 +264,10 @@ const ArchivesPage = ({
             await useDocumentStore.getState().archiveDocument(item.id, false);
 
             if (selectedDocument?.id === item.id) {
-                const updated = { ...selectedDocument, isArchived: false };
-                setSelectedDocument(updated);
-                onSelectDocument?.(updated);
+                setSelectedDocument(null);
+                onSelectDocument?.(null);
             }
+            onSelectMultiple?.([]);
 
             showToast({
                 type: 'success',
@@ -364,27 +372,53 @@ const ArchivesPage = ({
         }
 
         if (actionKey === 'restore') {
-            const itemsToRestore = Array.isArray(item) ? item : [item];
-            for (const singleItem of itemsToRestore) {
-                const allDocs = useDocumentStore.getState().documents || [];
-                const targetParentId = singleItem.parentId && singleItem.parentId !== 'root' ? singleItem.parentId : null;
-                const parentDoc = targetParentId ? allDocs.find((d) => d.id === targetParentId) : null;
-
-                // CHILD RESTORE GUARD: If original parent folder is currently archived, block and prompt
-                if (parentDoc && parentDoc.isArchived) {
-                    setRestoreConflictModalItem({ item: singleItem, parentFolder: parentDoc });
-                    return;
-                }
-
-                await performRestoreItem(singleItem);
-            }
-            onSelectMultiple?.([]);
+            setRestoringItem(item);
             return;
         }
 
         if (actionKey === 'delete') {
             setDeletingItem(item);
             return;
+        }
+    };
+
+    const handleConfirmRestoreItem = async () => {
+        const itemsToRestore = Array.isArray(restoringItem) ? restoringItem : (restoringItem?.id ? [restoringItem] : []);
+        if (itemsToRestore.length === 0) return;
+
+        const allDocs = useDocumentStore.getState().documents || [];
+        for (const singleItem of itemsToRestore) {
+            const targetParentId = singleItem.parentId && singleItem.parentId !== 'root' ? singleItem.parentId : null;
+            const parentDoc = targetParentId ? allDocs.find((d) => d.id === targetParentId) : null;
+            if (parentDoc && parentDoc.isArchived) {
+                setRestoringItem(null);
+                setRestoreConflictModalItem({ item: singleItem, parentFolder: parentDoc });
+                return;
+            }
+        }
+
+        setIsRestoringItem(true);
+        try {
+            for (const singleItem of itemsToRestore) {
+                await performRestoreItem(singleItem);
+            }
+
+            const restoredIds = new Set(itemsToRestore.map((it) => it.id));
+            const remaining = (selectedItems || []).filter((it) => !restoredIds.has(it.id));
+            onSelectMultiple?.(remaining);
+            if (selectedDocument && restoredIds.has(selectedDocument.id)) {
+                setSelectedDocument(null);
+                onSelectDocument?.(null);
+            }
+            setRestoringItem(null);
+        } catch (err) {
+            showToast({
+                type: 'error',
+                title: 'Restore Failed',
+                description: err?.message || 'Could not restore items.',
+            });
+        } finally {
+            setIsRestoringItem(false);
         }
     };
 
@@ -461,6 +495,9 @@ const ArchivesPage = ({
                 filterOptions={dynamicFilterOptions}
                 selectedItem={selectedItems.length > 1 ? null : (selectedDocument ?? selectedItem)}
                 selectedIds={new Set((selectedItems || []).map((i) => i.id))}
+                highlightedIds={highlightedIds}
+                onItemHover={markItemAsSeen}
+                onItemSeen={markItemAsSeen}
                 onSelectItem={handleItemSelect}
                 onSelectMultipleItems={onSelectMultiple}
                 onDoubleClickItem={handleItemDoubleClick}
@@ -475,11 +512,11 @@ const ArchivesPage = ({
                     isOpen={Boolean(restoreConflictModalItem)}
                     onClose={() => !isRestoringConflict && setRestoreConflictModalItem(null)}
                     title="Parent Folder Archived"
-                    description={`The original parent folder "${restoreConflictModalItem.parentFolder?.name || restoreConflictModalItem.parentFolder?.title || 'Parent Folder'}" is currently archived. To unarchive this item, its parent folder must also be restored.`}
+                    description={`The original parent folder "${restoreConflictModalItem.parentFolder?.name || restoreConflictModalItem.parentFolder?.title || 'Parent Folder'}" is currently archived. To restore this item, its parent folder must also be restored.`}
                     icon={AlertTriangle}
                     variant="warning"
                     size="sm"
-                    callout="Restoring this item requires unarchiving its enclosing directory structure so it has a valid repository path."
+                    callout="Restoring this item requires restoring its enclosing directory structure so it has a valid repository path."
                     calloutVariant="warning"
                     onConfirm={() =>
                         handleRestoreWithParent(
@@ -487,10 +524,56 @@ const ArchivesPage = ({
                             restoreConflictModalItem.parentFolder
                         )
                     }
-                    confirmLabel={isRestoringConflict ? 'Restoring...' : 'Unarchive Parent & File'}
+                    confirmLabel={isRestoringConflict ? 'Restoring...' : 'Restore Parent & File'}
                     cancelLabel="Cancel"
                     isConfirmLoading={isRestoringConflict}
                     isConfirmDisabled={isRestoringConflict}
+                />
+            )}
+
+            {/* RESTORE CONFIRMATION MODAL */}
+            {restoringItem && (
+                <Modal
+                    isOpen={Boolean(restoringItem)}
+                    onClose={() => !isRestoringItem && setRestoringItem(null)}
+                    title={
+                        Array.isArray(restoringItem)
+                            ? `Restore all (${restoringItem.length})`
+                            : restoringItem.isFolder
+                            ? 'Restore Folder'
+                            : 'Restore Document'
+                    }
+                    description={
+                        Array.isArray(restoringItem)
+                            ? `Are you sure you want to restore ${restoringItem.length} selected items to the active repository?`
+                            : restoringItem.isFolder
+                            ? `Are you sure you want to restore folder "${restoringItem.title || restoringItem.name}" to the active repository?`
+                            : `Are you sure you want to restore document "${restoringItem.title || restoringItem.name}" to the active repository?`
+                    }
+                    icon={RotateCcw}
+                    variant="primary"
+                    size="sm"
+                    callout={
+                        Array.isArray(restoringItem)
+                            ? 'The selected items will be moved back to the active repository and visible to permitted users.'
+                            : restoringItem.isFolder
+                            ? 'The folder and its directly active contents will be restored back to the repository.'
+                            : 'The document will be restored back to its active repository location.'
+                    }
+                    calloutVariant="primary"
+                    onConfirm={handleConfirmRestoreItem}
+                    confirmLabel={
+                        isRestoringItem
+                            ? 'Restoring...'
+                            : Array.isArray(restoringItem)
+                            ? `Restore all (${restoringItem.length})`
+                            : restoringItem.isFolder
+                            ? 'Restore Folder'
+                            : 'Restore Document'
+                    }
+                    cancelLabel="Cancel"
+                    isConfirmLoading={isRestoringItem}
+                    isConfirmDisabled={isRestoringItem}
                 />
             )}
 
