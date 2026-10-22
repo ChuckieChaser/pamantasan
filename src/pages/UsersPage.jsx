@@ -212,6 +212,21 @@ const UsersPage = ({
     const handleOpenEditModal = (userItem) => {
         const rawUser = users.find((user) => user.id === userItem.id) ?? userItem;
         const rawRole = rawUser.role ?? constants.USERS_ROLE.MEMBER;
+        const isTargetAdmin = constants.isAdminRole(rawRole);
+        const isSelfUser = Boolean(
+            currentUser && (
+                rawUser.id === currentUser.id ||
+                (rawUser.universityId && currentUser.universityId === rawUser.universityId)
+            )
+        );
+        if (isTargetAdmin && !isSelfUser) {
+            showToast({
+                type: 'error',
+                title: 'Action Prohibited',
+                description: 'Administrators cannot edit other administrators.',
+            });
+            return;
+        }
         const isLocked = rawRole === constants.USERS_ROLE.ADMINISTRATOR || rawRole === constants.USERS_ROLE.COORDINATOR;
 
         setEditingUser(rawUser);
@@ -299,6 +314,15 @@ const UsersPage = ({
             errors.universityId = 'University ID is required.';
         } else if (!constants.VALIDATION_PATTERNS.UNIVERSITY_ID.test(cleanUid)) {
             errors.universityId = 'Format must be YY-NNNNN.';
+        } else {
+            const normalizeUid = (id) => String(id || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+            const normalizedTarget = normalizeUid(cleanUid);
+            const isDuplicate = (users || []).some(
+                (u) => normalizeUid(u.universityId) === normalizedTarget
+            );
+            if (isDuplicate) {
+                errors.universityId = 'A user with this University ID already exists.';
+            }
         }
 
         if (!formFirstName.trim()) {

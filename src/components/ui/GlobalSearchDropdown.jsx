@@ -20,7 +20,7 @@ import { SegmentSelection } from '../Selections';
 import { constants } from '../../constants';
 
 // --- CONFIGURATIONS ---
-const BASE_STYLE = 'fixed inset-x-2.5 top-13 sm:absolute sm:inset-auto sm:left-0 sm:top-full mt-0 sm:mt-2 z-[100] w-auto sm:w-96 md:w-[32rem] max-w-none sm:max-w-[95vw]';
+const BASE_STYLE = 'fixed inset-x-2.5 top-13 sm:absolute sm:inset-auto sm:left-0 sm:top-full mt-0 sm:mt-2 z-[160] w-auto sm:w-96 md:w-[32rem] max-w-none sm:max-w-[95vw]';
 
 const getClassificationIcon = (classification) => {
     switch (classification) {

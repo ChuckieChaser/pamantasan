@@ -312,16 +312,15 @@ const ArchivesPage = ({
                     description: `Packaging ${itemsToDownload.length} items into ZIP archive...`,
                 });
                 try {
-                    await storageService.downloadMultipleAsZip(
+                    const zipName = await storageService.downloadMultipleAsZip(
                         itemsToDownload,
                         documents,
-                        documentVersions,
-                        'Documents.zip'
+                        documentVersions
                     );
                     showToast({
                         type: 'success',
                         title: 'Batch Download Complete',
-                        description: `Packaged ${itemsToDownload.length} items into Documents.zip.`,
+                        description: `Packaged ${itemsToDownload.length} items into ${zipName}.`,
                     });
                 } catch (err) {
                     console.error('Batch zip download failed:', err);

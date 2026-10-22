@@ -25,7 +25,7 @@ import { useAuditStore } from '../../stores/useAuditStore';
 import { useAuthStore } from '../../stores/useAuthStore';
 
 // --- CONFIGURATIONS ---
-const BASE_STYLE = 'fixed inset-x-2.5 top-13 sm:absolute sm:inset-auto sm:right-0 sm:top-full mt-0 sm:mt-2 z-[100] w-auto sm:w-96 md:w-[32rem] max-w-none sm:max-w-[95vw]';
+const BASE_STYLE = 'fixed inset-x-2.5 top-13 sm:absolute sm:inset-auto sm:right-0 sm:top-full mt-0 sm:mt-2 z-[160] w-auto sm:w-96 md:w-[32rem] max-w-none sm:max-w-[95vw]';
 const INITIAL_NOTIFICATION_LIMIT = 15;
 
 // --- HELPERS ---

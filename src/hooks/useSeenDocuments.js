@@ -1,5 +1,5 @@
 // --- IMPORTS ---
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useCallback } from 'react';
 import { constants } from '../constants';
 
 // --- CONFIGURATIONS ---
@@ -139,18 +139,37 @@ export const isItemNewForUser = (item, currentUser, seenSet, resourceName = 'doc
     // DEPARTMENT OFFICER
     if (constants.isOfficerRole(userRole)) {
         const sharerClean = cleanId(share?.sharerId || share?.sharer?.id);
+        const approverClean = cleanId(item.approverId || share?.approverId || item.reviewerId || share?.reviewerId);
         if (sharerClean && sharerClean === currentUserIdClean) {
             return false;
         }
-        return shareStatus === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL || Boolean(share);
+        if (approverClean && approverClean === currentUserIdClean) {
+            return false;
+        }
+        // Officer only needs highlight on items waiting for their approval
+        return shareStatus === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL;
     }
 
     // DEPARTMENT DIRECTOR
     if (constants.isDirectorRole(userRole)) {
-        return (
-            shareStatus === constants.DOCUMENT_SHARES_STATUS.APPROVED ||
-            shareStatus === constants.DOCUMENT_SHARES_STATUS.PUBLISHED
+        const publisherClean = cleanId(
+            item.publisherId ||
+            share?.publisherId ||
+            item.publisher?.id ||
+            share?.publisher?.id ||
+            item.approverId ||
+            share?.approverId ||
+            item.reviewerId ||
+            share?.reviewerId
         );
+        if (publisherClean && publisherClean === currentUserIdClean) {
+            return false;
+        }
+        // When published, department faculty members are notified; Director does not see highlight pulse
+        if (shareStatus === constants.DOCUMENT_SHARES_STATUS.PUBLISHED) {
+            return false;
+        }
+        return shareStatus === constants.DOCUMENT_SHARES_STATUS.APPROVED;
     }
 
     // FACULTY / MEMBER
@@ -163,6 +182,24 @@ export const isItemNewForUser = (item, currentUser, seenSet, resourceName = 'doc
     return true;
 };
 
+const loadSeenSetFromStorage = (key) => {
+    if (!key || typeof window === 'undefined') {
+        return new Set();
+    }
+    try {
+        const raw = localStorage.getItem(key);
+        if (raw) {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) {
+                return new Set(parsed);
+            }
+        }
+    } catch {
+        // Ignore parse errors
+    }
+    return new Set();
+};
+
 /**
  * Universal hook to manage seen item state across resources (documents, users, departments, requests, archives).
  */
@@ -170,44 +207,13 @@ export const useSeenItems = (resourceName = 'documents', currentUser) => {
     const activeUserId = currentUser?.id ? cleanId(currentUser.id) : null;
     const storageKey = activeUserId ? `${SEEN_STORAGE_KEY_PREFIX}${activeUserId}` : null;
 
-    const [seenSet, setSeenSet] = useState(() => {
-        if (!storageKey || typeof window === 'undefined') {
-            return new Set();
-        }
-        try {
-            const raw = localStorage.getItem(storageKey);
-            if (raw) {
-                const parsed = JSON.parse(raw);
-                if (Array.isArray(parsed)) {
-                    return new Set(parsed);
-                }
-            }
-        } catch {
-            // Ignore parse errors
-        }
-        return new Set();
-    });
+    const [prevStorageKey, setPrevStorageKey] = useState(storageKey);
+    const [seenSet, setSeenSet] = useState(() => loadSeenSetFromStorage(storageKey));
 
-    // Re-sync seen set when active user changes
-    useEffect(() => {
-        if (!storageKey || typeof window === 'undefined') {
-            setSeenSet(new Set());
-            return;
-        }
-        try {
-            const raw = localStorage.getItem(storageKey);
-            if (raw) {
-                const parsed = JSON.parse(raw);
-                if (Array.isArray(parsed)) {
-                    setSeenSet(new Set(parsed));
-                    return;
-                }
-            }
-        } catch {
-            // Ignore
-        }
-        setSeenSet(new Set());
-    }, [storageKey]);
+    if (prevStorageKey !== storageKey) {
+        setPrevStorageKey(storageKey);
+        setSeenSet(loadSeenSetFromStorage(storageKey));
+    }
 
     // Mark an item or multiple items as seen (via hover, selection, ticking checkbox, or select all)
     const markItemAsSeen = useCallback(

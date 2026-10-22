@@ -470,12 +470,18 @@ const systemEventService = {
     recordDocumentRead: async ({ document, user, version = null }) => {
         if (!document?.id || !user?.id) return null;
 
-        // Ensure Administrator and Coordinator reads never count up or get recorded
+        // Ensure Administrator, Coordinator, Director, and Officer administrative reads never count up or get recorded
         const resolvedRole =
             user?.role ||
             useUserStore.getState().users?.find((u) => String(u.id) === String(user.id))?.role ||
             useAuthStore.getState().user?.role;
-        if (isStaffRole(resolvedRole) || isAdminRole(resolvedRole) || isCoordinatorRole(resolvedRole)) {
+        if (
+            isStaffRole(resolvedRole) ||
+            isAdminRole(resolvedRole) ||
+            isCoordinatorRole(resolvedRole) ||
+            isDirectorRole(resolvedRole) ||
+            isOfficerRole(resolvedRole)
+        ) {
             return null;
         }
 

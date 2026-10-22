@@ -127,7 +127,8 @@ const ProtectedRoute = ({
     }
 
     if (!currentUser) {
-        return <Navigate to="/login" state={{ from: location }} replace />;
+        const isLogout = Boolean(location.state?.isLogout);
+        return <Navigate to="/login" state={isLogout ? { isLogout: true } : { from: location }} replace />;
     }
 
     if (!allowPending) {
@@ -175,7 +176,11 @@ const PublicRoute = ({
     }
 
     if (currentUser) {
-        let destination = location.state?.from?.pathname ?? '/dashboard';
+        const isLogout = Boolean(location.state?.isLogout);
+        const fromPath = location.state?.from?.pathname;
+        let destination = (!isLogout && fromPath && fromPath !== '/login' && fromPath !== '/')
+            ? fromPath
+            : '/dashboard';
         if (currentUser.status === constants.USERS_STATUS.PENDING_PASSWORD) {
             destination = '/onboarding';
         } else if (currentUser.status === constants.USERS_STATUS.PENDING_SSO) {

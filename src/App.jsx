@@ -51,6 +51,7 @@ import {
 } from './stores';
 import { authService, storageService, coordinatorApprovalService, realtimeSyncService, systemEventService } from './services';
 import { constants } from './constants';
+import { findRootSharedFolder } from './components/browser/common';
 
 
 // --- CONFIGURATIONS ---
@@ -454,12 +455,12 @@ const AppContent = () => {
         ]);
 
         if (authenticatedUser?.status === constants.USERS_STATUS.PENDING_PASSWORD) {
-            navigate('/onboarding');
+            navigate('/onboarding', { replace: true });
             return;
         }
         if (authenticatedUser?.status === constants.USERS_STATUS.PENDING_SSO) {
             if (!authService.hasSkippedSSOOnboarding(authenticatedUser.id)) {
-                navigate('/onboarding');
+                navigate('/onboarding', { replace: true });
                 return;
             }
         }
@@ -471,7 +472,12 @@ const AppContent = () => {
             fetchDocuments(),
         ]);
 
-        navigate('/dashboard');
+        const isLogout = Boolean(location.state?.isLogout);
+        const fromPath = location.state?.from?.pathname;
+        const destination = (!isLogout && fromPath && fromPath !== '/login' && fromPath !== '/')
+            ? fromPath
+            : '/dashboard';
+        navigate(destination, { replace: true });
     };
 
     const handleGoogleLogin = async () => {
@@ -482,12 +488,12 @@ const AppContent = () => {
         ]);
 
         if (authenticatedUser?.status === constants.USERS_STATUS.PENDING_PASSWORD) {
-            navigate('/onboarding');
+            navigate('/onboarding', { replace: true });
             return;
         }
         if (authenticatedUser?.status === constants.USERS_STATUS.PENDING_SSO) {
             if (!authService.hasSkippedSSOOnboarding(authenticatedUser.id)) {
-                navigate('/onboarding');
+                navigate('/onboarding', { replace: true });
                 return;
             }
         }
@@ -499,15 +505,21 @@ const AppContent = () => {
             fetchDocuments(),
         ]);
 
-        navigate('/dashboard');
+        const isLogout = Boolean(location.state?.isLogout);
+        const fromPath = location.state?.from?.pathname;
+        const destination = (!isLogout && fromPath && fromPath !== '/login' && fromPath !== '/')
+            ? fromPath
+            : '/dashboard';
+        navigate(destination, { replace: true });
     };
 
     const handleSignOut = async () => {
         try {
-            await logout();
             setSelectedItem(null);
+            setSelectedItems([]);
             setIsDetailPanelOpen(false);
-            navigate('/login');
+            navigate('/login', { replace: true, state: { isLogout: true, from: null } });
+            await logout();
         } catch (error) {
             console.error('Sign out error:', error);
         }
@@ -737,16 +749,15 @@ const AppContent = () => {
                 try {
                     const allDocs = useDocumentStore.getState().documents ?? [];
                     const allVersions = useDocumentStore.getState().documentVersions ?? [];
-                    await storageService.downloadMultipleAsZip(
+                    const zipName = await storageService.downloadMultipleAsZip(
                         itemsToDownload,
                         allDocs,
-                        allVersions,
-                        'Documents.zip'
+                        allVersions
                     );
                     showToast({
                         type: 'success',
                         title: 'Batch Download Complete',
-                        description: `Packaged ${itemsToDownload.length} items into Documents.zip.`,
+                        description: `Packaged ${itemsToDownload.length} items into ${zipName}.`,
                     });
                 } catch (err) {
                     console.error('Batch zip download failed:', err);
@@ -853,10 +864,24 @@ const AppContent = () => {
             return;
         }
 
+        if (actionKey === 'select_root_folder') {
+            const target = item || selectedItem;
+            if (target) {
+                setSelectedItem(target);
+                setSelectedItems([target]);
+                setIsDetailPanelOpen(true);
+                setInspectorTab('shares');
+            }
+            return;
+        }
+
         if (actionKey === 'share' || actionKey === 're_share') {
             const target = item || selectedItem;
             if (target) {
-                useDocumentStore.getState().setShareModalDocument(target);
+                const allDocs = useDocumentStore.getState().documents ?? [];
+                const allShares = useDocumentStore.getState().documentShares ?? [];
+                const rootShared = !Array.isArray(target) ? findRootSharedFolder(target, allDocs, allShares) : null;
+                useDocumentStore.getState().setShareModalDocument(rootShared || target);
             }
             return;
         }
@@ -864,7 +889,10 @@ const AppContent = () => {
         if (actionKey === 'publish' || actionKey === 're_publish') {
             const target = item || selectedItem;
             if (target) {
-                useDocumentStore.getState().setPublishModalDocument(target);
+                const allDocs = useDocumentStore.getState().documents ?? [];
+                const allShares = useDocumentStore.getState().documentShares ?? [];
+                const rootShared = !Array.isArray(target) ? findRootSharedFolder(target, allDocs, allShares) : null;
+                useDocumentStore.getState().setPublishModalDocument(rootShared || target);
             }
             return;
         }

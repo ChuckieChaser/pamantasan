@@ -62,12 +62,14 @@ const annotateDirectlyArchived = (docs = []) => {
 
 export const getRecursiveDescendantDocIds = (rootDocId, allDocuments = []) => {
     if (!rootDocId) return [];
+    const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
     const targetIds = [rootDocId];
     const queue = [rootDocId];
     while (queue.length > 0) {
         const currentParent = queue.shift();
+        const currentParentClean = cleanId(currentParent);
         const children = allDocuments.filter(
-            (d) => (d.parent?.id ?? d.parentId ?? d.parentFolderId) === currentParent
+            (d) => cleanId(d.parent?.id ?? d.parentId ?? d.parentFolderId) === currentParentClean
         );
         for (const child of children) {
             targetIds.push(child.id);
@@ -79,10 +81,42 @@ export const getRecursiveDescendantDocIds = (rootDocId, allDocuments = []) => {
     return targetIds;
 };
 
+const findRootSharedDoc = (item, allDocs = [], allShares = []) => {
+    if (!item) return null;
+    const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
+    const docMap = new Map((allDocs || []).map((d) => [cleanId(d.id), d]));
+
+    const sharedDocIds = new Set(
+        (allShares || [])
+            .filter((s) => {
+                const st = String(s.status || '').toUpperCase();
+                return st !== 'UNSHARED' && st !== 'REVOKED';
+            })
+            .map((s) => cleanId(s.document?.id ?? s.documentId))
+            .filter(Boolean)
+    );
+
+    const ancestors = [];
+    let currentParentId = cleanId(item.parentId ?? item.parentFolderId ?? docMap.get(cleanId(item.id))?.parentId ?? docMap.get(cleanId(item.id))?.parentFolderId);
+    const visited = new Set();
+    while (currentParentId && currentParentId !== 'root' && !visited.has(currentParentId)) {
+        visited.add(currentParentId);
+        const parentDoc = docMap.get(currentParentId);
+        if (!parentDoc) break;
+        ancestors.push(parentDoc);
+        currentParentId = cleanId(parentDoc.parentId ?? parentDoc.parentFolderId);
+    }
+
+    const topDownAncestors = [...ancestors].reverse();
+    return topDownAncestors.find((f) => sharedDocIds.has(cleanId(f.id))) || null;
+};
+
 
 // --- SYNC THROTTLES & MUTEX ---
 let inFlightSyncPromise = null;
 let lastSyncSharesTimestamp = 0;
+let inFlightFetchDocsPromise = null;
+let lastFetchDocsTimestamp = 0;
 
 // --- STORE ---
 const useDocumentStore = create((set, get) => ({
@@ -106,36 +140,58 @@ const useDocumentStore = create((set, get) => ({
     error: null,
 
     // DOCUMENTS
-    fetchDocuments: async (isArchived = null) => {
-        set({ isLoading: true, error: null });
-
-        try {
-            const [documents, versions] = await Promise.all([
-                documentService.fetchDocuments(isArchived),
-                documentService.fetchAllDocumentVersions().catch(() => []),
-            ]);
-            const annotated = annotateDirectlyArchived(documents);
-            if (annotated && annotated.length > 0) {
-                set({
-                    documents: annotated,
-                    documentVersions: versions && versions.length > 0 ? versions : get().documentVersions,
-                    isLoading: false,
-                    error: null,
-                });
-                return annotated;
-            } else if (get().documents.length > 0) {
-                set({ isLoading: false, error: null });
-                return get().documents;
-            } else {
-                set({ documents: [], documentVersions: versions || [], isLoading: false, error: null });
-                return [];
+    fetchDocuments: async (isArchived = null, force = false) => {
+        if (!force && isArchived === null) {
+            if (inFlightFetchDocsPromise) {
+                return inFlightFetchDocsPromise;
             }
-        } catch (error) {
-            const message = error?.message ?? 'Failed to fetch documents.';
-            set({ isLoading: false, error: message });
-
-            return get().documents || [];
+            if (Date.now() - lastFetchDocsTimestamp < 3000 && (get().documents || []).length > 0) {
+                return get().documents;
+            }
         }
+
+        const runFetch = (async () => {
+            set({ isLoading: true, error: null });
+
+            try {
+                const [documents, versions] = await Promise.all([
+                    documentService.fetchDocuments(isArchived),
+                    documentService.fetchAllDocumentVersions().catch(() => []),
+                ]);
+                lastFetchDocsTimestamp = Date.now();
+                const annotated = annotateDirectlyArchived(documents);
+                if (annotated && annotated.length > 0) {
+                    set({
+                        documents: annotated,
+                        documentVersions: versions && versions.length > 0 ? versions : get().documentVersions,
+                        isLoading: false,
+                        error: null,
+                    });
+                    return annotated;
+                } else if (get().documents.length > 0) {
+                    set({ isLoading: false, error: null });
+                    return get().documents;
+                } else {
+                    set({ documents: [], documentVersions: versions || [], isLoading: false, error: null });
+                    return [];
+                }
+            } catch (error) {
+                const message = error?.message ?? 'Failed to fetch documents.';
+                set({ isLoading: false, error: message });
+
+                return get().documents || [];
+            } finally {
+                if (isArchived === null) {
+                    inFlightFetchDocsPromise = null;
+                }
+            }
+        })();
+
+        if (isArchived === null) {
+            inFlightFetchDocsPromise = runFetch;
+        }
+
+        return runFetch;
     },
 
     fetchDocumentById: async (id) => {
@@ -171,6 +227,8 @@ const useDocumentStore = create((set, get) => ({
                 isLoading: false,
                 error: null,
             }));
+
+            await get().inheritSharesFromRoot(newDocument);
 
             systemEventService.recordSystemEvent({
                 entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT,
@@ -1003,12 +1061,119 @@ const useDocumentStore = create((set, get) => ({
         }
     },
 
-    setShareModalDocument: (doc) => {
-        set({ shareModalDocument: doc });
-    },
+    inheritSharesFromRoot: async (createdDoc) => {
+        try {
+            if (!createdDoc?.id) return [];
+            const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
+            const allDocs = get().documents || [];
+            const allShares = get().documentShares || [];
 
-    setPublishModalDocument: (doc) => {
-        set({ publishModalDocument: doc });
+            const docMap = new Map((allDocs || []).map((d) => [cleanId(d.id), d]));
+            docMap.set(cleanId(createdDoc.id), createdDoc);
+
+            const sharedDocIds = new Set(
+                (allShares || [])
+                    .filter((s) => {
+                        const st = String(s.status || '').toUpperCase();
+                        return st !== 'UNSHARED' && st !== 'REVOKED';
+                    })
+                    .map((s) => cleanId(s.document?.id ?? s.documentId))
+                    .filter(Boolean)
+            );
+
+            const ancestors = [];
+            let currentParentId = cleanId(
+                createdDoc.parentId ??
+                createdDoc.parentFolderId ??
+                docMap.get(cleanId(createdDoc.id))?.parentId ??
+                docMap.get(cleanId(createdDoc.id))?.parentFolderId
+            );
+            const visited = new Set();
+            while (currentParentId && currentParentId !== 'root' && !visited.has(currentParentId)) {
+                visited.add(currentParentId);
+                const parentDoc = docMap.get(currentParentId);
+                if (!parentDoc) break;
+                ancestors.push(parentDoc);
+                currentParentId = cleanId(parentDoc.parentId ?? parentDoc.parentFolderId);
+            }
+
+            const topDownAncestors = [...ancestors].reverse();
+            const rootSharedFolder = topDownAncestors.find((f) => sharedDocIds.has(cleanId(f.id))) || null;
+
+            if (!rootSharedFolder) return [];
+
+            const rootCleanId = cleanId(rootSharedFolder.id);
+            const targetDocClean = cleanId(createdDoc.id);
+
+            // Active shares belonging to the root shared folder
+            const rootShares = allShares.filter((s) => {
+                const sDoc = cleanId(s.document?.id ?? s.documentId);
+                const st = String(s.status || '').toUpperCase();
+                return sDoc === rootCleanId && st !== 'UNSHARED' && st !== 'REVOKED';
+            });
+
+            if (rootShares.length === 0) return [];
+
+            // Existing shares for this created doc
+            const existingTargetShares = allShares.filter((s) => {
+                const sDoc = cleanId(s.document?.id ?? s.documentId);
+                return sDoc === targetDocClean;
+            });
+
+            const timestamp = new Date().toISOString();
+            const createdShares = [];
+
+            for (const rs of rootShares) {
+                const deptId = rs.department?.id ?? rs.departmentId;
+                const recId = rs.recipient?.id ?? rs.recipientId ?? null;
+                const deptClean = cleanId(deptId);
+                const recClean = cleanId(recId);
+
+                const alreadyExists = existingTargetShares.some((es) => {
+                    const eDept = cleanId(es.department?.id ?? es.departmentId);
+                    const eRec = cleanId(es.recipient?.id ?? es.recipientId);
+                    return eDept === deptClean && eRec === recClean;
+                });
+
+                if (!alreadyExists) {
+                    const inserted = await documentService.insertDocumentShare({
+                        documentId: createdDoc.id,
+                        departmentId: deptId,
+                        recipientId: recId,
+                        sharerId: rs.sharer?.id ?? rs.sharerId ?? null,
+                        status: rs.status,
+                        createdAt: timestamp,
+                        updatedAt: timestamp,
+                    });
+                    if (inserted) {
+                        createdShares.push({
+                            ...inserted,
+                            documentId: createdDoc.id,
+                            document: createdDoc,
+                            departmentId: deptId,
+                            department: rs.department ?? (deptId ? { id: deptId } : null),
+                            recipientId: recId,
+                            recipient: rs.recipient ?? null,
+                            status: rs.status,
+                        });
+                    }
+                }
+            }
+
+            if (createdShares.length > 0) {
+                set((state) => ({
+                    documentShares: [...state.documentShares, ...createdShares],
+                    documents: state.documents.some((d) => cleanId(d.id) === targetDocClean)
+                        ? state.documents
+                        : [...state.documents, createdDoc],
+                }));
+            }
+
+            return createdShares;
+        } catch (err) {
+            console.warn('Failed to inherit shares from root folder:', err);
+            return [];
+        }
     },
 
     syncAllDocumentShares: async (currentUser, departments = [], force = false) => {
@@ -1053,8 +1218,8 @@ const useDocumentStore = create((set, get) => ({
                         }
                     });
 
-                    // Fetch department shares with bounded concurrency (max 2 at a time) to prevent PostgreSQL connection exhaustion
-                    const batchSize = 2;
+                    // Fetch department shares with bounded concurrency (up to 8 in parallel) for snappy load without artificial delay
+                    const batchSize = 8;
                     for (let i = 0; i < deptsToFetch.length; i += batchSize) {
                         const batch = deptsToFetch.slice(i, i + batchSize);
                         const results = await Promise.allSettled(
@@ -1071,9 +1236,6 @@ const useDocumentStore = create((set, get) => ({
                                 });
                             }
                         });
-                        if (i + batchSize < deptsToFetch.length) {
-                            await new Promise((res) => setTimeout(res, 30));
-                        }
                     }
 
                     if (aggregatedShares.length > 0) {
@@ -1475,6 +1637,46 @@ const useDocumentStore = create((set, get) => ({
                     }
                 }
 
+                // If unsharing a member-specific share, check if any published member shares remain for this document in this department
+                if (recId && docClean && deptClean) {
+                    const remainingMemberShares = (get().documentShares || []).filter((s) => {
+                        if (s.id === shareId) return false;
+                        const sDoc = cleanId(s.document?.id ?? s.documentId);
+                        const sDept = cleanId(s.department?.id ?? s.departmentId);
+                        const hasRec = Boolean(s.recipientId || s.recipient?.id || s.recipient);
+                        const isPub = String(s.status || '').toUpperCase() === constants.DOCUMENT_SHARES_STATUS.PUBLISHED;
+                        return hasRec && isPub && sDoc === docClean && sDept === deptClean;
+                    });
+
+                    if (remainingMemberShares.length === 0) {
+                        const baseShare = (get().documentShares || []).find((s) => {
+                            const sDoc = cleanId(s.document?.id ?? s.documentId);
+                            const sDept = cleanId(s.department?.id ?? s.departmentId);
+                            const isBase = !s.recipientId && !s.recipient?.id && !s.recipient;
+                            return isBase && sDoc === docClean && sDept === deptClean;
+                        });
+
+                        if (baseShare && String(baseShare.status || '').toUpperCase() === constants.DOCUMENT_SHARES_STATUS.PUBLISHED) {
+                            try {
+                                const timestamp = new Date().toISOString();
+                                await documentService.updateDocumentShare(baseShare.id, {
+                                    status: constants.DOCUMENT_SHARES_STATUS.APPROVED,
+                                    departmentId: deptId,
+                                    recipientId: null,
+                                    updatedAt: timestamp,
+                                });
+                                set((state) => ({
+                                    documentShares: state.documentShares.map((s) =>
+                                        s.id === baseShare.id ? { ...s, status: constants.DOCUMENT_SHARES_STATUS.APPROVED, updatedAt: timestamp } : s
+                                    ),
+                                }));
+                            } catch (e) {
+                                console.warn('Failed to revert base share status to APPROVED on last member revoke:', e);
+                            }
+                        }
+                    }
+                }
+
                 set((state) => ({
                     documentShares: state.documentShares.filter((item) => !deletedIds.has(item.id)),
                 }));
@@ -1775,7 +1977,7 @@ const useDocumentStore = create((set, get) => ({
                 // 2. PUBLISH TO SPECIFIC MEMBERS
                 const createdOrUpdatedShares = [];
 
-                // Keep base departmental share updated to PUBLISHED (for Officer & Director visibility)
+                // Ensure base departmental share is APPROVED (for Officer & Director visibility, but NOT broadcast to all members)
                 const baseShares = currentShares.filter(
                     (s) =>
                         targetDocIds.includes(s.document?.id ?? s.documentId) &&
@@ -1784,21 +1986,23 @@ const useDocumentStore = create((set, get) => ({
                         !s.recipient
                 );
                 for (const bs of baseShares) {
-                    await documentService.updateDocumentShare(bs.id, {
-                        status: constants.DOCUMENT_SHARES_STATUS.PUBLISHED,
-                        departmentId: departmentId,
-                        recipientId: null,
-                        updatedAt: timestamp,
-                    });
-                    createdOrUpdatedShares.push({
-                        ...bs,
-                        status: constants.DOCUMENT_SHARES_STATUS.PUBLISHED,
-                        departmentId: departmentId,
-                        department: bs.department ?? (departmentId ? { id: departmentId } : null),
-                        recipientId: null,
-                        recipient: null,
-                        updatedAt: timestamp,
-                    });
+                    if (bs.status !== constants.DOCUMENT_SHARES_STATUS.APPROVED) {
+                        await documentService.updateDocumentShare(bs.id, {
+                            status: constants.DOCUMENT_SHARES_STATUS.APPROVED,
+                            departmentId: departmentId,
+                            recipientId: null,
+                            updatedAt: timestamp,
+                        });
+                        createdOrUpdatedShares.push({
+                            ...bs,
+                            status: constants.DOCUMENT_SHARES_STATUS.APPROVED,
+                            departmentId: departmentId,
+                            department: bs.department ?? (departmentId ? { id: departmentId } : null),
+                            recipientId: null,
+                            recipient: null,
+                            updatedAt: timestamp,
+                        });
+                    }
                 }
 
                 const existingBaseDocIds = new Set(baseShares.map((s) => s.document?.id ?? s.documentId));
@@ -1809,7 +2013,7 @@ const useDocumentStore = create((set, get) => ({
                             departmentId: departmentId,
                             sharerId: publisherId,
                             recipientId: null,
-                            status: constants.DOCUMENT_SHARES_STATUS.PUBLISHED,
+                            status: constants.DOCUMENT_SHARES_STATUS.APPROVED,
                             createdAt: timestamp,
                             updatedAt: timestamp,
                         });
@@ -1819,6 +2023,7 @@ const useDocumentStore = create((set, get) => ({
                                 documentId: docId,
                                 departmentId: departmentId,
                                 recipientId: null,
+                                status: constants.DOCUMENT_SHARES_STATUS.APPROVED,
                             });
                         }
                     }
@@ -3297,11 +3502,21 @@ const useDocumentStore = create((set, get) => ({
     },
 
     setShareModalDocument: (document) => {
-        set({ shareModalDocument: document });
+        if (!document || Array.isArray(document)) {
+            set({ shareModalDocument: document });
+            return;
+        }
+        const root = findRootSharedDoc(document, get().documents, get().documentShares);
+        set({ shareModalDocument: root || document });
     },
 
     setPublishModalDocument: (document) => {
-        set({ publishModalDocument: document });
+        if (!document || Array.isArray(document)) {
+            set({ publishModalDocument: document });
+            return;
+        }
+        const root = findRootSharedDoc(document, get().documents, get().documentShares);
+        set({ publishModalDocument: root || document });
     },
 
     clearError: () => {

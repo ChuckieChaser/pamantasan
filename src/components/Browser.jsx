@@ -150,7 +150,9 @@ const Browser = ({
             try {
                 const saved = localStorage.getItem(sortStorageKey);
                 if (saved) return saved;
-            } catch (e) {}
+            } catch {
+                /* ignore */
+            }
         }
         return sortBy ?? 'name-asc';
     });
@@ -159,7 +161,9 @@ const Browser = ({
             try {
                 const saved = localStorage.getItem(viewStorageKey);
                 if (saved && ['table', 'list', 'grid'].includes(saved)) return saved;
-            } catch (e) {}
+            } catch {
+                /* ignore */
+            }
         }
         return initialView;
     });
@@ -346,26 +350,38 @@ const Browser = ({
 
 
     // REACTIVE SYNC FOR PERSISTED VIEW AND SORT WHEN RESOURCE OR ACTIVE USER CHANGES
+    const prevStorageKeysRef = useRef({ viewStorageKey, sortStorageKey });
     useEffect(() => {
         if (typeof window === 'undefined') return;
-        try {
-            const savedView = localStorage.getItem(viewStorageKey);
-            if (savedView && ['table', 'list', 'grid'].includes(savedView)) {
-                setCurrentView(savedView);
-            } else {
-                setCurrentView(initialView);
+        if (
+            prevStorageKeysRef.current.viewStorageKey === viewStorageKey &&
+            prevStorageKeysRef.current.sortStorageKey === sortStorageKey
+        ) {
+            return;
+        }
+        prevStorageKeysRef.current = { viewStorageKey, sortStorageKey };
+        queueMicrotask(() => {
+            try {
+                const savedView = localStorage.getItem(viewStorageKey);
+                if (savedView && ['table', 'list', 'grid'].includes(savedView)) {
+                    setCurrentView(savedView);
+                } else {
+                    setCurrentView(initialView);
+                }
+                const savedSort = localStorage.getItem(sortStorageKey);
+                if (savedSort) {
+                    setInternalSortBy(savedSort);
+                    onSortChange?.(savedSort);
+                } else {
+                    const defSort = sortBy ?? 'name-asc';
+                    setInternalSortBy(defSort);
+                    onSortChange?.(defSort);
+                }
+            } catch {
+                /* ignore */
             }
-            const savedSort = localStorage.getItem(sortStorageKey);
-            if (savedSort) {
-                setInternalSortBy(savedSort);
-                onSortChange?.(savedSort);
-            } else {
-                const defSort = sortBy ?? 'name-asc';
-                setInternalSortBy(defSort);
-                onSortChange?.(defSort);
-            }
-        } catch (e) {}
-    }, [viewStorageKey, sortStorageKey, initialView, sortBy]);
+        });
+    }, [viewStorageKey, sortStorageKey, initialView, sortBy, onSortChange]);
 
 
 
@@ -551,7 +567,9 @@ const Browser = ({
         if (typeof window !== 'undefined') {
             try {
                 localStorage.setItem(sortStorageKey, newSort);
-            } catch (e) {}
+            } catch {
+                /* ignore */
+            }
         }
         onSortChange?.(newSort);
     };
@@ -565,7 +583,9 @@ const Browser = ({
         if (typeof window !== 'undefined') {
             try {
                 localStorage.setItem(viewStorageKey, viewValue);
-            } catch (e) {}
+            } catch {
+                /* ignore */
+            }
         }
     };
 
@@ -755,7 +775,7 @@ const Browser = ({
             </div>
 
             {/* ACTION TOOLBAR: SEARCH, SORT SELECT, COMBO FILTERS, VIEW SELECTOR, AND ARCHIVE TOGGLE */}
-            <div ref={toolbarRef} className="relative z-50 flex flex-col gap-2 bg-surface/90 backdrop-blur-md p-2 sm:p-2.5 rounded-xl border border-surface-border shadow-2xs">
+            <div ref={toolbarRef} className="relative z-20 flex flex-col gap-2 bg-surface/90 backdrop-blur-md p-2 sm:p-2.5 rounded-xl border border-surface-border shadow-2xs">
                 {(() => {
                     const hasSort = sortOptions && sortOptions.length > 0;
                     const hasFilter = filterOptions && filterOptions.length > 0;
@@ -1102,7 +1122,7 @@ const Browser = ({
             {/* GLOBAL PORTAL-MOUNTED CONTEXTUAL ACTION MENU */}
             {activeActionMenu && (
                 <Menu
-                    item={activeActionMenu.item}
+                    item={data?.find((d) => d.id === activeActionMenu.id) || activeActionMenu.item}
                     resourceName={resourceName}
                     anchorRect={activeActionMenu.anchorRect}
                     onActionClick={handleActionClick}

@@ -4,22 +4,8 @@ service firebase.storage {
   match /b/{bucket}/o {
 
     // Helper functions
-    function isAuthenticated() {
-      return request.auth != null;
-    }
-
-    function isInstitutionalDomain() {
-      return isAuthenticated() &&
-             request.auth.token.email != null &&
-             request.auth.token.email.matches('.*@plpasig[.]edu[.]ph$');
-    }
-
-    function isValidFileSize() {
-      return request.resource.size <= 50 * 1024 * 1024; // 50 MB max
-    }
-
-    function isValidImage() {
-      return request.resource.contentType.matches('image/(jpeg|png|webp|svg[+]xml|gif)');
+    function isValidFileSize(req) {
+      return req.resource.size <= 50 * 1024 * 1024; // 50 MB max
     }
 
     // User Avatar Icons: avatars/{allPaths=**}
@@ -30,7 +16,7 @@ service firebase.storage {
     // System Documents: documents/{allPaths=**}
     match /documents/{allPaths=**} {
       allow read, delete: if true;
-      allow create, update: if isValidFileSize();
+      allow create, update: if isValidFileSize(request);
     }
 
     // Default fallback

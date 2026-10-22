@@ -2,7 +2,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, ChevronDown, Eye, EyeOff, Search, X } from 'lucide-react';
-import { useClickOutside, useSmartPosition } from '../hooks';
+import { useClickOutside } from '../hooks';
 import { Container } from './Container';
 import { renderIcon } from './common';
 
@@ -28,16 +28,6 @@ const STATE_STYLE = {
 };
 
 const AREA_BASE_STYLE = 'p-3 text-sm rounded-md border bg-surface hover:bg-surface-hover focus-within:bg-surface text-text placeholder:text-text-muted transition-colors w-full min-h-20 flex items-start gap-2.5 disabled:cursor-not-allowed disabled:opacity-50';
-
-const DROPDOWN_VERTICAL_STYLE = {
-    bottom: 'top-full mt-1',
-    top:    'bottom-full mb-1',
-};
-
-const DROPDOWN_HORIZONTAL_STYLE = {
-    left:  'left-0',
-    right: 'right-0',
-};
 
 
 // --- COMPONENTS ---
@@ -727,18 +717,128 @@ const ComboField = ({
 }) => {
     // STATES
     const [isOpen, setIsOpen] = useState(false);
+    const [dropdownCoords, setDropdownCoords] = useState({
+        top: 0,
+        bottom: 0,
+        left: 0,
+        width: 0,
+        maxHeight: 360,
+        openUpward: false,
+        isMobile: false,
+        isPositioned: false,
+    });
+    const effectiveIsOpen = isOpen && !isDisabled;
 
     // REFS
     const containerRef = useRef(null);
     const triggerRef = useRef(null);
     const dropdownRef = useRef(null);
 
-    // HOOKS
-    useClickOutside(containerRef, () => {
-        setIsOpen(false);
-    });
+    // DYNAMIC VIEWPORT-SAFE FIXED PORTAL POSITIONING
+    useLayoutEffect(() => {
+        if (!effectiveIsOpen) return;
 
-    const position = useSmartPosition(triggerRef, dropdownRef, isOpen, dropdownAlign);
+        const updatePosition = () => {
+            if (!triggerRef.current) return;
+            const rect = triggerRef.current.getBoundingClientRect();
+            const spaceBelow = window.innerHeight - rect.bottom;
+            const spaceAbove = rect.top;
+
+            const isMobile = window.innerWidth < 640;
+            const dropdownEl = dropdownRef.current;
+            const measuredWidth = dropdownEl?.offsetWidth;
+            const measuredHeight = dropdownEl?.offsetHeight;
+
+            const estimatedHeight = measuredHeight || 300;
+            const openUpward = dropdownAlign === 'top' || (
+                dropdownAlign === 'auto' && spaceBelow < estimatedHeight && spaceAbove > spaceBelow
+            );
+
+            const top = rect.bottom + 4;
+            const bottom = Math.max(8, window.innerHeight - rect.top + 4);
+
+            let dropdownWidth;
+            if (isMobile) {
+                dropdownWidth = Math.min(Math.max(rect.width, 280), window.innerWidth - 24);
+            } else if (measuredWidth) {
+                dropdownWidth = Math.min(Math.max(rect.width, measuredWidth), window.innerWidth - 32);
+            } else {
+                dropdownWidth = Math.min(Math.max(rect.width, 420), window.innerWidth - 32);
+            }
+
+            let left;
+            if (isMobile) {
+                left = Math.max(12, (window.innerWidth - dropdownWidth) / 2);
+            } else if (dropdownAlign === 'right') {
+                left = rect.right - dropdownWidth;
+            } else if (dropdownAlign === 'left') {
+                left = rect.left;
+            } else {
+                const isRightHalf = rect.left + rect.width / 2 > window.innerWidth / 2;
+                left = isRightHalf ? rect.right - dropdownWidth : rect.left;
+            }
+
+            // Clamping guarantees dropdown NEVER bleeds off the left or right of the screen
+            left = Math.max(16, Math.min(left, window.innerWidth - dropdownWidth - 16));
+
+            const availableHeight = openUpward ? spaceAbove - 20 : spaceBelow - 20;
+            const maxHeight = Math.max(180, Math.min(availableHeight, 380));
+
+            setDropdownCoords({
+                top,
+                bottom,
+                left,
+                width: dropdownWidth,
+                maxHeight,
+                openUpward,
+                isMobile,
+                isPositioned: true,
+            });
+        };
+
+        updatePosition();
+        const frameId = requestAnimationFrame(updatePosition);
+
+        window.addEventListener('resize', updatePosition, { passive: true });
+        window.addEventListener('scroll', updatePosition, { capture: true, passive: true });
+
+        return () => {
+            cancelAnimationFrame(frameId);
+            window.removeEventListener('resize', updatePosition);
+            window.removeEventListener('scroll', updatePosition, true);
+        };
+    }, [effectiveIsOpen, dropdownAlign, options]);
+
+    // OUTSIDE CLICK & ESCAPE KEY (CHECKS BOTH CONTAINER TRIGGER AND PORTAL DROPDOWN)
+    useEffect(() => {
+        if (!effectiveIsOpen) return;
+
+        const handleClickOutside = (event) => {
+            if (
+                containerRef.current?.contains(event.target) ||
+                dropdownRef.current?.contains(event.target)
+            ) {
+                return;
+            }
+            setIsOpen(false);
+        };
+
+        const handleKeyDown = (event) => {
+            if (event.key === 'Escape') {
+                setIsOpen(false);
+            }
+        };
+
+        document.addEventListener('mousedown', handleClickOutside);
+        document.addEventListener('touchstart', handleClickOutside);
+        document.addEventListener('keydown', handleKeyDown);
+
+        return () => {
+            document.removeEventListener('mousedown', handleClickOutside);
+            document.removeEventListener('touchstart', handleClickOutside);
+            document.removeEventListener('keydown', handleKeyDown);
+        };
+    }, [effectiveIsOpen]);
 
     // DERIVED VALUES
     const selectedValues = useMemo(() => {
@@ -771,13 +871,19 @@ const ComboField = ({
     const currentSizeStyle = SIZE_STYLE[size] ?? SIZE_STYLE.md;
     const stateStyle = error ? STATE_STYLE.error : STATE_STYLE.default;
     const composedTriggerClassName = `${BASE_STYLE} ${currentSizeStyle} ${stateStyle} justify-between cursor-pointer ${className ?? ''}`.trim();
-    const verticalStyle = DROPDOWN_VERTICAL_STYLE[position.vertical] ?? DROPDOWN_VERTICAL_STYLE.bottom;
-    const horizontalStyle = DROPDOWN_HORIZONTAL_STYLE[position.horizontal] ?? (
-        dropdownAlign === 'right' ? DROPDOWN_HORIZONTAL_STYLE.right : DROPDOWN_HORIZONTAL_STYLE.left
-    );
-    const composedPositionStyle = `${verticalStyle} ${horizontalStyle}`;
     const renderedLeadingIcon = renderIcon(leadingIcon, ICON_STYLE);
     const renderedTrailingIcon = renderIcon(trailingIcon, ICON_STYLE);
+
+    const dropdownStyle = {
+        position: 'fixed',
+        top: dropdownCoords.openUpward ? 'auto' : `${dropdownCoords.top}px`,
+        bottom: dropdownCoords.openUpward ? `${dropdownCoords.bottom}px` : 'auto',
+        left: `${dropdownCoords.left}px`,
+        width: dropdownCoords.isMobile ? `${dropdownCoords.width}px` : 'auto',
+        maxWidth: 'calc(100vw - 2rem)',
+        zIndex: 99999,
+        visibility: dropdownCoords.isPositioned ? 'visible' : 'hidden',
+    };
 
     // HANDLERS
     const handleToggleOpen = () => {
@@ -821,7 +927,7 @@ const ComboField = ({
     return (
         <div
             ref={containerRef}
-            className={`${FIELD_WRAPPER_STYLE} relative ${isOpen ? 'z-50' : ''}`}
+            className={`${FIELD_WRAPPER_STYLE} relative`}
             {...props}
         >
             {label && (
@@ -869,17 +975,19 @@ const ComboField = ({
                             renderedTrailingIcon
                         ) : (
                             <ChevronDown
-                                className={`${ICON_STYLE} transition-transform ${isOpen ? 'rotate-180' : ''}`}
+                                className={`${ICON_STYLE} transition-transform ${effectiveIsOpen ? 'rotate-180' : ''}`}
                             />
                         )}
                     </span>
                 </div>
             </button>
 
-            {isOpen && (
+            {effectiveIsOpen && typeof document !== 'undefined' && createPortal(
                 <div
                     ref={dropdownRef}
-                    className={`absolute z-[100] ${composedPositionStyle} min-w-full w-max max-w-[calc(100vw-1.5rem)] sm:max-w-2xl`}
+                    style={dropdownStyle}
+                    onClick={(event) => event.stopPropagation()}
+                    className="w-max max-w-[calc(100vw-2rem)] sm:max-w-2xl shadow-2xl animate-fade-in"
                 >
                     <Container
                         variant="dropdown"
@@ -890,7 +998,10 @@ const ComboField = ({
                                 No options available
                             </div>
                         ) : (
-                            <div className="flex flex-col sm:flex-row divide-y sm:divide-y-0 sm:divide-x divide-surface-border overflow-y-auto sm:overflow-x-auto max-h-80 sm:max-h-72">
+                            <div
+                                style={{ maxHeight: `${dropdownCoords.maxHeight}px` }}
+                                className="flex flex-col sm:flex-row divide-y sm:divide-y-0 sm:divide-x divide-surface-border overflow-y-auto sm:overflow-x-auto"
+                            >
                                 {categorizedGroups.map((group) => (
                                     <div
                                         key={group.title}
@@ -948,7 +1059,8 @@ const ComboField = ({
                             </div>
                         )}
                     </Container>
-                </div>
+                </div>,
+                document.body
             )}
 
             {error && <span className={FIELD_ERROR_STYLE}>{error}</span>}

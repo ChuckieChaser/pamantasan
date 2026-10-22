@@ -69,7 +69,6 @@ const CoordinatorPage = ({
     // STATES
     const location = useLocation();
     const [selectedRequestItem, setSelectedRequestItem] = useState(null);
-    const [pulsingItemIds, setPulsingItemIds] = useState(new Set());
     const { currentUser: authUser } = useAuth();
     const storeUser = useAuthStore((state) => state.currentUser);
     const activeUser = currentUser ?? authUser ?? storeUser ?? useAuthStore.getState().currentUser;
@@ -198,17 +197,12 @@ const CoordinatorPage = ({
 
     useEffect(() => {
         if (location.state?.highlightType === 'pending') {
-            const pendingIds = pendingCoordinatorData.map((d) => d.id);
-            if (pendingIds.length > 0) {
-                setPulsingItemIds(new Set(pendingIds));
-                const timer = setTimeout(() => {
-                    setPulsingItemIds(new Set());
-                    window.history.replaceState({}, document.title);
-                }, 3500);
-                return () => clearTimeout(timer);
-            }
+            const timer = setTimeout(() => {
+                window.history.replaceState({}, document.title);
+            }, 3500);
+            return () => clearTimeout(timer);
         }
-    }, [location.state, pendingCoordinatorData]);
+    }, [location.state]);
 
     const resolvedCoordinatorData = useMemo(() => {
         return formattedCoordinatorData.filter(

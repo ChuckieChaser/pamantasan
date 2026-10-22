@@ -1,8 +1,12 @@
 /* eslint-disable react-refresh/only-export-components */
 // --- IMPORTS ---
 import {
+    AlertTriangle,
     Archive,
     Building2,
+    CheckCircle2,
+    Clock,
+    EyeOff,
     FileArchive,
     FileCode,
     FileSpreadsheet,
@@ -11,14 +15,18 @@ import {
     Folder,
     Image,
     Inbox,
+    Layers,
     Music,
     Presentation,
+    RotateCcw,
+    Trash2,
     UserCheck,
 } from 'lucide-react';
 import { Avatar } from '../Avatar';
 import { Badge } from '../Badge';
 import { constants } from '../../constants';
 import { getMimeTypeFromFilename } from '../common';
+import { stripFileExtension } from '../../utils/fileNameUtils';
 
 
 // --- CONFIGURATIONS ---
@@ -578,6 +586,148 @@ const renderItemBadge = (item, columnKey) => {
 };
 
 
+const findRootSharedFolder = (item, allDocs = [], allShares = []) => {
+    if (!item) return null;
+    const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
+    const docMap = new Map((allDocs || []).map((d) => [cleanId(d.id), d]));
+
+    const sharedDocIds = new Set(
+        (allShares || [])
+            .filter((s) => {
+                const st = String(s.status || '').toUpperCase();
+                return st !== 'UNSHARED' && st !== 'REVOKED';
+            })
+            .map((s) => cleanId(s.document?.id ?? s.documentId))
+            .filter(Boolean)
+    );
+
+    const ancestors = [];
+    let currentParentId = cleanId(item.parentId ?? item.parentFolderId ?? docMap.get(cleanId(item.id))?.parentId ?? docMap.get(cleanId(item.id))?.parentFolderId);
+    const visited = new Set();
+    while (currentParentId && currentParentId !== 'root' && !visited.has(currentParentId)) {
+        visited.add(currentParentId);
+        const parentDoc = docMap.get(currentParentId);
+        if (!parentDoc) break;
+        ancestors.push(parentDoc);
+        currentParentId = cleanId(parentDoc.parentId ?? parentDoc.parentFolderId);
+    }
+
+    const topDownAncestors = [...ancestors].reverse();
+    return topDownAncestors.find((f) => sharedDocIds.has(cleanId(f.id))) || null;
+};
+
+const getActionConfirmationConfig = (actionKey, item, count = 1) => {
+    const isBatch = Array.isArray(item) || count > 1;
+    const effectiveCount = Array.isArray(item) ? item.length : count;
+    const isFolder = !isBatch && Boolean(item?.isFolder);
+    const itemNoun = isFolder ? 'Folder' : 'Document';
+    const rawTitle = !isBatch ? (item?.title || item?.name || itemNoun) : `${effectiveCount} items`;
+    const docTitle = isFolder ? rawTitle : (stripFileExtension(rawTitle) || rawTitle);
+
+    const configs = {
+        approve: {
+            title: isBatch ? `Approve Files (${effectiveCount})` : `Approve ${itemNoun}`,
+            message: isBatch
+                ? `Are you sure you want to approve ${effectiveCount} selected files for department director review?`
+                : `Are you sure you want to approve "${docTitle}" for department director review?`,
+            primaryLabel: isBatch ? `Approve (${effectiveCount})` : 'Approve',
+            variant: 'primary',
+            icon: CheckCircle2,
+            impact: 'This item will advance to the Department Director for final review and distribution.',
+        },
+        unapprove: {
+            title: isBatch ? `Revoke Approval for Files (${effectiveCount})` : `Revoke Approval for ${itemNoun}`,
+            message: isBatch
+                ? `Are you sure you want to revoke approval for ${effectiveCount} selected files and return them to pending approval?`
+                : `Are you sure you want to revert "${docTitle}" to pending approval?`,
+            primaryLabel: isBatch ? `Revoke Approval (${effectiveCount})` : 'Revoke Approval',
+            variant: 'destructive',
+            icon: AlertTriangle,
+            impact: 'The approval will be revoked and the item will be returned to pending officer review.',
+        },
+        unpublish: {
+            title: isBatch ? `Unpublish Files (${effectiveCount})` : `Unpublish ${itemNoun}`,
+            message: isBatch
+                ? `Are you sure you want to unpublish ${effectiveCount} selected files from faculty and department members?`
+                : `Are you sure you want to unpublish "${docTitle}" from faculty and department members?`,
+            primaryLabel: isBatch ? `Unpublish (${effectiveCount})` : 'Unpublish',
+            variant: 'destructive',
+            icon: EyeOff,
+            impact: 'Faculty members will immediately lose access. The item will revert to approved status in your department.',
+        },
+        unshare: {
+            title: isBatch ? `Unshare all (${effectiveCount})` : `Unshare ${itemNoun}`,
+            message: isBatch
+                ? `Are you sure you want to remove all departmental and member shares for ${effectiveCount} selected files?`
+                : `Are you sure you want to remove all departmental and member shares for "${docTitle}"?`,
+            primaryLabel: isBatch ? `Unshare all (${effectiveCount})` : 'Unshare',
+            variant: 'destructive',
+            icon: AlertTriangle,
+            impact: 'All departmental distributions and member access grants will be permanently revoked.',
+        },
+        stash: {
+            title: isBatch ? `Stash Files (${effectiveCount})` : `Stash ${itemNoun}`,
+            message: isBatch
+                ? `Are you sure you want to stash ${effectiveCount} selected files? They will be held at upper management level.`
+                : `Are you sure you want to stash "${docTitle}"? It will be held at upper management level.`,
+            primaryLabel: isBatch ? `Stash (${effectiveCount})` : 'Stash Item',
+            variant: 'secondary',
+            icon: Clock,
+            impact: 'This item will be placed on hold at upper management level and hidden from general distribution.',
+        },
+        unstash: {
+            title: isBatch ? `Unstash Files (${effectiveCount})` : `Unstash ${itemNoun}`,
+            message: isBatch
+                ? `Are you sure you want to unstash ${effectiveCount} selected files and restore them to approved status?`
+                : `Are you sure you want to unstash "${docTitle}" and restore it to approved status?`,
+            primaryLabel: isBatch ? `Unstash (${effectiveCount})` : 'Unstash Item',
+            variant: 'secondary',
+            icon: Layers,
+            impact: 'This item will be released from management hold and returned to approved state.',
+        },
+        unreject: {
+            title: isBatch ? `Unreject Files (${effectiveCount})` : `Unreject ${itemNoun}`,
+            message: isBatch
+                ? `Are you sure you want to unreject ${effectiveCount} selected files and return them to pending approval?`
+                : `Are you sure you want to unreject "${docTitle}" and return it to pending approval?`,
+            primaryLabel: isBatch ? `Unreject (${effectiveCount})` : 'Unreject',
+            variant: 'primary',
+            icon: RotateCcw,
+            impact: 'The previous rejection will be cleared and the item returned to pending review.',
+        },
+        restore: {
+            title: isBatch ? `Restore Files (${effectiveCount})` : `Restore ${itemNoun}`,
+            message: isBatch
+                ? `Are you sure you want to restore ${effectiveCount} selected files to the active repository?`
+                : `Are you sure you want to restore "${docTitle}" to the active repository?`,
+            primaryLabel: isBatch ? `Restore (${effectiveCount})` : `Restore ${itemNoun}`,
+            variant: 'primary',
+            icon: RotateCcw,
+            impact: 'This item will be restored from archives to the active document repository.',
+        },
+        delete: {
+            title: isBatch ? `Delete Files (${effectiveCount})` : `Delete ${itemNoun}`,
+            message: isBatch
+                ? `Are you sure you want to permanently delete ${effectiveCount} selected files?`
+                : `Are you sure you want to permanently delete "${docTitle}"?`,
+            primaryLabel: isBatch ? `Delete (${effectiveCount})` : 'Delete',
+            variant: 'destructive',
+            icon: Trash2,
+            impact: 'This item and all associated records will be permanently removed.',
+        },
+    };
+
+    return configs[actionKey] || {
+        title: `Confirm ${actionKey}`,
+        message: `Are you sure you want to proceed with this action?`,
+        primaryLabel: 'Confirm',
+        variant: 'primary',
+        icon: CheckCircle2,
+        impact: 'Please confirm you wish to perform this action. The status will update immediately across departmental queues.',
+    };
+};
+
+
 // --- EXPORTS ---
 export {
     ICON_STYLE,
@@ -590,4 +740,6 @@ export {
     getExtensionFromItem,
     getItemCategoryRank,
     getSpecificMimeLabel,
+    findRootSharedFolder,
+    getActionConfirmationConfig,
 };

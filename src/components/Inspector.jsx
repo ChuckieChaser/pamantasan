@@ -13,6 +13,8 @@ import {
     CheckCircle2,
     ChevronDown,
     ChevronRight,
+    ChevronUp,
+    FolderTree,
     Clock,
     Copy,
     Download,
@@ -72,6 +74,7 @@ import { AreaField, SelectField, TextField } from './Fields';
 import { SegmentSelection } from './Selections';
 import { Account } from './ui/Account';
 import { formatMimeTypeLabel } from './common';
+import { findRootSharedFolder, getActionConfirmationConfig } from './browser/common';
 import { constants, isStaffRole } from '../constants';
 import { storageService, coordinatorApprovalService, aiService } from '../services';
 import { stripFileExtension } from '../utils/fileNameUtils';
@@ -369,6 +372,16 @@ const Inspector = ({
     // DIRECTORY TREE STATES
     const [expandedFolderIds, setExpandedFolderIds] = useState(() => new Set());
     const [selectedTreeItemId, setSelectedTreeItemId] = useState(null);
+
+    // SHARE CARD COLLAPSE STATE
+    const [collapsedShareIds, setCollapsedShareIds] = useState(() => new Set());
+    const toggleShareCollapse = (id) => setCollapsedShareIds((prev) => {
+        const next = new Set(prev);
+        if (next.has(id)) next.delete(id); else next.add(id);
+        return next;
+    });
+    const collapseAllShares = (ids) => setCollapsedShareIds(new Set(ids));
+    const expandAllShares = () => setCollapsedShareIds(new Set());
 
     // STATES: QUICK ACTION CONFIRMATION & REJECTION MODALS
     const [inspectorConfirmAction, setInspectorConfirmAction] = useState(null);
@@ -750,7 +763,7 @@ const Inspector = ({
             }
         }
         return item;
-    }, [item, isDepartment, activeDepartment, isUser, activeUserRecord, userDepartmentDisplay, isDocument, isFolder, isDocumentRequest, isCoordinatorRequest, allDocuments, allDocumentVersions, allDocumentRequests, allCoordinatorRequests]);
+    }, [item, isDepartment, activeDepartment, isUser, activeUserRecord, userDepartmentDisplay, isDocument, isFolder, isDocumentRequest, isCoordinatorRequest, allDocuments, allDocumentVersions, allDocumentShares, allDocumentRequests, allCoordinatorRequests]);
 
     // FETCH REQUEST MESSAGES & ATTACHMENTS (INITIAL + REALTIME POLLING)
     useEffect(() => {
@@ -810,6 +823,10 @@ const Inspector = ({
         ];
     }, [item, isDocument, allDocumentVersions]);
 
+    const rootSharedFolder = useMemo(() => {
+        return findRootSharedFolder(activeItem ?? item, allDocuments, allDocumentShares);
+    }, [activeItem, item, allDocuments, allDocumentShares]);
+
     const documentShares = useMemo(() => {
         if (!item || (!isDocument && !isFolder)) {
             return [];
@@ -822,6 +839,37 @@ const Inspector = ({
             const sDocId = cleanId(share.document?.id ?? share.documentId);
             return sDocId === itemCleanId;
         });
+
+        if (rootSharedFolder) {
+            const rootCleanId = cleanId(rootSharedFolder.id);
+            const rootShares = allDocumentShares.filter((share) => {
+                const sDocId = cleanId(share.document?.id ?? share.documentId);
+                return sDocId === rootCleanId;
+            });
+
+            if (direct.length > 0 || rootShares.length > 0) {
+                // Key shares by their target (department or member)
+                // Direct shares on this document take precedence over inherited root shares
+                const getShareKey = (s) => {
+                    const deptId = cleanId(s.department?.id ?? s.departmentId ?? (typeof s.department === 'string' ? s.department : ''));
+                    const recId = cleanId(s.recipientId ?? s.recipient?.id ?? (typeof s.recipient === 'string' ? s.recipient : ''));
+                    return recId ? `user_${recId}_${deptId}` : `dept_${deptId}`;
+                };
+
+                const mergedMap = new Map();
+                for (const rs of rootShares) {
+                    const key = getShareKey(rs);
+                    mergedMap.set(key, rs);
+                }
+                for (const ds of direct) {
+                    const key = getShareKey(ds);
+                    mergedMap.set(key, ds);
+                }
+
+                return Array.from(mergedMap.values());
+            }
+        }
+
         if (direct.length > 0) return direct;
 
         // If direct is empty, check if document is known in the store. If so, it has NO direct shares.
@@ -854,7 +902,7 @@ const Inspector = ({
         }
 
         return [];
-    }, [item, isDocument, isFolder, allDocumentShares, allDocuments, userDepartmentDisplay]);
+    }, [item, isDocument, isFolder, rootSharedFolder, allDocumentShares, allDocuments]);
 
     const departmentShares = useMemo(() => {
         if (isMember) return [];
@@ -1716,6 +1764,16 @@ const Inspector = ({
     const handleOpenEditUser = () => {
         const u = activeUserRecord ?? item;
         const rawRole = u?.role ?? constants.USERS_ROLE.MEMBER;
+        // Guard: admins cannot edit other administrators (only themselves)
+        const isTargetAdmin = rawRole === constants.USERS_ROLE.ADMINISTRATOR;
+        if (isTargetAdmin && !isSelfUser && isAdmin) {
+            showToast({
+                type: 'error',
+                title: 'Action Not Permitted',
+                description: 'Administrators cannot edit other administrator accounts.',
+            });
+            return;
+        }
         const isLocked = rawRole === constants.USERS_ROLE.ADMINISTRATOR || rawRole === constants.USERS_ROLE.COORDINATOR;
         setUserFormFirstName(u?.firstName ?? '');
         setUserFormMiddleName(u?.middleName ?? '');
@@ -2072,13 +2130,47 @@ const Inspector = ({
         const userDeptClean = cleanId(activeUser?.departmentId ?? activeUser?.department?.id ?? activeUser?.department);
 
         const getItemEffectiveStatus = (it) => {
-            const matchedShare = (allDocumentShares || []).find((s) => {
+            const itCleanId = cleanId(it?.id);
+            let deptShares = (allDocumentShares || []).filter((s) => {
                 const sDocId = cleanId(s.document?.id ?? s.documentId);
                 const sDeptId = cleanId(s.department?.id ?? s.departmentId);
-                return cleanId(it?.id) === sDocId && userDeptClean && sDeptId === userDeptClean;
-            }) || it.share || null;
-            const rawStatus = matchedShare?.status ?? it.status ?? it.share?.status;
-            return (rawStatus && rawStatus !== '—') ? String(rawStatus).toUpperCase() : '';
+                return sDocId === itCleanId && userDeptClean && sDeptId === userDeptClean;
+            });
+
+            if (deptShares.length === 0) {
+                const root = findRootSharedFolder(it, allDocuments, allDocumentShares);
+                if (root) {
+                    const rootClean = cleanId(root.id);
+                    deptShares = (allDocumentShares || []).filter((s) => {
+                        const sDocId = cleanId(s.document?.id ?? s.documentId);
+                        const sDeptId = cleanId(s.department?.id ?? s.departmentId);
+                        return sDocId === rootClean && userDeptClean && sDeptId === userDeptClean;
+                    });
+                }
+            }
+
+            if (deptShares.length > 0) {
+                if (deptShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED)) {
+                    return constants.DOCUMENT_SHARES_STATUS.PUBLISHED;
+                }
+                if (deptShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.STASHED)) {
+                    return constants.DOCUMENT_SHARES_STATUS.STASHED;
+                }
+                if (deptShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.APPROVED)) {
+                    return constants.DOCUMENT_SHARES_STATUS.APPROVED;
+                }
+                if (deptShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL)) {
+                    return constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL;
+                }
+                if (deptShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.REJECTED)) {
+                    return constants.DOCUMENT_SHARES_STATUS.REJECTED;
+                }
+                const s0 = deptShares[0]?.status;
+                if (s0 && s0 !== '—') return String(s0).toUpperCase();
+            }
+
+            const rawFallback = it?.status ?? it?.share?.status;
+            return (rawFallback && rawFallback !== '—') ? String(rawFallback).toUpperCase() : '';
         };
 
         const isDocShared = (it) => {
@@ -2149,6 +2241,11 @@ const Inspector = ({
                 return;
             }
 
+            if (actionKey === 'share' || actionKey === 're_share') {
+                useDocumentStore.getState().setShareModalDocument(targetList);
+                return;
+            }
+
             if (actionKey === 'reject') {
                 setInspectorRejectReason('');
                 setInspectorRejectModal({ targetItem: targetList });
@@ -2157,10 +2254,6 @@ const Inspector = ({
 
             if (['approve', 'unapprove', 'unreject', 'unpublish', 'stash', 'unstash', 'unshare', 'suspend', 'unsuspend', 'resolve', 'restore', 'archive'].includes(actionKey)) {
                 const count = targetList.length;
-                const isSingle = count === 1;
-                const firstItem = targetList[0];
-                const isFirstFolder = Boolean(firstItem?.isFolder);
-                const singleName = firstItem?.title || firstItem?.name || (isFirstFolder ? 'Folder' : 'Document');
 
                 const titles = {
                     approve: `Approve Files (${count})`,
@@ -2214,14 +2307,15 @@ const Inspector = ({
                     unsuspend: count > 1 ? `Unsuspend (${count})` : 'Unsuspend',
                     resolve: count > 1 ? `Resolve (${count})` : 'Resolve',
                 };
+                const conf = getActionConfirmationConfig(actionKey, targetList, count);
                 const variants = {
                     approve: 'primary',
-                    unapprove: 'warning',
+                    unapprove: 'destructive',
                     unreject: 'primary',
                     publish: 'primary',
-                    unpublish: 'secondary',
+                    unpublish: 'destructive',
                     stash: 'secondary',
-                    unstash: 'primary',
+                    unstash: 'secondary',
                     unshare: 'destructive',
                     archive: 'secondary',
                     restore: 'primary',
@@ -2234,10 +2328,12 @@ const Inspector = ({
                 setInspectorConfirmAction({
                     actionKey,
                     targetItem: targetList,
-                    title: titles[actionKey] || `Confirm ${actionKey}`,
-                    message: messages[actionKey] || `Are you sure you want to proceed with this action on ${count} items?`,
-                    primaryLabel: primaryLabels[actionKey] || 'Confirm',
-                    variant: variants[actionKey] || 'primary',
+                    title: titles[actionKey] || conf.title,
+                    message: messages[actionKey] || conf.message,
+                    primaryLabel: primaryLabels[actionKey] || conf.primaryLabel,
+                    variant: conf.variant || variants[actionKey] || 'primary',
+                    icon: conf.icon,
+                    impact: conf.impact,
                 });
                 return;
             }
@@ -2679,19 +2775,7 @@ const Inspector = ({
                             // Director role: Publish all, Stash all, Re-Publish all, Unpublish all, Unstash all
                             <div className="w-full flex flex-col gap-2">
                                 {publishedDocs.length === selectedItems.length ? (
-                                    <div className="grid grid-cols-2 gap-2 w-full">
-                                        <Button
-                                            variant="primary"
-                                            leadingIcon={Globe}
-                                            isLoading={activeActionLoading === 'publish'}
-                                            isDisabled={Boolean(activeActionLoading)}
-                                            onClick={() => handleBatchActionClick('publish', publishedDocs)}
-                                            onMouseEnter={() => setHoveredActionFilter(() => (it) => publishedDocs.some((p) => p.id === it.id))}
-                                            onMouseLeave={() => setHoveredActionFilter(null)}
-                                            className="justify-center truncate text-xs"
-                                        >
-                                            {`Re-Publish all (${publishedDocs.length})`}
-                                        </Button>
+                                    <div className="w-full">
                                         <Button
                                             variant="secondary"
                                             leadingIcon={EyeOff}
@@ -2700,7 +2784,7 @@ const Inspector = ({
                                             onClick={() => handleBatchActionClick('unpublish', publishedDocs)}
                                             onMouseEnter={() => setHoveredActionFilter(() => (it) => publishedDocs.some((p) => p.id === it.id))}
                                             onMouseLeave={() => setHoveredActionFilter(null)}
-                                            className="justify-center truncate text-xs"
+                                            className="w-full justify-center truncate text-xs"
                                         >
                                             {`Unpublish all (${publishedDocs.length})`}
                                         </Button>
@@ -2745,37 +2829,39 @@ const Inspector = ({
                                             {`Stash all (${stashableDocs.length})`}
                                         </Button>
                                     </div>
-                                ) : (
-                                    <div className="flex flex-col gap-2 w-full">
-                                        {/* Mixed states for Director */}
-                                        {publishableDocs.length > 0 && (
-                                            <Button
-                                                variant="primary"
-                                                leadingIcon={Globe}
-                                                isLoading={activeActionLoading === 'publish'}
-                                                isDisabled={Boolean(activeActionLoading)}
-                                                onClick={() => handleBatchActionClick('publish', publishableDocs)}
-                                                onMouseEnter={() => setHoveredActionFilter(() => (it) => publishableDocs.some((p) => p.id === it.id))}
-                                                onMouseLeave={() => setHoveredActionFilter(null)}
-                                                className="w-full justify-center truncate text-xs"
-                                            >
-                                                {`Publish all (${publishableDocs.length})`}
-                                            </Button>
-                                        )}
-                                        {publishedDocs.length > 0 && (
-                                            <div className="grid grid-cols-2 gap-2 w-full">
+                                ) : (() => {
+                                    const hasPublish = publishableDocs.length > 0;
+                                    const hasUnpublish = publishedDocs.length > 0;
+                                    const hasStash = stashableDocs.length > 0;
+                                    const hasUnstash = stashedDocs.length > 0;
+                                    const totalActions = (hasPublish ? 1 : 0) + (hasUnpublish ? 1 : 0) + (hasStash ? 1 : 0) + (hasUnstash ? 1 : 0);
+
+                                    if (totalActions === 0) {
+                                        return (
+                                            <div className="p-2 rounded-lg bg-surface-hover/80 text-center text-xs text-text-muted border border-surface-border">
+                                                Selected files require Officer approval before publishing or stashing.
+                                            </div>
+                                        );
+                                    }
+
+                                    return (
+                                        <div className="grid grid-cols-2 gap-2 w-full">
+                                            {/* Mixed states for Director: 2-column grid pattern */}
+                                            {hasPublish && (
                                                 <Button
                                                     variant="primary"
                                                     leadingIcon={Globe}
                                                     isLoading={activeActionLoading === 'publish'}
                                                     isDisabled={Boolean(activeActionLoading)}
-                                                    onClick={() => handleBatchActionClick('publish', publishedDocs)}
-                                                    onMouseEnter={() => setHoveredActionFilter(() => (it) => publishedDocs.some((p) => p.id === it.id))}
+                                                    onClick={() => handleBatchActionClick('publish', publishableDocs)}
+                                                    onMouseEnter={() => setHoveredActionFilter(() => (it) => publishableDocs.some((p) => p.id === it.id))}
                                                     onMouseLeave={() => setHoveredActionFilter(null)}
-                                                    className="justify-center truncate text-xs"
+                                                    className={`${(totalActions === 1 || totalActions === 3) ? 'col-span-2' : 'col-span-1'} justify-center truncate text-xs`}
                                                 >
-                                                    {`Re-Publish all (${publishedDocs.length})`}
+                                                    {`Publish all (${publishableDocs.length})`}
                                                 </Button>
+                                            )}
+                                            {hasUnpublish && (
                                                 <Button
                                                     variant="secondary"
                                                     leadingIcon={EyeOff}
@@ -2784,14 +2870,12 @@ const Inspector = ({
                                                     onClick={() => handleBatchActionClick('unpublish', publishedDocs)}
                                                     onMouseEnter={() => setHoveredActionFilter(() => (it) => publishedDocs.some((p) => p.id === it.id))}
                                                     onMouseLeave={() => setHoveredActionFilter(null)}
-                                                    className="justify-center truncate text-xs"
+                                                    className={`${(totalActions === 1 || (!hasPublish && totalActions === 3)) ? 'col-span-2' : 'col-span-1'} justify-center truncate text-xs`}
                                                 >
                                                     {`Unpublish all (${publishedDocs.length})`}
                                                 </Button>
-                                            </div>
-                                        )}
-                                        {stashableDocs.length > 0 && stashedDocs.length > 0 ? (
-                                            <div className="grid grid-cols-2 gap-2 w-full">
+                                            )}
+                                            {hasStash && (
                                                 <Button
                                                     variant="secondary"
                                                     leadingIcon={Layers}
@@ -2800,10 +2884,12 @@ const Inspector = ({
                                                     onClick={() => handleBatchActionClick('stash', stashableDocs)}
                                                     onMouseEnter={() => setHoveredActionFilter(() => (it) => stashableDocs.some((s) => s.id === it.id))}
                                                     onMouseLeave={() => setHoveredActionFilter(null)}
-                                                    className="justify-center truncate text-xs"
+                                                    className={`${(totalActions === 1 || (!hasPublish && !hasUnpublish && totalActions === 3)) ? 'col-span-2' : 'col-span-1'} justify-center truncate text-xs`}
                                                 >
                                                     {`Stash all (${stashableDocs.length})`}
                                                 </Button>
+                                            )}
+                                            {hasUnstash && (
                                                 <Button
                                                     variant="secondary"
                                                     leadingIcon={RotateCcw}
@@ -2812,45 +2898,14 @@ const Inspector = ({
                                                     onClick={() => handleBatchActionClick('unstash', stashedDocs)}
                                                     onMouseEnter={() => setHoveredActionFilter(() => (it) => stashedDocs.some((s) => s.id === it.id))}
                                                     onMouseLeave={() => setHoveredActionFilter(null)}
-                                                    className="justify-center truncate text-xs"
+                                                    className={`${totalActions === 1 ? 'col-span-2' : 'col-span-1'} justify-center truncate text-xs`}
                                                 >
                                                     {`Unstash all (${stashedDocs.length})`}
                                                 </Button>
-                                            </div>
-                                        ) : stashableDocs.length > 0 ? (
-                                            <Button
-                                                variant="secondary"
-                                                leadingIcon={Layers}
-                                                isLoading={activeActionLoading === 'stash'}
-                                                isDisabled={Boolean(activeActionLoading)}
-                                                onClick={() => handleBatchActionClick('stash', stashableDocs)}
-                                                onMouseEnter={() => setHoveredActionFilter(() => (it) => stashableDocs.some((s) => s.id === it.id))}
-                                                onMouseLeave={() => setHoveredActionFilter(null)}
-                                                className="w-full justify-center truncate text-xs"
-                                            >
-                                                {`Stash all (${stashableDocs.length})`}
-                                            </Button>
-                                        ) : stashedDocs.length > 0 ? (
-                                            <Button
-                                                variant="secondary"
-                                                leadingIcon={RotateCcw}
-                                                isLoading={activeActionLoading === 'unstash'}
-                                                isDisabled={Boolean(activeActionLoading)}
-                                                onClick={() => handleBatchActionClick('unstash', stashedDocs)}
-                                                onMouseEnter={() => setHoveredActionFilter(() => (it) => stashedDocs.some((s) => s.id === it.id))}
-                                                onMouseLeave={() => setHoveredActionFilter(null)}
-                                                className="w-full justify-center truncate text-xs"
-                                            >
-                                                {`Unstash all (${stashedDocs.length})`}
-                                            </Button>
-                                        ) : null}
-                                        {publishedDocs.length === 0 && publishableDocs.length === 0 && stashedDocs.length === 0 && (
-                                            <div className="p-2 rounded-lg bg-surface-hover/80 text-center text-xs text-text-muted border border-surface-border">
-                                                Selected files require Officer approval before publishing or stashing.
-                                            </div>
-                                        )}
-                                    </div>
-                                )}
+                                            )}
+                                        </div>
+                                    );
+                                })()}
                             </div>
                         ) : isMember ? (
                             // Member role: Download all ({n})
@@ -2925,20 +2980,8 @@ const Inspector = ({
                                         </Button>
                                     </div>
                                 ) : unsharedDocs.length === 0 ? (
-                                    // Multiple (Same: all shared): Re-Share all | Unshare all
-                                    <div className="grid grid-cols-2 gap-2 w-full">
-                                        <Button
-                                            variant="primary"
-                                            leadingIcon={Share2}
-                                            isLoading={activeActionLoading === 'share'}
-                                            isDisabled={Boolean(activeActionLoading)}
-                                            onClick={() => handleBatchActionClick('share', sharedDocs)}
-                                            onMouseEnter={() => setHoveredActionFilter(() => (it) => isDocShared(it))}
-                                            onMouseLeave={() => setHoveredActionFilter(null)}
-                                            className="justify-center truncate text-xs"
-                                        >
-                                            {`Re-Share all (${sharedDocs.length})`}
-                                        </Button>
+                                    // Multiple (Same: all shared): Unshare all
+                                    <div className="w-full">
                                         <Button
                                             variant="secondary"
                                             leadingIcon={Share2}
@@ -2947,27 +2990,29 @@ const Inspector = ({
                                             onClick={() => handleBatchActionClick('unshare', sharedDocs)}
                                             onMouseEnter={() => setHoveredActionFilter(() => (it) => isDocShared(it))}
                                             onMouseLeave={() => setHoveredActionFilter(null)}
-                                            className="justify-center truncate text-xs"
+                                            className="w-full justify-center truncate text-xs"
                                         >
                                             {`Unshare all (${sharedDocs.length})`}
                                         </Button>
                                     </div>
                                 ) : (
-                                    // Multiple (Mixed shared/unshared): Row 1: Share all ({n}), Row 2: Unshare all ({n}) | Archive all ({n})
-                                    <div className="flex flex-col gap-2 w-full">
-                                        <Button
-                                            variant="primary"
-                                            leadingIcon={Share2}
-                                            isLoading={activeActionLoading === 'share'}
-                                            isDisabled={Boolean(activeActionLoading)}
-                                            onClick={() => handleBatchActionClick('share', unsharedDocs)}
-                                            onMouseEnter={() => setHoveredActionFilter(() => (it) => !isDocShared(it))}
-                                            onMouseLeave={() => setHoveredActionFilter(null)}
-                                            className="w-full justify-center truncate text-xs"
-                                        >
-                                            {`Share all (${unsharedDocs.length})`}
-                                        </Button>
-                                        <div className="grid grid-cols-2 gap-2 w-full">
+                                    // Multiple (Mixed shared/unshared): Row 1: Share all ({n}) (spans 2 cols), Row 2: Unshare all ({n}) | Archive all ({n})
+                                    <div className="grid grid-cols-2 gap-2 w-full">
+                                        {unsharedDocs.length > 0 && (
+                                            <Button
+                                                variant="primary"
+                                                leadingIcon={Share2}
+                                                isLoading={activeActionLoading === 'share'}
+                                                isDisabled={Boolean(activeActionLoading)}
+                                                onClick={() => handleBatchActionClick('share', unsharedDocs)}
+                                                onMouseEnter={() => setHoveredActionFilter(() => (it) => !isDocShared(it))}
+                                                onMouseLeave={() => setHoveredActionFilter(null)}
+                                                className={`${sharedDocs.length > 0 ? 'col-span-2' : 'col-span-1'} justify-center truncate text-xs`}
+                                            >
+                                                {`Share all (${unsharedDocs.length})`}
+                                            </Button>
+                                        )}
+                                        {sharedDocs.length > 0 && (
                                             <Button
                                                 variant="secondary"
                                                 leadingIcon={Share2}
@@ -2980,6 +3025,8 @@ const Inspector = ({
                                             >
                                                 {`Unshare all (${sharedDocs.length})`}
                                             </Button>
+                                        )}
+                                        {unsharedDocs.length > 0 && (
                                             <Button
                                                 variant="destructive"
                                                 leadingIcon={Archive}
@@ -2992,7 +3039,7 @@ const Inspector = ({
                                             >
                                                 {`Archive all (${unsharedDocs.length})`}
                                             </Button>
-                                        </div>
+                                        )}
                                     </div>
                                 )}
                             </div>
@@ -3023,7 +3070,7 @@ const Inspector = ({
                         onClose={() => setInspectorConfirmAction(null)}
                         title={inspectorConfirmAction.title}
                         description={inspectorConfirmAction.message}
-                        icon={inspectorConfirmAction.actionKey === 'stash' ? Clock : (['restore', 'unshare'].includes(inspectorConfirmAction.actionKey) ? RotateCcw : CheckCircle2)}
+                        icon={inspectorConfirmAction.icon || (inspectorConfirmAction.actionKey === 'stash' ? Clock : (['restore', 'unshare'].includes(inspectorConfirmAction.actionKey) ? RotateCcw : CheckCircle2))}
                         size="sm"
                         confirmOnClose={false}
                         primaryAction={{
@@ -3040,7 +3087,7 @@ const Inspector = ({
                         }}
                     >
                         <div className="text-xs text-text-muted leading-relaxed">
-                            Please confirm you wish to perform this action. The status will update immediately across departmental queues.
+                            {inspectorConfirmAction.impact || 'Please confirm you wish to perform this action. The status will update immediately across departmental queues.'}
                         </div>
                     </Modal>
                 )}
@@ -3882,11 +3929,50 @@ const Inspector = ({
                     const visibleSharesCount = departmentShares.length + userShares.length;
                     return (
                     <div className="flex flex-col gap-4">
+                        {rootSharedFolder && (
+                            <div className="p-3 rounded-xl border border-accent/30 bg-accent/10 flex items-start justify-between gap-3 shadow-2xs">
+                                <div className="flex items-start gap-2.5 min-w-0">
+                                    <div className="p-1.5 rounded-lg bg-accent/20 text-accent shrink-0 mt-0.5">
+                                        <FolderTree className="h-4 w-4" />
+                                    </div>
+                                    <div className="flex flex-col gap-0.5 min-w-0">
+                                        <span className="text-xs font-semibold text-text">
+                                            Inherited Share Property
+                                        </span>
+                                        <p className="text-[11px] text-text-muted leading-relaxed">
+                                            This {item.isFolder ? 'folder' : 'file'} is inside <strong className="text-text font-semibold">{rootSharedFolder.title || rootSharedFolder.name}</strong> and follows its permissions.
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
                         <div className="flex items-center justify-between">
                             <span className={SECTION_TITLE_STYLE}>Permissions & Access</span>
-                            <span className="text-xs text-text-muted">
-                                {visibleSharesCount} {visibleSharesCount === 1 ? 'share' : 'shares'}
-                            </span>
+                            <div className="flex items-center gap-2">
+                                <span className="text-xs text-text-muted">
+                                    {visibleSharesCount} {visibleSharesCount === 1 ? 'share' : 'shares'}
+                                </span>
+                                {departmentShares.length > 0 && (
+                                    <>
+                                        <span className="text-surface-border text-xs">•</span>
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                const allDeptCollapsed = departmentShares.every((s) => collapsedShareIds.has(s.id));
+                                                if (allDeptCollapsed) {
+                                                    expandAllShares();
+                                                } else {
+                                                    collapseAllShares(departmentShares.map((s) => s.id));
+                                                }
+                                            }}
+                                            className="text-xs text-accent hover:underline font-medium cursor-pointer"
+                                        >
+                                            {departmentShares.every((s) => collapsedShareIds.has(s.id)) ? 'Expand All' : 'Collapse All'}
+                                        </button>
+                                    </>
+                                )}
+                            </div>
                         </div>
 
                         {visibleSharesCount === 0 ? (
@@ -3899,71 +3985,83 @@ const Inspector = ({
                                     <div className="flex flex-col gap-2">
                                     {departmentShares.map((shareItem) => {
                                         const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
-                                        const targetDeptClean = cleanId(shareItem.department?.id ?? shareItem.departmentId);
+                                        const rawShareDept = shareItem.department?.id ?? shareItem.departmentId ?? (typeof shareItem.department === 'string' ? shareItem.department : null);
                                         const shareDepartment = allDepartments.find(
-                                            (department) => cleanId(department.id) === targetDeptClean
+                                            (d) => cleanId(d.id) === cleanId(rawShareDept) ||
+                                                (typeof rawShareDept === 'string' && d.name?.toLowerCase() === rawShareDept.toLowerCase()) ||
+                                                (typeof rawShareDept === 'string' && d.code?.toLowerCase() === rawShareDept.toLowerCase()) ||
+                                                (shareItem.department?.name && d.name?.toLowerCase() === shareItem.department.name.toLowerCase())
                                         ) ?? shareItem.department;
+
+                                        const targetDeptClean = cleanId(shareDepartment?.id ?? shareItem.department?.id ?? shareItem.departmentId);
+                                        const shareDeptNameClean = (shareDepartment?.name ?? (typeof shareItem.department === 'string' ? shareItem.department : null))?.toLowerCase();
+                                        const shareDeptCodeClean = shareDepartment?.code?.toLowerCase();
                                         const publisherName = resolvePublisherName(shareItem);
 
-                                        const deptId = shareDepartment?.id ?? shareItem.department?.id ?? shareItem.departmentId;
                                         const isFold = Boolean(item?.isFolder || item?.mimeType === 'folder');
-                                        const userMap = new Map((allUsers || []).map((u) => [String(u.id), u]));
 
-                                        let deptReadCount = 0;
-                                        let deptAuditLogs = [];
-                                        let uniqueReadersCount = 0;
+                                        const isUserInDept = (u) => {
+                                            const rawUDept = u.departmentId ?? u.department?.id ?? u.department;
+                                            const uClean = cleanId(rawUDept);
+                                            if (targetDeptClean && uClean && targetDeptClean === uClean) return true;
+                                            const matchedUDept = allDepartments.find((d) =>
+                                                cleanId(d.id) === uClean ||
+                                                (typeof rawUDept === 'string' && d.name?.toLowerCase() === rawUDept.toLowerCase()) ||
+                                                (typeof rawUDept === 'string' && d.code?.toLowerCase() === rawUDept.toLowerCase())
+                                            );
+                                            const uDeptId = cleanId(matchedUDept?.id ?? u.departmentId ?? u.department?.id);
+                                            const uDeptName = (matchedUDept?.name ?? (typeof u.department === 'string' ? u.department : null))?.toLowerCase();
+                                            const uDeptCode = matchedUDept?.code?.toLowerCase();
+
+                                            return Boolean(
+                                                (targetDeptClean && uDeptId && targetDeptClean === uDeptId) ||
+                                                (shareDeptNameClean && uDeptName && shareDeptNameClean === uDeptName) ||
+                                                (shareDeptCodeClean && uDeptCode && shareDeptCodeClean === uDeptCode) ||
+                                                (shareDeptCodeClean && uDeptName && shareDeptCodeClean === uDeptName)
+                                            );
+                                        };
+
+                                        const deptFaculty = (allUsers || []).filter(
+                                            (u) => isUserInDept(u) && constants.isMemberRole(u.role)
+                                        );
+                                        const deptFacultyMemberIds = new Set(deptFaculty.map((u) => cleanId(u.id)));
+
+                                        let deptReadCount;
+                                        let deptAuditLogs;
+                                        let uniqueReadersCount;
+
+                                        const readMemberIdsSet = new Set();
+                                        const rawDescendantIds = isFold ? getRecursiveDescendantDocIds(item?.id, allDocuments) : [];
+                                        const descendantIds = new Set();
+                                        rawDescendantIds.forEach((id) => {
+                                            descendantIds.add(id);
+                                            descendantIds.add(cleanId(id));
+                                        });
+                                        const cleanTargetId = cleanId(item?.id);
 
                                         if (isFold) {
-                                            const rawDescendantIds = getRecursiveDescendantDocIds(item?.id, allDocuments);
-                                            const descendantIds = new Set();
-                                            rawDescendantIds.forEach((id) => {
-                                                descendantIds.add(id);
-                                                descendantIds.add(cleanId(id));
-                                            });
-
                                             const childDocDeptReadersMap = new Map();
-                                            const deptUniqueUsers = new Set();
                                             const deptLogs = [];
 
                                             (allAuditLogs || []).forEach((log) => {
                                                 const docId = log?.entityId || log?.document?.id || log?.documentId;
                                                 if (!docId || (!descendantIds.has(docId) && !descendantIds.has(cleanId(docId)))) return;
-                                                const isReadAction = ['READ', 'VIEW', 'VIEWED', 'DOWNLOAD', 'DOWNLOADED', 'ACCESS', 'ACCESSED'].includes(String(log?.action || '').toUpperCase());
+                                                const isReadAction = ['READ', 'VIEW', 'VIEWED', 'DOWNLOAD', 'DOWNLOADED', 'ACCESS', 'ACCESSED', 'OPEN', 'OPENED'].includes(String(log?.action || '').toUpperCase());
                                                 if (!isReadAction) return;
 
                                                 const actorId = String(log?.actor?.id ?? log?.actorId ?? '');
-                                                if (!actorId) return;
+                                                const actorClean = cleanId(actorId);
+                                                if (!actorClean || !deptFacultyMemberIds.has(actorClean)) return;
 
-                                                let actorUser = userMap.get(actorId) || log?.actor;
-                                                let actorRole = actorUser?.role;
-                                                let logDeptId = actorUser?.departmentId;
-
-                                                if (typeof log?.data === 'string') {
-                                                    try {
-                                                        const parsed = JSON.parse(log.data);
-                                                        actorRole = actorRole || parsed.role || parsed.actorRole;
-                                                        logDeptId = logDeptId || parsed.departmentId || parsed._actorDepartmentId || parsed.new?._departmentId;
-                                                        if (!actorUser) {
-                                                            actorUser = { id: actorId, role: actorRole, departmentId: logDeptId };
-                                                        }
-                                                    } catch {
-                                                        // ignore malformed log data
-                                                    }
+                                                const normalizedDocId = cleanId(docId);
+                                                if (!childDocDeptReadersMap.has(normalizedDocId)) {
+                                                    childDocDeptReadersMap.set(normalizedDocId, new Set());
                                                 }
-
-                                                if (isStaffRole(actorRole) || isRmoUser({ ...(actorUser || {}), role: actorRole }, allDepartments)) return;
-
-                                                if (deptId && logDeptId && cleanId(logDeptId) === cleanId(deptId)) {
-                                                    const normalizedDocId = cleanId(docId);
-                                                    if (!childDocDeptReadersMap.has(normalizedDocId)) {
-                                                        childDocDeptReadersMap.set(normalizedDocId, new Set());
-                                                    }
-                                                    if (!childDocDeptReadersMap.get(normalizedDocId).has(actorId)) {
-                                                        childDocDeptReadersMap.get(normalizedDocId).add(actorId);
-                                                        deptLogs.push(log);
-                                                    }
-                                                    deptUniqueUsers.add(actorId);
+                                                if (!childDocDeptReadersMap.get(normalizedDocId).has(actorClean)) {
+                                                    childDocDeptReadersMap.get(normalizedDocId).add(actorClean);
+                                                    deptLogs.push(log);
                                                 }
+                                                readMemberIdsSet.add(actorClean);
                                             });
 
                                             let totalDeptReads = 0;
@@ -3971,56 +4069,47 @@ const Inspector = ({
                                                 totalDeptReads += readersSet.size;
                                             });
                                             deptReadCount = totalDeptReads;
-                                            uniqueReadersCount = deptUniqueUsers.size;
                                             deptAuditLogs = deptLogs;
                                         } else {
-                                            const targetDocId = item?.id;
-                                            const cleanTargetId = cleanId(targetDocId);
                                             const nonRmoUserFirstReadLogs = new Map();
 
                                             (allAuditLogs || []).forEach((log) => {
                                                 const docId = log?.entityId || log?.document?.id || log?.documentId;
                                                 const isDoc = docId && cleanId(docId) === cleanTargetId;
-                                                const isReadAction = ['READ', 'VIEW', 'VIEWED', 'DOWNLOAD', 'DOWNLOADED', 'ACCESS', 'ACCESSED'].includes(String(log?.action || '').toUpperCase());
+                                                const isReadAction = ['READ', 'VIEW', 'VIEWED', 'DOWNLOAD', 'DOWNLOADED', 'ACCESS', 'ACCESSED', 'OPEN', 'OPENED'].includes(String(log?.action || '').toUpperCase());
                                                 if (!isDoc || !isReadAction) return;
 
                                                 const actorId = String(log?.actor?.id ?? log?.actorId ?? '');
-                                                if (!actorId) return;
+                                                const actorClean = cleanId(actorId);
+                                                if (!actorClean || !deptFacultyMemberIds.has(actorClean)) return;
 
-                                                let actorUser = userMap.get(actorId) || log?.actor;
-                                                let actorRole = actorUser?.role;
-                                                let logDeptId = actorUser?.departmentId;
-
-                                                if (typeof log?.data === 'string') {
-                                                    try {
-                                                        const parsed = JSON.parse(log.data);
-                                                        actorRole = actorRole || parsed.role || parsed.actorRole;
-                                                        logDeptId = logDeptId || parsed.departmentId || parsed._actorDepartmentId || parsed.new?._departmentId;
-                                                        if (!actorUser) {
-                                                            actorUser = { id: actorId, role: actorRole, departmentId: logDeptId };
-                                                        }
-                                                    } catch {
-                                                        // ignore malformed log data
-                                                    }
+                                                if (!nonRmoUserFirstReadLogs.has(actorClean)) {
+                                                    nonRmoUserFirstReadLogs.set(actorClean, log);
                                                 }
-
-                                                if (isStaffRole(actorRole) || isRmoUser({ ...(actorUser || {}), role: actorRole }, allDepartments)) return;
-
-                                                if (deptId && logDeptId && cleanId(logDeptId) === cleanId(deptId)) {
-                                                    if (!nonRmoUserFirstReadLogs.has(actorId)) {
-                                                        nonRmoUserFirstReadLogs.set(actorId, log);
-                                                    }
-                                                }
+                                                readMemberIdsSet.add(actorClean);
                                             });
 
                                             deptReadCount = nonRmoUserFirstReadLogs.size;
-                                            uniqueReadersCount = nonRmoUserFirstReadLogs.size;
                                             deptAuditLogs = Array.from(nonRmoUserFirstReadLogs.values());
                                         }
 
-                                        const deptFaculty = (allUsers || []).filter(
-                                            (u) => cleanId(u.departmentId) === targetDeptClean && constants.isMemberRole(u.role)
-                                        );
+                                        // Also incorporate direct member user share read states (e.g. from individual member shares)
+                                        (documentShares || []).forEach((s) => {
+                                            const sDocId = cleanId(s.document?.id ?? s.documentId);
+                                            const isDoc = isFold
+                                                ? (sDocId && descendantIds.has(sDocId))
+                                                : (sDocId === cleanTargetId);
+                                            if (!isDoc) return;
+
+                                            const recId = cleanId(s.recipientId ?? s.recipient?.id);
+                                            if (recId && deptFacultyMemberIds.has(recId)) {
+                                                if (s.isRead || String(s.status || '').toUpperCase() === 'READ' || s.readAt) {
+                                                    readMemberIdsSet.add(recId);
+                                                }
+                                            }
+                                        });
+
+                                        uniqueReadersCount = readMemberIdsSet.size;
                                         const totalDeptMembers = deptFaculty.length > 0 ? deptFaculty.length : (uniqueReadersCount || 1);
 
                                         const deptUserShares = userShares.filter((us) => {
@@ -4028,8 +4117,7 @@ const Inspector = ({
                                             if (usDeptClean && usDeptClean === targetDeptClean) return true;
                                             const recipientId = us.recipientId ?? us.recipient?.id;
                                             const recUser = allUsers.find((u) => u.id === recipientId);
-                                            const recDeptClean = cleanId(recUser?.departmentId ?? recUser?.department?.id);
-                                            return recDeptClean && recDeptClean === targetDeptClean;
+                                            return recUser && isUserInDept(recUser);
                                         });
 
                                         const isDeptPublished = String(shareItem.status || '').toUpperCase() === constants.DOCUMENT_SHARES_STATUS.PUBLISHED;
@@ -4038,23 +4126,50 @@ const Inspector = ({
                                             (deptFaculty.length > 0 && deptUserShares.length >= deptFaculty.length)
                                         );
 
+                                        const isCollapsed = collapsedShareIds.has(shareItem.id);
+
                                         return (
                                             <div
                                                 key={shareItem.id}
-                                                className="p-3.5 rounded-lg border border-surface-border bg-surface-hover flex flex-col gap-3"
+                                                className="p-3.5 rounded-lg border border-surface-border bg-surface-hover flex flex-col gap-3 transition-all"
                                             >
-                                                <div className="flex items-center justify-between gap-2">
-                                                    <div className="flex items-center gap-2 min-w-0">
-                                                        <Building2 className="h-4 w-4 text-text-muted shrink-0" />
-                                                        <span className="font-semibold text-xs text-text truncate">
-                                                            {shareDepartment?.name ?? 'University Wide'}
-                                                        </span>
+                                                <div
+                                                    onClick={() => toggleShareCollapse(shareItem.id)}
+                                                    className="flex items-center justify-between gap-2 cursor-pointer select-none group"
+                                                    title={isCollapsed ? 'Click to expand details' : 'Click to collapse'}
+                                                >
+                                                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                                                        <Building2 className="h-4 w-4 text-accent shrink-0" />
+                                                        <div className="flex flex-col min-w-0">
+                                                            <span className="font-semibold text-xs text-text truncate group-hover:text-accent transition-colors">
+                                                                {shareDepartment?.name ?? 'University Wide'}
+                                                            </span>
+                                                            {isCollapsed && (
+                                                                <span className="text-[10px] text-text-muted truncate">
+                                                                    {isAllMembersPublished
+                                                                        ? `${totalDeptMembers} member${totalDeptMembers === 1 ? '' : 's'} • ${uniqueReadersCount}/${totalDeptMembers} read`
+                                                                        : `${deptUserShares.length} published • ${uniqueReadersCount}/${deptUserShares.length} read`}
+                                                                </span>
+                                                            )}
+                                                        </div>
                                                     </div>
-                                                    <Badge
-                                                        variant={STATUS_BADGE_VARIANT[shareItem.status] ?? 'neutral'}
-                                                        label={shareItem.status}
-                                                    />
+                                                    <div className="flex items-center gap-2 shrink-0">
+                                                        <Badge
+                                                            variant={STATUS_BADGE_VARIANT[shareItem.status] ?? 'neutral'}
+                                                            label={shareItem.status}
+                                                        />
+                                                        <button
+                                                            type="button"
+                                                            className="p-1 rounded text-text-muted hover:text-text hover:bg-surface-hover/80 transition-colors cursor-pointer"
+                                                            aria-label={isCollapsed ? 'Expand share details' : 'Collapse share details'}
+                                                        >
+                                                            {isCollapsed ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronUp className="h-3.5 w-3.5" />}
+                                                        </button>
+                                                    </div>
                                                 </div>
+
+                                                {!isCollapsed && (
+                                                <>
 
                                                 {/* REJECTION FEEDBACK CALLOUT & ADMIN RESHARE ACTIONS */}
                                                 {(() => {
@@ -4063,7 +4178,7 @@ const Inspector = ({
 
                                                     const latestVer = documentVersions[0];
                                                     const rejectionReason = shareItem.rejectionReason || latestVer?.rejectionReason || 'No rejection reason specified.';
-                                                    const rejecter = allUsers.find((u) => u.id === latestVer?.rejecterId);
+                                                    const rejecter = allUsers.find((u) => u.id === latestVer?.rejecterId || u.id === shareItem.rejecterId || u.id === shareItem.reviewerId);
                                                     const rejecterName = rejecter ? `${rejecter.firstName || ''} ${rejecter.lastName || ''}`.trim() : null;
 
                                                     return (
@@ -4472,7 +4587,6 @@ const Inspector = ({
                                                         )}
                                                     </div>
                                                 )}
-
                                                 <div className="flex items-center justify-between text-xs text-text-muted pt-1 border-t border-surface-border">
                                                     <span>
                                                         Shared by {publisherName}
@@ -4484,7 +4598,7 @@ const Inspector = ({
                                                                 type="button"
                                                                 onClick={(e) => {
                                                                     e.stopPropagation();
-                                                                    handleActionClick('unshare', shareItem);
+                                                                    handleActionClick('unshare', rootSharedFolder ? rootSharedFolder : shareItem);
                                                                 }}
                                                                 className="text-error hover:underline cursor-pointer font-medium ml-1"
                                                             >
@@ -4493,6 +4607,8 @@ const Inspector = ({
                                                         )}
                                                     </div>
                                                 </div>
+                                                </>
+                                                )}
                                             </div>
                                         );
                                     })}
@@ -5811,19 +5927,52 @@ const Inspector = ({
                     if (isOfficer) {
                         const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
                         const userDeptClean = cleanId(activeUser?.departmentId ?? activeUser?.department?.id ?? activeUser?.department);
-                        const officerShare = (documentShares || []).find((s) => {
+                        const itemCleanId = cleanId(item?.id);
+
+                        const deptDocShares = (documentShares || []).filter((s) => {
                             const sDeptId = cleanId(s.department?.id ?? s.departmentId);
                             return userDeptClean && sDeptId === userDeptClean;
-                        }) || (allDocumentShares || []).find((s) => {
+                        });
+
+                        const fallbackShares = (allDocumentShares || []).filter((s) => {
                             const sDocId = cleanId(s.document?.id ?? s.documentId);
                             const sDeptId = cleanId(s.department?.id ?? s.departmentId);
-                            return cleanId(item?.id) === sDocId && userDeptClean && sDeptId === userDeptClean;
-                        }) || item.share || (documentShares && documentShares.length > 0 ? documentShares[0] : null);
+                            return itemCleanId === sDocId && userDeptClean && sDeptId === userDeptClean;
+                        });
 
-                        const rawOfficerStatus = officerShare?.status ?? item.status ?? item.share?.status;
-                        const effectiveOfficerStatus = (rawOfficerStatus && rawOfficerStatus !== '—')
-                            ? String(rawOfficerStatus).toUpperCase()
-                            : constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL;
+                        const pool = deptDocShares.length > 0 ? deptDocShares : fallbackShares;
+
+                        let effectiveOfficerStatus;
+                        let officerShare;
+
+                        const pubShare = pool.find((s) => s.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED);
+                        const stashedShare = pool.find((s) => s.status === constants.DOCUMENT_SHARES_STATUS.STASHED);
+                        const rejectedShare = pool.find((s) => s.status === constants.DOCUMENT_SHARES_STATUS.REJECTED);
+                        const approvedShare = pool.find((s) => s.status === constants.DOCUMENT_SHARES_STATUS.APPROVED);
+                        const pendingShare = pool.find((s) => s.status === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL);
+
+                        if (pubShare) {
+                            effectiveOfficerStatus = constants.DOCUMENT_SHARES_STATUS.PUBLISHED;
+                            officerShare = pubShare;
+                        } else if (stashedShare) {
+                            effectiveOfficerStatus = constants.DOCUMENT_SHARES_STATUS.STASHED;
+                            officerShare = stashedShare;
+                        } else if (rejectedShare) {
+                            effectiveOfficerStatus = constants.DOCUMENT_SHARES_STATUS.REJECTED;
+                            officerShare = rejectedShare;
+                        } else if (approvedShare) {
+                            effectiveOfficerStatus = constants.DOCUMENT_SHARES_STATUS.APPROVED;
+                            officerShare = approvedShare;
+                        } else if (pendingShare) {
+                            effectiveOfficerStatus = constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL;
+                            officerShare = pendingShare;
+                        } else {
+                            officerShare = item.share || (pool.length > 0 ? pool[0] : null);
+                            const rawOfficerStatus = officerShare?.status ?? item.status ?? item.share?.status;
+                            effectiveOfficerStatus = (rawOfficerStatus && rawOfficerStatus !== '—')
+                                ? String(rawOfficerStatus).toUpperCase()
+                                : constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL;
+                        }
 
                         const isApproved = effectiveOfficerStatus === constants.DOCUMENT_SHARES_STATUS.APPROVED;
                         const isRejected = effectiveOfficerStatus === constants.DOCUMENT_SHARES_STATUS.REJECTED;
@@ -5854,14 +6003,14 @@ const Inspector = ({
                                         leadingIcon={RotateCcw}
                                         isLoading={activeActionLoading === 'unreject'}
                                         isDisabled={Boolean(activeActionLoading)}
-                                        onClick={() => setInspectorConfirmAction({
-                                            actionKey: 'unreject',
-                                            targetItem: targetWithShare,
-                                            title: `Unreject ${item.isFolder ? 'Folder' : 'Document'}`,
-                                            message: `Are you sure you want to unreject "${item.name || item.title || 'this document'}" and return it to pending approval?`,
-                                            primaryLabel: 'Unreject',
-                                            variant: 'primary',
-                                        })}
+                                        onClick={() => {
+                                            const conf = getActionConfirmationConfig('unreject', item, 1);
+                                            setInspectorConfirmAction({
+                                                actionKey: 'unreject',
+                                                targetItem: targetWithShare,
+                                                ...conf,
+                                            });
+                                        }}
                                         className="w-full justify-center truncate px-2"
                                     >
                                         Unreject
@@ -5878,14 +6027,14 @@ const Inspector = ({
                                         leadingIcon={RotateCcw}
                                         isLoading={activeActionLoading === 'unapprove'}
                                         isDisabled={Boolean(activeActionLoading)}
-                                        onClick={() => setInspectorConfirmAction({
-                                            actionKey: 'unapprove',
-                                            targetItem: targetWithShare,
-                                            title: `Revoke Approval for ${item.isFolder ? 'Folder' : 'Document'}`,
-                                            message: `Are you sure you want to revert "${item.name || item.title || 'this document'}" to pending approval?`,
-                                            primaryLabel: 'Revoke Approval',
-                                            variant: 'warning',
-                                        })}
+                                        onClick={() => {
+                                            const conf = getActionConfirmationConfig('unapprove', item, 1);
+                                            setInspectorConfirmAction({
+                                                actionKey: 'unapprove',
+                                                targetItem: targetWithShare,
+                                                ...conf,
+                                            });
+                                        }}
                                         className="w-full justify-center truncate px-2"
                                     >
                                         Unapprove
@@ -5901,14 +6050,14 @@ const Inspector = ({
                                     leadingIcon={CheckCircle2}
                                     isLoading={activeActionLoading === 'approve'}
                                     isDisabled={Boolean(activeActionLoading)}
-                                    onClick={() => setInspectorConfirmAction({
-                                        actionKey: 'approve',
-                                        targetItem: targetWithShare,
-                                        title: `Approve ${item.isFolder ? 'Folder' : 'Document'}`,
-                                        message: `Are you sure you want to approve "${item.name || item.title || 'this document'}" for department director review?`,
-                                        primaryLabel: 'Approve',
-                                        variant: 'primary',
-                                    })}
+                                    onClick={() => {
+                                        const conf = getActionConfirmationConfig('approve', item, 1);
+                                        setInspectorConfirmAction({
+                                            actionKey: 'approve',
+                                            targetItem: targetWithShare,
+                                            ...conf,
+                                        });
+                                    }}
                                     className="justify-center truncate px-2"
                                 >
                                     Approve
@@ -5934,27 +6083,54 @@ const Inspector = ({
                     if (isDirector) {
                         const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
                         const userDeptClean = cleanId(activeUser?.departmentId ?? activeUser?.department?.id ?? activeUser?.department);
+                        const itemCleanId = cleanId(item?.id);
                         const isBaseShare = (s) => !s.recipientId && !s.recipient?.id && !s.recipient;
-                        const directorShare = (documentShares || []).find((s) => {
-                            const sDeptId = cleanId(s.department?.id ?? s.departmentId);
-                            return userDeptClean && sDeptId === userDeptClean && isBaseShare(s);
-                        }) || (documentShares || []).find((s) => {
+
+                        const deptDocShares = (documentShares || []).filter((s) => {
                             const sDeptId = cleanId(s.department?.id ?? s.departmentId);
                             return userDeptClean && sDeptId === userDeptClean;
-                        }) || (allDocumentShares || []).find((s) => {
-                            const sDocId = cleanId(s.document?.id ?? s.documentId);
-                            const sDeptId = cleanId(s.department?.id ?? s.departmentId);
-                            return cleanId(item?.id) === sDocId && userDeptClean && sDeptId === userDeptClean && isBaseShare(s);
-                        }) || (allDocumentShares || []).find((s) => {
-                            const sDocId = cleanId(s.document?.id ?? s.documentId);
-                            const sDeptId = cleanId(s.department?.id ?? s.departmentId);
-                            return cleanId(item?.id) === sDocId && userDeptClean && sDeptId === userDeptClean;
-                        }) || item.share || (documentShares && documentShares.length > 0 ? documentShares[0] : null);
+                        });
 
-                        const rawDirectorStatus = directorShare?.status ?? item.status ?? item.share?.status;
-                        const effectiveDirectorStatus = (rawDirectorStatus && rawDirectorStatus !== '—')
-                            ? String(rawDirectorStatus).toUpperCase()
-                            : '';
+                        const fallbackShares = (allDocumentShares || []).filter((s) => {
+                            const sDocId = cleanId(s.document?.id ?? s.documentId);
+                            const sDeptId = cleanId(s.department?.id ?? s.departmentId);
+                            return itemCleanId === sDocId && userDeptClean && sDeptId === userDeptClean;
+                        });
+
+                        const pool = deptDocShares.length > 0 ? deptDocShares : fallbackShares;
+
+                        let effectiveDirectorStatus;
+                        let directorShare;
+
+                        const pubShare = pool.find((s) => s.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED);
+                        const stashedShare = pool.find((s) => s.status === constants.DOCUMENT_SHARES_STATUS.STASHED);
+                        const approvedShare = pool.find((s) => s.status === constants.DOCUMENT_SHARES_STATUS.APPROVED);
+                        const pendingShare = pool.find((s) => s.status === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL);
+                        const rejectedShare = pool.find((s) => s.status === constants.DOCUMENT_SHARES_STATUS.REJECTED);
+
+                        if (pubShare) {
+                            effectiveDirectorStatus = constants.DOCUMENT_SHARES_STATUS.PUBLISHED;
+                            directorShare = pool.find(isBaseShare) || pubShare;
+                        } else if (stashedShare) {
+                            effectiveDirectorStatus = constants.DOCUMENT_SHARES_STATUS.STASHED;
+                            directorShare = pool.find(isBaseShare) || stashedShare;
+                        } else if (approvedShare) {
+                            effectiveDirectorStatus = constants.DOCUMENT_SHARES_STATUS.APPROVED;
+                            directorShare = approvedShare;
+                        } else if (pendingShare) {
+                            effectiveDirectorStatus = constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL;
+                            directorShare = pendingShare;
+                        } else if (rejectedShare) {
+                            effectiveDirectorStatus = constants.DOCUMENT_SHARES_STATUS.REJECTED;
+                            directorShare = rejectedShare;
+                        } else {
+                            directorShare = item.share || (pool.length > 0 ? pool[0] : null);
+                            const rawDirectorStatus = directorShare?.status ?? item.status ?? item.share?.status;
+                            effectiveDirectorStatus = (rawDirectorStatus && rawDirectorStatus !== '—')
+                                ? String(rawDirectorStatus).toUpperCase()
+                                : '';
+                        }
+
                         const isPublished = effectiveDirectorStatus === constants.DOCUMENT_SHARES_STATUS.PUBLISHED;
                         const isStashed = effectiveDirectorStatus === constants.DOCUMENT_SHARES_STATUS.STASHED;
                         const isApproved = effectiveDirectorStatus === constants.DOCUMENT_SHARES_STATUS.APPROVED;
@@ -5983,14 +6159,14 @@ const Inspector = ({
                                         leadingIcon={EyeOff}
                                         isLoading={activeActionLoading === 'unpublish'}
                                         isDisabled={Boolean(activeActionLoading)}
-                                        onClick={() => setInspectorConfirmAction({
-                                            actionKey: 'unpublish',
-                                            targetItem: targetWithShare,
-                                            title: `Unpublish ${item.isFolder ? 'Folder' : 'Document'}`,
-                                            message: `Are you sure you want to unpublish "${item.name || item.title || 'this document'}" from faculty and department members?`,
-                                            primaryLabel: 'Unpublish',
-                                            variant: 'secondary',
-                                        })}
+                                        onClick={() => {
+                                            const conf = getActionConfirmationConfig('unpublish', item, 1);
+                                            setInspectorConfirmAction({
+                                                actionKey: 'unpublish',
+                                                targetItem: targetWithShare,
+                                                ...conf,
+                                            });
+                                        }}
                                         className="justify-center truncate px-2"
                                     >
                                         Unpublish
@@ -6007,14 +6183,14 @@ const Inspector = ({
                                         leadingIcon={RotateCcw}
                                         isLoading={activeActionLoading === 'unstash'}
                                         isDisabled={Boolean(activeActionLoading)}
-                                        onClick={() => setInspectorConfirmAction({
-                                            actionKey: 'unstash',
-                                            targetItem: targetWithShare,
-                                            title: `Unstash ${item.isFolder ? 'Folder' : 'Document'}`,
-                                            message: `Are you sure you want to unstash "${item.name || item.title || 'this document'}" and restore it to approved status?`,
-                                            primaryLabel: 'Unstash Item',
-                                            variant: 'primary',
-                                        })}
+                                        onClick={() => {
+                                            const conf = getActionConfirmationConfig('unstash', item, 1);
+                                            setInspectorConfirmAction({
+                                                actionKey: 'unstash',
+                                                targetItem: targetWithShare,
+                                                ...conf,
+                                            });
+                                        }}
                                         className="w-full justify-center truncate px-2"
                                     >
                                         Unstash
@@ -6041,14 +6217,14 @@ const Inspector = ({
                                         leadingIcon={Layers}
                                         isLoading={activeActionLoading === 'stash'}
                                         isDisabled={Boolean(activeActionLoading)}
-                                        onClick={() => setInspectorConfirmAction({
-                                            actionKey: 'stash',
-                                            targetItem: targetWithShare,
-                                            title: `Stash ${item.isFolder ? 'Folder' : 'Document'}`,
-                                            message: `Are you sure you want to stash "${item.name || item.title || 'this document'}"? It will be held at upper management level.`,
-                                            primaryLabel: 'Stash Item',
-                                            variant: 'secondary',
-                                        })}
+                                        onClick={() => {
+                                            const conf = getActionConfirmationConfig('stash', item, 1);
+                                            setInspectorConfirmAction({
+                                                actionKey: 'stash',
+                                                targetItem: targetWithShare,
+                                                ...conf,
+                                            });
+                                        }}
                                         className="justify-center truncate px-2"
                                     >
                                         Stash
@@ -6086,14 +6262,14 @@ const Inspector = ({
                                     leadingIcon={RotateCcw}
                                     isLoading={activeActionLoading === 'restore'}
                                     isDisabled={Boolean(activeActionLoading)}
-                                    onClick={() => setInspectorConfirmAction({
-                                        actionKey: 'restore',
-                                        targetItem: item,
-                                        title: item.isFolder ? 'Restore Folder' : 'Restore Document',
-                                        message: `Are you sure you want to restore ${item.isFolder ? 'folder' : 'document'} "${item.name || item.title || (item.isFolder ? 'this folder' : 'this document')}" to the active repository?`,
-                                        primaryLabel: item.isFolder ? 'Restore Folder' : 'Restore Document',
-                                        variant: 'primary',
-                                    })}
+                                    onClick={() => {
+                                        const conf = getActionConfirmationConfig('restore', item, 1);
+                                        setInspectorConfirmAction({
+                                            actionKey: 'restore',
+                                            targetItem: item,
+                                            ...conf,
+                                        });
+                                    }}
                                     className="justify-center truncate px-2"
                                 >
                                     Restore
@@ -6128,14 +6304,14 @@ const Inspector = ({
                                     leadingIcon={Share2}
                                     isLoading={activeActionLoading === 'unshare'}
                                     isDisabled={Boolean(activeActionLoading)}
-                                    onClick={() => setInspectorConfirmAction({
-                                        actionKey: 'unshare',
-                                        targetItem: item,
-                                        title: `Unshare ${item.isFolder ? 'Folder' : 'Document'}`,
-                                        message: `Are you sure you want to remove all departmental and member shares for "${item.name || item.title || 'this item'}"?`,
-                                        primaryLabel: 'Unshare',
-                                        variant: 'destructive',
-                                    })}
+                                    onClick={() => {
+                                        const conf = getActionConfirmationConfig('unshare', item, 1);
+                                        setInspectorConfirmAction({
+                                            actionKey: 'unshare',
+                                            targetItem: item,
+                                            ...conf,
+                                        });
+                                    }}
                                     className="justify-center truncate px-2"
                                 >
                                     Unshare
@@ -6168,37 +6344,51 @@ const Inspector = ({
                     );
                 })()}
 
-                {isUser && (
-                    <div className={`grid ${isSelfUser && (activeUserRecord?.status ?? item.status) !== constants.USERS_STATUS.SUSPENDED ? 'grid-cols-1' : 'grid-cols-2'} gap-2 w-full`}>
-                        <Button
-                            variant="secondary"
-                            leadingIcon={Edit3}
-                            onClick={handleOpenEditUser}
-                            className="justify-center truncate"
-                        >
-                            Edit
-                        </Button>
-                        {(activeUserRecord?.status ?? item.status) === constants.USERS_STATUS.SUSPENDED ? (
-                            <Button
-                                variant="primary"
-                                leadingIcon={UserCheck}
-                                onClick={handleOpenSuspendUser}
-                                className="justify-center truncate"
-                            >
-                                Unsuspend
-                            </Button>
-                        ) : !isSelfUser ? (
-                            <Button
-                                variant="destructive"
-                                leadingIcon={UserX}
-                                onClick={handleOpenSuspendUser}
-                                className="justify-center truncate"
-                            >
-                                Suspend
-                            </Button>
-                        ) : null}
-                    </div>
-                )}
+                {isUser && (() => {
+                    const u = activeUserRecord ?? item;
+                    const isTargetAdmin = constants.isAdminRole(u?.role);
+                    const canEditUser = !isTargetAdmin || isSelfUser;
+                    const canSuspend = !isSelfUser;
+                    const isSuspended = (activeUserRecord?.status ?? item.status) === constants.USERS_STATUS.SUSPENDED;
+
+                    if (!canEditUser && !canSuspend) return null;
+
+                    return (
+                        <div className={`grid ${canEditUser && canSuspend ? 'grid-cols-2' : 'grid-cols-1'} gap-2 w-full`}>
+                            {canEditUser && (
+                                <Button
+                                    variant="secondary"
+                                    leadingIcon={Edit3}
+                                    onClick={handleOpenEditUser}
+                                    className="justify-center truncate"
+                                >
+                                    Edit
+                                </Button>
+                            )}
+                            {canSuspend && (
+                                isSuspended ? (
+                                    <Button
+                                        variant="primary"
+                                        leadingIcon={UserCheck}
+                                        onClick={handleOpenSuspendUser}
+                                        className="justify-center truncate"
+                                    >
+                                        Unsuspend
+                                    </Button>
+                                ) : (
+                                    <Button
+                                        variant="destructive"
+                                        leadingIcon={UserX}
+                                        onClick={handleOpenSuspendUser}
+                                        className="justify-center truncate"
+                                    >
+                                        Suspend
+                                    </Button>
+                                )
+                            )}
+                        </div>
+                    );
+                })()}
 
                 {isDepartment && (
                     <div className="grid grid-cols-2 gap-2 w-full">

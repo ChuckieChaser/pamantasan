@@ -10,6 +10,7 @@
         "preview": "vite preview",
         "deploy:dataconnect": "firebase deploy --only dataconnect",
         "deploy:functions": "firebase deploy --only functions",
+        "storage:cors": "node scripts/setStorageCors.js",
         "check:backend": "node scripts/checkFirebase.js"
     },
     "dependencies": {

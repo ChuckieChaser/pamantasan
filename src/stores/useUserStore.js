@@ -31,6 +31,10 @@ function getStoredPreviousStatus(userId) {
 }
 
 
+// --- SYNC THROTTLES & MUTEX ---
+let inFlightFetchUsersPromise = null;
+let lastFetchUsersTimestamp = 0;
+
 // --- STORE ---
 const useUserStore = create((set, get) => ({
     // STATES
@@ -54,34 +58,50 @@ const useUserStore = create((set, get) => ({
     },
 
     // USERS
-    fetchUsers: async () => {
-        set({ isLoading: true, error: null });
-
-        try {
-            const users = await userService.fetchUsers();
-            let resolvedUsers = (users || []).filter(Boolean);
-
-            const currentUser = useAuthStore.getState().currentUser;
-            if (currentUser && !resolvedUsers.some((u) => u.id === currentUser.id || u.universityId === currentUser.universityId)) {
-                resolvedUsers = [currentUser, ...resolvedUsers];
+    fetchUsers: async (force = false) => {
+        if (!force) {
+            if (inFlightFetchUsersPromise) {
+                return inFlightFetchUsersPromise;
             }
-
-            resolvedUsers.forEach((u) => {
-                if (u?.id && u?.status && String(u.status).toUpperCase() !== 'SUSPENDED') {
-                    savePreviousStatus(u.id, u.status);
-                }
-            });
-
-            set({ users: resolvedUsers, isLoading: false, error: null });
-
-            return resolvedUsers;
-        } catch {
-            const currentUser = useAuthStore.getState().currentUser;
-            const fallbackUsers = currentUser ? [currentUser] : [];
-            set({ users: fallbackUsers, isLoading: false, error: null });
-
-            return fallbackUsers;
+            if (Date.now() - lastFetchUsersTimestamp < 3000 && (get().users || []).length > 0) {
+                return get().users || [];
+            }
         }
+
+        inFlightFetchUsersPromise = (async () => {
+            set({ isLoading: true, error: null });
+
+            try {
+                const users = await userService.fetchUsers();
+                lastFetchUsersTimestamp = Date.now();
+                let resolvedUsers = (users || []).filter(Boolean);
+
+                const currentUser = useAuthStore.getState().currentUser;
+                if (currentUser && !resolvedUsers.some((u) => u.id === currentUser.id || u.universityId === currentUser.universityId)) {
+                    resolvedUsers = [currentUser, ...resolvedUsers];
+                }
+
+                resolvedUsers.forEach((u) => {
+                    if (u?.id && u?.status && String(u.status).toUpperCase() !== 'SUSPENDED') {
+                        savePreviousStatus(u.id, u.status);
+                    }
+                });
+
+                set({ users: resolvedUsers, isLoading: false, error: null });
+
+                return resolvedUsers;
+            } catch {
+                const currentUser = useAuthStore.getState().currentUser;
+                const fallbackUsers = currentUser ? [currentUser] : [];
+                set({ users: fallbackUsers, isLoading: false, error: null });
+
+                return fallbackUsers;
+            } finally {
+                inFlightFetchUsersPromise = null;
+            }
+        })();
+
+        return inFlightFetchUsersPromise;
     },
 
     fetchUserById: async (id) => {

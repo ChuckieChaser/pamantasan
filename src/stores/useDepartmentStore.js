@@ -21,6 +21,10 @@ const generateUuid = () => {
 };
 
 
+// --- SYNC THROTTLES & MUTEX ---
+let inFlightFetchDeptsPromise = null;
+let lastFetchDeptsTimestamp = 0;
+
 // --- STORE ---
 const useDepartmentStore = create((set, get) => ({
     // STATES
@@ -30,57 +34,73 @@ const useDepartmentStore = create((set, get) => ({
     error: null,
 
     // CORE
-    fetchDepartments: async () => {
-        set({ isLoading: true, error: null });
-
-        try {
-            const departments = await departmentService.fetchDepartments();
-
-            set((state) => {
-                if (departments && departments.length > 0) {
-                    const serverDeptMap = new Map();
-                    departments.forEach((dept) => {
-                        if (dept?.id) serverDeptMap.set(dept.id, dept);
-                        if (dept?.code) serverDeptMap.set(`code:${dept.code.toUpperCase()}`, dept);
-                    });
-
-                    // Retain any locally added departments that may not yet be in the server response
-                    const preservedLocal = state.departments.filter((localDept) => {
-                        if (!localDept) return false;
-                        const byId = localDept.id && serverDeptMap.has(localDept.id);
-                        const byCode = localDept.code && serverDeptMap.has(`code:${localDept.code.toUpperCase()}`);
-                        return !byId && !byCode;
-                    });
-
-                    return {
-                        departments: [...departments, ...preservedLocal],
-                        isLoading: false,
-                        error: null,
-                    };
-                }
-
-                // If server returned 0 items but we already have local items, do not wipe them
-                if (state.departments.length > 0) {
-                    return {
-                        isLoading: false,
-                        error: null,
-                    };
-                }
-
-                return {
-                    departments: [],
-                    isLoading: false,
-                    error: null,
-                };
-            });
-
-            return departments;
-        } catch (error) {
-            const message = error?.message ?? 'Failed to fetch departments.';
-            set({ isLoading: false, error: message });
-
-            return [];
+    fetchDepartments: async (force = false) => {
+        if (!force) {
+            if (inFlightFetchDeptsPromise) {
+                return inFlightFetchDeptsPromise;
+            }
+            if (Date.now() - lastFetchDeptsTimestamp < 3000 && (get().departments || []).length > 0) {
+                return get().departments || [];
+            }
         }
+
+        inFlightFetchDeptsPromise = (async () => {
+            set({ isLoading: true, error: null });
+
+            try {
+                const departments = await departmentService.fetchDepartments();
+                lastFetchDeptsTimestamp = Date.now();
+
+                set((state) => {
+                    if (departments && departments.length > 0) {
+                        const serverDeptMap = new Map();
+                        departments.forEach((dept) => {
+                            if (dept?.id) serverDeptMap.set(dept.id, dept);
+                            if (dept?.code) serverDeptMap.set(`code:${dept.code.toUpperCase()}`, dept);
+                        });
+
+                        // Retain any locally added departments that may not yet be in the server response
+                        const preservedLocal = state.departments.filter((localDept) => {
+                            if (!localDept) return false;
+                            const byId = localDept.id && serverDeptMap.has(localDept.id);
+                            const byCode = localDept.code && serverDeptMap.has(`code:${localDept.code.toUpperCase()}`);
+                            return !byId && !byCode;
+                        });
+
+                        return {
+                            departments: [...departments, ...preservedLocal],
+                            isLoading: false,
+                            error: null,
+                        };
+                    }
+
+                    // If server returned 0 items but we already have local items, do not wipe them
+                    if (state.departments.length > 0) {
+                        return {
+                            isLoading: false,
+                            error: null,
+                        };
+                    }
+
+                    return {
+                        departments: [],
+                        isLoading: false,
+                        error: null,
+                    };
+                });
+
+                return departments;
+            } catch (error) {
+                const message = error?.message ?? 'Failed to fetch departments.';
+                set({ isLoading: false, error: message });
+
+                return [];
+            } finally {
+                inFlightFetchDeptsPromise = null;
+            }
+        })();
+
+        return inFlightFetchDeptsPromise;
     },
 
     fetchDepartmentById: async (id) => {

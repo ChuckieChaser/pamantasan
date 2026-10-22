@@ -1,6 +1,6 @@
-// --- IMPORTS ---
-import { ref, uploadBytes, getDownloadURL, deleteObject, getBlob, listAll } from 'firebase/storage';
+import { ref, uploadBytes, getDownloadURL, deleteObject, getBlob, getBytes, listAll } from 'firebase/storage';
 import { storage } from './firebase';
+import { getKnownFileExtension } from '../utils/fileNameUtils';
 
 
 // --- CONFIGURATIONS ---
@@ -63,13 +63,13 @@ const storageService = {
                 console.warn(`Failed to resolve download URL for "${cleanPath}":`, urlErr?.message);
             }
 
-            // Strategy B: Fallback attempt with Firebase SDK getBlob (capped at 20s timeout to accommodate mobile networks)
+            // Strategy B: Fallback attempt with Firebase SDK getBlob / getBytes (capped at 20s timeout)
             try {
                 onProgress?.({ progress: 60, statusText: 'Downloading from storage SDK...' });
                 const fileReference = ref(storage, cleanPath);
                 const blobPromise = getBlob(fileReference, 100 * 1024 * 1024);
                 const timeoutPromise = new Promise((_, reject) =>
-                    setTimeout(() => reject(new Error('Firebase SDK timeout')), 20000)
+                    setTimeout(() => reject(new Error('Firebase SDK timeout')), 8000)
                 );
                 const blob = await Promise.race([blobPromise, timeoutPromise]);
                 if (blob) {
@@ -77,6 +77,19 @@ const storageService = {
                 }
             } catch (error) {
                 console.warn(`Firebase getBlob failed for "${cleanPath}":`, error?.message);
+                try {
+                    const fileReference = ref(storage, cleanPath);
+                    const bytesPromise = getBytes(fileReference, 100 * 1024 * 1024);
+                    const timeoutPromise = new Promise((_, reject) =>
+                        setTimeout(() => reject(new Error('Firebase SDK getBytes timeout')), 8000)
+                    );
+                    const buffer = await Promise.race([bytesPromise, timeoutPromise]);
+                    if (buffer) {
+                        return new Blob([buffer]);
+                    }
+                } catch (bytesErr) {
+                    console.warn(`Firebase getBytes failed for "${cleanPath}":`, bytesErr?.message);
+                }
             }
 
             // Strategy C: Direct fetch fallback using resolved download URL
@@ -219,18 +232,12 @@ const storageService = {
             storagePath = storagePathOrItem;
         }
 
-        if (!effectiveFileName) {
-            effectiveFileName = (storagePath ? storagePath.split('/').pop() : 'document') || 'document';
-        }
-
-        // Ensure extension is retained from storage path if missing
-        if (storagePath) {
-            const clean = cleanStoragePath(storagePath);
-            const pathExt = clean.includes('.') ? '.' + clean.split('.').pop().split('?')[0] : '';
-            if (pathExt && !effectiveFileName.toLowerCase().endsWith(pathExt.toLowerCase())) {
-                effectiveFileName = `${effectiveFileName}${pathExt}`;
-            }
-        }
+        effectiveFileName = resolveFileNameWithExtension(
+            effectiveFileName,
+            storagePath,
+            storagePathOrItem?.mimeType,
+            storagePathOrItem
+        );
 
         if (!storagePath) {
             throw new Error(`Storage path could not be located for "${effectiveFileName}".`);
@@ -239,6 +246,7 @@ const storageService = {
         onProgress?.({ progress: 25, statusText: 'Downloading document binary...' });
 
         let blob = null;
+        let directUrl = null;
         if (storagePath) {
             blob = await storageService.getFileBlob(storagePath, onProgress);
         }
@@ -247,7 +255,7 @@ const storageService = {
         if (!blob && storagePath) {
             try {
                 onProgress?.({ progress: 50, statusText: 'Resolving download stream...' });
-                const directUrl = await storageService.fetchDocument(storagePath);
+                directUrl = await storageService.fetchDocument(storagePath);
                 if (directUrl) {
                     const targetUrl = toProxiedUrl(directUrl);
                     const response = await fetch(targetUrl);
@@ -260,19 +268,41 @@ const storageService = {
             }
         }
 
-        // Fallback: When remote storage object is not physically present (mock/seeded data)
-        if (!blob) {
-            onProgress?.({ progress: 70, statusText: 'Generating institutional record...' });
-            const fallbackContent = `Pamantasan Institutional Document\n\nFile: ${effectiveFileName}\nPath: ${storagePath || 'N/A'}\nDownloaded: ${new Date().toISOString()}\n`;
-            blob = new Blob([fallbackContent], { type: 'text/plain;charset=utf-8' });
-            if (!effectiveFileName.endsWith('.txt')) {
-                effectiveFileName = `${effectiveFileName.replace(/\.[^/.]+$/, '')}.txt`;
+        // If blob was successfully retrieved, use local device download via Save As / File Explorer
+        if (blob) {
+            onProgress?.({ progress: 90, statusText: 'Saving to your device...' });
+            await triggerBrowserDownload(blob, effectiveFileName);
+            onProgress?.({ progress: 100, isFinished: true, statusText: 'Saved to device' });
+            return true;
+        }
+
+        // Production Fallback: When browser JavaScript fetch() is blocked by Firebase Storage CORS,
+        // resolve the direct signed download URL and trigger native browser anchor download.
+        // Direct browser navigation / anchor downloads bypass CORS completely!
+        if (!directUrl && storagePath) {
+            try {
+                directUrl = await storageService.fetchDocument(storagePath);
+            } catch (urlErr) {
+                console.warn('Could not resolve download URL for direct anchor download:', urlErr);
             }
         }
 
-        onProgress?.({ progress: 90, statusText: 'Saving to your device...' });
+        if (directUrl && (directUrl.startsWith('http://') || directUrl.startsWith('https://'))) {
+            onProgress?.({ progress: 90, statusText: 'Saving to your device...' });
+            triggerBrowserUrlDownload(directUrl, effectiveFileName);
+            onProgress?.({ progress: 100, isFinished: true, statusText: 'Saved to device' });
+            return true;
+        }
 
-        // Guarantee actual file download to local device via Save As / File Explorer (never open in browser tab)
+        // Fallback: ONLY when remote storage object is physically missing or truly unresolvable (mock/seeded data)
+        onProgress?.({ progress: 70, statusText: 'Generating institutional record...' });
+        const fallbackContent = `Pamantasan Institutional Document\n\nFile: ${effectiveFileName}\nPath: ${storagePath || 'N/A'}\nDownloaded: ${new Date().toISOString()}\n`;
+        blob = new Blob([fallbackContent], { type: 'text/plain;charset=utf-8' });
+        if (!effectiveFileName.endsWith('.txt')) {
+            effectiveFileName = `${effectiveFileName.replace(/\.[^/.]+$/, '')}.txt`;
+        }
+
+        onProgress?.({ progress: 90, statusText: 'Saving to your device...' });
         await triggerBrowserDownload(blob, effectiveFileName);
         onProgress?.({ progress: 100, isFinished: true, statusText: 'Saved to device' });
         return true;
@@ -287,6 +317,26 @@ const storageService = {
         onProgress?.({ progress: 15, statusText: 'Scanning folder contents...' });
 
         const filesToDownload = [];
+        const usedNames = new Set();
+
+        const getUniqueRelativePath = (fullPath) => {
+            let unique = fullPath;
+            let counter = 1;
+            while (usedNames.has(unique)) {
+                const lastSlash = fullPath.lastIndexOf('/');
+                const dir = lastSlash >= 0 ? fullPath.slice(0, lastSlash + 1) : '';
+                const base = lastSlash >= 0 ? fullPath.slice(lastSlash + 1) : fullPath;
+                const dotIndex = base.lastIndexOf('.');
+                if (dotIndex > 0) {
+                    unique = `${dir}${base.slice(0, dotIndex)} (${counter})${base.slice(dotIndex)}`;
+                } else {
+                    unique = `${dir}${base} (${counter})`;
+                }
+                counter++;
+            }
+            usedNames.add(unique);
+            return unique;
+        };
 
         const collectChildren = (parentId, prefix) => {
             const children = (allDocuments || []).filter(
@@ -305,9 +355,11 @@ const storageService = {
                         ? [...docVers].sort((a, b) => (b.version ?? 0) - (a.version ?? 0))[0]
                         : null;
                     const path = latestVer?.path || child.path || child.url || child.downloadUrl;
-                    const fileName = child.name || child.title || (path ? path.split('/').pop() : 'file');
+                    const rawName = child.name || child.title || (path ? path.split('/').pop() : 'file');
+                    const fileName = resolveFileNameWithExtension(rawName, path, child.mimeType || latestVer?.mimeType, child);
+                    const relPath = getUniqueRelativePath(`${prefix}${fileName}`);
                     filesToDownload.push({
-                        relativePath: `${prefix}${fileName}`,
+                        relativePath: relPath,
                         storagePath: path,
                         fileName: fileName,
                     });
@@ -330,6 +382,16 @@ const storageService = {
                         const content = `Pamantasan Institutional Document\n\nFile: ${file.fileName}\nPath: ${file.storagePath || 'N/A'}\nDownloaded: ${new Date().toISOString()}\n`;
                         blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
                     }
+
+                    let finalRelativePath = file.relativePath;
+                    const hasExt = getKnownFileExtension(finalRelativePath);
+                    if (!hasExt) {
+                        const blobExt = MIME_EXTENSION_MAP[(blob.type || '').toLowerCase()] || (blob.type?.startsWith('image/') ? '.jpg' : '');
+                        if (blobExt && !finalRelativePath.toLowerCase().endsWith(blobExt)) {
+                            finalRelativePath = `${finalRelativePath}${blobExt}`;
+                        }
+                    }
+
                     const buffer = await blob.arrayBuffer();
                     completedCount++;
                     const progressPercent = 20 + Math.round((completedCount / filesToDownload.length) * 55);
@@ -338,7 +400,7 @@ const storageService = {
                         statusText: `Downloaded ${completedCount} of ${filesToDownload.length} files...`,
                     });
                     return {
-                        path: file.relativePath,
+                        path: finalRelativePath,
                         data: new Uint8Array(buffer),
                     };
                 })
@@ -353,18 +415,39 @@ const storageService = {
 
         onProgress?.({ progress: 85, statusText: 'Packaging ZIP archive...' });
         const zipBlob = createZipBlob(filesWithData);
-        onProgress?.({ progress: 95, statusText: 'Saving ZIP to laptop disk...' });
-        await triggerBrowserDownload(zipBlob, `${folderName}.zip`);
-        onProgress?.({ progress: 100, isFinished: true, statusText: 'Saved to laptop' });
-        return true;
+        onProgress?.({ progress: 95, statusText: 'Saving ZIP to device...' });
+        const finalZipName = `${folderName}.zip`;
+        await triggerBrowserDownload(zipBlob, finalZipName);
+        onProgress?.({ progress: 100, isFinished: true, statusText: 'Saved to device' });
+        return finalZipName;
     },
 
-    downloadMultipleAsZip: async (items = [], allDocuments = [], allVersions = [], customZipName = 'Documents.zip', onProgress) => {
+    downloadMultipleAsZip: async (items = [], allDocuments = [], allVersions = [], customZipName = null, onProgress) => {
         const safeItems = Array.isArray(items) ? items : [items];
         if (safeItems.length === 0) return false;
 
         onProgress?.({ progress: 10, statusText: 'Scanning selected items...' });
         const filesToDownload = [];
+        const usedNames = new Set();
+
+        const getUniqueRelativePath = (fullPath) => {
+            let unique = fullPath;
+            let counter = 1;
+            while (usedNames.has(unique)) {
+                const lastSlash = fullPath.lastIndexOf('/');
+                const dir = lastSlash >= 0 ? fullPath.slice(0, lastSlash + 1) : '';
+                const base = lastSlash >= 0 ? fullPath.slice(lastSlash + 1) : fullPath;
+                const dotIndex = base.lastIndexOf('.');
+                if (dotIndex > 0) {
+                    unique = `${dir}${base.slice(0, dotIndex)} (${counter})${base.slice(dotIndex)}`;
+                } else {
+                    unique = `${dir}${base} (${counter})`;
+                }
+                counter++;
+            }
+            usedNames.add(unique);
+            return unique;
+        };
 
         const collectFolderChildren = (parentId, prefix) => {
             const children = (allDocuments || []).filter(
@@ -382,31 +465,16 @@ const storageService = {
                         ? [...docVers].sort((a, b) => (b.version ?? 0) - (a.version ?? 0))[0]
                         : null;
                     const path = latestVer?.path || child.path || child.url || child.downloadUrl;
-                    const fileName = child.name || child.title || (path ? path.split('/').pop() : 'file');
+                    const rawName = child.name || child.title || (path ? path.split('/').pop() : 'file');
+                    const fileName = resolveFileNameWithExtension(rawName, path, child.mimeType || latestVer?.mimeType, child);
+                    const relPath = getUniqueRelativePath(`${prefix}${fileName}`);
                     filesToDownload.push({
-                        relativePath: `${prefix}${fileName}`,
+                        relativePath: relPath,
                         storagePath: path,
                         fileName: fileName,
                     });
                 }
             }
-        };
-
-        const usedNames = new Set();
-        const getUniqueRelativePath = (name) => {
-            let unique = name;
-            let counter = 1;
-            while (usedNames.has(unique)) {
-                const dotIndex = name.lastIndexOf('.');
-                if (dotIndex > 0) {
-                    unique = `${name.slice(0, dotIndex)} (${counter})${name.slice(dotIndex)}`;
-                } else {
-                    unique = `${name} (${counter})`;
-                }
-                counter++;
-            }
-            usedNames.add(unique);
-            return unique;
         };
 
         for (const item of safeItems) {
@@ -423,7 +491,8 @@ const storageService = {
                     ? [...docVers].sort((a, b) => (b.version ?? 0) - (a.version ?? 0))[0]
                     : null;
                 const path = item.path ?? latestVer?.path ?? matchedDoc.path ?? item.url ?? item.downloadUrl;
-                const fileName = item.name || matchedDoc.name || item.title || (path ? path.split('/').pop() : 'document');
+                const rawName = item.name || matchedDoc.name || item.title || matchedDoc.title || (path ? path.split('/').pop() : 'document');
+                const fileName = resolveFileNameWithExtension(rawName, path, item.mimeType || matchedDoc.mimeType || latestVer?.mimeType, matchedDoc);
                 const relPath = getUniqueRelativePath(fileName);
                 filesToDownload.push({
                     relativePath: relPath,
@@ -446,6 +515,16 @@ const storageService = {
                         const content = `Pamantasan Institutional Document\n\nFile: ${file.fileName}\nPath: ${file.storagePath || 'N/A'}\nDownloaded: ${new Date().toISOString()}\n`;
                         blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
                     }
+
+                    let finalRelativePath = file.relativePath;
+                    const hasExt = getKnownFileExtension(finalRelativePath);
+                    if (!hasExt) {
+                        const blobExt = MIME_EXTENSION_MAP[(blob.type || '').toLowerCase()] || (blob.type?.startsWith('image/') ? '.jpg' : '');
+                        if (blobExt && !finalRelativePath.toLowerCase().endsWith(blobExt)) {
+                            finalRelativePath = `${finalRelativePath}${blobExt}`;
+                        }
+                    }
+
                     const buffer = await blob.arrayBuffer();
                     completedCount++;
                     const progressPercent = 20 + Math.round((completedCount / filesToDownload.length) * 60);
@@ -454,7 +533,7 @@ const storageService = {
                         statusText: `Processed ${completedCount} of ${filesToDownload.length} files...`,
                     });
                     return {
-                        path: file.relativePath,
+                        path: finalRelativePath,
                         data: new Uint8Array(buffer),
                     };
                 })
@@ -469,10 +548,10 @@ const storageService = {
         onProgress?.({ progress: 85, statusText: 'Packaging ZIP archive...' });
         const zipBlob = createZipBlob(filesWithData);
         onProgress?.({ progress: 95, statusText: 'Saving ZIP archive...' });
-        const finalZipName = customZipName.endsWith('.zip') ? customZipName : `${customZipName}.zip`;
+        const finalZipName = generateDriveArchiveName(safeItems, customZipName);
         await triggerBrowserDownload(zipBlob, finalZipName);
         onProgress?.({ progress: 100, isFinished: true, statusText: 'Saved ZIP to device' });
-        return true;
+        return finalZipName;
     },
 
     deleteDocument: async (storagePath) => {
@@ -572,6 +651,10 @@ const storageService = {
         return triggerBrowserDownload(blob, fileName);
     },
 
+    triggerBrowserUrlDownload: (url, fileName) => {
+        return triggerBrowserUrlDownload(url, fileName);
+    },
+
     toProxiedUrl: (url) => {
         return toProxiedUrl(url);
     },
@@ -579,6 +662,96 @@ const storageService = {
 
 
 // --- HELPERS ---
+const MIME_EXTENSION_MAP = {
+    'application/pdf': '.pdf',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+    'application/msword': '.doc',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
+    'application/vnd.ms-excel': '.xls',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation': '.pptx',
+    'application/vnd.ms-powerpoint': '.ppt',
+    'image/png': '.png',
+    'image/jpeg': '.jpg',
+    'image/jpg': '.jpg',
+    'image/webp': '.webp',
+    'image/gif': '.gif',
+    'image/svg+xml': '.svg',
+    'image/bmp': '.bmp',
+    'image/tiff': '.tiff',
+    'text/plain': '.txt',
+    'text/csv': '.csv',
+    'text/markdown': '.md',
+    'application/json': '.json',
+    'application/xml': '.xml',
+    'text/html': '.html',
+    'application/zip': '.zip',
+    'application/x-zip-compressed': '.zip',
+    'audio/mpeg': '.mp3',
+    'audio/wav': '.wav',
+    'video/mp4': '.mp4',
+};
+
+function resolveFileNameWithExtension(rawName, storagePath, mimeType, item) {
+    let name = (rawName || '').trim();
+
+    // 1. If rawName is empty or generic, try to get the filename from storage path
+    const cleanPath = cleanStoragePath(storagePath || item?.path || item?.url || item?.downloadUrl || '');
+    const pathFileName = cleanPath ? cleanPath.split('/').pop().split('?')[0] : '';
+    // Strip version prefix like "v1_" if present in storage filename
+    const strippedPathName = pathFileName.replace(/^v\d+[_]/, '');
+
+    if (!name || name === 'file' || name === 'document') {
+        name = strippedPathName || name || 'document';
+    }
+
+    // 2. Check if name already has a recognized extension
+    const existingExt = getKnownFileExtension(name);
+    if (existingExt) {
+        return name;
+    }
+
+    // 3. Try to resolve extension from candidate sources
+    let resolvedExt = getKnownFileExtension(pathFileName);
+
+    if (!resolvedExt) {
+        resolvedExt = getKnownFileExtension(item?.fileName || item?.originalName || '');
+    }
+    if (!resolvedExt && (item?.fileExtension || item?.extension)) {
+        const ext = item.fileExtension || item.extension;
+        resolvedExt = ext.startsWith('.') ? ext.toLowerCase() : `.${ext.toLowerCase()}`;
+    }
+    if (!resolvedExt) {
+        const effectiveMime = (mimeType || item?.mimeType || item?.type || item?.contentType || '').toLowerCase();
+        resolvedExt = MIME_EXTENSION_MAP[effectiveMime] || '';
+    }
+
+    if (resolvedExt && !name.toLowerCase().endsWith(resolvedExt.toLowerCase())) {
+        return `${name}${resolvedExt}`;
+    }
+
+    return name;
+}
+
+function generateDriveArchiveName(items = [], customZipName = null) {
+    // If a custom name is explicitly provided and is NOT the old default 'Documents.zip', use it
+    if (customZipName && customZipName !== 'Documents.zip') {
+        return customZipName.endsWith('.zip') ? customZipName : `${customZipName}.zip`;
+    }
+
+    // If exactly one folder is downloaded, name it after the folder (like Google Drive)
+    const safeItems = Array.isArray(items) ? items : [items];
+    if (safeItems.length === 1 && safeItems[0]?.isFolder) {
+        const folderName = safeItems[0].name || safeItems[0].title || 'Folder';
+        return `${folderName}.zip`;
+    }
+
+    // Google Drive standard format: drive-download-YYYYMMDDTHHmmssZ.zip
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    const timestamp = `${now.getUTCFullYear()}${pad(now.getUTCMonth() + 1)}${pad(now.getUTCDate())}T${pad(now.getUTCHours())}${pad(now.getUTCMinutes())}${pad(now.getUTCSeconds())}Z`;
+    return `drive-download-${timestamp}.zip`;
+}
+
 function toProxiedUrl(url) {
     if (!url || typeof url !== 'string') return url;
     if (typeof window !== 'undefined') {
@@ -602,7 +775,7 @@ function cleanStoragePath(storagePath) {
 
     // Handle gs://bucket/path
     if (storagePath.startsWith('gs://')) {
-        return storagePath.replace(/^gs:\/\/[^/]+\//, '');
+        return storagePath.replace(/^gs:\/\/[^/]+\//, '').split('?')[0];
     }
 
     // Handle Firebase Storage HTTP/HTTPS download URLs
@@ -611,15 +784,53 @@ function cleanStoragePath(storagePath) {
             const parts = storagePath.split('/o/');
             if (parts.length > 1) {
                 const encodedPath = parts[1].split('?')[0];
-                return decodeURIComponent(encodedPath);
+                return decodeURIComponent(encodedPath).split('?')[0];
             }
         } catch (e) {
             console.warn('Failed to parse Firebase storage URL path:', e);
         }
     }
 
-    // Strip leading slash if any
-    return storagePath.replace(/^\/+/, '');
+    // Strip leading slash if any and query parameters
+    return storagePath.replace(/^\/+/, '').split('?')[0];
+}
+
+function triggerBrowserUrlDownload(url, fileName) {
+    if (typeof window === 'undefined' || typeof document === 'undefined') {
+        return;
+    }
+
+    const anchor = document.createElement('a');
+    anchor.style.position = 'fixed';
+    anchor.style.left = '-9999px';
+    anchor.style.top = '-9999px';
+    anchor.style.opacity = '0';
+    anchor.href = url;
+    if (fileName) {
+        anchor.download = fileName;
+        anchor.setAttribute('download', fileName);
+    }
+    anchor.target = '_blank';
+    anchor.rel = 'noopener noreferrer';
+    document.body.appendChild(anchor);
+
+    try {
+        anchor.dispatchEvent(
+            new MouseEvent('click', {
+                bubbles: true,
+                cancelable: true,
+                view: window,
+            })
+        );
+    } catch {
+        anchor.click();
+    }
+
+    setTimeout(() => {
+        if (anchor.parentNode) {
+            anchor.parentNode.removeChild(anchor);
+        }
+    }, 15000);
 }
 
 function sanitizeFileName(fileName) {

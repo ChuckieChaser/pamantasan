@@ -28,8 +28,8 @@ import {
 } from 'lucide-react';
 import { Container } from '../Container';
 import { constants } from '../../constants';
-import { useAuthStore, useDocumentStore } from '../../stores';
-import { ICON_STYLE } from './common';
+import { useAuthStore, useDocumentStore, useDepartmentStore } from '../../stores';
+import { ICON_STYLE, findRootSharedFolder } from './common';
 
 
 // --- COMPONENTS ---
@@ -48,6 +48,12 @@ const Menu = ({
     // STORES
     const currentUser = useAuthStore((state) => state.currentUser);
     const allDocumentShares = useDocumentStore((state) => state.documentShares ?? state.shares ?? []);
+    const allDocuments = useDocumentStore((state) => state.documents ?? []);
+    const allDepartments = useDepartmentStore((state) => state.departments ?? []);
+
+    const rootSharedFolder = !isMultipleSelected && item
+        ? findRootSharedFolder(item, allDocuments, allDocumentShares)
+        : null;
 
     // MOBILE VIEWPORT DETECTION
     const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 640);
@@ -149,21 +155,89 @@ const Menu = ({
     const isMember = constants.isMemberRole(currentUser?.role);
 
     const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
-    const userDeptClean = cleanId(currentUser?.departmentId ?? currentUser?.department?.id ?? currentUser?.department);
+    const rawUserDept = currentUser?.departmentId ?? currentUser?.department?.id ?? currentUser?.department;
+    const matchedUserDept = allDepartments.find((d) =>
+        cleanId(d.id) === cleanId(rawUserDept) ||
+        (typeof rawUserDept === 'string' && d.name?.toLowerCase() === rawUserDept.toLowerCase()) ||
+        (typeof rawUserDept === 'string' && d.code?.toLowerCase() === rawUserDept.toLowerCase())
+    );
+    const userDeptCleanId = cleanId(matchedUserDept?.id ?? currentUser?.departmentId ?? currentUser?.department?.id);
+    const userDeptCleanName = matchedUserDept?.name?.toLowerCase() ?? (typeof currentUser?.department === 'string' ? currentUser.department.toLowerCase() : null);
+    const userDeptCleanCode = matchedUserDept?.code?.toLowerCase();
+
+    const isShareForUserDept = (s) => {
+        if (!userDeptCleanId && !userDeptCleanName && !userDeptCleanCode) return true;
+        const rawSDept = s.department?.id ?? s.departmentId ?? (typeof s.department === 'string' ? s.department : null);
+        const matchedSDept = allDepartments.find((d) =>
+            cleanId(d.id) === cleanId(rawSDept) ||
+            (typeof rawSDept === 'string' && d.name?.toLowerCase() === rawSDept.toLowerCase()) ||
+            (typeof rawSDept === 'string' && d.code?.toLowerCase() === rawSDept.toLowerCase()) ||
+            (s.department?.name && d.name?.toLowerCase() === s.department.name.toLowerCase())
+        );
+        const sDeptCleanId = cleanId(matchedSDept?.id ?? rawSDept);
+        const sDeptCleanName = matchedSDept?.name?.toLowerCase() ?? s.department?.name?.toLowerCase();
+        const sDeptCleanCode = matchedSDept?.code?.toLowerCase();
+
+        return Boolean(
+            (userDeptCleanId && sDeptCleanId && userDeptCleanId === sDeptCleanId) ||
+            (userDeptCleanName && sDeptCleanName && userDeptCleanName === sDeptCleanName) ||
+            (userDeptCleanCode && sDeptCleanCode && userDeptCleanCode === sDeptCleanCode) ||
+            (userDeptCleanCode && sDeptCleanName && userDeptCleanCode === sDeptCleanName)
+        );
+    };
 
     const getItemEffectiveStatus = (it) => {
-        const matchedShare = (allDocumentShares || []).find((s) => {
+        const itCleanId = cleanId(it?.id);
+        let deptShares = (allDocumentShares || []).filter((s) => {
             const sDocId = cleanId(s.document?.id ?? s.documentId);
-            const sDeptId = cleanId(s.department?.id ?? s.departmentId);
-            return cleanId(it?.id) === sDocId && userDeptClean && sDeptId === userDeptClean;
-        }) || it.share || null;
-        const rawStatus = matchedShare?.status ?? it.status ?? it.share?.status;
-        return (rawStatus && rawStatus !== '—') ? String(rawStatus).toUpperCase() : '';
+            return sDocId === itCleanId && isShareForUserDept(s);
+        });
+
+        if (deptShares.length === 0) {
+            const root = findRootSharedFolder(it, allDocuments, allDocumentShares);
+            if (root) {
+                const rootClean = cleanId(root.id);
+                deptShares = (allDocumentShares || []).filter((s) => {
+                    const sDocId = cleanId(s.document?.id ?? s.documentId);
+                    return sDocId === rootClean && isShareForUserDept(s);
+                });
+            }
+        }
+
+        if (deptShares.length === 0 && Array.isArray(it?.shares) && it.shares.length > 0) {
+            deptShares = it.shares.filter(isShareForUserDept);
+        }
+        if (deptShares.length === 0 && it?.share && isShareForUserDept(it.share)) {
+            deptShares = [it.share];
+        }
+
+        if (deptShares.length > 0) {
+            if (deptShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED)) {
+                return constants.DOCUMENT_SHARES_STATUS.PUBLISHED;
+            }
+            if (deptShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.STASHED)) {
+                return constants.DOCUMENT_SHARES_STATUS.STASHED;
+            }
+            if (deptShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.APPROVED)) {
+                return constants.DOCUMENT_SHARES_STATUS.APPROVED;
+            }
+            if (deptShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL)) {
+                return constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL;
+            }
+            if (deptShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.REJECTED)) {
+                return constants.DOCUMENT_SHARES_STATUS.REJECTED;
+            }
+            const s0 = deptShares[0]?.status;
+            if (s0 && s0 !== '—') return String(s0).toUpperCase();
+        }
+
+        const rawFallback = it?.status ?? it?.share?.status;
+        return (rawFallback && rawFallback !== '—') ? String(rawFallback).toUpperCase() : '';
     };
 
     const isDocShared = (it) => {
         const itCleanId = cleanId(it?.id);
-        return Boolean(
+        const hasDirect = Boolean(
             it?.share ||
             it?.departmentId ||
             (Array.isArray(it?.shares) && it.shares.length > 0) ||
@@ -173,6 +247,8 @@ const Menu = ({
                 return sDocId === itCleanId && status !== 'UNSHARED' && status !== 'REVOKED';
             })
         );
+        if (hasDirect) return true;
+        return Boolean(findRootSharedFolder(it, allDocuments, allDocumentShares));
     };
 
     const targetSelection = isMultipleSelected && selectedItems.length > 0 ? selectedItems : [item];
@@ -326,6 +402,8 @@ const Menu = ({
                     const canSuspend = isMultipleSelected
                         ? activeUsersWithoutSelf.length > 0
                         : (!isSelfUser && item.status !== constants.USERS_STATUS.SUSPENDED);
+                    const isTargetAdmin = constants.isAdminRole(item?.role);
+                    const canEditUser = !isMultipleSelected && (!isTargetAdmin || isSelfUser);
 
                     return (
                         <>
@@ -346,14 +424,16 @@ const Menu = ({
                             {/* Minor Actions: Flow at top, then utilities */}
                             {!isMultipleSelected && (
                                 <>
-                                    <button
-                                        type="button"
-                                        onClick={(event) => onActionClick?.(event, 'edit', item)}
-                                        className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
-                                    >
-                                        <Edit3 className={ICON_STYLE} />
-                                        <span>Edit</span>
-                                    </button>
+                                    {canEditUser && (
+                                        <button
+                                            type="button"
+                                            onClick={(event) => onActionClick?.(event, 'edit', item)}
+                                            className="flex items-center gap-2 px-3 py-2 rounded text-text hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
+                                        >
+                                            <Edit3 className={ICON_STYLE} />
+                                            <span>Edit</span>
+                                        </button>
+                                    )}
                                     <button
                                         type="button"
                                         onClick={(event) => onActionClick?.(event, 'view_profile', item)}
@@ -736,7 +816,7 @@ const Menu = ({
                     if (isDirector) {
                         const approvedUnpublishedDocs = approvedDocs.filter((d) => getItemEffectiveStatus(d) !== constants.DOCUMENT_SHARES_STATUS.PUBLISHED);
                         const canDirectorPublish = isMultipleSelected ? approvedUnpublishedDocs.length > 0 : (isApproved && !isPublished);
-                        const canDirectorRePublish = isMultipleSelected ? publishedDocs.length > 0 : isPublished;
+                        const canDirectorRePublish = !isMultipleSelected && isPublished;
                         const canDirectorUnpublish = isMultipleSelected ? publishedDocs.length > 0 : isPublished;
                         const approvedNonStashedDocs = approvedDocs.filter((d) => {
                             const s = getItemEffectiveStatus(d);
@@ -759,14 +839,14 @@ const Menu = ({
                                     </button>
                                 )}
 
-                                {canDirectorRePublish && !canDirectorPublish && (
+                                {(canDirectorRePublish && !canDirectorPublish) && (
                                     <button
                                         type="button"
-                                        onClick={(event) => onActionClick?.(event, 're_publish', isMultipleSelected ? publishedDocs : item)}
+                                        onClick={(event) => onActionClick?.(event, 're_publish', item)}
                                         className="flex items-center gap-2 px-3 py-2 rounded text-accent hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
                                     >
                                         <Globe className={ICON_STYLE} />
-                                        <span>{isMultipleSelected ? `Re-Publish all (${publishedDocs.length})` : `Re-Publish ${targetType}`}</span>
+                                        <span>{`Re-Publish ${targetType}`}</span>
                                     </button>
                                 )}
 
@@ -869,7 +949,7 @@ const Menu = ({
                     // Minor: Open, Edit, Unshare (only if shared!), Download, View Info, View Version, View Share
                     // Destructive: Archive (only if unshared!), Delete (only if unshared or archived!)
                     const canAdminShare = !isArchived && (isMultipleSelected ? unsharedDocs.length > 0 : !isShared);
-                    const canAdminReShare = !isArchived && (isMultipleSelected ? sharedDocs.length > 0 : isShared);
+                    const canAdminReShare = !isArchived && !isMultipleSelected && isShared;
                     const canAdminUnshare = !isArchived && (isMultipleSelected ? sharedDocs.length > 0 : isShared);
                     const canAdminArchive = !isArchived && (isMultipleSelected ? unsharedDocs.length > 0 : !isShared);
                     const canAdminDelete = isArchived
@@ -900,14 +980,14 @@ const Menu = ({
                                             <span>{isMultipleSelected ? `Share all (${unsharedDocs.length})` : `Share ${targetType}`}</span>
                                         </button>
                                     )}
-                                    {canAdminReShare && !canAdminShare && (
+                                    {(canAdminReShare && !canAdminShare) && (
                                         <button
                                             type="button"
-                                            onClick={(event) => onActionClick?.(event, 're_share', isMultipleSelected ? sharedDocs : item)}
+                                            onClick={(event) => onActionClick?.(event, 're_share', rootSharedFolder || item)}
                                             className="flex items-center gap-2 px-3 py-2 rounded text-accent hover:bg-surface-hover transition-colors cursor-pointer w-full text-left font-medium"
                                         >
                                             <Share2 className={ICON_STYLE} />
-                                            <span>{isMultipleSelected ? `Re-Share all (${sharedDocs.length})` : `Re-Share ${targetType}`}</span>
+                                            <span>{rootSharedFolder ? `Manage Root Folder Share (${rootSharedFolder.name})` : `Re-Share ${targetType}`}</span>
                                         </button>
                                     )}
                                 </>

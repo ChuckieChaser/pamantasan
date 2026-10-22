@@ -3,8 +3,8 @@
 
 const CHANNEL_NAME = 'pamantasan_realtime_sync';
 const STORAGE_KEY = 'pamantasan_sync_event';
-const POLLING_INTERVAL_MS = 45000;
-const MIN_REFETCH_INTERVAL_MS = 10000;
+const POLLING_INTERVAL_MS = 60000;
+const MIN_REFETCH_INTERVAL_MS = 15000;
 
 let broadcastChannel = null;
 if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
@@ -16,6 +16,7 @@ if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
 }
 
 let lastSyncTimestamp = 0;
+let isSyncInProgress = false;
 
 export const realtimeSyncService = {
     /**
@@ -108,13 +109,23 @@ export const realtimeSyncService = {
     initAutoSync: (syncCallback) => {
         if (typeof window === 'undefined') return () => {};
 
-        const executeSync = (reason) => {
+        const executeSync = async (reason) => {
+            if (isSyncInProgress) {
+                return;
+            }
             const now = Date.now();
             if (now - lastSyncTimestamp < MIN_REFETCH_INTERVAL_MS) {
                 return;
             }
+            isSyncInProgress = true;
             lastSyncTimestamp = now;
-            syncCallback?.(reason);
+            try {
+                await Promise.resolve(syncCallback?.(reason));
+            } catch (err) {
+                console.warn('[realtimeSync] Auto-sync callback error:', err);
+            } finally {
+                isSyncInProgress = false;
+            }
         };
 
         // Window focus
