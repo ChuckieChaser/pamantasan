@@ -1,5 +1,5 @@
 // --- IMPORTS ---
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
 import {
     CheckCircle2,
@@ -101,14 +101,14 @@ const CoordinatorPage = ({
     const departments = useDepartmentStore((state) => state.departments);
     const fetchDepartments = useDepartmentStore((state) => state.fetchDepartments);
 
-    const handleStartCoordinatorApproval = (requestItem) => {
+    const handleStartCoordinatorApproval = useCallback((requestItem) => {
         setApprovingCoordinatorRequest(requestItem);
-    };
+    }, []);
 
-    const handleStartCoordinatorRejection = (requestItem) => {
+    const handleStartCoordinatorRejection = useCallback((requestItem) => {
         setRejectingCoordinatorRequest(requestItem);
         setRejectionReason('');
-    };
+    }, []);
 
     // EFFECTS
     useEffect(() => {
@@ -116,60 +116,6 @@ const CoordinatorPage = ({
         fetchUsers?.().catch(() => {});
         fetchDepartments?.().catch(() => {});
     }, [fetchCoordinatorRequests, fetchUsers, fetchDepartments]);
-
-    // LISTEN FOR EXTERNAL ACTIONS (E.G. FROM INSPECTOR QUICK ACTIONS)
-    useEffect(() => {
-        const handleApproveCoordinatorRequestEvent = (event) => {
-            if (event.detail) {
-                if (Array.isArray(event.detail)) {
-                    handleCoordinatorAction('approve', event.detail);
-                    return;
-                }
-                const targetRequest = (coordinatorRequests || []).find((r) => r.id === event.detail.id) ?? event.detail;
-                handleStartCoordinatorApproval(targetRequest);
-            }
-        };
-
-        const handleRejectCoordinatorRequestEvent = (event) => {
-            if (event.detail) {
-                if (Array.isArray(event.detail)) {
-                    handleCoordinatorAction('reject', event.detail);
-                    return;
-                }
-                const targetRequest = (coordinatorRequests || []).find((r) => r.id === event.detail.id) ?? event.detail;
-                handleStartCoordinatorRejection(targetRequest);
-            }
-        };
-
-        const handleDeleteCoordinatorRequestEvent = (event) => {
-            if (event.detail) {
-                if (Array.isArray(event.detail)) {
-                    setDeletingRequestItem(event.detail);
-                    return;
-                }
-                const targetRequest = (coordinatorRequests || []).find((r) => r.id === event.detail.id) ?? event.detail;
-                if (targetRequest.status && targetRequest.status !== constants.COORDINATOR_REQUESTS_STATUS.PENDING) {
-                    showToast({
-                        type: 'error',
-                        title: 'Action Prohibited',
-                        description: 'Only pending coordinator requests can be deleted. Finalized requests cannot be removed.',
-                    });
-                    return;
-                }
-                setDeletingRequestItem(targetRequest);
-            }
-        };
-
-        window.addEventListener('pamantasan:approve-coordinator-request', handleApproveCoordinatorRequestEvent);
-        window.addEventListener('pamantasan:reject-coordinator-request', handleRejectCoordinatorRequestEvent);
-        window.addEventListener('pamantasan:delete-coordinator-request', handleDeleteCoordinatorRequestEvent);
-
-        return () => {
-            window.removeEventListener('pamantasan:approve-coordinator-request', handleApproveCoordinatorRequestEvent);
-            window.removeEventListener('pamantasan:reject-coordinator-request', handleRejectCoordinatorRequestEvent);
-            window.removeEventListener('pamantasan:delete-coordinator-request', handleDeleteCoordinatorRequestEvent);
-        };
-    }, [coordinatorRequests, showToast]);
 
     // DERIVED VALUES: DATA
     const formattedCoordinatorData = useMemo(() => {
@@ -301,9 +247,9 @@ const CoordinatorPage = ({
         }
     };
 
-    const handleOpenCoordinatorReview = (requestItem) => {
+    const handleOpenCoordinatorReview = useCallback((requestItem) => {
         setViewingCoordinatorRequest(requestItem);
-    };
+    }, []);
 
     const handleConfirmApproveRequest = async () => {
         if (!approvingCoordinatorRequest) {
@@ -433,7 +379,7 @@ const CoordinatorPage = ({
         }
     };
 
-    const handleCoordinatorAction = async (actionKey, item) => {
+    const handleCoordinatorAction = useCallback(async (actionKey, item) => {
         if (actionKey === 'open' || actionKey === 'inspect' || actionKey === 'view_payload') {
             handleOpenCoordinatorReview(item);
             return;
@@ -514,7 +460,62 @@ const CoordinatorPage = ({
             setDeletingRequestItem(item);
             return;
         }
-    };
+    }, [isAdmin, showToast, handleOpenCoordinatorReview, handleStartCoordinatorApproval, handleStartCoordinatorRejection]);
+
+    // LISTEN FOR EXTERNAL ACTIONS (E.G. FROM INSPECTOR QUICK ACTIONS)
+    useEffect(() => {
+        const handleApproveCoordinatorRequestEvent = (event) => {
+            if (event.detail) {
+                if (Array.isArray(event.detail)) {
+                    handleCoordinatorAction('approve', event.detail);
+                    return;
+                }
+                const targetRequest = (coordinatorRequests || []).find((r) => r.id === event.detail.id) ?? event.detail;
+                handleStartCoordinatorApproval(targetRequest);
+            }
+        };
+
+        const handleRejectCoordinatorRequestEvent = (event) => {
+            if (event.detail) {
+                if (Array.isArray(event.detail)) {
+                    handleCoordinatorAction('reject', event.detail);
+                    return;
+                }
+                const targetRequest = (coordinatorRequests || []).find((r) => r.id === event.detail.id) ?? event.detail;
+                handleStartCoordinatorRejection(targetRequest);
+            }
+        };
+
+        const handleDeleteCoordinatorRequestEvent = (event) => {
+            if (event.detail) {
+                if (Array.isArray(event.detail)) {
+                    setDeletingRequestItem(event.detail);
+                    return;
+                }
+                const targetRequest = (coordinatorRequests || []).find((r) => r.id === event.detail.id) ?? event.detail;
+                if (targetRequest.status && targetRequest.status !== constants.COORDINATOR_REQUESTS_STATUS.PENDING) {
+                    showToast({
+                        type: 'error',
+                        title: 'Action Prohibited',
+                        description: 'Only pending coordinator requests can be deleted. Finalized requests cannot be removed.',
+                    });
+                    return;
+                }
+                setDeletingRequestItem(targetRequest);
+            }
+        };
+
+        window.addEventListener('pamantasan:approve-coordinator-request', handleApproveCoordinatorRequestEvent);
+        window.addEventListener('pamantasan:reject-coordinator-request', handleRejectCoordinatorRequestEvent);
+        window.addEventListener('pamantasan:delete-coordinator-request', handleDeleteCoordinatorRequestEvent);
+
+        return () => {
+            window.removeEventListener('pamantasan:approve-coordinator-request', handleApproveCoordinatorRequestEvent);
+            window.removeEventListener('pamantasan:reject-coordinator-request', handleRejectCoordinatorRequestEvent);
+            window.removeEventListener('pamantasan:delete-coordinator-request', handleDeleteCoordinatorRequestEvent);
+        };
+    }, [coordinatorRequests, showToast, handleCoordinatorAction, handleStartCoordinatorApproval, handleStartCoordinatorRejection]);
+
 
     const handleConfirmDeleteRequest = async () => {
         const itemsToDelete = Array.isArray(deletingRequestItem) ? deletingRequestItem : (deletingRequestItem?.id ? [deletingRequestItem] : []);

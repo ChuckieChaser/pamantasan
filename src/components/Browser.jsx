@@ -64,6 +64,39 @@ const getStorageKeyPrefix = (resName) => {
     return raw;
 };
 
+const parseItemTimestamp = (item) => {
+    if (!item) return 0;
+    const candidate = item.updatedAt ?? item.createdAt ?? item.rawDate ?? item.dateValue ?? item.date;
+    if (!candidate) return 0;
+    if (typeof candidate === 'number') return candidate;
+    if (candidate instanceof Date) return candidate.getTime();
+    if (typeof candidate === 'string') {
+        const direct = new Date(candidate).getTime();
+        if (!isNaN(direct) && direct > 0) return direct;
+        const stripped = candidate.replace(/\s+at\s+/i, ' ');
+        const strippedTime = new Date(stripped).getTime();
+        if (!isNaN(strippedTime) && strippedTime > 0) return strippedTime;
+    }
+    return 0;
+};
+
+const getStatusWeight = (status) => {
+    const s = String(status || '').toUpperCase();
+    if (s === 'OPEN' || s === 'PENDING') return 1;
+    if (s === 'PENDING_APPROVAL' || s === 'PENDING_REVIEW') return 2;
+    if (s === 'RESOLVED' || s === 'APPROVED') return 3;
+    if (s === 'REJECTED') return 4;
+    return 5;
+};
+
+const parseSize = (sizeStr) => {
+    if (!sizeStr) return 0;
+    if (sizeStr.includes('MB')) return parseFloat(sizeStr) * 1024 * 1024;
+    if (sizeStr.includes('KB')) return parseFloat(sizeStr) * 1024;
+    if (sizeStr.includes('items')) return parseInt(sizeStr, 10) * 1000;
+    return 0;
+};
+
 
 // --- COMPONENTS ---
 const Browser = ({
@@ -143,12 +176,174 @@ const Browser = ({
         return internalSelectedIds;
     }, [selectedIdsProp, internalSelectedIds]);
 
-    useEffect(() => {
-        if (selectedIdsProp !== undefined && selectedIdsProp !== null) {
-            const next = selectedIdsProp instanceof Set ? selectedIdsProp : new Set(selectedIdsProp);
-            setInternalSelectedIds(next);
+    // DERIVED VALUES
+    const activeSortBy = sortBy !== undefined ? sortBy : internalSortBy;
+
+    const filteredData = useMemo(() => {
+        const activeOptionObjects = selectedFilters.length > 0
+            ? filterOptions.filter((option) => selectedFilters.includes(option.value))
+            : [];
+
+        const activeCategoryMap = new Map();
+        if (activeOptionObjects.length > 0) {
+            activeOptionObjects.forEach((option) => {
+                const categoryName = option.category ?? 'General';
+                if (!activeCategoryMap.has(categoryName)) {
+                    activeCategoryMap.set(categoryName, []);
+                }
+                activeCategoryMap.get(categoryName).push(option.value);
+            });
         }
-    }, [selectedIdsProp]);
+        const activeCategoryValues = Array.from(activeCategoryMap.values());
+
+        const filtered = data.filter((item) => {
+            const matchesSearch = searchQuery.trim() === '' || [
+                item.title,
+                item.subtitle,
+                item.description,
+                item.summary,
+                item.department,
+                item.classification,
+                item.status,
+                item.category,
+                item.name,
+                item.code,
+                item.email,
+                item.role,
+                item.firstName,
+                item.lastName,
+                item.universityId,
+                item.subject,
+                item.action,
+            ].some((field) => {
+                return typeof field === 'string' && field.toLowerCase().includes(searchQuery.toLowerCase());
+            });
+
+            if (selectedFilters.length === 0) {
+                return matchesSearch;
+            }
+
+            const matchesCategoryFilters = activeCategoryValues.every((categoryValues) => {
+                return categoryValues.some((filterValue) => {
+                    return (
+                        item.classification === filterValue ||
+                        item.status === filterValue ||
+                        item.role === filterValue ||
+                        item.category === filterValue ||
+                        item.department === filterValue ||
+                        item.departmentCode === filterValue ||
+                        item.departmentId === filterValue ||
+                        (typeof item.department === 'string' && item.department.toLowerCase().includes(String(filterValue).toLowerCase())) ||
+                        item.tags?.includes?.(filterValue)
+                    );
+                });
+            });
+
+            return matchesSearch && matchesCategoryFilters;
+        });
+
+        const hasFolderItems = resourceName === 'documents' || resourceName === 'archives' || data.some((d) => d?.isFolder);
+
+        return [...filtered].sort((itemA, itemB) => {
+            // 1. SMART DOMAIN-SPECIFIC PRIMARY SORTS:
+            // For Documents and Archives: Folders ALWAYS appear first at the top
+            if (hasFolderItems && Boolean(itemA.isFolder) !== Boolean(itemB.isFolder)) {
+                return itemA.isFolder ? -1 : 1;
+            }
+
+            // For Document Requests: Open / Actionable status comes first
+            if (resourceName === 'requests' || resourceName === 'request_document') {
+                const weightA = getStatusWeight(itemA.status);
+                const weightB = getStatusWeight(itemB.status);
+                if (weightA !== weightB && activeSortBy.startsWith('status-priority')) {
+                    return weightA - weightB;
+                }
+            }
+
+            if (activeSortBy === 'name-asc') {
+                const nameA = itemA.title ?? itemA.name ?? itemA.subject ?? '';
+                const nameB = itemB.title ?? itemB.name ?? itemB.subject ?? '';
+                return nameA.localeCompare(nameB);
+            }
+
+            if (activeSortBy === 'name-desc') {
+                const nameA = itemA.title ?? itemA.name ?? itemA.subject ?? '';
+                const nameB = itemB.title ?? itemB.name ?? itemB.subject ?? '';
+                return nameB.localeCompare(nameA);
+            }
+
+            if (activeSortBy === 'date-desc') {
+                const timeA = parseItemTimestamp(itemA);
+                const timeB = parseItemTimestamp(itemB);
+                if (timeA !== timeB) {
+                    return timeB - timeA;
+                }
+                const nameA = itemA.title ?? itemA.name ?? itemA.subject ?? '';
+                const nameB = itemB.title ?? itemB.name ?? itemB.subject ?? '';
+                return nameA.localeCompare(nameB);
+            }
+
+            if (activeSortBy === 'date-asc') {
+                const timeA = parseItemTimestamp(itemA);
+                const timeB = parseItemTimestamp(itemB);
+                if (timeA !== timeB) {
+                    return timeA - timeB;
+                }
+                const nameA = itemA.title ?? itemA.name ?? itemA.subject ?? '';
+                const nameB = itemB.title ?? itemB.name ?? itemB.subject ?? '';
+                return nameA.localeCompare(nameB);
+            }
+
+            if (activeSortBy === 'mimetype-asc' || activeSortBy === 'type-asc') {
+                const rankA = getItemCategoryRank(itemA);
+                const rankB = getItemCategoryRank(itemB);
+                if (rankA !== rankB) {
+                    return rankA - rankB;
+                }
+                const mimeA = (getMimeTypeFromItem(itemA) || '').toLowerCase();
+                const mimeB = (getMimeTypeFromItem(itemB) || '').toLowerCase();
+                if (mimeA !== mimeB) {
+                    return mimeA.localeCompare(mimeB);
+                }
+                const nameA = itemA.title ?? itemA.name ?? itemA.subject ?? '';
+                const nameB = itemB.title ?? itemB.name ?? itemB.subject ?? '';
+                return nameA.localeCompare(nameB);
+            }
+
+            if (activeSortBy === 'mimetype-desc' || activeSortBy === 'type-desc') {
+                const rankA = getItemCategoryRank(itemA);
+                const rankB = getItemCategoryRank(itemB);
+                if (rankA !== rankB) {
+                    return rankB - rankA;
+                }
+                const mimeA = (getMimeTypeFromItem(itemA) || '').toLowerCase();
+                const mimeB = (getMimeTypeFromItem(itemB) || '').toLowerCase();
+                if (mimeA !== mimeB) {
+                    return mimeB.localeCompare(mimeA);
+                }
+                const nameA = itemA.title ?? itemA.name ?? itemA.subject ?? '';
+                const nameB = itemB.title ?? itemB.name ?? itemB.subject ?? '';
+                return nameA.localeCompare(nameB);
+            }
+
+            if (activeSortBy === 'size-desc') {
+                return parseSize(itemB.size) - parseSize(itemA.size);
+            }
+
+            const timeA = parseItemTimestamp(itemA);
+            const timeB = parseItemTimestamp(itemB);
+            if (timeA !== timeB) {
+                return timeB - timeA;
+            }
+
+            const nameA = itemA.title ?? itemA.name ?? itemA.subject ?? '';
+            const nameB = itemB.title ?? itemB.name ?? itemB.subject ?? '';
+            return nameA.localeCompare(nameB);
+        });
+    }, [data, searchQuery, selectedFilters, filterOptions, activeSortBy, resourceName]);
+
+    const totalCount = filteredData.length;
+
 
     // REACTIVE SYNC FOR PERSISTED VIEW AND SORT WHEN RESOURCE OR ACTIVE USER CHANGES
     useEffect(() => {
@@ -482,203 +677,7 @@ const Browser = ({
         }
     };
 
-    // DERIVED VALUES
-    const activeSortBy = sortBy !== undefined ? sortBy : internalSortBy;
 
-    const filteredData = useMemo(() => {
-        const filtered = data.filter((item) => {
-            const matchesSearch = searchQuery.trim() === '' || [
-                item.title,
-                item.subtitle,
-                item.description,
-                item.summary,
-                item.department,
-                item.classification,
-                item.status,
-                item.category,
-                item.name,
-                item.code,
-                item.email,
-                item.role,
-                item.firstName,
-                item.lastName,
-                item.universityId,
-                item.subject,
-                item.action,
-            ].some((field) => {
-                return typeof field === 'string' && field.toLowerCase().includes(searchQuery.toLowerCase());
-            });
-
-            if (selectedFilters.length === 0) {
-                return matchesSearch;
-            }
-
-            const activeOptionObjects = filterOptions.filter((option) =>
-                selectedFilters.includes(option.value)
-            );
-
-            const activeCategoryMap = new Map();
-            activeOptionObjects.forEach((option) => {
-                const categoryName = option.category ?? 'General';
-                if (!activeCategoryMap.has(categoryName)) {
-                    activeCategoryMap.set(categoryName, []);
-                }
-                activeCategoryMap.get(categoryName).push(option.value);
-            });
-
-            const matchesCategoryFilters = Array.from(activeCategoryMap.values()).every(
-                (categoryValues) => {
-                    return categoryValues.some((filterValue) => {
-                        return (
-                            item.classification === filterValue ||
-                            item.status === filterValue ||
-                            item.role === filterValue ||
-                            item.category === filterValue ||
-                            item.department === filterValue ||
-                            item.departmentCode === filterValue ||
-                            item.departmentId === filterValue ||
-                            (typeof item.department === 'string' && item.department.toLowerCase().includes(String(filterValue).toLowerCase())) ||
-                            item.tags?.includes?.(filterValue)
-                        );
-                    });
-                }
-            );
-
-            return matchesSearch && matchesCategoryFilters;
-        });
-
-        return filtered.sort((itemA, itemB) => {
-            // 1. SMART DOMAIN-SPECIFIC PRIMARY SORTS:
-            // For Documents and Archives: Folders ALWAYS appear first at the top
-            const hasFolderItems = resourceName === 'documents' || resourceName === 'archives' || data.some((d) => d?.isFolder);
-            if (hasFolderItems && Boolean(itemA.isFolder) !== Boolean(itemB.isFolder)) {
-                return itemA.isFolder ? -1 : 1;
-            }
-
-            // For Document Requests: Open / Actionable status comes first
-            if (resourceName === 'requests' || resourceName === 'request_document') {
-                const getStatusWeight = (status) => {
-                    const s = String(status || '').toUpperCase();
-                    if (s === 'OPEN' || s === 'PENDING') return 1;
-                    if (s === 'PENDING_APPROVAL' || s === 'PENDING_REVIEW') return 2;
-                    if (s === 'RESOLVED' || s === 'APPROVED') return 3;
-                    if (s === 'REJECTED') return 4;
-                    return 5;
-                };
-                const weightA = getStatusWeight(itemA.status);
-                const weightB = getStatusWeight(itemB.status);
-                if (weightA !== weightB && activeSortBy.startsWith('status-priority')) {
-                    return weightA - weightB;
-                }
-            }
-
-            if (activeSortBy === 'name-asc') {
-                const nameA = itemA.title ?? itemA.name ?? itemA.subject ?? '';
-                const nameB = itemB.title ?? itemB.name ?? itemB.subject ?? '';
-                return nameA.localeCompare(nameB);
-            }
-
-            if (activeSortBy === 'name-desc') {
-                const nameA = itemA.title ?? itemA.name ?? itemA.subject ?? '';
-                const nameB = itemB.title ?? itemB.name ?? itemB.subject ?? '';
-                return nameB.localeCompare(nameA);
-            }
-
-            // DATE HELPERS
-            const parseItemTimestamp = (item) => {
-                if (!item) return 0;
-                const candidate = item.updatedAt ?? item.createdAt ?? item.rawDate ?? item.dateValue ?? item.date;
-                if (!candidate) return 0;
-                if (typeof candidate === 'number') return candidate;
-                if (candidate instanceof Date) return candidate.getTime();
-                if (typeof candidate === 'string') {
-                    const direct = new Date(candidate).getTime();
-                    if (!isNaN(direct) && direct > 0) return direct;
-                    const stripped = candidate.replace(/\s+at\s+/i, ' ');
-                    const strippedTime = new Date(stripped).getTime();
-                    if (!isNaN(strippedTime) && strippedTime > 0) return strippedTime;
-                }
-                return 0;
-            };
-
-            if (activeSortBy === 'date-desc') {
-                const timeA = parseItemTimestamp(itemA);
-                const timeB = parseItemTimestamp(itemB);
-                if (timeA !== timeB) {
-                    return timeB - timeA;
-                }
-                const nameA = itemA.title ?? itemA.name ?? itemA.subject ?? '';
-                const nameB = itemB.title ?? itemB.name ?? itemB.subject ?? '';
-                return nameA.localeCompare(nameB);
-            }
-
-            if (activeSortBy === 'date-asc') {
-                const timeA = parseItemTimestamp(itemA);
-                const timeB = parseItemTimestamp(itemB);
-                if (timeA !== timeB) {
-                    return timeA - timeB;
-                }
-                const nameA = itemA.title ?? itemA.name ?? itemA.subject ?? '';
-                const nameB = itemB.title ?? itemB.name ?? itemB.subject ?? '';
-                return nameA.localeCompare(nameB);
-            }
-
-            if (activeSortBy === 'mimetype-asc' || activeSortBy === 'type-asc') {
-                const rankA = getItemCategoryRank(itemA);
-                const rankB = getItemCategoryRank(itemB);
-                if (rankA !== rankB) {
-                    return rankA - rankB;
-                }
-                const mimeA = (getMimeTypeFromItem(itemA) || '').toLowerCase();
-                const mimeB = (getMimeTypeFromItem(itemB) || '').toLowerCase();
-                if (mimeA !== mimeB) {
-                    return mimeA.localeCompare(mimeB);
-                }
-                const nameA = itemA.title ?? itemA.name ?? itemA.subject ?? '';
-                const nameB = itemB.title ?? itemB.name ?? itemB.subject ?? '';
-                return nameA.localeCompare(nameB);
-            }
-
-            if (activeSortBy === 'mimetype-desc' || activeSortBy === 'type-desc') {
-                const rankA = getItemCategoryRank(itemA);
-                const rankB = getItemCategoryRank(itemB);
-                if (rankA !== rankB) {
-                    return rankB - rankA;
-                }
-                const mimeA = (getMimeTypeFromItem(itemA) || '').toLowerCase();
-                const mimeB = (getMimeTypeFromItem(itemB) || '').toLowerCase();
-                if (mimeA !== mimeB) {
-                    return mimeB.localeCompare(mimeA);
-                }
-                const nameA = itemA.title ?? itemA.name ?? itemA.subject ?? '';
-                const nameB = itemB.title ?? itemB.name ?? itemB.subject ?? '';
-                return nameA.localeCompare(nameB);
-            }
-
-            if (activeSortBy === 'size-desc') {
-                const parseSize = (sizeStr) => {
-                    if (!sizeStr) return 0;
-                    if (sizeStr.includes('MB')) return parseFloat(sizeStr) * 1024 * 1024;
-                    if (sizeStr.includes('KB')) return parseFloat(sizeStr) * 1024;
-                    if (sizeStr.includes('items')) return parseInt(sizeStr, 10) * 1000;
-                    return 0;
-                };
-                return parseSize(itemB.size) - parseSize(itemA.size);
-            }
-
-            const timeA = parseItemTimestamp(itemA);
-            const timeB = parseItemTimestamp(itemB);
-            if (timeA !== timeB) {
-                return timeB - timeA;
-            }
-
-            const nameA = itemA.title ?? itemA.name ?? itemA.subject ?? '';
-            const nameB = itemB.title ?? itemB.name ?? itemB.subject ?? '';
-            return nameA.localeCompare(nameB);
-        });
-    }, [data, searchQuery, selectedFilters, filterOptions, activeSortBy, resourceName]);
-
-    const totalCount = filteredData.length;
 
     // RENDER
     return (

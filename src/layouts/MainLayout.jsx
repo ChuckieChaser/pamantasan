@@ -433,25 +433,11 @@ const MainLayout = ({
     const touchStartYRef = useRef(0);
     const currentSnapRef = useRef('low');
     const hasDraggedRef = useRef(false);
-    const isFirstMountOpenRef = useRef(true);
-
-    useEffect(() => {
-        currentSnapRef.current = mobileSheetSnap;
-    }, [mobileSheetSnap]);
-
-    // Whenever inspector opens or re-opens, always default to 'low' snap level with transition suppression
-    useEffect(() => {
-        if (!effectiveIsDetailPanelOpen) {
-            setMobileSheetSnap('low');
-            isFirstMountOpenRef.current = true;
-        } else {
-            setMobileSheetSnap('low');
-            const timer = setTimeout(() => {
-                isFirstMountOpenRef.current = false;
-            }, 60);
-            return () => clearTimeout(timer);
-        }
-    }, [effectiveIsDetailPanelOpen]);
+    const [prevDetailOpen, setPrevDetailOpen] = useState(effectiveIsDetailPanelOpen);
+    if (prevDetailOpen !== effectiveIsDetailPanelOpen) {
+        setPrevDetailOpen(effectiveIsDetailPanelOpen);
+        setMobileSheetSnap('low');
+    }
 
     const LOW_HEIGHT = 74;
     const getMidHeight = () => (typeof window !== 'undefined' ? Math.round(window.innerHeight * 0.5) : 400);
@@ -734,7 +720,7 @@ const MainLayout = ({
                 >
                     <div
                         className={`w-full bg-surface border-t border-surface-border rounded-t-2xl shadow-2xl flex flex-col overflow-hidden pointer-events-auto ${
-                            isDraggingSheet || isFirstMountOpenRef.current ? 'transition-none' : 'transition-[height] duration-300 ease-out'
+                            isDraggingSheet ? 'transition-none' : 'transition-[height] duration-300 ease-out'
                         }`}
                         style={{ height: getDynamicSheetHeight() }}
                         onTouchStart={handleSheetTouchStart}

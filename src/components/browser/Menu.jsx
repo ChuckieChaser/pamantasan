@@ -47,6 +47,7 @@ const Menu = ({
 
     // STORES
     const currentUser = useAuthStore((state) => state.currentUser);
+    const allDocumentShares = useDocumentStore((state) => state.documentShares ?? state.shares ?? []);
 
     // MOBILE VIEWPORT DETECTION
     const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 640);
@@ -147,8 +148,6 @@ const Menu = ({
     const isDirector = constants.isDirectorRole(currentUser?.role);
     const isMember = constants.isMemberRole(currentUser?.role);
 
-    const allDocumentShares = useDocumentStore((state) => state.documentShares ?? state.shares ?? []);
-
     const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
     const userDeptClean = cleanId(currentUser?.departmentId ?? currentUser?.department?.id ?? currentUser?.department);
 
@@ -195,10 +194,6 @@ const Menu = ({
     const stashedDocs = targetSelection.filter(
         (it) => getItemEffectiveStatus(it) === constants.DOCUMENT_SHARES_STATUS.STASHED
     );
-    const unpublishedDocs = targetSelection.filter((it) => {
-        const s = getItemEffectiveStatus(it);
-        return s !== constants.DOCUMENT_SHARES_STATUS.PUBLISHED && s !== constants.DOCUMENT_SHARES_STATUS.STASHED;
-    });
     const sharedDocs = targetSelection.filter(isDocShared);
     const unsharedDocs = targetSelection.filter((it) => !isDocShared(it));
 
