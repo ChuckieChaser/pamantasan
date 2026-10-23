@@ -3928,6 +3928,10 @@ const Inspector = ({
                                     ? `${uploader.firstName} ${uploader.lastName}`
                                     : 'Author';
 
+                                const rejectedShare = departmentShares.find((s) => String(s.status || '').toUpperCase().includes('REJECT'));
+                                const isRejected = Boolean(versionItem.rejectionReason) || (isCurrent && Boolean(rejectedShare));
+                                const rejectionText = versionItem.rejectionReason || rejectedShare?.rejectionReason || 'Document share was rejected during review.';
+
                                 return (
                                     <div
                                         key={versionItem.id ?? versionIndex}
@@ -3940,6 +3944,9 @@ const Inspector = ({
                                                 </span>
                                                 {isCurrent && (
                                                     <Badge variant="success" label="Active" />
+                                                )}
+                                                {isRejected && (
+                                                    <Badge variant="destructive" label="Rejected" />
                                                 )}
                                             </div>
 
@@ -3957,17 +3964,56 @@ const Inspector = ({
                                             </div>
                                         )}
 
+                                        {isRejected && (
+                                            <div className="p-2.5 rounded-md border border-error/20 bg-error/5 flex flex-col gap-2">
+                                                <div className="flex items-start gap-2 text-xs text-error">
+                                                    <XCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                                                    <div className="flex flex-col gap-0.5 min-w-0">
+                                                        <span className="font-semibold">Rejection Feedback</span>
+                                                        <span className="text-text-muted leading-relaxed break-words">
+                                                            {rejectionText}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                                {isAdmin && isCurrent && (
+                                                    <div className="flex items-center justify-end pt-1.5 border-t border-error/15">
+                                                        <Button
+                                                            variant="secondary"
+                                                            size="xs"
+                                                            leadingIcon={FileCheck}
+                                                            onClick={() => {
+                                                                setReshareModal({
+                                                                    mode: 'overwrite',
+                                                                    shareItem: rejectedShare || { id: null, documentId: item.id },
+                                                                    docId: item.id,
+                                                                    docName: item?.name || item?.title || 'Document',
+                                                                    targetDeptName: rejectedShare
+                                                                        ? (allDepartments.find((d) => d.id === (rejectedShare.department?.id ?? rejectedShare.departmentId))?.name || 'Department')
+                                                                        : 'Department',
+                                                                });
+                                                                setReshareFile(null);
+                                                                setReshareChangeSummary('');
+                                                            }}
+                                                            className="text-[11px]"
+                                                        >
+                                                            Overwrite File &amp; Reshare
+                                                        </Button>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+
                                         <div className="flex items-center justify-between gap-2 text-xs text-text-muted pt-1 border-t border-surface-border">
                                             <span className="truncate font-medium">By {uploaderName}</span>
                                             <div className="flex items-center gap-2 shrink-0">
                                                 <span>{formatBytes(versionItem.sizeBytes)}</span>
-                                                {!isCurrent && (
+                                                {!isCurrent && (isAdmin || isCoordinator) && (
                                                     <button
                                                         type="button"
                                                         onClick={() => setRevertingVersionItem(versionItem)}
                                                         className="p-1 rounded hover:bg-surface-hover text-accent transition-colors cursor-pointer"
-                                                        title={`Revert document to v${versionItem.version}.0`}
-                                                        aria-label={`Revert document to v${versionItem.version}.0`}
+                                                        title={isCoordinator ? `Request revert to v${versionItem.version}.0 (Pending Admin Approval)` : `Revert document to v${versionItem.version}.0`}
+                                                        aria-label={isCoordinator ? `Request revert to v${versionItem.version}.0` : `Revert document to v${versionItem.version}.0`}
                                                     >
                                                         <RotateCcw className="h-3.5 w-3.5" />
                                                     </button>
@@ -4321,6 +4367,7 @@ const Inspector = ({
                                                                                 mode: 'new_version',
                                                                                 shareItem,
                                                                                 docId: item.id,
+                                                                                docName: item?.name || item?.title || 'Document',
                                                                                 targetDeptName: shareDepartment?.name ?? 'Department',
                                                                             });
                                                                             setReshareFile(null);
@@ -4339,6 +4386,7 @@ const Inspector = ({
                                                                                 mode: 'overwrite',
                                                                                 shareItem,
                                                                                 docId: item.id,
+                                                                                docName: item?.name || item?.title || 'Document',
                                                                                 targetDeptName: shareDepartment?.name ?? 'Department',
                                                                             });
                                                                             setReshareFile(null);
@@ -7101,13 +7149,21 @@ const Inspector = ({
                 <Modal
                     isOpen={Boolean(revertingVersionItem)}
                     onClose={() => !isRevertingVersion && setRevertingVersionItem(null)}
-                    title="Revert Document Version"
-                    description={`Are you sure you want to revert this document to version v${revertingVersionItem.version}.0?`}
+                    title={isCoordinator ? "Queue Revert Request" : "Revert Document Version"}
+                    description={
+                        isCoordinator
+                            ? `Are you sure you want to request reverting this document to version v${revertingVersionItem.version}.0? This request will be queued for Administrator review.`
+                            : `Are you sure you want to revert this document to version v${revertingVersionItem.version}.0?`
+                    }
                     icon={RotateCcw}
-                    variant="warning"
+                    variant={isCoordinator ? "information" : "warning"}
                     size="sm"
-                    callout={`A new revision will be created restoring the exact binary file and snapshot from version v${revertingVersionItem.version}.0. Previous versions are retained.`}
-                    calloutVariant="warning"
+                    callout={
+                        isCoordinator
+                            ? `As a Coordinator, submitting this action will create a Coordinator Request pending Administrator approval. Once approved, the document will be restored to version v${revertingVersionItem.version}.0.`
+                            : `A new revision will be created restoring the exact binary file and snapshot from version v${revertingVersionItem.version}.0. Previous versions are retained.`
+                    }
+                    calloutVariant={isCoordinator ? "information" : "warning"}
                     onConfirm={async () => {
                         setIsRevertingVersion(true);
                         try {
@@ -7117,7 +7173,11 @@ const Inspector = ({
                             setIsRevertingVersion(false);
                         }
                     }}
-                    confirmLabel={isRevertingVersion ? 'Reverting...' : `Revert to v${revertingVersionItem.version}.0`}
+                    confirmLabel={
+                        isRevertingVersion
+                            ? (isCoordinator ? 'Submitting Request...' : 'Reverting...')
+                            : (isCoordinator ? `Request Revert to v${revertingVersionItem.version}.0` : `Revert to v${revertingVersionItem.version}.0`)
+                    }
                     cancelLabel="Cancel"
                     isConfirmLoading={isRevertingVersion}
                     isConfirmDisabled={isRevertingVersion}
@@ -7252,7 +7312,7 @@ const Inspector = ({
                     description={
                         reshareModal.mode === 'new_version'
                             ? `Upload a new revision for ${reshareModal.targetDeptName}. This will create the next version number and reset status to Pending Approval.`
-                            : `Upload a replacement file for ${reshareModal.targetDeptName}. This will overwrite the current version file in-place and reset status to Pending Approval.`
+                            : `Upload a replacement file for ${reshareModal.targetDeptName}. The file content will overwrite the current version file in-place, while strictly preserving the document name "${reshareModal.docName || item?.name || 'Document'}". Status will be reset to Pending Approval.`
                     }
                     icon={reshareModal.mode === 'new_version' ? UploadCloud : FileCheck}
                     size="md"
@@ -7287,8 +7347,19 @@ const Inspector = ({
                                 className="block w-full text-xs text-text file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-accent file:text-accent-foreground hover:file:bg-accent/90 cursor-pointer border border-surface-border rounded-lg bg-surface p-2"
                             />
                             {reshareFile && (
-                                <div className="text-[11px] text-text-muted">
-                                    Selected: <strong className="text-text">{reshareFile.name}</strong> ({formatBytes(reshareFile.size)})
+                                <div className="text-[11px] text-text-muted flex flex-col gap-1.5">
+                                    <div>
+                                        Selected: <strong className="text-text">{reshareFile.name}</strong> ({formatBytes(reshareFile.size)})
+                                    </div>
+                                    {reshareModal.mode === 'overwrite' && (
+                                        <div className="p-2 rounded bg-surface-hover border border-surface-border text-[11px] text-text">
+                                            <span className="font-semibold text-accent">Preserved Document Name:</span>{' '}
+                                            <span className="font-bold">{reshareModal.docName || item?.name || 'Document'}</span>
+                                            <p className="text-text-muted mt-0.5">
+                                                The file content will be updated to match the contents of <span className="font-semibold text-text">{reshareFile.name}</span>, while retaining the document name <span className="font-semibold text-text">&ldquo;{reshareModal.docName || item?.name || 'Document'}&rdquo;</span>.
+                                            </p>
+                                        </div>
+                                    )}
                                 </div>
                             )}
                         </div>

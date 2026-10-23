@@ -4,6 +4,7 @@ import { create } from 'zustand';
 import { constants } from '../constants';
 import { mutationSchema } from '../schemas';
 import { documentService, departmentService, systemEventService, storageService } from '../services';
+import { stripFileExtension, getKnownFileExtension } from '../utils/fileNameUtils';
 import { useDepartmentStore } from './useDepartmentStore';
 import { useUserStore } from './useUserStore';
 
@@ -2476,12 +2477,19 @@ const useDocumentStore = create((set, get) => ({
             const nextVersionNumber = (latestVer?.version || 1) + 1;
             const timestamp = new Date().toISOString();
 
-            // 1. Upload to storage with next version number
+            // Compute preserved file name to maintain original document name while uploading new revision
+            const existingDocName = targetDoc?.name || targetDoc?.title || file.name;
+            const existingBaseName = stripFileExtension(existingDocName) || existingDocName;
+            const newExtWithDot = getKnownFileExtension(file.name) || (file.name.includes('.') ? `.${file.name.split('.').pop()}` : '') || getKnownFileExtension(existingDocName);
+            const preservedStorageFileName = `${existingBaseName}${newExtWithDot}`;
+            const preservedDocName = targetDoc?.name ? (targetDoc.name.includes('.') ? preservedStorageFileName : existingBaseName) : preservedStorageFileName;
+
+            // 1. Upload to storage with next version number and preserved filename
             const storageResult = await storageService.uploadDocument(
                 docId,
                 file,
                 nextVersionNumber,
-                file.name
+                preservedStorageFileName
             );
 
             // 2. Insert new version record (clearing rejection)
@@ -2505,13 +2513,17 @@ const useDocumentStore = create((set, get) => ({
                 updatedAt: timestamp,
             });
 
-            // 4. Update parent document updatedAt
+            // 4. Update parent document name and updatedAt
             await get().updateDocument(docId, {
+                name: preservedDocName,
                 updatedAt: timestamp,
             });
 
             // 5. Update local store
             set((state) => ({
+                documents: state.documents.map((d) =>
+                    d.id === docId ? { ...d, name: preservedDocName, updatedAt: timestamp } : d
+                ),
                 documentShares: state.documentShares.map((item) =>
                     item.id === shareId
                         ? { ...item, status: constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL, rejectionReason: null, updatedAt: timestamp }
@@ -2524,8 +2536,8 @@ const useDocumentStore = create((set, get) => ({
                 entityId: shareId,
                 action: constants.AUDIT_LOGS_ACTION.SHARED,
                 data: {
-                    title: `Reshared ${targetDoc?.name || 'Document'} (v${nextVersionNumber}.0)`,
-                    documentName: targetDoc?.name,
+                    title: `Reshared ${preservedDocName || targetDoc?.name || 'Document'} (v${nextVersionNumber}.0)`,
+                    documentName: preservedDocName || targetDoc?.name,
                     departmentName: resolveDepartmentName(deptId),
                     version: nextVersionNumber,
                 },
@@ -2544,7 +2556,14 @@ const useDocumentStore = create((set, get) => ({
     overwriteVersionFileAndReshare: async (documentId, shareId, file, uploaderId) => {
         try {
             const docId = documentId;
-            const existing = (get().documentShares || []).find((s) => s.id === shareId);
+            let targetShareId = shareId;
+            let existing = (get().documentShares || []).find((s) => s.id === targetShareId);
+            if (!existing && docId) {
+                existing = (get().documentShares || []).find(
+                    (s) => (s.document?.id ?? s.documentId) === docId && String(s.status || '').toUpperCase().includes('REJECT')
+                );
+                if (existing) targetShareId = existing.id;
+            }
             const deptId = existing?.department?.id ?? existing?.departmentId;
             const targetDoc = (get().documents || []).find((d) => d.id === docId);
 
@@ -2563,12 +2582,19 @@ const useDocumentStore = create((set, get) => ({
             const currentVersionNumber = latestVer?.version || 1;
             const timestamp = new Date().toISOString();
 
-            // 1. Upload replacement to storage with current version number
+            // Compute preserved file name to maintain original document name while overwriting file content
+            const existingDocName = targetDoc?.name || targetDoc?.title || file.name;
+            const existingBaseName = stripFileExtension(existingDocName) || existingDocName;
+            const newExtWithDot = getKnownFileExtension(file.name) || (file.name.includes('.') ? `.${file.name.split('.').pop()}` : '') || getKnownFileExtension(existingDocName);
+            const preservedStorageFileName = `${existingBaseName}${newExtWithDot}`;
+            const preservedDocName = targetDoc?.name ? (targetDoc.name.includes('.') ? preservedStorageFileName : existingBaseName) : preservedStorageFileName;
+
+            // 1. Upload replacement to storage with current version number and preserved filename
             const storageResult = await storageService.uploadDocument(
                 docId,
                 file,
                 currentVersionNumber,
-                file.name
+                preservedStorageFileName
             );
 
             // 2. Update current version in-place without bumping version number
@@ -2584,41 +2610,72 @@ const useDocumentStore = create((set, get) => ({
                 });
             }
 
-            // 3. Reset share to PENDING_APPROVAL
-            await documentService.updateDocumentShare(shareId, {
-                status: constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL,
-                updatedAt: timestamp,
-            });
+            // 3. Reset share(s) to PENDING_APPROVAL
+            const sharesToReset = targetShareId
+                ? (get().documentShares || []).filter((s) => s.id === targetShareId)
+                : (get().documentShares || []).filter(
+                    (s) => (s.document?.id ?? s.documentId) === docId && String(s.status || '').toUpperCase().includes('REJECT')
+                );
 
-            // 4. Update parent document updatedAt
+            for (const sh of sharesToReset) {
+                await documentService.updateDocumentShare(sh.id, {
+                    status: constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL,
+                    rejectionReason: null,
+                    rejecterId: null,
+                    updatedAt: timestamp,
+                });
+            }
+
+            // 4. Update parent document name and updatedAt
             await get().updateDocument(docId, {
+                name: preservedDocName,
                 updatedAt: timestamp,
             });
 
             // 5. Update local store
+            const resetShareIds = new Set(sharesToReset.map((s) => s.id));
             set((state) => ({
+                documents: state.documents.map((d) =>
+                    d.id === docId ? { ...d, name: preservedDocName, updatedAt: timestamp } : d
+                ),
+                documentVersions: state.documentVersions.map((v) =>
+                    v.id === latestVer?.id
+                        ? {
+                              ...v,
+                              path: storageResult.path,
+                              sizeBytes: storageResult.sizeBytes,
+                              mimeType: storageResult.mimeType || file.type || latestVer.mimeType,
+                              checksum: storageResult.checksum || null,
+                              rejectionReason: null,
+                              rejecterId: null,
+                              updatedAt: timestamp,
+                          }
+                        : v
+                ),
                 documentShares: state.documentShares.map((item) =>
-                    item.id === shareId
+                    resetShareIds.has(item.id)
                         ? { ...item, status: constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL, rejectionReason: null, updatedAt: timestamp }
                         : item
                 ),
             }));
 
-            systemEventService.recordSystemEvent({
-                actorId: uploaderId || null,
-                entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_SHARE,
-                entityId: shareId,
-                action: constants.AUDIT_LOGS_ACTION.SHARED,
-                data: {
-                    title: `Overwrote and Reshared ${targetDoc?.name || 'Document'} (v${currentVersionNumber}.0)`,
-                    documentName: targetDoc?.name,
-                    departmentName: resolveDepartmentName(deptId),
-                    version: currentVersionNumber,
-                },
-                targetRoles: ['ADMINISTRATOR', 'COORDINATOR', 'OFFICER'],
-                targetDepartmentId: deptId,
-                isMajor: true,
-            }).catch(() => {});
+            if (targetShareId || deptId) {
+                systemEventService.recordSystemEvent({
+                    actorId: uploaderId || null,
+                    entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_SHARE,
+                    entityId: targetShareId || docId,
+                    action: constants.AUDIT_LOGS_ACTION.SHARED,
+                    data: {
+                        title: `Overwrote and Reshared ${preservedDocName || targetDoc?.name || 'Document'} (v${currentVersionNumber}.0)`,
+                        documentName: preservedDocName || targetDoc?.name,
+                        departmentName: resolveDepartmentName(deptId),
+                        version: currentVersionNumber,
+                    },
+                    targetRoles: ['ADMINISTRATOR', 'COORDINATOR', 'OFFICER'],
+                    targetDepartmentId: deptId,
+                    isMajor: true,
+                }).catch(() => {});
+            }
 
             return latestVer;
         } catch (error) {

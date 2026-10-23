@@ -718,6 +718,27 @@ const AppContent = () => {
                 if (!currentUser?.id) {
                     throw new Error('Authentication required to revert version.');
                 }
+                if (constants.isCoordinatorRole(currentUser?.role)) {
+                    const targetDoc = useDocumentStore.getState().documents.find((d) => d.id === activeDocId);
+                    const docName = targetDoc?.name || targetDoc?.title || 'Document';
+                    await coordinatorApprovalService.submitCoordinatorRequest({
+                        action: constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_VERSION_REVERT,
+                        requesterId: currentUser.id,
+                        data: {
+                            documentId: activeDocId,
+                            documentName: docName,
+                            versionItem: item,
+                            targetVersion: item.version,
+                        },
+                    });
+                    showToast({
+                        type: 'information',
+                        title: 'Coordinator Request Submitted',
+                        description: `Reverting "${docName}" to version v${item.version}.0 has been queued for Administrator approval.`,
+                    });
+                    return;
+                }
+
                 const reverted = await useDocumentStore.getState().revertDocumentVersion(
                     activeDocId,
                     item,
