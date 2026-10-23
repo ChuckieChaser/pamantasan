@@ -523,6 +523,22 @@ const RequestsPage = ({
         });
     }, [viewingDocumentRequest, coordinatorRequests, isAdmin, isCoordinator, currentUser?.id]);
 
+    const alreadyAttachedDocIds = useMemo(() => {
+        const set = new Set();
+        (activeViewingAttachments || []).forEach((att) => {
+            const id = att.documentId ?? att.document?.id ?? att.id;
+            if (id) set.add(String(id));
+        });
+        (pendingAttachRequests || []).forEach((pr) => {
+            const pData = typeof pr.data === 'string' ? JSON.parse(pr.data || '{}') : (pr.data || {});
+            (pData.attachments || []).forEach((att) => {
+                const id = att.documentId ?? att.id;
+                if (id) set.add(String(id));
+            });
+        });
+        return set;
+    }, [activeViewingAttachments, pendingAttachRequests]);
+
     const pendingStatusRequest = useMemo(() => {
         if (!viewingDocumentRequest) return null;
         const activeId = currentUser?.id;
@@ -617,7 +633,13 @@ const RequestsPage = ({
         };
 
         if (!attachSearchTerm.trim()) {
-            return list.sort(sortComparator);
+            return list.sort((a, b) => {
+                const aAttached = alreadyAttachedDocIds.has(String(a.id));
+                const bAttached = alreadyAttachedDocIds.has(String(b.id));
+                if (aAttached && !bAttached) return -1;
+                if (!aAttached && bAttached) return 1;
+                return sortComparator(a, b);
+            });
         }
 
         const query = attachSearchTerm.toLowerCase().trim();
@@ -692,7 +714,7 @@ const RequestsPage = ({
             })
             .filter((doc) => doc._relevanceScore > 0)
             .sort((a, b) => (b._relevanceScore - a._relevanceScore) || sortComparator(a, b));
-    }, [documents, documentVersions, attachSearchTerm, semanticScoreMap, attachClassFilter, attachSortBy]);
+    }, [documents, documentVersions, attachSearchTerm, semanticScoreMap, attachClassFilter, attachSortBy, alreadyAttachedDocIds]);
 
     // DERIVED SELECTION: Stays reactive to store updates and formatted data
     const activeSelectedRequest = useMemo(() => {
@@ -740,6 +762,9 @@ const RequestsPage = ({
 
     const handleSelectDocumentToAttach = (selectedDocument) => {
         const docId = selectedDocument.id;
+        if (alreadyAttachedDocIds.has(String(docId))) {
+            return;
+        }
         setStagedAttachments((prev) => {
             if (prev.some((item) => item.documentId === docId)) {
                 return prev.filter((item) => item.documentId !== docId);
@@ -790,11 +815,7 @@ const RequestsPage = ({
         }
 
         const currentStaged = [...stagedAttachments];
-        const messageText =
-            replyMessage.trim() ||
-            (currentStaged.length > 0
-                ? `Shared ${currentStaged.length === 1 ? currentStaged[0].name : `${currentStaged.length} documents`}`
-                : '');
+        const messageText = replyMessage.trim();
 
         if (isCoordinator && currentStaged.length > 0) {
             try {
@@ -849,7 +870,7 @@ const RequestsPage = ({
             const metaTag = attachedDocIds.length > 0
                 ? `<!-- attachments:[${attachedDocIds.join(',')}] --> <!-- att_names:[${currentStaged.map((s) => encodeURIComponent(s.name || '')).join(',')}] -->`
                 : '';
-            const fullMessageText = metaTag ? `${messageText} ${metaTag}` : messageText;
+            const fullMessageText = metaTag ? (messageText ? `${messageText} ${metaTag}` : metaTag) : messageText;
 
             await insertDocumentRequestMessage({
                 documentRequestId: viewingDocumentRequest.id,
@@ -1416,36 +1437,38 @@ const RequestsPage = ({
                                                         const vers = (documentVersions || []).filter((v) => (v.document?.id ?? v.documentId) === targetDocId);
                                                         const fallbackName = savedNames[idx] || matchedDoc?.name || vers[0]?.document?.name || 'Attached document';
 
+                                                        const isArchived = Boolean(matchedDoc?.isArchived);
+                                                        const isMissing = !matchedDoc || (!foundAtt?.path && !matchedDoc?.path);
+                                                        const isUnavailable = isArchived || isMissing || foundAtt?.isDeleted || !foundAtt;
+
+                                                        let unavailableReason = null;
+                                                        if (isArchived) {
+                                                            unavailableReason = 'Archived • Unavailable';
+                                                        } else if (isUnavailable) {
+                                                            unavailableReason = 'Unavailable';
+                                                        }
+
                                                         if (foundAtt) {
-                                                            const isDocDeleted = matchedDoc?.isArchived || (!matchedDoc && !foundAtt.path);
                                                             return {
                                                                 ...foundAtt,
                                                                 name: foundAtt.name || fallbackName,
-                                                                isDeleted: isDocDeleted || foundAtt.isDeleted,
-                                                                deletedReason: isDocDeleted ? 'repository_deleted' : null,
+                                                                isUnavailable,
+                                                                unavailableReason,
                                                             };
                                                         }
 
-                                                        // If not found in active attachments, it was unsent or removed from thread!
+                                                        // If not found in active attachments, it was unsent, deleted, or removed!
                                                         return {
                                                             id: targetDocId,
                                                             documentId: targetDocId,
                                                             name: fallbackName,
-                                                            isDeleted: true,
-                                                            deletedReason: 'unsent',
+                                                            isUnavailable: true,
+                                                            unavailableReason: 'Unavailable',
                                                         };
                                                     });
                                                 }
                                             }
-                                            const msgTime = new Date(message.createdAt).getTime();
-                                            return activeViewingAttachments.filter((att) => {
-                                                const attUserId = typeof att.attachedBy === 'object' ? att.attachedBy?.id : (att.attachedById ?? att.attachedBy);
-                                                const attTime = new Date(att.createdAt).getTime();
-                                                const isSameUser = attUserId === messageUserId || (!attUserId && isCurrentUser);
-                                                const isNearTime = Math.abs(attTime - msgTime) <= 10000;
-                                                const isMentioned = att.name && message.message && message.message.includes(att.name);
-                                                return isSameUser && (isNearTime || isMentioned);
-                                            });
+                                            return [];
                                         })();
 
                                         const bubbleStyle = isCurrentUser
@@ -1507,19 +1530,54 @@ const RequestsPage = ({
                                                         <div
                                                             className={`p-3 rounded-2xl text-xs leading-relaxed break-words select-text ${bubbleStyle}`}
                                                         >
-                                                            <p className="whitespace-pre-wrap">{cleanMessageText}</p>
+                                                            {cleanMessageText && (
+                                                                <p className="whitespace-pre-wrap">{cleanMessageText}</p>
+                                                            )}
 
                                                             {messageAttachments.length > 0 && (
-                                                                <div className="mt-2 flex flex-col gap-2">
-                                                                    {messageAttachments.filter((att) => !att.isDeleted).map((attachment) => (
-                                                                        <div
-                                                                            key={attachment.id}
-                                                                            className={`p-2 rounded-lg flex items-center justify-between gap-2 text-xs ${
-                                                                                isCurrentUser
-                                                                                    ? 'bg-black/20 text-text-inverted border border-white/20'
-                                                                                    : 'bg-surface-hover border border-surface-border text-text'
-                                                                            }`}
-                                                                        >
+                                                                <div className={`${cleanMessageText ? 'mt-2' : ''} flex flex-col gap-2`}>
+                                                                    {messageAttachments.map((attachment) => {
+                                                                        if (attachment.isUnavailable) {
+                                                                            return (
+                                                                                <div
+                                                                                    key={attachment.id}
+                                                                                    className={`p-2 rounded-lg flex items-center justify-between gap-2 text-xs border ${
+                                                                                        isCurrentUser
+                                                                                            ? 'bg-rose-950/40 border-rose-500/40 text-rose-200'
+                                                                                            : 'bg-error-background/60 border-error-border text-error'
+                                                                                    }`}
+                                                                                >
+                                                                                    <div className="flex items-center gap-2 min-w-0">
+                                                                                        <Paperclip className="h-4 w-4 shrink-0 text-error opacity-75" />
+                                                                                        <span
+                                                                                            className="font-semibold truncate line-through opacity-85"
+                                                                                            title={`${attachment.name} (${attachment.unavailableReason || 'Unavailable'})`}
+                                                                                        >
+                                                                                            {attachment.name}
+                                                                                        </span>
+                                                                                    </div>
+                                                                                    <div className="flex items-center gap-1.5 shrink-0">
+                                                                                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                                                                                            isCurrentUser
+                                                                                                ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                                                                                                : 'bg-error/15 text-error border border-error/30'
+                                                                                        }`}>
+                                                                                            {attachment.unavailableReason || 'Unavailable'}
+                                                                                        </span>
+                                                                                    </div>
+                                                                                </div>
+                                                                            );
+                                                                        }
+
+                                                                        return (
+                                                                            <div
+                                                                                key={attachment.id}
+                                                                                className={`p-2 rounded-lg flex items-center justify-between gap-2 text-xs ${
+                                                                                    isCurrentUser
+                                                                                        ? 'bg-black/20 text-text-inverted border border-white/20'
+                                                                                        : 'bg-surface-hover border border-surface-border text-text'
+                                                                                }`}
+                                                                            >
                                                                             <div className="flex items-center gap-2 min-w-0">
                                                                                 <Paperclip className="h-4 w-4 shrink-0" />
                                                                                 <span
@@ -1603,7 +1661,8 @@ const RequestsPage = ({
                                                                                 </button>
                                                                             </div>
                                                                         </div>
-                                                                    ))}
+                                                                    );
+                                                                })}
                                                                 </div>
                                                             )}
                                                         </div>
@@ -2013,17 +2072,26 @@ const RequestsPage = ({
                                 </div>
                             ) : (
                                 attachableDocuments.map((doc) => {
+                                    const isAlreadyAttached = alreadyAttachedDocIds.has(String(doc.id));
                                     const isStaged = stagedAttachments.some((att) => att.documentId === doc.id);
                                     return (
                                         <div
                                             key={doc.id}
-                                            onClick={() => handleSelectDocumentToAttach(doc)}
-                                            className={`p-3 flex items-center justify-between gap-3 transition-colors cursor-pointer ${
-                                                isStaged ? 'bg-accent/10' : 'hover:bg-surface-hover'
+                                            onClick={() => {
+                                                if (!isAlreadyAttached) {
+                                                    handleSelectDocumentToAttach(doc);
+                                                }
+                                            }}
+                                            className={`p-3 flex items-center justify-between gap-3 transition-colors ${
+                                                isAlreadyAttached
+                                                    ? 'bg-accent/10 cursor-default'
+                                                    : isStaged
+                                                    ? 'bg-accent/10 cursor-pointer'
+                                                    : 'hover:bg-surface-hover cursor-pointer'
                                             }`}
                                         >
                                             <div className="flex items-center gap-3 min-w-0">
-                                                <FileText className={`h-4 w-4 shrink-0 ${isStaged ? 'text-accent' : 'text-text-muted'}`} />
+                                                <FileText className={`h-4 w-4 shrink-0 ${isAlreadyAttached || isStaged ? 'text-accent' : 'text-text-muted'}`} />
                                                 <div className="flex flex-col min-w-0">
                                                     <div className="flex items-center gap-2">
                                                         <span
@@ -2033,6 +2101,12 @@ const RequestsPage = ({
                                                             {doc.name}
                                                         </span>
                                                         {renderClassificationBadge(doc.classification)}
+                                                        {isAlreadyAttached && (
+                                                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[9px] font-semibold bg-accent/20 text-accent border border-accent/40">
+                                                                <Check className="h-2.5 w-2.5" />
+                                                                Attached
+                                                            </span>
+                                                        )}
                                                         {doc._semanticInfo && (
                                                             <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[9px] font-semibold bg-accent/15 text-accent border border-accent/30">
                                                                 <Sparkles className="h-2.5 w-2.5" />
@@ -2051,17 +2125,24 @@ const RequestsPage = ({
                                                 </div>
                                             </div>
 
-                                            <Button
-                                                variant={isStaged ? 'secondary' : 'primary'}
-                                                leadingIcon={isStaged ? Check : undefined}
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    handleSelectDocumentToAttach(doc);
-                                                }}
-                                                className="shrink-0 text-xs px-3"
-                                            >
-                                                {isStaged ? 'Staged' : 'Attach'}
-                                            </Button>
+                                            {isAlreadyAttached ? (
+                                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold bg-accent/15 text-accent border border-accent/30 shrink-0 select-none">
+                                                    <Check className="h-3.5 w-3.5 text-accent" />
+                                                    Already Attached
+                                                </span>
+                                            ) : (
+                                                <Button
+                                                    variant={isStaged ? 'secondary' : 'primary'}
+                                                    leadingIcon={isStaged ? Check : undefined}
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handleSelectDocumentToAttach(doc);
+                                                    }}
+                                                    className="shrink-0 text-xs px-3"
+                                                >
+                                                    {isStaged ? 'Staged' : 'Attach'}
+                                                </Button>
+                                            )}
                                         </div>
                                     );
                                 })

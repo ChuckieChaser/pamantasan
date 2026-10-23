@@ -382,24 +382,18 @@ const coordinatorApprovalService = {
                     }
                 }
 
-                const rawMessage = (payloadData.message || '').trim();
-                const fallbackMessage = (Array.isArray(payloadData.attachments) && payloadData.attachments.length > 0)
-                    ? `Shared ${payloadData.attachments.length === 1 ? (payloadData.attachments[0].name || 'a document') : `${payloadData.attachments.length} documents`}`
-                    : '';
-                const baseText = rawMessage || fallbackMessage;
-                if (baseText) {
-                    const tagParts = [];
-                    if (attachedDocIds.length > 0) {
-                        tagParts.push(`<!-- attachments:[${attachedDocIds.join(',')}] -->`);
-                    }
-                    tagParts.push(`<!-- admin_approved:${adminUser?.id || 'admin'} -->`);
-                    const taggedMessage = `${baseText} ${tagParts.join(' ')}`;
-                    await docStore.insertDocumentRequestMessage({
-                        documentRequestId: reqId,
-                        userId: coordinatorId,
-                        message: taggedMessage,
-                    });
+                const rawMessage = (payloadData.message || payloadData.userMessage || '').trim();
+                const tagParts = [];
+                if (attachedDocIds.length > 0) {
+                    tagParts.push(`<!-- attachments:[${attachedDocIds.join(',')}] -->`);
                 }
+                tagParts.push(`<!-- admin_approved:${adminUser?.id || 'admin'} -->`);
+                const taggedMessage = rawMessage ? `${rawMessage} ${tagParts.join(' ')}` : tagParts.join(' ');
+                await docStore.insertDocumentRequestMessage({
+                    documentRequestId: reqId,
+                    userId: coordinatorId,
+                    message: taggedMessage,
+                });
 
                 await docStore.fetchDocumentRequestMessages(reqId);
                 await docStore.fetchDocumentRequestAttachments(reqId);
