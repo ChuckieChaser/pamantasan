@@ -4297,12 +4297,22 @@ const Inspector = ({
                                                     const isRejected = statusUpper.includes('REJECT');
 
                                                     const isStashed = statusUpper === constants.DOCUMENT_SHARES_STATUS.STASHED;
-                                                    const isPublished = statusUpper === constants.DOCUMENT_SHARES_STATUS.PUBLISHED;
-                                                    const isDirectorApproved = statusUpper === constants.DOCUMENT_SHARES_STATUS.APPROVED;
-                                                    const isOfficerPending = statusUpper === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL;
+                                                    const hasPublishedMembers = !isStashed && (
+                                                        deptUserShares.some((us) =>
+                                                            String(us.status || '').toUpperCase() === constants.DOCUMENT_SHARES_STATUS.PUBLISHED
+                                                        ) || deptUserShares.length > 0
+                                                    );
+                                                    const isPublished = !isStashed && (
+                                                        statusUpper === constants.DOCUMENT_SHARES_STATUS.PUBLISHED ||
+                                                        hasPublishedMembers ||
+                                                        isAllMembersPublished ||
+                                                        isDeptPublished
+                                                    );
+                                                    const isDirectorApproved = statusUpper === constants.DOCUMENT_SHARES_STATUS.APPROVED && !isPublished;
+                                                    const isOfficerPending = statusUpper === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL && !isPublished && !isStashed;
 
                                                     // Determine active step:
-                                                    // 1: You (Origin / Draft)
+                                                    // 1: Administrator (Origin / Draft)
                                                     // 2: Officer (Pending Approval / Review)
                                                     // 3: Director (Approved / Pre-publish)
                                                     // 4: Terminal Branch (Stashed or Published)
@@ -4400,12 +4410,12 @@ const Inspector = ({
 
                                                             {/* EQUAL DISTANCE WORKFLOW TRACK (PILL BADGES) */}
                                                             <div className="flex items-center w-full pt-1 pb-0.5">
-                                                                {/* 1. NODE 1: YOU */}
+                                                                {/* 1. NODE 1: ADMINISTRATOR */}
                                                                 <div
                                                                     className={`flex items-center justify-center px-2 py-0.5 rounded-md border text-[10px] transition-all select-none shrink-0 ${node1Class}`}
-                                                                    title="You (Origin / Created)"
+                                                                    title="Administrator (Origin / Created)"
                                                                 >
-                                                                    <span>You</span>
+                                                                    <span>Administrator</span>
                                                                 </div>
 
                                                                 {/* CONNECTOR 1 -> 2 (EQUAL DISTANCE WITH GRADIENT) */}
