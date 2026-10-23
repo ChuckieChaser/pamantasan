@@ -3583,15 +3583,24 @@ const Inspector = ({
                                                     if (!actorId) return;
 
                                                     let actorUser = userMap.get(String(actorId)) || log?.actor;
-                                                    if (!actorUser && typeof log?.data === 'string') {
+                                                    let actorRole = actorUser?.role;
+                                                    let actorDeptId = actorUser?.departmentId;
+                                                    if (typeof log?.data === 'string') {
                                                         try {
                                                             const parsed = JSON.parse(log.data);
-                                                            actorUser = { id: actorId, role: parsed.role, departmentId: parsed.departmentId };
+                                                            actorRole = actorRole || parsed.actorRole || parsed.role || parsed.new?.role;
+                                                            actorDeptId = actorDeptId || parsed.departmentId || parsed._actorDepartmentId || parsed.new?._departmentId;
+                                                            if (!actorUser) {
+                                                                actorUser = { id: actorId, role: actorRole, departmentId: actorDeptId };
+                                                            } else {
+                                                                actorUser = { ...actorUser, role: actorRole, departmentId: actorDeptId };
+                                                            }
                                                         } catch {
                                                             // ignore malformed log data
                                                         }
                                                     }
-                                                    if (!isRmoUser(actorUser, allDepartments)) {
+                                                    const isExcluded = constants.isStaffRole(actorRole) || constants.isAdminRole(actorRole) || constants.isCoordinatorRole(actorRole);
+                                                    if (!isExcluded && !isRmoUser(actorUser, allDepartments)) {
                                                         if (!childDocReadersMap.has(docId)) {
                                                             childDocReadersMap.set(docId, new Set());
                                                         }
@@ -3609,7 +3618,7 @@ const Inspector = ({
                                                         <span className={PROPERTY_LABEL_STYLE}>
                                                             <Eye className={ICON_STYLE} /> Total Reads
                                                         </span>
-                                                        <span className={PROPERTY_VALUE_STYLE} title={`${combinedCount} combined unique non-RMO reads across folder contents`}>
+                                                        <span className={PROPERTY_VALUE_STYLE} title={`${combinedCount} combined unique reads (Directors, Officers, Members)`}>
                                                             {combinedCount} {combinedCount === 1 ? 'read' : 'reads'} (combined)
                                                         </span>
                                                     </div>
@@ -3630,15 +3639,24 @@ const Inspector = ({
                                                 if (!actorId) return;
 
                                                 let actorUser = userMap.get(String(actorId)) || log?.actor;
-                                                if (!actorUser && typeof log?.data === 'string') {
+                                                let actorRole = actorUser?.role;
+                                                let actorDeptId = actorUser?.departmentId;
+                                                if (typeof log?.data === 'string') {
                                                     try {
                                                         const parsed = JSON.parse(log.data);
-                                                        actorUser = { id: actorId, role: parsed.role, departmentId: parsed.departmentId };
+                                                        actorRole = actorRole || parsed.actorRole || parsed.role || parsed.new?.role;
+                                                        actorDeptId = actorDeptId || parsed.departmentId || parsed._actorDepartmentId || parsed.new?._departmentId;
+                                                        if (!actorUser) {
+                                                            actorUser = { id: actorId, role: actorRole, departmentId: actorDeptId };
+                                                        } else {
+                                                            actorUser = { ...actorUser, role: actorRole, departmentId: actorDeptId };
+                                                        }
                                                     } catch {
                                                         // ignore malformed log data
                                                     }
                                                 }
-                                                if (!isRmoUser(actorUser, allDepartments)) {
+                                                const isExcluded = constants.isStaffRole(actorRole) || constants.isAdminRole(actorRole) || constants.isCoordinatorRole(actorRole);
+                                                if (!isExcluded && !isRmoUser(actorUser, allDepartments)) {
                                                     nonRmoReaders.add(String(actorId));
                                                 }
                                             });
@@ -3650,7 +3668,7 @@ const Inspector = ({
                                                     <span className={PROPERTY_LABEL_STYLE}>
                                                         <Eye className={ICON_STYLE} /> Total Reads
                                                     </span>
-                                                    <span className={PROPERTY_VALUE_STYLE} title={`${readCount} unique non-RMO faculty reads`}>
+                                                    <span className={PROPERTY_VALUE_STYLE} title={`${readCount} unique readership (Directors, Officers, Members)`}>
                                                         {readCount} {readCount === 1 ? 'read' : 'reads'}
                                                     </span>
                                                 </div>
@@ -4072,10 +4090,54 @@ const Inspector = ({
                                             );
                                         };
 
+                                        const isEligibleReaderRole = (role) => {
+                                            if (!role) return false;
+                                            const r = String(role).trim().toUpperCase();
+                                            if (constants.isAdminRole(r) || constants.isCoordinatorRole(r) || constants.isStaffRole(r)) {
+                                                return false;
+                                            }
+                                            return constants.isMemberRole(r) || constants.isOfficerRole(r) || constants.isDirectorRole(r);
+                                        };
+
                                         const deptFaculty = (allUsers || []).filter(
                                             (u) => isUserInDept(u) && constants.isMemberRole(u.role)
                                         );
                                         const deptFacultyMemberIds = new Set(deptFaculty.map((u) => cleanId(u.id)));
+
+                                        const deptEligibleReaders = (allUsers || []).filter(
+                                            (u) => isUserInDept(u) && isEligibleReaderRole(u.role)
+                                        );
+                                        const deptEligibleReaderIds = new Set(deptEligibleReaders.map((u) => cleanId(u.id)));
+
+                                        const isEligibleDeptActor = (actorId, log) => {
+                                            const actorClean = cleanId(actorId);
+                                            if (!actorClean) return false;
+                                            if (deptEligibleReaderIds.has(actorClean)) return true;
+
+                                            const userObj = (allUsers || []).find((u) => cleanId(u.id) === actorClean) || log?.actor;
+                                            let userRole = userObj?.role;
+                                            let userDept = userObj?.departmentId ?? userObj?.department?.id ?? userObj?.department;
+
+                                            if (!userRole && typeof log?.data === 'string') {
+                                                try {
+                                                    const parsed = JSON.parse(log.data);
+                                                    userRole = parsed.actorRole || parsed.role || parsed.new?.role;
+                                                    userDept = userDept || parsed._departmentId || parsed._actorDepartmentId || parsed.departmentId || parsed.new?._departmentId;
+                                                } catch {
+                                                    // ignore
+                                                }
+                                            }
+
+                                            if (isEligibleReaderRole(userRole)) {
+                                                if (!userObj && userDept) {
+                                                    return isUserInDept({ departmentId: userDept, role: userRole });
+                                                }
+                                                if (userObj && isUserInDept(userObj)) {
+                                                    return true;
+                                                }
+                                            }
+                                            return false;
+                                        };
 
                                         let deptReadCount;
                                         let deptAuditLogs;
@@ -4102,7 +4164,7 @@ const Inspector = ({
 
                                                 const actorId = String(log?.actor?.id ?? log?.actorId ?? '');
                                                 const actorClean = cleanId(actorId);
-                                                if (!actorClean || !deptFacultyMemberIds.has(actorClean)) return;
+                                                if (!actorClean || !isEligibleDeptActor(actorClean, log)) return;
 
                                                 const normalizedDocId = cleanId(docId);
                                                 if (!childDocDeptReadersMap.has(normalizedDocId)) {
@@ -4132,7 +4194,7 @@ const Inspector = ({
 
                                                 const actorId = String(log?.actor?.id ?? log?.actorId ?? '');
                                                 const actorClean = cleanId(actorId);
-                                                if (!actorClean || !deptFacultyMemberIds.has(actorClean)) return;
+                                                if (!actorClean || !isEligibleDeptActor(actorClean, log)) return;
 
                                                 if (!nonRmoUserFirstReadLogs.has(actorClean)) {
                                                     nonRmoUserFirstReadLogs.set(actorClean, log);
@@ -4153,7 +4215,7 @@ const Inspector = ({
                                             if (!isDoc) return;
 
                                             const recId = cleanId(s.recipientId ?? s.recipient?.id);
-                                            if (recId && deptFacultyMemberIds.has(recId)) {
+                                            if (recId && (deptEligibleReaderIds.has(recId) || deptFacultyMemberIds.has(recId) || isEligibleDeptActor(recId, s))) {
                                                 if (s.isRead || String(s.status || '').toUpperCase() === 'READ' || s.readAt) {
                                                     readMemberIdsSet.add(recId);
                                                 }
@@ -4161,7 +4223,8 @@ const Inspector = ({
                                         });
 
                                         uniqueReadersCount = readMemberIdsSet.size;
-                                        const totalDeptMembers = deptFaculty.length > 0 ? deptFaculty.length : (uniqueReadersCount || 1);
+                                        const deptTargetCount = deptEligibleReaders.length > 0 ? deptEligibleReaders.length : deptFaculty.length;
+                                        const totalDeptMembers = Math.max(deptTargetCount, uniqueReadersCount || 0) || 1;
 
                                         const deptUserShares = userShares.filter((us) => {
                                             const usDeptClean = cleanId(us.department?.id ?? us.departmentId);
@@ -4558,10 +4621,12 @@ const Inspector = ({
                                                                         String(uShare.status || '').toUpperCase() === 'READ' ||
                                                                         uShare.readAt ||
                                                                         allAuditLogs.some(
-                                                                            (log) =>
-                                                                                (log.actor?.id === recId || log.actorId === recId) &&
-                                                                                (log.entityId === item.id || log.document?.id === item.id) &&
-                                                                                ['READ', 'VIEW', 'DOWNLOAD', 'OPEN'].includes(String(log.action || '').toUpperCase())
+                                                                            (log) => {
+                                                                                const lActor = cleanId(log.actor?.id || log.actorId);
+                                                                                const lDoc = cleanId(log.entityId || log.documentId || log.document?.id);
+                                                                                const isRead = ['READ', 'VIEW', 'VIEWED', 'DOWNLOAD', 'DOWNLOADED', 'ACCESS', 'ACCESSED', 'OPEN', 'OPENED'].includes(String(log.action || '').toUpperCase());
+                                                                                return lActor === recClean && lDoc === cleanId(item.id) && isRead;
+                                                                            }
                                                                         )
                                                                     );
 
@@ -4711,10 +4776,12 @@ const Inspector = ({
                                                     String(shareItem.status || '').toUpperCase() === 'READ' ||
                                                     shareItem.readAt ||
                                                     allAuditLogs.some(
-                                                        (log) =>
-                                                            (log.actor?.id === recId || log.actorId === recId) &&
-                                                            (log.entityId === item.id || log.document?.id === item.id) &&
-                                                            ['READ', 'VIEW', 'DOWNLOAD', 'OPEN'].includes(String(log.action || '').toUpperCase())
+                                                        (log) => {
+                                                            const lActor = cleanId(log.actor?.id || log.actorId);
+                                                            const lDoc = cleanId(log.entityId || log.documentId || log.document?.id);
+                                                            const isRead = ['READ', 'VIEW', 'VIEWED', 'DOWNLOAD', 'DOWNLOADED', 'ACCESS', 'ACCESSED', 'OPEN', 'OPENED'].includes(String(log.action || '').toUpperCase());
+                                                            return lActor === recClean && lDoc === cleanId(item.id) && isRead;
+                                                        }
                                                     )
                                                 );
 

@@ -470,7 +470,7 @@ const systemEventService = {
     recordDocumentRead: async ({ document, user, version = null }) => {
         if (!document?.id || !user?.id) return null;
 
-        // Ensure Administrator, Coordinator, Director, and Officer administrative reads never count up or get recorded
+        // Ensure Administrator and Coordinator administrative reads never count up or get recorded
         const resolvedRole =
             user?.role ||
             useUserStore.getState().users?.find((u) => String(u.id) === String(user.id))?.role ||
@@ -478,9 +478,7 @@ const systemEventService = {
         if (
             isStaffRole(resolvedRole) ||
             isAdminRole(resolvedRole) ||
-            isCoordinatorRole(resolvedRole) ||
-            isDirectorRole(resolvedRole) ||
-            isOfficerRole(resolvedRole)
+            isCoordinatorRole(resolvedRole)
         ) {
             return null;
         }
@@ -497,12 +495,19 @@ const systemEventService = {
 
         // Check if user has already read this document previously (once per user only)
         const loadedLogs = useAuditStore.getState().auditLogs || [];
+        const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id ? String(id).toLowerCase() : '');
+        const targetCleanDocId = cleanId(docId);
+        const targetCleanUserId = cleanId(userId);
+
         const hasExistingRead = loadedLogs.some((l) => {
             const act = String(l?.action || '').toUpperCase();
-            const isReadAct = ['READ', 'VIEW', 'VIEWED', 'DOWNLOAD', 'DOWNLOADED', 'ACCESS', 'ACCESSED'].includes(act);
-            const isDoc = String(l?.entityType || '').toUpperCase() === 'DOCUMENT';
-            const matchDoc = String(l?.entityId || l?.documentId) === docId;
-            const matchActor = String(l?.actorId || l?.actor?.id) === userId;
+            const isReadAct = ['READ', 'VIEW', 'VIEWED', 'DOWNLOAD', 'DOWNLOADED', 'ACCESS', 'ACCESSED', 'OPEN', 'OPENED'].includes(act);
+            const isDoc = !l?.entityType || String(l.entityType).toUpperCase() === 'DOCUMENT';
+            const lDocId = l?.entityId || l?.documentId || l?.document?.id;
+            const lActorId = l?.actorId || l?.actor?.id;
+            if (!lDocId || !lActorId) return false;
+            const matchDoc = cleanId(lDocId) === targetCleanDocId;
+            const matchActor = cleanId(lActorId) === targetCleanUserId;
             return isReadAct && isDoc && matchDoc && matchActor;
         });
 
@@ -533,13 +538,13 @@ const systemEventService = {
                         documentName: docTitle,
                         departmentName: departmentName,
                         _departmentId: departmentId,
-                        role: user.role || constants.USERS_ROLE.MEMBER,
+                        role: resolvedRole || user.role || constants.USERS_ROLE.MEMBER,
                         version: version || document.currentVersion || 1,
                         timestamp: new Date().toISOString(),
                     },
                     actorId: userId,
                     actorName: actorName,
-                    actorRole: user.role || constants.USERS_ROLE.MEMBER,
+                    actorRole: resolvedRole || user.role || constants.USERS_ROLE.MEMBER,
                     actorEmail: user.email || '',
                     actorDepartment: departmentName,
                     _actorDepartmentId: departmentId,
