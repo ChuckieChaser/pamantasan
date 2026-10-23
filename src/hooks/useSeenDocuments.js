@@ -124,8 +124,9 @@ export const isItemNewForUser = (item, currentUser, seenSet, resourceName = 'doc
         item.createdBy ||
         item.createdById
     );
+    // Allow the uploader to see the highlight accent tint on their uploaded/modified items until seen
     if (uploaderClean && uploaderClean === currentUserIdClean) {
-        return false;
+        return true;
     }
 
     const share = item.share;

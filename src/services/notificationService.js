@@ -7,9 +7,13 @@ import { functions } from './firebase';
 // --- SERVICES ---
 const notificationService = {
     // CORE
-    fetchNotifications: async (recipientId) => {
+    fetchNotifications: async (recipientId, options = {}) => {
         try {
-            const data = await dataConnectService.executeQuery('FetchNotifications', { recipientId: recipientId });
+            const data = await dataConnectService.executeQuery('FetchNotifications', {
+                recipientId: recipientId,
+                limit: options?.limit ?? 10000,
+                offset: options?.offset ?? 0,
+            });
             const notifications = data?.notifications ?? [];
 
             return notifications.map(formatLiveNotification);

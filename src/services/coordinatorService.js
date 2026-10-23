@@ -6,9 +6,12 @@ import { constants } from '../constants';
 // --- SERVICES ---
 const coordinatorService = {
     // CORE
-    fetchCoordinatorRequests: async () => {
+    fetchCoordinatorRequests: async (options = {}) => {
         try {
-            const data = await dataConnectService.executeQuery('FetchCoordinatorRequests');
+            const data = await dataConnectService.executeQuery('FetchCoordinatorRequests', {
+                limit: options?.limit ?? 10000,
+                offset: options?.offset ?? 0,
+            });
             const coordinatorRequests = data?.coordinatorRequests ?? [];
 
             return coordinatorRequests.map(formatLiveCoordinatorRequest);
@@ -18,9 +21,13 @@ const coordinatorService = {
         }
     },
 
-    fetchCoordinatorRequestsByRequesterId: async (requesterId) => {
+    fetchCoordinatorRequestsByRequesterId: async (requesterId, options = {}) => {
         try {
-            const data = await dataConnectService.executeQuery('FetchCoordinatorRequestsByRequesterId', { requesterId: requesterId });
+            const data = await dataConnectService.executeQuery('FetchCoordinatorRequestsByRequesterId', {
+                requesterId: requesterId,
+                limit: options?.limit ?? 10000,
+                offset: options?.offset ?? 0,
+            });
             const coordinatorRequests = data?.coordinatorRequests ?? [];
 
             return coordinatorRequests.map(formatLiveCoordinatorRequest);

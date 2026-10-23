@@ -10,9 +10,12 @@ const DEFAULT_AVATAR_STORAGE_PATH = 'avatars/placeholder.png';
 // --- SERVICES ---
 const userService = {
     // USERS
-    fetchUsers: async () => {
+    fetchUsers: async (options = {}) => {
         try {
-            const data = await dataConnectService.executeQuery('FetchUsers');
+            const data = await dataConnectService.executeQuery('FetchUsers', {
+                limit: options?.limit ?? 10000,
+                offset: options?.offset ?? 0,
+            });
             const users = data?.users ?? [];
 
             return users.map(formatLiveUser);

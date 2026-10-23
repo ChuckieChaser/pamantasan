@@ -7,16 +7,20 @@ import { constants } from '../constants';
 // --- SERVICES ---
 const documentService = {
     // DOCUMENTS
-    fetchDocuments: async (isArchived = null) => {
+    fetchDocuments: async (isArchived = null, options = {}) => {
         try {
             let data;
+            const variables = {
+                limit: options?.limit ?? 10000,
+                offset: options?.offset ?? 0,
+            };
             if (isArchived === null || isArchived === undefined) {
-                data = await dataConnectService.executeQuery('FetchAllDocuments').catch(() => null);
+                data = await dataConnectService.executeQuery('FetchAllDocuments', variables).catch(() => null);
                 if (!data?.documents) {
-                    data = await dataConnectService.executeQuery('FetchDocuments', { isArchived: false });
+                    data = await dataConnectService.executeQuery('FetchDocuments', { ...variables, isArchived: false });
                 }
             } else {
-                data = await dataConnectService.executeQuery('FetchDocuments', { isArchived: isArchived });
+                data = await dataConnectService.executeQuery('FetchDocuments', { ...variables, isArchived: isArchived });
             }
             const documents = data?.documents ?? [];
 
@@ -220,9 +224,12 @@ const documentService = {
     },
 
     // VERSIONS
-    fetchAllDocumentVersions: async () => {
+    fetchAllDocumentVersions: async (options = {}) => {
         try {
-            const data = await dataConnectService.executeQuery('FetchAllDocumentVersions');
+            const data = await dataConnectService.executeQuery('FetchAllDocumentVersions', {
+                limit: options?.limit ?? 10000,
+                offset: options?.offset ?? 0,
+            });
             const versions = data?.documentVersions ?? [];
 
             return versions.map(formatLiveDocumentVersion);
@@ -232,9 +239,13 @@ const documentService = {
         }
     },
 
-    fetchDocumentVersions: async (documentId) => {
+    fetchDocumentVersions: async (documentId, options = {}) => {
         try {
-            const data = await dataConnectService.executeQuery('FetchDocumentVersions', { documentId: documentId });
+            const data = await dataConnectService.executeQuery('FetchDocumentVersions', {
+                documentId: documentId,
+                limit: options?.limit ?? 10000,
+                offset: options?.offset ?? 0,
+            });
             const versions = data?.documentVersions ?? [];
 
             return versions.map(formatLiveDocumentVersion);
@@ -355,9 +366,13 @@ const documentService = {
     },
 
     // SHARES
-    fetchDocumentShares: async (documentId) => {
+    fetchDocumentShares: async (documentId, options = {}) => {
         try {
-            const data = await dataConnectService.executeQuery('FetchDocumentShares', { documentId: documentId });
+            const data = await dataConnectService.executeQuery('FetchDocumentShares', {
+                documentId: documentId,
+                limit: options?.limit ?? 10000,
+                offset: options?.offset ?? 0,
+            });
             const shares = data?.documentShares ?? [];
 
             return shares.map(formatLiveDocumentShare);
@@ -367,9 +382,13 @@ const documentService = {
         }
     },
 
-    fetchDocumentSharesByDepartmentId: async (departmentId) => {
+    fetchDocumentSharesByDepartmentId: async (departmentId, options = {}) => {
         try {
-            const data = await dataConnectService.executeQuery('FetchDocumentSharesByDepartmentId', { departmentId: departmentId });
+            const data = await dataConnectService.executeQuery('FetchDocumentSharesByDepartmentId', {
+                departmentId: departmentId,
+                limit: options?.limit ?? 10000,
+                offset: options?.offset ?? 0,
+            });
             const shares = data?.documentShares ?? [];
 
             return shares.map(formatLiveDocumentShare);
@@ -379,9 +398,13 @@ const documentService = {
         }
     },
 
-    fetchDocumentSharesByRecipientId: async (recipientId) => {
+    fetchDocumentSharesByRecipientId: async (recipientId, options = {}) => {
         try {
-            const data = await dataConnectService.executeQuery('FetchDocumentSharesByRecipientId', { recipientId: recipientId });
+            const data = await dataConnectService.executeQuery('FetchDocumentSharesByRecipientId', {
+                recipientId: recipientId,
+                limit: options?.limit ?? 10000,
+                offset: options?.offset ?? 0,
+            });
             const shares = data?.documentShares ?? [];
 
             return shares.map(formatLiveDocumentShare);
@@ -472,9 +495,12 @@ const documentService = {
     },
 
     // REQUESTS
-    fetchDocumentRequests: async () => {
+    fetchDocumentRequests: async (options = {}) => {
         try {
-            const data = await dataConnectService.executeQuery('FetchDocumentRequests');
+            const data = await dataConnectService.executeQuery('FetchDocumentRequests', {
+                limit: options?.limit ?? 10000,
+                offset: options?.offset ?? 0,
+            });
             const requests = data?.documentRequests ?? [];
 
             return requests.map(formatLiveDocumentRequest);
@@ -484,9 +510,13 @@ const documentService = {
         }
     },
 
-    fetchDocumentRequestsByRequesterId: async (requesterId) => {
+    fetchDocumentRequestsByRequesterId: async (requesterId, options = {}) => {
         try {
-            const data = await dataConnectService.executeQuery('FetchDocumentRequestsByRequesterId', { requesterId: requesterId });
+            const data = await dataConnectService.executeQuery('FetchDocumentRequestsByRequesterId', {
+                requesterId: requesterId,
+                limit: options?.limit ?? 10000,
+                offset: options?.offset ?? 0,
+            });
             const requests = data?.documentRequests ?? [];
 
             return requests.map(formatLiveDocumentRequest);

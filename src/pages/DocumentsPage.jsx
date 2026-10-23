@@ -1390,7 +1390,7 @@ const DocumentsPage = ({
                 }
             }
 
-            await fetchDocuments();
+            await fetchDocuments(null, true);
 
             const timestamp = new Date().toISOString();
             const updatedSelected = {
@@ -2888,7 +2888,7 @@ const DocumentsPage = ({
         );
         await Promise.all(workers);
 
-        await fetchDocuments().catch(() => {});
+        await fetchDocuments(null, true).catch(() => {});
         if (currentUser) {
             await syncAllDocumentShares(currentUser, departments, true).catch(() => {});
         }
@@ -3233,7 +3233,7 @@ const DocumentsPage = ({
                 if (created?.id) {
                     await useDocumentStore.getState().inheritSharesFromRoot(created);
                 }
-                await fetchDocuments();
+                await fetchDocuments(null, true);
                 if (currentUser) {
                     await syncAllDocumentShares(currentUser, departments, true).catch(() => {});
                 }

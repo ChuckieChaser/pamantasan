@@ -1,6 +1,13 @@
 # --- DEPARTMENT QUERIES ---
-query FetchDepartments @auth(level: PUBLIC) {
-    departments {
+query FetchDepartments(
+    $limit: Int = 10000
+    $offset: Int = 0
+) @auth(level: PUBLIC) {
+    departments(
+        limit: $limit
+        offset: $offset
+        orderBy: [{ name: ASC }]
+    ) {
         id
         name
         code
@@ -35,8 +42,15 @@ query FetchDepartmentByCode(
 
 
 # --- USER QUERIES ---
-query FetchUsers @auth(level: PUBLIC) {
-    users {
+query FetchUsers(
+    $limit: Int = 10000
+    $offset: Int = 0
+) @auth(level: PUBLIC) {
+    users(
+        limit: $limit
+        offset: $offset
+        orderBy: [{ createdAt: DESC }]
+    ) {
         id
         universityId
         department {
@@ -156,8 +170,14 @@ query FetchUserSettingsByUserId(
 
 query FetchUserSessionsByUserId(
     $userId: UUID!
+    $limit: Int = 1000
+    $offset: Int = 0
 ) @auth(level: PUBLIC) {
-    userSessions(where: { user: { id: { eq: $userId } } }) {
+    userSessions(
+        where: { user: { id: { eq: $userId } } }
+        limit: $limit
+        offset: $offset
+    ) {
         id
         user {
             id
@@ -174,8 +194,14 @@ query FetchUserSessionsByUserId(
 # --- DOCUMENT QUERIES ---
 query FetchDocuments(
     $isArchived: Boolean
+    $limit: Int = 10000
+    $offset: Int = 0
 ) @auth(level: PUBLIC) {
-    documents(where: { isArchived: { eq: $isArchived } }) {
+    documents(
+        where: { isArchived: { eq: $isArchived } }
+        limit: $limit
+        offset: $offset
+    ) {
         id
         parent {
             id
@@ -191,8 +217,15 @@ query FetchDocuments(
     }
 }
 
-query FetchAllDocuments @auth(level: PUBLIC) {
-    documents(orderBy: [{ isFolder: DESC }, { name: ASC }]) {
+query FetchAllDocuments(
+    $limit: Int = 10000
+    $offset: Int = 0
+) @auth(level: PUBLIC) {
+    documents(
+        limit: $limit
+        offset: $offset
+        orderBy: [{ isFolder: DESC }, { name: ASC }]
+    ) {
         id
         parent {
             id
@@ -229,8 +262,15 @@ query FetchDocumentById(
 
 query FetchDocumentVersions(
     $documentId: UUID!
+    $limit: Int = 10000
+    $offset: Int = 0
 ) @auth(level: PUBLIC) {
-    documentVersions(where: { document: { id: { eq: $documentId } } }, orderBy: [{ version: DESC }]) {
+    documentVersions(
+        where: { document: { id: { eq: $documentId } } }
+        limit: $limit
+        offset: $offset
+        orderBy: [{ version: DESC }]
+    ) {
         id
         document {
             id
@@ -272,8 +312,15 @@ query FetchDocumentVersions(
     }
 }
 
-query FetchAllDocumentVersions @auth(level: PUBLIC) {
-    documentVersions(orderBy: [{ createdAt: DESC }]) {
+query FetchAllDocumentVersions(
+    $limit: Int = 10000
+    $offset: Int = 0
+) @auth(level: PUBLIC) {
+    documentVersions(
+        limit: $limit
+        offset: $offset
+        orderBy: [{ createdAt: DESC }]
+    ) {
         id
         document {
             id
@@ -362,8 +409,14 @@ query FetchDocumentVersionById(
 
 query FetchDocumentShares(
     $documentId: UUID!
+    $limit: Int = 10000
+    $offset: Int = 0
 ) @auth(level: PUBLIC) {
-    documentShares(where: { document: { id: { eq: $documentId } } }) {
+    documentShares(
+        where: { document: { id: { eq: $documentId } } }
+        limit: $limit
+        offset: $offset
+    ) {
         id
         document {
             id
@@ -392,8 +445,14 @@ query FetchDocumentShares(
 
 query FetchDocumentSharesByDepartmentId(
     $departmentId: UUID!
+    $limit: Int = 10000
+    $offset: Int = 0
 ) @auth(level: PUBLIC) {
-    documentShares(where: { department: { id: { eq: $departmentId } } }) {
+    documentShares(
+        where: { department: { id: { eq: $departmentId } } }
+        limit: $limit
+        offset: $offset
+    ) {
         id
         document {
             id
@@ -422,8 +481,14 @@ query FetchDocumentSharesByDepartmentId(
 
 query FetchDocumentSharesByRecipientId(
     $recipientId: UUID!
+    $limit: Int = 10000
+    $offset: Int = 0
 ) @auth(level: PUBLIC) {
-    documentShares(where: { recipient: { id: { eq: $recipientId } } }) {
+    documentShares(
+        where: { recipient: { id: { eq: $recipientId } } }
+        limit: $limit
+        offset: $offset
+    ) {
         id
         document {
             id
@@ -480,8 +545,15 @@ query FetchDocumentShareById(
     }
 }
 
-query FetchDocumentRequests @auth(level: PUBLIC) {
-    documentRequests {
+query FetchDocumentRequests(
+    $limit: Int = 10000
+    $offset: Int = 0
+) @auth(level: PUBLIC) {
+    documentRequests(
+        limit: $limit
+        offset: $offset
+        orderBy: [{ createdAt: DESC }]
+    ) {
         id
         requester {
             id
@@ -505,8 +577,15 @@ query FetchDocumentRequests @auth(level: PUBLIC) {
 
 query FetchDocumentRequestsByRequesterId(
     $requesterId: UUID!
+    $limit: Int = 10000
+    $offset: Int = 0
 ) @auth(level: PUBLIC) {
-    documentRequests(where: { requester: { id: { eq: $requesterId } } }) {
+    documentRequests(
+        where: { requester: { id: { eq: $requesterId } } }
+        limit: $limit
+        offset: $offset
+        orderBy: [{ createdAt: DESC }]
+    ) {
         id
         requester {
             id
@@ -555,8 +634,15 @@ query FetchDocumentRequestById(
 
 query FetchDocumentRequestMessages(
     $documentRequestId: UUID!
+    $limit: Int = 10000
+    $offset: Int = 0
 ) @auth(level: PUBLIC) {
-    documentRequestMessages(where: { documentRequest: { id: { eq: $documentRequestId } } }) {
+    documentRequestMessages(
+        where: { documentRequest: { id: { eq: $documentRequestId } } }
+        limit: $limit
+        offset: $offset
+        orderBy: [{ createdAt: ASC }]
+    ) {
         id
         documentRequest {
             id
@@ -573,8 +659,14 @@ query FetchDocumentRequestMessages(
 
 query FetchDocumentRequestAttachments(
     $documentRequestId: UUID!
+    $limit: Int = 10000
+    $offset: Int = 0
 ) @auth(level: PUBLIC) {
-    documentRequestAttachments(where: { documentRequest: { id: { eq: $documentRequestId } } }) {
+    documentRequestAttachments(
+        where: { documentRequest: { id: { eq: $documentRequestId } } }
+        limit: $limit
+        offset: $offset
+    ) {
         id
         documentRequest {
             id
@@ -594,8 +686,15 @@ query FetchDocumentRequestAttachments(
 
 
 # --- COORDINATOR REQUEST QUERIES ---
-query FetchCoordinatorRequests @auth(level: PUBLIC) {
-    coordinatorRequests {
+query FetchCoordinatorRequests(
+    $limit: Int = 10000
+    $offset: Int = 0
+) @auth(level: PUBLIC) {
+    coordinatorRequests(
+        limit: $limit
+        offset: $offset
+        orderBy: [{ createdAt: DESC }]
+    ) {
         id
         requester {
             id
@@ -618,8 +717,15 @@ query FetchCoordinatorRequests @auth(level: PUBLIC) {
 
 query FetchCoordinatorRequestsByRequesterId(
     $requesterId: UUID!
+    $limit: Int = 10000
+    $offset: Int = 0
 ) @auth(level: PUBLIC) {
-    coordinatorRequests(where: { requester: { id: { eq: $requesterId } } }) {
+    coordinatorRequests(
+        where: { requester: { id: { eq: $requesterId } } }
+        limit: $limit
+        offset: $offset
+        orderBy: [{ createdAt: DESC }]
+    ) {
         id
         requester {
             id
@@ -668,8 +774,15 @@ query FetchCoordinatorRequestById(
 # --- NOTIFICATION QUERIES ---
 query FetchNotifications(
     $recipientId: UUID!
+    $limit: Int = 10000
+    $offset: Int = 0
 ) @auth(level: PUBLIC) {
-    notifications(where: { recipient: { id: { eq: $recipientId } } }) {
+    notifications(
+        where: { recipient: { id: { eq: $recipientId } } }
+        limit: $limit
+        offset: $offset
+        orderBy: [{ createdAt: DESC }]
+    ) {
         id
         recipient {
             id
@@ -695,7 +808,7 @@ query FetchNotifications(
 # --- AUDIT LOG QUERIES ---
 query FetchAuditLogs(
     $limit: Int = 10000
-    $offset: Int
+    $offset: Int = 0
 ) @auth(level: PUBLIC) {
     auditLogs(
         limit: $limit

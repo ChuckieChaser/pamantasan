@@ -18,9 +18,12 @@ const generateUuid = () => {
 // --- SERVICES ---
 const departmentService = {
     // CORE
-    fetchDepartments: async () => {
+    fetchDepartments: async (options = {}) => {
         try {
-            const data = await dataConnectService.executeQuery('FetchDepartments');
+            const data = await dataConnectService.executeQuery('FetchDepartments', {
+                limit: options?.limit ?? 10000,
+                offset: options?.offset ?? 0,
+            });
             const departments = data?.departments ?? [];
 
             return departments.map(formatLiveDepartment).filter(Boolean);
