@@ -1633,13 +1633,14 @@ const RequestsPage = ({
                                                                                             const requestRequesterId = typeof viewingDocumentRequest?.requester === 'object'
                                                                                                 ? viewingDocumentRequest?.requester?.id
                                                                                                 : (viewingDocumentRequest?.requesterId ?? viewingDocumentRequest?.requester);
-                                                                                            const isRequester = currentUser?.id && String(currentUser.id) === String(requestRequesterId);
+                                                                                            const isRequester = currentUser?.id && String(currentUser.id).replace(/-/g, '').toLowerCase() === String(requestRequesterId).replace(/-/g, '').toLowerCase();
 
                                                                                             if (isRequester && docToRecord && currentUser?.id) {
                                                                                                 systemEventService.recordDocumentRead({
                                                                                                     document: docToRecord,
                                                                                                     user: currentUser,
                                                                                                     version: latestVer?.version,
+                                                                                                    isDocumentRequest: true,
                                                                                                 }).catch(() => {});
                                                                                             }
                                                                                         } catch (err) {

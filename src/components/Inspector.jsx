@@ -76,7 +76,7 @@ import { Account } from './ui/Account';
 import { formatMimeTypeLabel } from './common';
 import { findRootSharedFolder, getActionConfirmationConfig } from './browser/common';
 import { constants, isStaffRole } from '../constants';
-import { storageService, coordinatorApprovalService, aiService } from '../services';
+import { storageService, coordinatorApprovalService, aiService, systemEventService } from '../services';
 import { stripFileExtension } from '../utils/fileNameUtils';
 
 const isRmoUser = (user, safeDepts = []) => {
@@ -305,6 +305,7 @@ const formatChangeSummary = (rawChangeSummary) => {
     return text;
 };
 
+const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id ? String(id).toLowerCase() : '');
 
 // --- COMPONENTS ---
 const Inspector = ({
@@ -392,6 +393,7 @@ const Inspector = ({
     const [reshareModal, setReshareModal] = useState(null);
     const [reshareFile, setReshareFile] = useState(null);
     const [reshareChangeSummary, setReshareChangeSummary] = useState('');
+    const [reshareChangeName, setReshareChangeName] = useState(true);
     const [isSubmittingReshare, setIsSubmittingReshare] = useState(false);
 
     // HOOKS
@@ -1584,6 +1586,11 @@ const Inspector = ({
         }
 
         const targetItem = target;
+        if (actionKey === 'publish') {
+            useDocumentStore.getState().setPublishModalDocument(targetItem);
+            return;
+        }
+
         const shouldSkipLoading = actionKey === 'archive' && targetItem?.isFolder;
 
         if (!shouldSkipLoading) {
@@ -1695,7 +1702,8 @@ const Inspector = ({
                     reshareModal.shareItem.id,
                     reshareFile,
                     uploaderId,
-                    reshareChangeSummary.trim() || 'Revision addressing rejection feedback'
+                    reshareChangeSummary.trim() || 'Revision addressing rejection feedback',
+                    reshareChangeName
                 );
                 showToast({
                     type: 'success',
@@ -1707,7 +1715,8 @@ const Inspector = ({
                     reshareModal.docId,
                     reshareModal.shareItem.id,
                     reshareFile,
-                    uploaderId
+                    uploaderId,
+                    reshareChangeName
                 );
                 showToast({
                     type: 'success',
@@ -1724,6 +1733,7 @@ const Inspector = ({
             setReshareModal(null);
             setReshareFile(null);
             setReshareChangeSummary('');
+            setReshareChangeName(true);
         } catch (err) {
             console.error('Failed to reshare document:', err);
             showToast({
@@ -3600,7 +3610,7 @@ const Inspector = ({
                                                         }
                                                     }
                                                     const isExcluded = constants.isStaffRole(actorRole) || constants.isAdminRole(actorRole) || constants.isCoordinatorRole(actorRole);
-                                                    if (!isExcluded && !isRmoUser(actorUser, allDepartments)) {
+                                                    if (!isExcluded) {
                                                         if (!childDocReadersMap.has(docId)) {
                                                             childDocReadersMap.set(docId, new Set());
                                                         }
@@ -3626,11 +3636,16 @@ const Inspector = ({
                                             }
 
                                             // File: unique non-RMO readers
-                                            const targetId = item?.id;
+                                            const targetClean = cleanId(item?.id);
                                             const nonRmoReaders = new Set();
                                             (allAuditLogs || []).forEach((log) => {
-                                                const isDoc = log?.entityId === targetId || log?.document?.id === targetId;
-                                                const isRead = ['READ', 'VIEW', 'VIEWED', 'DOWNLOAD', 'DOWNLOADED', 'ACCESS', 'ACCESSED'].includes(
+                                                let parsed = log?.data;
+                                                if (typeof parsed === 'string') {
+                                                    try { parsed = JSON.parse(parsed); } catch {}
+                                                }
+                                                const logDocClean = cleanId(log?.entityId || log?.document?.id || log?.documentId || parsed?._documentId || parsed?.documentId);
+                                                const isDoc = logDocClean && targetClean && logDocClean === targetClean;
+                                                const isRead = ['READ', 'VIEW', 'VIEWED', 'DOWNLOAD', 'DOWNLOADED', 'ACCESS', 'ACCESSED', 'OPEN', 'OPENED'].includes(
                                                     String(log?.action || '').toUpperCase()
                                                 );
                                                 if (!isDoc || !isRead) return;
@@ -3656,7 +3671,7 @@ const Inspector = ({
                                                     }
                                                 }
                                                 const isExcluded = constants.isStaffRole(actorRole) || constants.isAdminRole(actorRole) || constants.isCoordinatorRole(actorRole);
-                                                if (!isExcluded && !isRmoUser(actorUser, allDepartments)) {
+                                                if (!isExcluded) {
                                                     nonRmoReaders.add(String(actorId));
                                                 }
                                             });
@@ -3993,6 +4008,7 @@ const Inspector = ({
                                                                 });
                                                                 setReshareFile(null);
                                                                 setReshareChangeSummary('');
+                                                                setReshareChangeName(true);
                                                             }}
                                                             className="text-[11px]"
                                                         >
@@ -4372,6 +4388,7 @@ const Inspector = ({
                                                                             });
                                                                             setReshareFile(null);
                                                                             setReshareChangeSummary('Revision addressing rejection feedback');
+                                                                            setReshareChangeName(true);
                                                                         }}
                                                                         className="truncate text-[11px]"
                                                                     >
@@ -4391,6 +4408,7 @@ const Inspector = ({
                                                                             });
                                                                             setReshareFile(null);
                                                                             setReshareChangeSummary('');
+                                                                            setReshareChangeName(true);
                                                                         }}
                                                                         className="truncate text-[11px]"
                                                                     >
@@ -4601,6 +4619,93 @@ const Inspector = ({
                                                                         <span>Published</span>
                                                                     </div>
                                                                 </div>
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })()}
+
+                                                {/* REJECTED DESCENDANT FILES INDICATOR FOR SHARED FOLDERS */}
+                                                {(() => {
+                                                    if (!isFold) return null;
+                                                    const descendantDocIds = getRecursiveDescendantDocIds(item.id, allDocuments).filter((id) => id !== item.id);
+                                                    const descendantFiles = (allDocuments || []).filter(
+                                                        (d) => descendantDocIds.includes(d.id) && !d.isFolder && d.mimeType !== 'folder'
+                                                    );
+                                                    const rejectedList = [];
+                                                    for (const file of descendantFiles) {
+                                                        const fileIdClean = cleanId(file.id);
+                                                        const fileShare = (allDocumentShares || []).find((s) => {
+                                                            const sDocId = cleanId(s.document?.id ?? s.documentId);
+                                                            const sDeptId = cleanId(s.department?.id ?? s.departmentId);
+                                                            return sDocId === fileIdClean && sDeptId === targetDeptClean;
+                                                        });
+                                                        if (fileShare && String(fileShare.status || '').toUpperCase().includes('REJECT')) {
+                                                            rejectedList.push({
+                                                                file,
+                                                                share: fileShare,
+                                                                rejectionReason: fileShare.rejectionReason,
+                                                            });
+                                                        }
+                                                    }
+
+                                                    if (rejectedList.length === 0) return null;
+
+                                                    return (
+                                                        <div className="p-2.5 rounded-md border border-error/30 bg-error/5 flex flex-col gap-2">
+                                                            <div className="flex items-center justify-between text-[11px]">
+                                                                <span className="font-semibold text-error flex items-center gap-1.5">
+                                                                    <AlertTriangle className="h-3.5 w-3.5 text-error shrink-0" />
+                                                                    <span>Rejected Files in Folder ({rejectedList.length})</span>
+                                                                </span>
+                                                                <span className="text-[10px] text-error font-medium">Independent Share Track</span>
+                                                            </div>
+                                                            <p className="text-[11px] text-text-muted leading-relaxed">
+                                                                The following files were rejected during department review. They retain their individual lifecycle and will not be published until resolved:
+                                                            </p>
+                                                            <div className="flex flex-col gap-1.5 max-h-48 overflow-y-auto pr-1">
+                                                                {rejectedList.map((rf) => (
+                                                                    <div key={rf.file.id} className="p-2 rounded border border-surface-border bg-surface flex flex-col gap-1 text-xs">
+                                                                        <div className="flex items-center justify-between gap-2">
+                                                                            <span className="font-medium text-text truncate" title={rf.file.name}>{rf.file.name}</span>
+                                                                            <div className="flex items-center gap-1.5 shrink-0">
+                                                                                <Button
+                                                                                    variant="secondary"
+                                                                                    size="xs"
+                                                                                    onClick={() => handleActionClick('open', rf.file)}
+                                                                                    className="text-[10px] px-2 py-0.5"
+                                                                                >
+                                                                                    View
+                                                                                </Button>
+                                                                                {isAdmin && (
+                                                                                    <Button
+                                                                                        variant="primary"
+                                                                                        size="xs"
+                                                                                        onClick={() => {
+                                                                                            setReshareModal({
+                                                                                                mode: 'overwrite',
+                                                                                                shareItem: rf.share,
+                                                                                                docId: rf.file.id,
+                                                                                                docName: rf.file.name,
+                                                                                                targetDeptName: shareDepartment?.name ?? 'Department',
+                                                                                            });
+                                                                                            setReshareFile(null);
+                                                                                            setReshareChangeSummary('');
+                                                                                            setReshareChangeName(true);
+                                                                                        }}
+                                                                                        className="text-[10px] px-2 py-0.5"
+                                                                                    >
+                                                                                        Reshare
+                                                                                    </Button>
+                                                                                )}
+                                                                            </div>
+                                                                        </div>
+                                                                        {rf.rejectionReason && (
+                                                                            <div className="text-[11px] text-error bg-error/10 px-2 py-1 rounded leading-tight">
+                                                                                Reason: &ldquo;{rf.rejectionReason}&rdquo;
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                ))}
                                                             </div>
                                                         </div>
                                                     );
@@ -7306,13 +7411,14 @@ const Inspector = ({
                             setReshareModal(null);
                             setReshareFile(null);
                             setReshareChangeSummary('');
+                            setReshareChangeName(true);
                         }
                     }}
                     title={reshareModal.mode === 'new_version' ? 'Reshare Document (New Version)' : 'Overwrite File & Reshare'}
                     description={
                         reshareModal.mode === 'new_version'
                             ? `Upload a new revision for ${reshareModal.targetDeptName}. This will create the next version number and reset status to Pending Approval.`
-                            : `Upload a replacement file for ${reshareModal.targetDeptName}. The file content will overwrite the current version file in-place, while strictly preserving the document name "${reshareModal.docName || item?.name || 'Document'}". Status will be reset to Pending Approval.`
+                            : `Upload a replacement file for ${reshareModal.targetDeptName}. The file content will overwrite the current version in-place and reset status to Pending Approval.`
                     }
                     icon={reshareModal.mode === 'new_version' ? UploadCloud : FileCheck}
                     size="md"
@@ -7331,6 +7437,7 @@ const Inspector = ({
                             setReshareModal(null);
                             setReshareFile(null);
                             setReshareChangeSummary('');
+                            setReshareChangeName(true);
                         },
                     }}
                 >
@@ -7347,19 +7454,33 @@ const Inspector = ({
                                 className="block w-full text-xs text-text file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-accent file:text-accent-foreground hover:file:bg-accent/90 cursor-pointer border border-surface-border rounded-lg bg-surface p-2"
                             />
                             {reshareFile && (
-                                <div className="text-[11px] text-text-muted flex flex-col gap-1.5">
+                                <div className="text-[11px] text-text-muted flex flex-col gap-2 mt-1">
                                     <div>
                                         Selected: <strong className="text-text">{reshareFile.name}</strong> ({formatBytes(reshareFile.size)})
                                     </div>
-                                    {reshareModal.mode === 'overwrite' && (
-                                        <div className="p-2 rounded bg-surface-hover border border-surface-border text-[11px] text-text">
-                                            <span className="font-semibold text-accent">Preserved Document Name:</span>{' '}
-                                            <span className="font-bold">{reshareModal.docName || item?.name || 'Document'}</span>
-                                            <p className="text-text-muted mt-0.5">
-                                                The file content will be updated to match the contents of <span className="font-semibold text-text">{reshareFile.name}</span>, while retaining the document name <span className="font-semibold text-text">&ldquo;{reshareModal.docName || item?.name || 'Document'}&rdquo;</span>.
-                                            </p>
+
+                                    {/* CHANGE NAME TOGGLE (CHECKBOX / SWITCH) */}
+                                    <label className="flex items-start gap-2.5 p-2.5 rounded-lg border border-surface-border bg-surface-hover/60 cursor-pointer select-none">
+                                        <input
+                                            type="checkbox"
+                                            id="reshare-change-name-toggle"
+                                            checked={reshareChangeName}
+                                            onChange={(e) => setReshareChangeName(e.target.checked)}
+                                            className="mt-0.5 rounded border-surface-border text-accent focus:ring-accent"
+                                        />
+                                        <div className="flex flex-col gap-0.5">
+                                            <span className="text-xs font-semibold text-text">
+                                                Change document name to match uploaded file
+                                            </span>
+                                            <span className="text-[11px] text-text-muted">
+                                                {reshareChangeName ? (
+                                                    <>Document name will be updated to <strong className="text-accent">&ldquo;{reshareFile.name}&rdquo;</strong>.</>
+                                                ) : (
+                                                    <>Document name will remain <strong className="text-accent">&ldquo;{reshareModal.docName || item?.name || 'Document'}&rdquo;</strong> while replacing content.</>
+                                                )}
+                                            </span>
                                         </div>
-                                    )}
+                                    </label>
                                 </div>
                             )}
                         </div>
