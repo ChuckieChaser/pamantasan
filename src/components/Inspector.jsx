@@ -870,22 +870,25 @@ const Inspector = ({
                 const descendantFileIds = new Set(descendantFiles.map((d) => cleanId(d.id)));
                 const childShares = allDocumentShares.filter((s) => {
                     const sDocId = cleanId(s.document?.id ?? s.documentId);
-                    const isBase = !s.recipientId && !s.recipient?.id && !s.recipient;
-                    return descendantFileIds.has(sDocId) && isBase;
+                    return descendantFileIds.has(sDocId);
                 });
                 if (childShares.length > 0) {
-                    if (
-                        childShares.length >= descendantFiles.length &&
-                        childShares.every(
-                            (s) => s.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED || s.status === constants.DOCUMENT_SHARES_STATUS.STASHED
-                        )
-                    ) {
-                        folderEffectiveStatus = childShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED)
+                    const descendantFilesPublishedOrStashed = descendantFiles.length > 0 && descendantFiles.every((childFile) => {
+                        const childCleanId = cleanId(childFile.id);
+                        const cShares = childShares.filter((s) => cleanId(s.document?.id ?? s.documentId) === childCleanId);
+                        return cShares.some((s) => {
+                            const st = String(s.status || '').toUpperCase();
+                            return st === constants.DOCUMENT_SHARES_STATUS.PUBLISHED || st === constants.DOCUMENT_SHARES_STATUS.STASHED;
+                        });
+                    });
+                    if (descendantFilesPublishedOrStashed) {
+                        const anyPub = childShares.some((s) => String(s.status || '').toUpperCase() === constants.DOCUMENT_SHARES_STATUS.PUBLISHED);
+                        folderEffectiveStatus = anyPub
                             ? constants.DOCUMENT_SHARES_STATUS.PUBLISHED
                             : constants.DOCUMENT_SHARES_STATUS.STASHED;
-                    } else if (childShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL)) {
+                    } else if (childShares.some((s) => String(s.status || '').toUpperCase() === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL)) {
                         folderEffectiveStatus = constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL;
-                    } else if (childShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.APPROVED)) {
+                    } else if (childShares.some((s) => String(s.status || '').toUpperCase() === constants.DOCUMENT_SHARES_STATUS.APPROVED)) {
                         folderEffectiveStatus = constants.DOCUMENT_SHARES_STATUS.APPROVED;
                     }
                 }
@@ -1042,27 +1045,30 @@ const Inspector = ({
             const computedFolderDeptShares = directFolderShares.map((fShare) => {
                 const fDeptClean = cleanId(fShare.department?.id ?? fShare.departmentId);
                 const childShares = allDocumentShares.filter((s) => {
-                    const sDocId = cleanId(s.document?.id ?? s.documentId);
+                    const sDocClean = cleanId(s.document?.id ?? s.documentId);
                     const sDeptClean = cleanId(s.department?.id ?? s.departmentId);
-                    const isBase = !s.recipientId && !s.recipient?.id && !s.recipient;
-                    return descendantFileIds.has(sDocId) && sDeptClean === fDeptClean && isBase;
+                    return descendantFileIds.has(sDocClean) && sDeptClean === fDeptClean;
                 });
 
                 if (childShares.length === 0) return fShare;
 
                 let nextStatus = fShare.status;
-                const allPubOrStashed = childShares.length >= descendantFiles.length &&
-                    childShares.every(
-                        (s) => s.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED || s.status === constants.DOCUMENT_SHARES_STATUS.STASHED
-                    );
+                const descendantFilesPublishedOrStashed = descendantFiles.length > 0 && descendantFiles.every((childFile) => {
+                    const childCleanId = cleanId(childFile.id);
+                    const cShares = childShares.filter((s) => cleanId(s.document?.id ?? s.documentId) === childCleanId);
+                    return cShares.some((s) => {
+                        const st = String(s.status || '').toUpperCase();
+                        return st === constants.DOCUMENT_SHARES_STATUS.PUBLISHED || st === constants.DOCUMENT_SHARES_STATUS.STASHED;
+                    });
+                });
 
-                if (allPubOrStashed) {
-                    nextStatus = childShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED)
+                if (descendantFilesPublishedOrStashed) {
+                    nextStatus = childShares.some((s) => String(s.status || '').toUpperCase() === constants.DOCUMENT_SHARES_STATUS.PUBLISHED)
                         ? constants.DOCUMENT_SHARES_STATUS.PUBLISHED
                         : constants.DOCUMENT_SHARES_STATUS.STASHED;
-                } else if (childShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL)) {
+                } else if (childShares.some((s) => String(s.status || '').toUpperCase() === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL)) {
                     nextStatus = constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL;
-                } else if (childShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.APPROVED)) {
+                } else if (childShares.some((s) => String(s.status || '').toUpperCase() === constants.DOCUMENT_SHARES_STATUS.APPROVED)) {
                     nextStatus = constants.DOCUMENT_SHARES_STATUS.APPROVED;
                 }
 
@@ -2445,23 +2451,26 @@ const Inspector = ({
                         return descendantFileIds.has(sDocId) && userDeptClean && sDeptId === userDeptClean;
                     });
                     if (childShares.length > 0) {
-                        if (childShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.REJECTED)) {
+                        if (childShares.some((s) => String(s.status || '').toUpperCase() === constants.DOCUMENT_SHARES_STATUS.REJECTED)) {
                             return constants.DOCUMENT_SHARES_STATUS.REJECTED;
                         }
-                        if (
-                            childShares.length >= descendantFiles.length &&
-                            childShares.every(
-                                (s) => s.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED || s.status === constants.DOCUMENT_SHARES_STATUS.STASHED
-                            )
-                        ) {
-                            return childShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED)
+                        const descendantFilesPublishedOrStashed = descendantFiles.length > 0 && descendantFiles.every((childFile) => {
+                            const childCleanId = cleanId(childFile.id);
+                            const cShares = childShares.filter((s) => cleanId(s.document?.id ?? s.documentId) === childCleanId);
+                            return cShares.some((s) => {
+                                const st = String(s.status || '').toUpperCase();
+                                return st === constants.DOCUMENT_SHARES_STATUS.PUBLISHED || st === constants.DOCUMENT_SHARES_STATUS.STASHED;
+                            });
+                        });
+                        if (descendantFilesPublishedOrStashed) {
+                            return childShares.some((s) => String(s.status || '').toUpperCase() === constants.DOCUMENT_SHARES_STATUS.PUBLISHED)
                                 ? constants.DOCUMENT_SHARES_STATUS.PUBLISHED
                                 : constants.DOCUMENT_SHARES_STATUS.STASHED;
                         }
-                        if (childShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL)) {
+                        if (childShares.some((s) => String(s.status || '').toUpperCase() === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL)) {
                             return constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL;
                         }
-                        if (childShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.APPROVED)) {
+                        if (childShares.some((s) => String(s.status || '').toUpperCase() === constants.DOCUMENT_SHARES_STATUS.APPROVED)) {
                             return constants.DOCUMENT_SHARES_STATUS.APPROVED;
                         }
                     }
@@ -4572,11 +4581,19 @@ const Inspector = ({
                                             return recUser && isUserInDept(recUser);
                                         });
 
-                                        const isDeptPublished = String(shareItem.status || '').toUpperCase() === constants.DOCUMENT_SHARES_STATUS.PUBLISHED;
-                                        const isAllMembersPublished = isDeptPublished && (
-                                            deptUserShares.length === 0 ||
-                                            (deptFaculty.length > 0 && deptUserShares.length >= deptFaculty.length)
+                                        const hasMemberPublished = deptUserShares.some(
+                                            (us) => String(us.status || '').toUpperCase() === constants.DOCUMENT_SHARES_STATUS.PUBLISHED
                                         );
+                                        const isDeptPublished = String(shareItem.status || '').toUpperCase() === constants.DOCUMENT_SHARES_STATUS.PUBLISHED || hasMemberPublished;
+                                        const isDeptStashed = String(shareItem.status || '').toUpperCase() === constants.DOCUMENT_SHARES_STATUS.STASHED;
+                                        const isAllMembersPublished = (String(shareItem.status || '').toUpperCase() === constants.DOCUMENT_SHARES_STATUS.PUBLISHED && deptUserShares.length === 0) ||
+                                            (deptFaculty.length > 0 && deptUserShares.length >= deptFaculty.length && deptUserShares.every((us) => String(us.status || '').toUpperCase() === constants.DOCUMENT_SHARES_STATUS.PUBLISHED));
+
+                                        const singleEffectiveStatus = isDeptPublished
+                                            ? constants.DOCUMENT_SHARES_STATUS.PUBLISHED
+                                            : isDeptStashed
+                                            ? constants.DOCUMENT_SHARES_STATUS.STASHED
+                                            : shareItem.status;
 
                                         const directChildren = isFold
                                             ? (allDocuments || []).filter((d) => {
@@ -4591,13 +4608,18 @@ const Inspector = ({
                                         if (isFold && directFiles.length > 0) {
                                             const fileShareStatuses = directFiles.map((childFile) => {
                                                 const childCleanId = cleanId(childFile.id);
-                                                const childShare = (allDocumentShares || []).find((s) => {
+                                                const childDeptShares = (allDocumentShares || []).filter((s) => {
                                                     const sDocClean = cleanId(s.document?.id ?? s.documentId);
                                                     const sDeptClean = cleanId(s.department?.id ?? s.departmentId);
-                                                    const isBase = !s.recipientId && !s.recipient?.id && !s.recipient;
-                                                    return sDocClean === childCleanId && sDeptClean === targetDeptClean && isBase;
+                                                    return sDocClean === childCleanId && sDeptClean === targetDeptClean;
                                                 });
-                                                return String(childShare?.status || shareItem.status || 'PENDING_APPROVAL').toUpperCase();
+                                                const isChildPub = childDeptShares.some((s) => String(s.status || '').toUpperCase() === constants.DOCUMENT_SHARES_STATUS.PUBLISHED);
+                                                const isChildStashed = !isChildPub && childDeptShares.some((s) => String(s.status || '').toUpperCase() === constants.DOCUMENT_SHARES_STATUS.STASHED);
+                                                const baseChildShare = childDeptShares.find((s) => !s.recipientId && !s.recipient?.id && !s.recipient);
+
+                                                if (isChildPub) return constants.DOCUMENT_SHARES_STATUS.PUBLISHED;
+                                                if (isChildStashed) return constants.DOCUMENT_SHARES_STATUS.STASHED;
+                                                return String(baseChildShare?.status || shareItem.status || 'PENDING_APPROVAL').toUpperCase();
                                             });
                                             const allPubOrStashed = fileShareStatuses.every(
                                                 (st) => st === constants.DOCUMENT_SHARES_STATUS.PUBLISHED || st === constants.DOCUMENT_SHARES_STATUS.STASHED
@@ -4644,8 +4666,8 @@ const Inspector = ({
                                                     </div>
                                                     <div className="flex items-center gap-2 shrink-0">
                                                         <Badge
-                                                            variant={STATUS_BADGE_VARIANT[isFold ? folderDeptStatus : shareItem.status] ?? 'neutral'}
-                                                            label={isFold ? folderDeptStatus : shareItem.status}
+                                                            variant={STATUS_BADGE_VARIANT[isFold ? folderDeptStatus : singleEffectiveStatus] ?? 'neutral'}
+                                                            label={isFold ? folderDeptStatus : singleEffectiveStatus}
                                                         />
                                                         <button
                                                             type="button"
@@ -4664,25 +4686,48 @@ const Inspector = ({
                                                         <div className="flex flex-col gap-2.5 pt-1 border-t border-surface-border">
                                                             {directFiles.map((childFile) => {
                                                                 const childCleanId = cleanId(childFile.id);
-                                                                const childShare = (allDocumentShares || []).find((s) => {
+                                                                const childDeptShares = (allDocumentShares || []).filter((s) => {
                                                                     const sDocClean = cleanId(s.document?.id ?? s.documentId);
                                                                     const sDeptClean = cleanId(s.department?.id ?? s.departmentId);
-                                                                    const isBase = !s.recipientId && !s.recipient?.id && !s.recipient;
-                                                                    return sDocClean === childCleanId && sDeptClean === targetDeptClean && isBase;
-                                                                }) || shareItem;
+                                                                    return sDocClean === childCleanId && sDeptClean === targetDeptClean;
+                                                                });
 
-                                                                const fileStatus = String(childShare?.status || 'PENDING_APPROVAL').toUpperCase();
-                                                                const isFileRejected = fileStatus === constants.DOCUMENT_SHARES_STATUS.REJECTED;
-                                                                const isFileStashed = fileStatus === constants.DOCUMENT_SHARES_STATUS.STASHED;
-                                                                const isFilePublished = fileStatus === constants.DOCUMENT_SHARES_STATUS.PUBLISHED;
+                                                                const isFolderPub = String(shareItem.status || '').toUpperCase() === constants.DOCUMENT_SHARES_STATUS.PUBLISHED;
+                                                                const isFolderStashed = String(shareItem.status || '').toUpperCase() === constants.DOCUMENT_SHARES_STATUS.STASHED;
+
+                                                                const baseChildShare = childDeptShares.find((s) => !s.recipientId && !s.recipient?.id && !s.recipient) || shareItem;
+
+                                                                const isFilePublished = childDeptShares.some((s) => String(s.status || '').toUpperCase() === constants.DOCUMENT_SHARES_STATUS.PUBLISHED) ||
+                                                                    (childDeptShares.length === 0 && isFolderPub);
+
+                                                                const isFileStashed = !isFilePublished && (
+                                                                    childDeptShares.some((s) => String(s.status || '').toUpperCase() === constants.DOCUMENT_SHARES_STATUS.STASHED) ||
+                                                                    (childDeptShares.length === 0 && isFolderStashed)
+                                                                );
+
+                                                                const isFileRejected = !isFilePublished && !isFileStashed && (
+                                                                    childDeptShares.some((s) => String(s.status || '').toUpperCase() === constants.DOCUMENT_SHARES_STATUS.REJECTED) ||
+                                                                    String(baseChildShare?.status || '').toUpperCase() === constants.DOCUMENT_SHARES_STATUS.REJECTED
+                                                                );
+
+                                                                let fileStatus;
+                                                                if (isFilePublished) {
+                                                                    fileStatus = constants.DOCUMENT_SHARES_STATUS.PUBLISHED;
+                                                                } else if (isFileStashed) {
+                                                                    fileStatus = constants.DOCUMENT_SHARES_STATUS.STASHED;
+                                                                } else if (isFileRejected) {
+                                                                    fileStatus = constants.DOCUMENT_SHARES_STATUS.REJECTED;
+                                                                } else {
+                                                                    fileStatus = String(baseChildShare?.status || shareItem.status || 'PENDING_APPROVAL').toUpperCase();
+                                                                }
 
                                                                 const childVersions = (allDocumentVersions || []).filter(
                                                                     (v) => cleanId(v.document?.id ?? v.documentId) === childCleanId
                                                                 ).sort((a, b) => (b.versionNumber ?? b.version ?? 0) - (a.versionNumber ?? a.version ?? 0));
                                                                 const childLatestVer = childVersions[0];
-                                                                const childRejectionReason = childShare?.rejectionReason || childLatestVer?.rejectionReason || 'No rejection reason specified.';
+                                                                const childRejectionReason = baseChildShare?.rejectionReason || childLatestVer?.rejectionReason || 'No rejection reason specified.';
                                                                 const childRejecter = allUsers.find(
-                                                                    (u) => u.id === childLatestVer?.rejecterId || u.id === childShare?.rejecterId || u.id === childShare?.reviewerId
+                                                                    (u) => u.id === childLatestVer?.rejecterId || u.id === baseChildShare?.rejecterId || u.id === baseChildShare?.reviewerId
                                                                 );
                                                                 const childRejecterName = childRejecter ? `${childRejecter.firstName || ''} ${childRejecter.lastName || ''}`.trim() : null;
 
@@ -4761,7 +4806,7 @@ const Inspector = ({
                                                                                             onClick={() => {
                                                                                                 setReshareModal({
                                                                                                     mode: 'new_version',
-                                                                                                    shareItem: childShare,
+                                                                                                    shareItem: baseChildShare,
                                                                                                     docId: childFile.id,
                                                                                                     targetDeptName: shareDepartment?.name ?? 'Department',
                                                                                                 });
@@ -4779,7 +4824,7 @@ const Inspector = ({
                                                                                             onClick={() => {
                                                                                                 setReshareModal({
                                                                                                     mode: 'overwrite',
-                                                                                                    shareItem: childShare,
+                                                                                                    shareItem: baseChildShare,
                                                                                                     docId: childFile.id,
                                                                                                     targetDeptName: shareDepartment?.name ?? 'Department',
                                                                                                 });
@@ -4929,8 +4974,8 @@ const Inspector = ({
 
                                                             {/* WORKFLOW TRACKING PIPELINE FOR SINGLE FILE */}
                                                             <WorkflowProgressPipeline
-                                                                status={shareItem.status}
-                                                                isStashed={String(shareItem.status || '').toUpperCase() === constants.DOCUMENT_SHARES_STATUS.STASHED}
+                                                                status={singleEffectiveStatus}
+                                                                isStashed={isDeptStashed}
                                                                 isPublished={isDeptPublished}
                                                             />
 

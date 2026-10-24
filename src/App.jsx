@@ -1721,7 +1721,9 @@ const AppContent = () => {
                     });
 
                     if (actionKey === 'stash') {
-                        if (directShare) {
+                        if (targetDoc.isFolder && rawUserDept) {
+                            await useDocumentStore.getState().updateShareStatusRecursive(targetDoc.id, rawUserDept, constants.DOCUMENT_SHARES_STATUS.STASHED);
+                        } else if (directShare) {
                             await useDocumentStore.getState().stashShare(directShare.id);
                         } else if (rawUserDept) {
                             await useDocumentStore.getState().insertDocumentShare({
@@ -1733,7 +1735,9 @@ const AppContent = () => {
                             });
                         }
                     } else if (actionKey === 'unstash') {
-                        if (directShare) {
+                        if (targetDoc.isFolder && rawUserDept) {
+                            await useDocumentStore.getState().updateShareStatusRecursive(targetDoc.id, rawUserDept, constants.DOCUMENT_SHARES_STATUS.APPROVED);
+                        } else if (directShare) {
                             await useDocumentStore.getState().unstashShare(directShare.id);
                         } else if (rawUserDept) {
                             await useDocumentStore.getState().insertDocumentShare({
@@ -1745,11 +1749,15 @@ const AppContent = () => {
                             });
                         }
                     } else if (actionKey === 'unpublish') {
-                        if (directShare) {
+                        if (targetDoc.isFolder && rawUserDept) {
+                            await useDocumentStore.getState().updateShareStatusRecursive(targetDoc.id, rawUserDept, constants.DOCUMENT_SHARES_STATUS.APPROVED);
+                        } else if (directShare) {
                             await useDocumentStore.getState().unpublishShare(directShare.id);
                         }
                     } else if (actionKey === 'unapprove') {
-                        if (directShare) {
+                        if (targetDoc.isFolder && rawUserDept) {
+                            await useDocumentStore.getState().updateShareStatusRecursive(targetDoc.id, rawUserDept, constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL);
+                        } else if (directShare) {
                             await useDocumentStore.getState().unapproveShare(directShare.id);
                         } else if (rawUserDept) {
                             await useDocumentStore.getState().insertDocumentShare({
@@ -1761,7 +1769,9 @@ const AppContent = () => {
                             });
                         }
                     } else if (actionKey === 'unreject') {
-                        if (directShare) {
+                        if (targetDoc.isFolder && rawUserDept) {
+                            await useDocumentStore.getState().updateShareStatusRecursive(targetDoc.id, rawUserDept, constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL);
+                        } else if (directShare) {
                             await useDocumentStore.getState().unrejectShare(directShare.id);
                         } else if (rawUserDept) {
                             await useDocumentStore.getState().insertDocumentShare({
