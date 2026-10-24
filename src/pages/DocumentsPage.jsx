@@ -506,6 +506,7 @@ const DocumentsPage = ({
 
         documents.forEach((doc) => {
             const docClean = cleanId(doc.id);
+            const rootSharedFolder = findRootSharedFolder(doc, documents, documentShares);
             const rootClean = rootSharedFolder ? cleanId(rootSharedFolder.id) : null;
             let docDirectShares = (documentShares || []).filter(
                 (s) => cleanId(s.document?.id ?? s.documentId) === docClean
