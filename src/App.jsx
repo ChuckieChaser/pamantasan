@@ -718,6 +718,27 @@ const AppContent = () => {
                 if (!currentUser?.id) {
                     throw new Error('Authentication required to revert version.');
                 }
+                if (constants.isCoordinatorRole(currentUser?.role)) {
+                    const targetDoc = useDocumentStore.getState().documents.find((d) => d.id === activeDocId);
+                    const docName = targetDoc?.name || targetDoc?.title || 'Document';
+                    await coordinatorApprovalService.submitCoordinatorRequest({
+                        action: constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_VERSION_REVERT,
+                        requesterId: currentUser.id,
+                        data: {
+                            documentId: activeDocId,
+                            documentName: docName,
+                            currentVersion: targetDoc?.currentVersion ?? 1,
+                            targetVersion: item.version,
+                        },
+                    });
+                    showToast({
+                        type: 'information',
+                        title: 'Coordinator Request Submitted',
+                        description: `Reverting "${docName}" to version v${item.version}.0 has been queued for Administrator approval.`,
+                    });
+                    return;
+                }
+
                 const reverted = await useDocumentStore.getState().revertDocumentVersion(
                     activeDocId,
                     item,
@@ -843,13 +864,14 @@ const AppContent = () => {
                         selectedItem?.requesterId ??
                         selectedItem?.requester?.id ??
                         selectedItem?.requester;
-                    const isRequester = !isDocReqContext || (currentUser?.id && String(currentUser.id) === String(reqRequesterId));
+                    const isRequester = !isDocReqContext || (currentUser?.id && String(currentUser.id).replace(/-/g, '').toLowerCase() === String(reqRequesterId).replace(/-/g, '').toLowerCase());
 
                     if (isRequester && docToRecord && currentUser?.id) {
                         systemEventService.recordDocumentRead({
                             document: docToRecord,
                             user: currentUser,
                             version: latestVer?.version,
+                            isDocumentRequest: isDocReqContext,
                         }).catch(() => {});
                     }
                 }
@@ -889,6 +911,7 @@ const AppContent = () => {
         if (actionKey === 'publish' || actionKey === 're_publish') {
             const target = item || selectedItem;
             if (target) {
+                // Officers and Directors publish individual files directly
                 useDocumentStore.getState().setPublishModalDocument(target);
             }
             return;
@@ -1498,6 +1521,65 @@ const AppContent = () => {
         }
 
         if (actionKey === 'approve') {
+            const targetDoc = item || selectedItem;
+            const isDoc = Boolean(
+                targetDoc &&
+                !targetDoc.subject &&
+                !targetDoc.universityId &&
+                !targetDoc.code &&
+                (targetDoc.fileName || targetDoc.mimeType || targetDoc.isFolder !== undefined || targetDoc.sizeBytes !== undefined)
+            );
+
+            if (isDoc && targetDoc?.id) {
+                try {
+                    const cleanId = (uid) => (typeof uid === 'string' ? uid.replace(/-/g, '').toLowerCase() : uid);
+                    const rawUserDept = currentUser?.departmentId || currentUser?.department?.id || currentUser?.department;
+                    const userDeptClean = cleanId(rawUserDept);
+                    const docClean = cleanId(targetDoc.id);
+                    const freshShares = useDocumentStore.getState().documentShares || [];
+
+                    const directShare = freshShares.find((s) => {
+                        const sDocClean = cleanId(s.document?.id ?? s.documentId);
+                        const sDeptClean = cleanId(s.department?.id ?? s.departmentId);
+                        const isBase = !s.recipientId && !s.recipient?.id;
+                        return sDocClean === docClean && (!userDeptClean || sDeptClean === userDeptClean) && isBase;
+                    }) || freshShares.find((s) => {
+                        const sDocClean = cleanId(s.document?.id ?? s.documentId);
+                        const sDeptClean = cleanId(s.department?.id ?? s.departmentId);
+                        return sDocClean === docClean && (!userDeptClean || sDeptClean === userDeptClean);
+                    });
+
+                    if (directShare) {
+                        await useDocumentStore.getState().approveShare(directShare.id);
+                    } else if (rawUserDept) {
+                        await useDocumentStore.getState().insertDocumentShare({
+                            documentId: targetDoc.id,
+                            departmentId: rawUserDept,
+                            sharerId: currentUser?.id,
+                            recipientId: null,
+                            status: constants.DOCUMENT_SHARES_STATUS.APPROVED,
+                        });
+                    }
+                    await useDocumentStore.getState().fetchDocumentShares(targetDoc.id).catch(() => {});
+                    if (currentUser) {
+                        useDocumentStore.getState().syncAllDocumentShares(currentUser, departments, true).catch(() => {});
+                    }
+                    showToast({
+                        type: 'success',
+                        title: targetDoc.isFolder ? 'Folder Approved' : 'Document Approved',
+                        description: `Approved "${targetDoc.title || targetDoc.name || 'document'}" for director review.`,
+                    });
+                } catch (err) {
+                    console.error('Failed to approve document share:', err);
+                    showToast({
+                        type: 'error',
+                        title: 'Approval Failed',
+                        description: err?.message || 'Could not approve document share.',
+                    });
+                }
+                return;
+            }
+
             showToast({
                 type: 'success',
                 title: 'Request Approved',
@@ -1520,12 +1602,213 @@ const AppContent = () => {
                 return;
             }
 
+            const targetDoc = item || selectedItem;
+            const isDoc = Boolean(
+                targetDoc &&
+                !targetDoc.subject &&
+                !targetDoc.universityId &&
+                !targetDoc.code &&
+                (targetDoc.fileName || targetDoc.mimeType || targetDoc.isFolder !== undefined || targetDoc.sizeBytes !== undefined)
+            );
+
+            if (isDoc && targetDoc?.id) {
+                try {
+                    const cleanId = (uid) => (typeof uid === 'string' ? uid.replace(/-/g, '').toLowerCase() : uid);
+                    const rawUserDept = currentUser?.departmentId || currentUser?.department?.id || currentUser?.department;
+                    const userDeptClean = cleanId(rawUserDept);
+                    const docClean = cleanId(targetDoc.id);
+                    const reason = targetDoc.rejectionReason || 'Rejected by Officer';
+                    const freshShares = useDocumentStore.getState().documentShares || [];
+
+                    const directShare = freshShares.find((s) => {
+                        const sDocClean = cleanId(s.document?.id ?? s.documentId);
+                        const sDeptClean = cleanId(s.department?.id ?? s.departmentId);
+                        const isBase = !s.recipientId && !s.recipient?.id;
+                        return sDocClean === docClean && (!userDeptClean || sDeptClean === userDeptClean) && isBase;
+                    }) || freshShares.find((s) => {
+                        const sDocClean = cleanId(s.document?.id ?? s.documentId);
+                        const sDeptClean = cleanId(s.department?.id ?? s.departmentId);
+                        return sDocClean === docClean && (!userDeptClean || sDeptClean === userDeptClean);
+                    });
+
+                    if (directShare) {
+                        await useDocumentStore.getState().rejectShare(directShare.id, reason, currentUser?.id);
+                    } else if (rawUserDept) {
+                        await useDocumentStore.getState().insertDocumentShare({
+                            documentId: targetDoc.id,
+                            departmentId: rawUserDept,
+                            sharerId: currentUser?.id,
+                            recipientId: null,
+                            status: constants.DOCUMENT_SHARES_STATUS.REJECTED,
+                            rejectionReason: reason,
+                            rejecterId: currentUser?.id,
+                        });
+                        const docVers = (useDocumentStore.getState().documentVersions || []).filter(
+                            (v) => (v.document?.id ?? v.documentId) === targetDoc.id
+                        );
+                        const latestVer = [...docVers].sort((a, b) => (b.version || 0) - (a.version || 0))[0];
+                        if (latestVer?.id) {
+                            await useDocumentStore.getState().updateDocumentVersion(latestVer.id, {
+                                rejectionReason: reason,
+                                rejecterId: currentUser?.id,
+                                updatedAt: new Date().toISOString(),
+                            });
+                        }
+                    }
+                    await useDocumentStore.getState().fetchDocumentShares(targetDoc.id).catch(() => {});
+                    if (currentUser) {
+                        useDocumentStore.getState().syncAllDocumentShares(currentUser, departments, true).catch(() => {});
+                    }
+                    showToast({
+                        type: 'warning',
+                        title: targetDoc.isFolder ? 'Folder Rejected' : 'Document Rejected',
+                        description: `Rejected "${targetDoc.title || targetDoc.name || 'document'}". Item remains in repository as Rejected.`,
+                    });
+                } catch (err) {
+                    console.error('Failed to reject document share:', err);
+                    showToast({
+                        type: 'error',
+                        title: 'Rejection Failed',
+                        description: err?.message || 'Could not reject document share.',
+                    });
+                }
+                return;
+            }
+
             showToast({
                 type: 'warning',
                 title: 'Request Rejected',
                 description: 'Governance request was rejected.',
             });
             return;
+        }
+
+        if (actionKey === 'publish') {
+            const targetDoc = item || selectedItem;
+            if (targetDoc) {
+                useDocumentStore.getState().setPublishModalDocument(targetDoc);
+            }
+            return;
+        }
+
+        if (['unpublish', 'stash', 'unstash', 'unapprove', 'unreject'].includes(actionKey)) {
+            const targetDoc = item || selectedItem;
+            const isDoc = Boolean(
+                targetDoc &&
+                !targetDoc.subject &&
+                !targetDoc.universityId &&
+                !targetDoc.code &&
+                (targetDoc.fileName || targetDoc.mimeType || targetDoc.isFolder !== undefined || targetDoc.sizeBytes !== undefined)
+            );
+
+            if (isDoc && targetDoc?.id) {
+                try {
+                    const cleanId = (uid) => (typeof uid === 'string' ? uid.replace(/-/g, '').toLowerCase() : uid);
+                    const rawUserDept = currentUser?.departmentId || currentUser?.department?.id || currentUser?.department;
+                    const userDeptClean = cleanId(rawUserDept);
+                    const docClean = cleanId(targetDoc.id);
+                    const freshShares = useDocumentStore.getState().documentShares || [];
+
+                    const directShare = freshShares.find((s) => {
+                        const sDocClean = cleanId(s.document?.id ?? s.documentId);
+                        const sDeptClean = cleanId(s.department?.id ?? s.departmentId);
+                        const isBase = !s.recipientId && !s.recipient?.id;
+                        return sDocClean === docClean && (!userDeptClean || sDeptClean === userDeptClean) && isBase;
+                    }) || freshShares.find((s) => {
+                        const sDocClean = cleanId(s.document?.id ?? s.documentId);
+                        const sDeptClean = cleanId(s.department?.id ?? s.departmentId);
+                        return sDocClean === docClean && (!userDeptClean || sDeptClean === userDeptClean);
+                    });
+
+                    if (actionKey === 'stash') {
+                        if (directShare) {
+                            await useDocumentStore.getState().stashShare(directShare.id);
+                        } else if (rawUserDept) {
+                            await useDocumentStore.getState().insertDocumentShare({
+                                documentId: targetDoc.id,
+                                departmentId: rawUserDept,
+                                sharerId: currentUser?.id,
+                                recipientId: null,
+                                status: constants.DOCUMENT_SHARES_STATUS.STASHED,
+                            });
+                        }
+                    } else if (actionKey === 'unstash') {
+                        if (directShare) {
+                            await useDocumentStore.getState().unstashShare(directShare.id);
+                        } else if (rawUserDept) {
+                            await useDocumentStore.getState().insertDocumentShare({
+                                documentId: targetDoc.id,
+                                departmentId: rawUserDept,
+                                sharerId: currentUser?.id,
+                                recipientId: null,
+                                status: constants.DOCUMENT_SHARES_STATUS.APPROVED,
+                            });
+                        }
+                    } else if (actionKey === 'unpublish') {
+                        if (directShare) {
+                            await useDocumentStore.getState().unpublishShare(directShare.id);
+                        }
+                    } else if (actionKey === 'unapprove') {
+                        if (directShare) {
+                            await useDocumentStore.getState().unapproveShare(directShare.id);
+                        } else if (rawUserDept) {
+                            await useDocumentStore.getState().insertDocumentShare({
+                                documentId: targetDoc.id,
+                                departmentId: rawUserDept,
+                                sharerId: currentUser?.id,
+                                recipientId: null,
+                                status: constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL,
+                            });
+                        }
+                    } else if (actionKey === 'unreject') {
+                        if (directShare) {
+                            await useDocumentStore.getState().unrejectShare(directShare.id);
+                        } else if (rawUserDept) {
+                            await useDocumentStore.getState().insertDocumentShare({
+                                documentId: targetDoc.id,
+                                departmentId: rawUserDept,
+                                sharerId: currentUser?.id,
+                                recipientId: null,
+                                status: constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL,
+                            });
+                        }
+                    }
+
+                    await useDocumentStore.getState().fetchDocumentShares(targetDoc.id).catch(() => {});
+                    if (currentUser) {
+                        useDocumentStore.getState().syncAllDocumentShares(currentUser, departments, true).catch(() => {});
+                    }
+
+                    const titleMap = {
+                        stash: 'Document Stashed',
+                        unstash: 'Document Unstashed',
+                        unpublish: 'Document Unpublished',
+                        unapprove: 'Approval Revoked',
+                        unreject: 'Document Restored',
+                    };
+                    const descMap = {
+                        stash: `Stashed "${targetDoc.title || targetDoc.name || 'document'}" at upper management level.`,
+                        unstash: `Restored "${targetDoc.title || targetDoc.name || 'document'}" to approved state.`,
+                        unpublish: `Unpublished "${targetDoc.title || targetDoc.name || 'document'}" and returned it to approved status.`,
+                        unapprove: `Reverted "${targetDoc.title || targetDoc.name || 'document'}" to pending approval.`,
+                        unreject: `Restored "${targetDoc.title || targetDoc.name || 'document'}" to pending approval.`,
+                    };
+
+                    showToast({
+                        type: 'information',
+                        title: titleMap[actionKey] || 'Action Completed',
+                        description: descMap[actionKey] || `Completed ${actionKey}.`,
+                    });
+                } catch (err) {
+                    console.error(`Failed to execute ${actionKey} in Inspector:`, err);
+                    showToast({
+                        type: 'error',
+                        title: 'Action Failed',
+                        description: err?.message || `Could not complete ${actionKey}.`,
+                    });
+                }
+                return;
+            }
         }
 
         if (actionKey === 'resolve') {

@@ -4,6 +4,7 @@ import { create } from 'zustand';
 import { constants } from '../constants';
 import { mutationSchema } from '../schemas';
 import { documentService, departmentService, systemEventService, storageService } from '../services';
+import { stripFileExtension, getKnownFileExtension } from '../utils/fileNameUtils';
 import { useDepartmentStore } from './useDepartmentStore';
 import { useUserStore } from './useUserStore';
 
@@ -1863,7 +1864,11 @@ const useDocumentStore = create((set, get) => ({
             const sharesToUpdate = currentShares.filter(
                 (s) =>
                     targetDocIds.includes(s.document?.id ?? s.documentId) &&
-                    (s.department?.id ?? s.departmentId) === departmentId
+                    (s.department?.id ?? s.departmentId) === departmentId &&
+                    (nextStatus !== constants.DOCUMENT_SHARES_STATUS.PUBLISHED || (
+                        s.status !== constants.DOCUMENT_SHARES_STATUS.REJECTED &&
+                        s.status !== constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL
+                    ))
             );
 
             if (sharesToUpdate.length === 0) {
@@ -1994,23 +1999,44 @@ const useDocumentStore = create((set, get) => ({
 
     publishDocumentToMembers: async (rootDocId, departmentId, targetMemberIds = [], publisherId) => {
         try {
+            const cleanId = (uid) => (typeof uid === 'string' ? uid.replace(/-/g, '').toLowerCase() : uid ? String(uid).toLowerCase() : '');
+            const rootClean = cleanId(rootDocId);
+            const deptClean = cleanId(departmentId);
+
             const allDocs = get().documents || [];
-            const targetDoc = allDocs.find((d) => d.id === rootDocId);
+            const targetDoc = allDocs.find((d) => cleanId(d.id) === rootClean);
             const targetDocIds = targetDoc?.isFolder
-                ? getRecursiveDescendantDocIds(rootDocId, allDocs)
-                : [rootDocId];
+                ? getRecursiveDescendantDocIds(targetDoc.id, allDocs)
+                : [targetDoc?.id || rootDocId];
 
             const currentShares = get().documentShares || [];
             const timestamp = new Date().toISOString();
+
+            // Filter targetDocIds: Any descendant file that is REJECTED or PENDING_APPROVAL in this department MUST NOT be published
+            const nonPublishableDocIds = new Set(
+                currentShares
+                    .filter(
+                        (s) =>
+                            cleanId(s.department?.id ?? s.departmentId) === deptClean &&
+                            (s.status === constants.DOCUMENT_SHARES_STATUS.REJECTED ||
+                             s.status === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL)
+                    )
+                    .map((s) => cleanId(s.document?.id ?? s.documentId))
+            );
+
+            const publishableDocIds = targetDocIds.filter((id) => !nonPublishableDocIds.has(cleanId(id)));
+            const publishableCleanSet = new Set(publishableDocIds.map(cleanId));
 
             if (!targetMemberIds || targetMemberIds.length === 0) {
                 // 1. PUBLISH TO ALL DEPARTMENT MEMBERS
                 const sharesToUpdate = currentShares.filter(
                     (s) =>
-                        targetDocIds.includes(s.document?.id ?? s.documentId) &&
-                        (s.department?.id ?? s.departmentId) === departmentId &&
+                        publishableCleanSet.has(cleanId(s.document?.id ?? s.documentId)) &&
+                        cleanId(s.department?.id ?? s.departmentId) === deptClean &&
                         !s.recipientId &&
-                        !s.recipient
+                        !s.recipient?.id &&
+                        s.status !== constants.DOCUMENT_SHARES_STATUS.REJECTED &&
+                        s.status !== constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL
                 );
 
                 const updatedBaseShares = [];
@@ -2032,9 +2058,13 @@ const useDocumentStore = create((set, get) => ({
                     });
                 }
 
-                const existingBaseDocIds = new Set(sharesToUpdate.map((s) => s.document?.id ?? s.documentId));
-                for (const docId of targetDocIds) {
-                    if (!existingBaseDocIds.has(docId)) {
+                const existingDeptDocIds = new Set(
+                    currentShares
+                        .filter((s) => cleanId(s.department?.id ?? s.departmentId) === deptClean && !s.recipientId && !s.recipient?.id)
+                        .map((s) => cleanId(s.document?.id ?? s.documentId))
+                );
+                for (const docId of publishableDocIds) {
+                    if (!existingDeptDocIds.has(cleanId(docId))) {
                         const newShare = await documentService.insertDocumentShare({
                             documentId: docId,
                             departmentId: departmentId,
@@ -2057,8 +2087,8 @@ const useDocumentStore = create((set, get) => ({
                 // Delete any existing member-specific shares to revert to broad access
                 const existingSpecificShares = currentShares.filter(
                     (s) =>
-                        targetDocIds.includes(s.document?.id ?? s.documentId) &&
-                        (s.department?.id ?? s.departmentId) === departmentId &&
+                        publishableCleanSet.has(cleanId(s.document?.id ?? s.documentId)) &&
+                        cleanId(s.department?.id ?? s.departmentId) === deptClean &&
                         (s.recipient?.id ?? s.recipientId)
                 );
                 for (const ess of existingSpecificShares) {
@@ -2078,7 +2108,7 @@ const useDocumentStore = create((set, get) => ({
                     ],
                 }));
 
-                const targetDoc = (get().documents || []).find((d) => d.id === rootDocId);
+                const targetDoc = (get().documents || []).find((d) => cleanId(d.id) === rootClean);
                 systemEventService.recordSystemEvent({
                     actorId: publisherId,
                     entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_SHARE,
@@ -2112,10 +2142,12 @@ const useDocumentStore = create((set, get) => ({
                 // Ensure base departmental share is APPROVED (for Officer & Director visibility, but NOT broadcast to all members)
                 const baseShares = currentShares.filter(
                     (s) =>
-                        targetDocIds.includes(s.document?.id ?? s.documentId) &&
-                        (s.department?.id ?? s.departmentId) === departmentId &&
+                        publishableCleanSet.has(cleanId(s.document?.id ?? s.documentId)) &&
+                        cleanId(s.department?.id ?? s.departmentId) === deptClean &&
                         !s.recipientId &&
-                        !s.recipient
+                        !s.recipient?.id &&
+                        s.status !== constants.DOCUMENT_SHARES_STATUS.REJECTED &&
+                        s.status !== constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL
                 );
                 for (const bs of baseShares) {
                     if (bs.status !== constants.DOCUMENT_SHARES_STATUS.APPROVED) {
@@ -2137,9 +2169,13 @@ const useDocumentStore = create((set, get) => ({
                     }
                 }
 
-                const existingBaseDocIds = new Set(baseShares.map((s) => s.document?.id ?? s.documentId));
-                for (const docId of targetDocIds) {
-                    if (!existingBaseDocIds.has(docId)) {
+                const existingDeptDocIds = new Set(
+                    currentShares
+                        .filter((s) => cleanId(s.department?.id ?? s.departmentId) === deptClean && !s.recipientId && !s.recipient?.id)
+                        .map((s) => cleanId(s.document?.id ?? s.documentId))
+                );
+                for (const docId of publishableDocIds) {
+                    if (!existingDeptDocIds.has(cleanId(docId))) {
                         const newBase = await documentService.insertDocumentShare({
                             documentId: docId,
                             departmentId: departmentId,
@@ -2163,12 +2199,14 @@ const useDocumentStore = create((set, get) => ({
 
                 // Insert or update shares for each chosen member
                 for (const memberId of targetMemberIds) {
-                    for (const docId of targetDocIds) {
+                    const memberClean = cleanId(memberId);
+                    for (const docId of publishableDocIds) {
+                        const docClean = cleanId(docId);
                         const existingMemberShare = currentShares.find(
                             (s) =>
-                                (s.document?.id ?? s.documentId) === docId &&
-                                (s.department?.id ?? s.departmentId) === departmentId &&
-                                (s.recipient?.id ?? s.recipientId) === memberId
+                                cleanId(s.document?.id ?? s.documentId) === docClean &&
+                                cleanId(s.department?.id ?? s.departmentId) === deptClean &&
+                                cleanId(s.recipient?.id ?? s.recipientId) === memberClean
                         );
 
                         if (existingMemberShare) {
@@ -2208,12 +2246,13 @@ const useDocumentStore = create((set, get) => ({
                 }
 
                 // Remove shares for members who are no longer selected
+                const targetCleanMemberIds = new Set(targetMemberIds.map(cleanId));
                 const unselectedMemberShares = currentShares.filter(
                     (s) =>
-                        targetDocIds.includes(s.document?.id ?? s.documentId) &&
-                        (s.department?.id ?? s.departmentId) === departmentId &&
+                        publishableCleanSet.has(cleanId(s.document?.id ?? s.documentId)) &&
+                        cleanId(s.department?.id ?? s.departmentId) === deptClean &&
                         (s.recipient?.id ?? s.recipientId) &&
-                        !targetMemberIds.includes(s.recipient?.id ?? s.recipientId)
+                        !targetCleanMemberIds.has(cleanId(s.recipient?.id ?? s.recipientId))
                 );
                 for (const ums of unselectedMemberShares) {
                     await documentService.deleteDocumentShare(ums.id);
@@ -2232,7 +2271,7 @@ const useDocumentStore = create((set, get) => ({
                     ],
                 }));
 
-                const targetDoc = (get().documents || []).find((d) => d.id === rootDocId);
+                const targetDoc = (get().documents || []).find((d) => cleanId(d.id) === rootClean);
                 systemEventService.recordSystemEvent({
                     actorId: publisherId,
                     entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_SHARE,
@@ -2598,7 +2637,7 @@ const useDocumentStore = create((set, get) => ({
         }
     },
 
-    reshareNewVersion: async (documentId, shareId, file, uploaderId, changeSummary = 'Revision addressing rejection feedback') => {
+    reshareNewVersion: async (documentId, shareId, file, uploaderId, changeSummary = 'Revision addressing rejection feedback', changeDocumentName = true) => {
         try {
             const docId = documentId;
             const existing = (get().documentShares || []).find((s) => s.id === shareId);
@@ -2620,12 +2659,22 @@ const useDocumentStore = create((set, get) => ({
             const nextVersionNumber = (latestVer?.version || 1) + 1;
             const timestamp = new Date().toISOString();
 
+            // Compute file name and document name according to changeDocumentName flag
+            const existingDocName = targetDoc?.name || targetDoc?.title || file.name;
+            const existingBaseName = stripFileExtension(existingDocName) || existingDocName;
+            const newExtWithDot = getKnownFileExtension(file.name) || (file.name.includes('.') ? `.${file.name.split('.').pop()}` : '') || getKnownFileExtension(existingDocName);
+            const preservedStorageFileName = `${existingBaseName}${newExtWithDot}`;
+            const preservedDocName = targetDoc?.name ? (targetDoc.name.includes('.') ? preservedStorageFileName : existingBaseName) : preservedStorageFileName;
+
+            const finalDocName = changeDocumentName ? file.name : preservedDocName;
+            const finalStorageFileName = changeDocumentName ? file.name : preservedStorageFileName;
+
             // 1. Upload to storage with next version number
             const storageResult = await storageService.uploadDocument(
                 docId,
                 file,
                 nextVersionNumber,
-                file.name
+                finalStorageFileName
             );
 
             // 2. Insert new version record (clearing rejection)
@@ -2649,13 +2698,17 @@ const useDocumentStore = create((set, get) => ({
                 updatedAt: timestamp,
             });
 
-            // 4. Update parent document updatedAt
+            // 4. Update parent document name and updatedAt
             await get().updateDocument(docId, {
+                name: finalDocName,
                 updatedAt: timestamp,
             });
 
             // 5. Update local store
             set((state) => ({
+                documents: state.documents.map((d) =>
+                    d.id === docId ? { ...d, name: finalDocName, updatedAt: timestamp } : d
+                ),
                 documentShares: state.documentShares.map((item) =>
                     item.id === shareId
                         ? { ...item, status: constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL, rejectionReason: null, updatedAt: timestamp }
@@ -2668,8 +2721,8 @@ const useDocumentStore = create((set, get) => ({
                 entityId: shareId,
                 action: constants.AUDIT_LOGS_ACTION.SHARED,
                 data: {
-                    title: `Reshared ${targetDoc?.name || 'Document'} (v${nextVersionNumber}.0)`,
-                    documentName: targetDoc?.name,
+                    title: `Reshared ${finalDocName} (v${nextVersionNumber}.0)`,
+                    documentName: finalDocName,
                     departmentName: resolveDepartmentName(deptId),
                     version: nextVersionNumber,
                 },
@@ -2687,10 +2740,17 @@ const useDocumentStore = create((set, get) => ({
         }
     },
 
-    overwriteVersionFileAndReshare: async (documentId, shareId, file, uploaderId) => {
+    overwriteVersionFileAndReshare: async (documentId, shareId, file, uploaderId, changeDocumentName = true) => {
         try {
             const docId = documentId;
-            const existing = (get().documentShares || []).find((s) => s.id === shareId);
+            let targetShareId = shareId;
+            let existing = (get().documentShares || []).find((s) => s.id === targetShareId);
+            if (!existing && docId) {
+                existing = (get().documentShares || []).find(
+                    (s) => (s.document?.id ?? s.documentId) === docId && String(s.status || '').toUpperCase().includes('REJECT')
+                );
+                if (existing) targetShareId = existing.id;
+            }
             const deptId = existing?.department?.id ?? existing?.departmentId;
             const targetDoc = (get().documents || []).find((d) => d.id === docId);
 
@@ -2709,12 +2769,22 @@ const useDocumentStore = create((set, get) => ({
             const currentVersionNumber = latestVer?.version || 1;
             const timestamp = new Date().toISOString();
 
-            // 1. Upload replacement to storage with current version number
+            // Compute file name and document name according to changeDocumentName flag
+            const existingDocName = targetDoc?.name || targetDoc?.title || file.name;
+            const existingBaseName = stripFileExtension(existingDocName) || existingDocName;
+            const newExtWithDot = getKnownFileExtension(file.name) || (file.name.includes('.') ? `.${file.name.split('.').pop()}` : '') || getKnownFileExtension(existingDocName);
+            const preservedStorageFileName = `${existingBaseName}${newExtWithDot}`;
+            const preservedDocName = targetDoc?.name ? (targetDoc.name.includes('.') ? preservedStorageFileName : existingBaseName) : preservedStorageFileName;
+
+            const finalDocName = changeDocumentName ? file.name : preservedDocName;
+            const finalStorageFileName = changeDocumentName ? file.name : preservedStorageFileName;
+
+            // 1. Upload replacement to storage with current version number and calculated filename
             const storageResult = await storageService.uploadDocument(
                 docId,
                 file,
                 currentVersionNumber,
-                file.name
+                finalStorageFileName
             );
 
             // 2. Update current version in-place without bumping version number
@@ -2730,41 +2800,72 @@ const useDocumentStore = create((set, get) => ({
                 });
             }
 
-            // 3. Reset share to PENDING_APPROVAL
-            await documentService.updateDocumentShare(shareId, {
-                status: constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL,
-                updatedAt: timestamp,
-            });
+            // 3. Reset share(s) to PENDING_APPROVAL
+            const sharesToReset = targetShareId
+                ? (get().documentShares || []).filter((s) => s.id === targetShareId)
+                : (get().documentShares || []).filter(
+                    (s) => (s.document?.id ?? s.documentId) === docId && String(s.status || '').toUpperCase().includes('REJECT')
+                );
 
-            // 4. Update parent document updatedAt
+            for (const sh of sharesToReset) {
+                await documentService.updateDocumentShare(sh.id, {
+                    status: constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL,
+                    rejectionReason: null,
+                    rejecterId: null,
+                    updatedAt: timestamp,
+                });
+            }
+
+            // 4. Update parent document name and updatedAt
             await get().updateDocument(docId, {
+                name: finalDocName,
                 updatedAt: timestamp,
             });
 
             // 5. Update local store
+            const resetShareIds = new Set(sharesToReset.map((s) => s.id));
             set((state) => ({
+                documents: state.documents.map((d) =>
+                    d.id === docId ? { ...d, name: finalDocName, updatedAt: timestamp } : d
+                ),
+                documentVersions: state.documentVersions.map((v) =>
+                    v.id === latestVer?.id
+                        ? {
+                              ...v,
+                              path: storageResult.path,
+                              sizeBytes: storageResult.sizeBytes,
+                              mimeType: storageResult.mimeType || file.type || latestVer.mimeType,
+                              checksum: storageResult.checksum || null,
+                              rejectionReason: null,
+                              rejecterId: null,
+                              updatedAt: timestamp,
+                          }
+                        : v
+                ),
                 documentShares: state.documentShares.map((item) =>
-                    item.id === shareId
+                    resetShareIds.has(item.id)
                         ? { ...item, status: constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL, rejectionReason: null, updatedAt: timestamp }
                         : item
                 ),
             }));
 
-            systemEventService.recordSystemEvent({
-                actorId: uploaderId || null,
-                entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_SHARE,
-                entityId: shareId,
-                action: constants.AUDIT_LOGS_ACTION.SHARED,
-                data: {
-                    title: `Overwrote and Reshared ${targetDoc?.name || 'Document'} (v${currentVersionNumber}.0)`,
-                    documentName: targetDoc?.name,
-                    departmentName: resolveDepartmentName(deptId),
-                    version: currentVersionNumber,
-                },
-                targetRoles: ['ADMINISTRATOR', 'COORDINATOR', 'OFFICER'],
-                targetDepartmentId: deptId,
-                isMajor: true,
-            }).catch(() => {});
+            if (targetShareId || deptId) {
+                systemEventService.recordSystemEvent({
+                    actorId: uploaderId || null,
+                    entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT_SHARE,
+                    entityId: targetShareId || docId,
+                    action: constants.AUDIT_LOGS_ACTION.SHARED,
+                    data: {
+                        title: `Overwrote and Reshared ${finalDocName} (v${currentVersionNumber}.0)`,
+                        documentName: finalDocName,
+                        departmentName: resolveDepartmentName(deptId),
+                        version: currentVersionNumber,
+                    },
+                    targetRoles: ['ADMINISTRATOR', 'COORDINATOR', 'OFFICER'],
+                    targetDepartmentId: deptId,
+                    isMajor: true,
+                }).catch(() => {});
+            }
 
             await get().syncParentFolderShares(docId, deptId);
 

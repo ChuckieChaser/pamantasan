@@ -5,6 +5,7 @@ import { useNotificationStore } from '../stores/useNotificationStore';
 import { useUserStore } from '../stores/useUserStore';
 import { useDepartmentStore } from '../stores/useDepartmentStore';
 import { useAuthStore } from '../stores/useAuthStore';
+import { useDocumentStore } from '../stores/useDocumentStore';
 import { userService } from './userService';
 import { realtimeSyncService } from './realtimeSyncService';
 
@@ -467,14 +468,19 @@ const systemEventService = {
      * Records a document read / view event.
      * Enforces once-per-user recording to accurately feed readership analytics without duplication.
      */
-    recordDocumentRead: async ({ document, user, version = null }) => {
+    recordDocumentRead: async ({ document, user, version = null, isDocumentRequest = false }) => {
         if (!document?.id || !user?.id) return null;
 
         // Ensure Administrator and Coordinator administrative reads never count up or get recorded
+        const currentUserFromStore = useAuthStore.getState().currentUser;
+        const matchingStoreUser = useUserStore.getState().users?.find((u) => String(u.id) === String(user.id));
         const resolvedRole =
             user?.role ||
-            useUserStore.getState().users?.find((u) => String(u.id) === String(user.id))?.role ||
-            useAuthStore.getState().user?.role;
+            matchingStoreUser?.role ||
+            (currentUserFromStore && String(currentUserFromStore.id) === String(user.id) ? currentUserFromStore.role : null) ||
+            currentUserFromStore?.role ||
+            constants.USERS_ROLE.MEMBER;
+
         if (
             isStaffRole(resolvedRole) ||
             isAdminRole(resolvedRole) ||
@@ -493,18 +499,78 @@ const systemEventService = {
             return null;
         }
 
-        // Check if user has already read this document previously (once per user only)
+        // Check if user has already read this document previously (once per user only across all channels)
         const loadedLogs = useAuditStore.getState().auditLogs || [];
         const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id ? String(id).toLowerCase() : '');
         const targetCleanDocId = cleanId(docId);
         const targetCleanUserId = cleanId(userId);
 
+        // Enforce departmental scoping for standard repository browsing:
+        // Reader can only increment read count if:
+        // 1) Their department matches the document's department, OR
+        // 2) The document is shared to their department with an active status permitted for their role:
+        //    - Officer: PENDING_APPROVAL, APPROVED, STASHED, PUBLISHED
+        //    - Director: APPROVED, STASHED, PUBLISHED
+        //    - Member: PUBLISHED
+        // (Bypassed if isDocumentRequest is true, as authorized document requests provide institution-wide readership)
+        if (!isDocumentRequest) {
+            const userDeptId = cleanId(user?.departmentId || user?.department?.id || matchingStoreUser?.departmentId || matchingStoreUser?.department?.id || currentUserFromStore?.departmentId || currentUserFromStore?.department?.id);
+            const fullDoc = useDocumentStore.getState().documents?.find((d) => cleanId(d.id) === targetCleanDocId) || document;
+            const docDeptId = cleanId(fullDoc?.departmentId || fullDoc?.department?.id);
+
+            if (userDeptId && docDeptId && userDeptId !== docDeptId) {
+                const loadedShares = useDocumentStore.getState().documentShares || [];
+                const allDocs = useDocumentStore.getState().documents || [];
+
+                const checkShares = (targetId) => {
+                    return loadedShares.filter((s) => {
+                        const sDocId = cleanId(s.document?.id ?? s.documentId);
+                        const sDeptId = cleanId(s.department?.id ?? s.departmentId);
+                        const st = String(s.status || '').toUpperCase();
+                        if (['REVOKED', 'DELETED', 'UNSHARED'].includes(st)) return false;
+                        return sDocId === targetId && sDeptId === userDeptId;
+                    });
+                };
+
+                let shares = checkShares(targetCleanDocId);
+                if (shares.length === 0) {
+                    let pId = fullDoc?.parentId ?? fullDoc?.parentFolderId;
+                    while (pId && pId !== 'root') {
+                        const pClean = cleanId(pId);
+                        shares = checkShares(pClean);
+                        if (shares.length > 0) break;
+                        const pDoc = allDocs.find((d) => cleanId(d.id) === pClean);
+                        pId = pDoc?.parentId ?? pDoc?.parentFolderId;
+                    }
+                }
+
+                if (shares.length === 0) {
+                    return null;
+                }
+
+                const permittedStatuses = isMemberRole(resolvedRole)
+                    ? ['PUBLISHED']
+                    : isDirectorRole(resolvedRole)
+                    ? ['APPROVED', 'STASHED', 'PUBLISHED']
+                    : ['PENDING_APPROVAL', 'APPROVED', 'STASHED', 'PUBLISHED'];
+
+                const isPermitted = shares.some((s) => permittedStatuses.includes(String(s.status || '').toUpperCase()));
+                if (!isPermitted) {
+                    return null;
+                }
+            }
+        }
+
         const hasExistingRead = loadedLogs.some((l) => {
             const act = String(l?.action || '').toUpperCase();
             const isReadAct = ['READ', 'VIEW', 'VIEWED', 'DOWNLOAD', 'DOWNLOADED', 'ACCESS', 'ACCESSED', 'OPEN', 'OPENED'].includes(act);
             const isDoc = !l?.entityType || String(l.entityType).toUpperCase() === 'DOCUMENT';
-            const lDocId = l?.entityId || l?.documentId || l?.document?.id;
-            const lActorId = l?.actorId || l?.actor?.id;
+            let parsed = l?.data;
+            if (typeof parsed === 'string') {
+                try { parsed = JSON.parse(parsed); } catch {}
+            }
+            const lDocId = l?.entityId || l?.documentId || l?.document?.id || parsed?._documentId || parsed?.documentId;
+            const lActorId = l?.actorId || l?.actor?.id || parsed?.actorId;
             if (!lDocId || !lActorId) return false;
             const matchDoc = cleanId(lDocId) === targetCleanDocId;
             const matchActor = cleanId(lActorId) === targetCleanUserId;
@@ -527,7 +593,10 @@ const systemEventService = {
         try {
             const auditPayload = {
                 actorId: userId,
-                actor: user,
+                actor: {
+                    ...user,
+                    role: resolvedRole,
+                },
                 entityType: constants.AUDIT_LOGS_ENTITY_TYPE.DOCUMENT,
                 entityId: docId,
                 action: 'READ',
@@ -538,13 +607,13 @@ const systemEventService = {
                         documentName: docTitle,
                         departmentName: departmentName,
                         _departmentId: departmentId,
-                        role: resolvedRole || user.role || constants.USERS_ROLE.MEMBER,
+                        role: resolvedRole,
                         version: version || document.currentVersion || 1,
                         timestamp: new Date().toISOString(),
                     },
                     actorId: userId,
                     actorName: actorName,
-                    actorRole: resolvedRole || user.role || constants.USERS_ROLE.MEMBER,
+                    actorRole: resolvedRole,
                     actorEmail: user.email || '',
                     actorDepartment: departmentName,
                     _actorDepartmentId: departmentId,

@@ -76,7 +76,7 @@ import { Account } from './ui/Account';
 import { formatMimeTypeLabel } from './common';
 import { findRootSharedFolder, getActionConfirmationConfig } from './browser/common';
 import { constants, isStaffRole } from '../constants';
-import { storageService, coordinatorApprovalService, aiService } from '../services';
+import { storageService, coordinatorApprovalService, aiService, systemEventService } from '../services';
 import { stripFileExtension } from '../utils/fileNameUtils';
 
 const isRmoUser = (user, safeDepts = []) => {
@@ -304,6 +304,8 @@ const formatChangeSummary = (rawChangeSummary) => {
 
     return text;
 };
+
+const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id ? String(id).toLowerCase() : '');
 
 const WorkflowProgressPipeline = ({ status, isStashed = false, isPublished = false }) => {
     const statusUpper = String(status || '').toUpperCase();
@@ -545,6 +547,7 @@ const Inspector = ({
     const [reshareModal, setReshareModal] = useState(null);
     const [reshareFile, setReshareFile] = useState(null);
     const [reshareChangeSummary, setReshareChangeSummary] = useState('');
+    const [reshareChangeName, setReshareChangeName] = useState(true);
     const [isSubmittingReshare, setIsSubmittingReshare] = useState(false);
 
     // HOOKS
@@ -1823,6 +1826,11 @@ const Inspector = ({
         }
 
         const targetItem = target;
+        if (actionKey === 'publish') {
+            useDocumentStore.getState().setPublishModalDocument(targetItem);
+            return;
+        }
+
         const shouldSkipLoading = actionKey === 'archive' && targetItem?.isFolder;
 
         if (!shouldSkipLoading) {
@@ -1934,7 +1942,8 @@ const Inspector = ({
                     reshareModal.shareItem.id,
                     reshareFile,
                     uploaderId,
-                    reshareChangeSummary.trim() || 'Revision addressing rejection feedback'
+                    reshareChangeSummary.trim() || 'Revision addressing rejection feedback',
+                    reshareChangeName
                 );
                 showToast({
                     type: 'success',
@@ -1946,7 +1955,8 @@ const Inspector = ({
                     reshareModal.docId,
                     reshareModal.shareItem.id,
                     reshareFile,
-                    uploaderId
+                    uploaderId,
+                    reshareChangeName
                 );
                 showToast({
                     type: 'success',
@@ -1963,6 +1973,7 @@ const Inspector = ({
             setReshareModal(null);
             setReshareFile(null);
             setReshareChangeSummary('');
+            setReshareChangeName(true);
         } catch (err) {
             console.error('Failed to reshare document:', err);
             showToast({
@@ -3875,7 +3886,7 @@ const Inspector = ({
                                                         }
                                                     }
                                                     const isExcluded = constants.isStaffRole(actorRole) || constants.isAdminRole(actorRole) || constants.isCoordinatorRole(actorRole);
-                                                    if (!isExcluded && !isRmoUser(actorUser, allDepartments)) {
+                                                    if (!isExcluded) {
                                                         if (!childDocReadersMap.has(docId)) {
                                                             childDocReadersMap.set(docId, new Set());
                                                         }
@@ -3901,11 +3912,16 @@ const Inspector = ({
                                             }
 
                                             // File: unique non-RMO readers
-                                            const targetId = item?.id;
+                                            const targetClean = cleanId(item?.id);
                                             const nonRmoReaders = new Set();
                                             (allAuditLogs || []).forEach((log) => {
-                                                const isDoc = log?.entityId === targetId || log?.document?.id === targetId;
-                                                const isRead = ['READ', 'VIEW', 'VIEWED', 'DOWNLOAD', 'DOWNLOADED', 'ACCESS', 'ACCESSED'].includes(
+                                                let parsed = log?.data;
+                                                if (typeof parsed === 'string') {
+                                                    try { parsed = JSON.parse(parsed); } catch {}
+                                                }
+                                                const logDocClean = cleanId(log?.entityId || log?.document?.id || log?.documentId || parsed?._documentId || parsed?.documentId);
+                                                const isDoc = logDocClean && targetClean && logDocClean === targetClean;
+                                                const isRead = ['READ', 'VIEW', 'VIEWED', 'DOWNLOAD', 'DOWNLOADED', 'ACCESS', 'ACCESSED', 'OPEN', 'OPENED'].includes(
                                                     String(log?.action || '').toUpperCase()
                                                 );
                                                 if (!isDoc || !isRead) return;
@@ -3931,7 +3947,7 @@ const Inspector = ({
                                                     }
                                                 }
                                                 const isExcluded = constants.isStaffRole(actorRole) || constants.isAdminRole(actorRole) || constants.isCoordinatorRole(actorRole);
-                                                if (!isExcluded && !isRmoUser(actorUser, allDepartments)) {
+                                                if (!isExcluded) {
                                                     nonRmoReaders.add(String(actorId));
                                                 }
                                             });
@@ -4203,6 +4219,10 @@ const Inspector = ({
                                     ? `${uploader.firstName} ${uploader.lastName}`
                                     : 'Author';
 
+                                const rejectedShare = departmentShares.find((s) => String(s.status || '').toUpperCase().includes('REJECT'));
+                                const isRejected = Boolean(versionItem.rejectionReason) || (isCurrent && Boolean(rejectedShare));
+                                const rejectionText = versionItem.rejectionReason || rejectedShare?.rejectionReason || 'Document share was rejected during review.';
+
                                 return (
                                     <div
                                         key={versionItem.id ?? versionIndex}
@@ -4215,6 +4235,9 @@ const Inspector = ({
                                                 </span>
                                                 {isCurrent && (
                                                     <Badge variant="success" label="Active" />
+                                                )}
+                                                {isRejected && (
+                                                    <Badge variant="destructive" label="Rejected" />
                                                 )}
                                             </div>
 
@@ -4232,17 +4255,57 @@ const Inspector = ({
                                             </div>
                                         )}
 
+                                        {isRejected && (
+                                            <div className="p-2.5 rounded-md border border-error/20 bg-error/5 flex flex-col gap-2">
+                                                <div className="flex items-start gap-2 text-xs text-error">
+                                                    <XCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                                                    <div className="flex flex-col gap-0.5 min-w-0">
+                                                        <span className="font-semibold">Rejection Feedback</span>
+                                                        <span className="text-text-muted leading-relaxed break-words">
+                                                            {rejectionText}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                                {isAdmin && isCurrent && (
+                                                    <div className="flex items-center justify-end pt-1.5 border-t border-error/15">
+                                                        <Button
+                                                            variant="secondary"
+                                                            size="xs"
+                                                            leadingIcon={FileCheck}
+                                                            onClick={() => {
+                                                                setReshareModal({
+                                                                    mode: 'overwrite',
+                                                                    shareItem: rejectedShare || { id: null, documentId: item.id },
+                                                                    docId: item.id,
+                                                                    docName: item?.name || item?.title || 'Document',
+                                                                    targetDeptName: rejectedShare
+                                                                        ? (allDepartments.find((d) => d.id === (rejectedShare.department?.id ?? rejectedShare.departmentId))?.name || 'Department')
+                                                                        : 'Department',
+                                                                });
+                                                                setReshareFile(null);
+                                                                setReshareChangeSummary('');
+                                                                setReshareChangeName(true);
+                                                            }}
+                                                            className="text-[11px]"
+                                                        >
+                                                            Overwrite File &amp; Reshare
+                                                        </Button>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+
                                         <div className="flex items-center justify-between gap-2 text-xs text-text-muted pt-1 border-t border-surface-border">
                                             <span className="truncate font-medium">By {uploaderName}</span>
                                             <div className="flex items-center gap-2 shrink-0">
                                                 <span>{formatBytes(versionItem.sizeBytes)}</span>
-                                                {!isCurrent && (
+                                                {!isCurrent && (isAdmin || isCoordinator) && (
                                                     <button
                                                         type="button"
                                                         onClick={() => setRevertingVersionItem(versionItem)}
                                                         className="p-1 rounded hover:bg-surface-hover text-accent transition-colors cursor-pointer"
-                                                        title={`Revert document to v${versionItem.version}.0`}
-                                                        aria-label={`Revert document to v${versionItem.version}.0`}
+                                                        title={isCoordinator ? `Request revert to v${versionItem.version}.0 (Pending Admin Approval)` : `Revert document to v${versionItem.version}.0`}
+                                                        aria-label={isCoordinator ? `Request revert to v${versionItem.version}.0` : `Revert document to v${versionItem.version}.0`}
                                                     >
                                                         <RotateCcw className="h-3.5 w-3.5" />
                                                     </button>
@@ -4752,7 +4815,6 @@ const Inspector = ({
                                                                     No files or subfolders in this folder.
                                                                 </div>
                                                             )}
-
                                                             {directSubfolders.length > 0 && (
                                                                 <div className="flex flex-col gap-1.5 pt-2 border-t border-surface-border">
                                                                     <span className="text-[11px] font-semibold text-text-muted select-none">
@@ -7292,13 +7354,21 @@ const Inspector = ({
                 <Modal
                     isOpen={Boolean(revertingVersionItem)}
                     onClose={() => !isRevertingVersion && setRevertingVersionItem(null)}
-                    title="Revert Document Version"
-                    description={`Are you sure you want to revert this document to version v${revertingVersionItem.version}.0?`}
+                    title={isCoordinator ? "Queue Revert Request" : "Revert Document Version"}
+                    description={
+                        isCoordinator
+                            ? `Are you sure you want to request reverting this document to version v${revertingVersionItem.version}.0? This request will be queued for Administrator review.`
+                            : `Are you sure you want to revert this document to version v${revertingVersionItem.version}.0?`
+                    }
                     icon={RotateCcw}
-                    variant="warning"
+                    variant={isCoordinator ? "information" : "warning"}
                     size="sm"
-                    callout={`A new revision will be created restoring the exact binary file and snapshot from version v${revertingVersionItem.version}.0. Previous versions are retained.`}
-                    calloutVariant="warning"
+                    callout={
+                        isCoordinator
+                            ? `As a Coordinator, submitting this action will create a Coordinator Request pending Administrator approval. Once approved, the document will be restored to version v${revertingVersionItem.version}.0.`
+                            : `A new revision will be created restoring the exact binary file and snapshot from version v${revertingVersionItem.version}.0. Previous versions are retained.`
+                    }
+                    calloutVariant={isCoordinator ? "information" : "warning"}
                     onConfirm={async () => {
                         setIsRevertingVersion(true);
                         try {
@@ -7308,7 +7378,11 @@ const Inspector = ({
                             setIsRevertingVersion(false);
                         }
                     }}
-                    confirmLabel={isRevertingVersion ? 'Reverting...' : `Revert to v${revertingVersionItem.version}.0`}
+                    confirmLabel={
+                        isRevertingVersion
+                            ? (isCoordinator ? 'Submitting Request...' : 'Reverting...')
+                            : (isCoordinator ? `Request Revert to v${revertingVersionItem.version}.0` : `Revert to v${revertingVersionItem.version}.0`)
+                    }
                     cancelLabel="Cancel"
                     isConfirmLoading={isRevertingVersion}
                     isConfirmDisabled={isRevertingVersion}
@@ -7437,13 +7511,14 @@ const Inspector = ({
                             setReshareModal(null);
                             setReshareFile(null);
                             setReshareChangeSummary('');
+                            setReshareChangeName(true);
                         }
                     }}
                     title={reshareModal.mode === 'new_version' ? 'Reshare Document (New Version)' : 'Overwrite File & Reshare'}
                     description={
                         reshareModal.mode === 'new_version'
                             ? `Upload a new revision for ${reshareModal.targetDeptName}. This will create the next version number and reset status to Pending Approval.`
-                            : `Upload a replacement file for ${reshareModal.targetDeptName}. This will overwrite the current version file in-place and reset status to Pending Approval.`
+                            : `Upload a replacement file for ${reshareModal.targetDeptName}. The file content will overwrite the current version in-place and reset status to Pending Approval.`
                     }
                     icon={reshareModal.mode === 'new_version' ? UploadCloud : FileCheck}
                     size="md"
@@ -7462,6 +7537,7 @@ const Inspector = ({
                             setReshareModal(null);
                             setReshareFile(null);
                             setReshareChangeSummary('');
+                            setReshareChangeName(true);
                         },
                     }}
                 >
@@ -7478,8 +7554,33 @@ const Inspector = ({
                                 className="block w-full text-xs text-text file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-accent file:text-accent-foreground hover:file:bg-accent/90 cursor-pointer border border-surface-border rounded-lg bg-surface p-2"
                             />
                             {reshareFile && (
-                                <div className="text-[11px] text-text-muted">
-                                    Selected: <strong className="text-text">{reshareFile.name}</strong> ({formatBytes(reshareFile.size)})
+                                <div className="text-[11px] text-text-muted flex flex-col gap-2 mt-1">
+                                    <div>
+                                        Selected: <strong className="text-text">{reshareFile.name}</strong> ({formatBytes(reshareFile.size)})
+                                    </div>
+
+                                    {/* CHANGE NAME TOGGLE (CHECKBOX / SWITCH) */}
+                                    <label className="flex items-start gap-2.5 p-2.5 rounded-lg border border-surface-border bg-surface-hover/60 cursor-pointer select-none">
+                                        <input
+                                            type="checkbox"
+                                            id="reshare-change-name-toggle"
+                                            checked={reshareChangeName}
+                                            onChange={(e) => setReshareChangeName(e.target.checked)}
+                                            className="mt-0.5 rounded border-surface-border text-accent focus:ring-accent"
+                                        />
+                                        <div className="flex flex-col gap-0.5">
+                                            <span className="text-xs font-semibold text-text">
+                                                Change document name to match uploaded file
+                                            </span>
+                                            <span className="text-[11px] text-text-muted">
+                                                {reshareChangeName ? (
+                                                    <>Document name will be updated to <strong className="text-accent">&ldquo;{reshareFile.name}&rdquo;</strong>.</>
+                                                ) : (
+                                                    <>Document name will remain <strong className="text-accent">&ldquo;{reshareModal.docName || item?.name || 'Document'}&rdquo;</strong> while replacing content.</>
+                                                )}
+                                            </span>
+                                        </div>
+                                    </label>
                                 </div>
                             )}
                         </div>

@@ -1054,9 +1054,13 @@ const DashboardPage = ({
         const readMap = new Map();
         safeLogs.forEach((log) => {
             const act = String(log?.action || '').toUpperCase();
-            if (!['READ', 'VIEW', 'VIEWED', 'DOWNLOAD', 'DOWNLOADED', 'ACCESS', 'ACCESSED'].includes(act)) return;
+            if (!['READ', 'VIEW', 'VIEWED', 'DOWNLOAD', 'DOWNLOADED', 'ACCESS', 'ACCESSED', 'OPEN', 'OPENED'].includes(act)) return;
 
-            const docId = log?.entityId || log?.document?.id;
+            let parsed = log?.data;
+            if (typeof parsed === 'string') {
+                try { parsed = JSON.parse(parsed); } catch {}
+            }
+            const docId = log?.entityId || log?.document?.id || log?.documentId || parsed?._documentId || parsed?.documentId;
             if (!docId) return;
 
             const cId = cleanId(docId);
@@ -1140,7 +1144,7 @@ const DashboardPage = ({
                     return false;
                 }
 
-                return !isRmoUser(actorUser, safeDepts);
+                return true;
             });
 
             // Count readership once per user only
@@ -1554,12 +1558,13 @@ const DashboardPage = ({
                 'Institutional System';
 
             const actorRole =
-                actor?.role ||
                 parsedData?.actorRole ||
+                parsedData?.new?.role ||
                 parsedData?.role ||
+                actor?.role ||
                 rawActor?.role ||
                 activeUserMatch?.role ||
-                (actorName !== 'Institutional System' ? constants.USERS_ROLE.ADMINISTRATOR : constants.USERS_ROLE.MEMBER);
+                (actorName !== 'Institutional System' ? constants.USERS_ROLE.MEMBER : constants.USERS_ROLE.MEMBER);
 
             const deptMatch = deptById.get(String(actor?.departmentId || parsedData?.actorDepartmentId));
             const actorDepartment =

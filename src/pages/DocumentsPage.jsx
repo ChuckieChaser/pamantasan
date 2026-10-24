@@ -506,13 +506,12 @@ const DocumentsPage = ({
 
         documents.forEach((doc) => {
             const docClean = cleanId(doc.id);
-            const rootSharedFolder = findRootSharedFolder(doc, documents, documentShares);
             const rootClean = rootSharedFolder ? cleanId(rootSharedFolder.id) : null;
-            let docShares = [];
+            let docDirectShares = (documentShares || []).filter(
+                (s) => cleanId(s.document?.id ?? s.documentId) === docClean
+            );
+
             if (doc.isFolder) {
-                docShares = (documentShares || []).filter(
-                    (s) => cleanId(s.document?.id ?? s.documentId) === docClean
-                );
                 const descendantIds = getRecursiveDescendantDocIds(doc.id, documents);
                 const descendantFiles = documents.filter(
                     (d) => descendantIds.includes(d.id) && cleanId(d.id) !== docClean && !d.isFolder
@@ -525,7 +524,7 @@ const DocumentsPage = ({
                         return descendantFileIds.has(sDocId) && isBase;
                     });
                     if (childShares.length > 0) {
-                        docShares = docShares.map((fShare) => {
+                        docDirectShares = docDirectShares.map((fShare) => {
                             const fDeptClean = cleanId(fShare.department?.id ?? fShare.departmentId);
                             const deptChildShares = childShares.filter(
                                 (s) => cleanId(s.department?.id ?? s.departmentId) === fDeptClean
@@ -554,50 +553,16 @@ const DocumentsPage = ({
                         });
                     }
                 }
-            } else {
-                const directShares = (documentShares || []).filter(
-                    (s) => cleanId(s.document?.id ?? s.documentId) === docClean
-                );
-                const rootShares = rootClean
-                    ? (documentShares || []).filter((s) => cleanId(s.document?.id ?? s.documentId) === rootClean)
-                    : [];
-                docShares = directShares.length > 0 ? directShares : rootShares;
             }
 
-            if (isStaff) {
-                // Admin and Coord see everything
-                let resolvedStatus = '—';
-                if (docShares.length > 0) {
-                    if (docShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED)) {
-                        resolvedStatus = constants.DOCUMENT_SHARES_STATUS.PUBLISHED;
-                    } else if (docShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.APPROVED)) {
-                        resolvedStatus = constants.DOCUMENT_SHARES_STATUS.APPROVED;
-                    } else if (docShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL)) {
-                        resolvedStatus = constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL;
-                    } else if (docShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.STASHED)) {
-                        resolvedStatus = constants.DOCUMENT_SHARES_STATUS.STASHED;
-                    } else {
-                        resolvedStatus = docShares[0].status;
-                    }
-                }
-                setAccessibleItem(doc.id, {
-                    status: resolvedStatus,
-                    share: docShares[0] || null,
-                    shares: docShares,
-                    rootSharedFolder: rootSharedFolder || null,
-                });
-                return;
-            }
-
-            // For departmental users (Officer, Director, Member):
-            // 1. Collect all shares for this document (or root folder) that belong to the user's department
-            const directDeptShares = docShares.filter(
-                (s) => cleanId(s.department?.id ?? s.departmentId) === userDeptClean
+            // 1. Direct departmental shares for this specific document (file or folder)
+            const directDeptShares = docDirectShares.filter(
+                (s) => !userDeptClean || cleanId(s.department?.id ?? s.departmentId) === userDeptClean
             );
 
-            // 2. If no direct share row for this item and no root folder found yet, fallback check ancestors
+            // 2. Ancestor/folder inherited departmental shares (if no direct share)
             let effectiveDeptShares = [...directDeptShares];
-            let isInheritedFromFolder = Boolean(rootSharedFolder);
+            let isInheritedFromFolder = false;
 
             if (effectiveDeptShares.length === 0) {
                 let pId = doc.parentId ?? doc.parentFolderId;
@@ -608,15 +573,66 @@ const DocumentsPage = ({
                     const parentDeptShares = (documentShares || []).filter(
                         (s) =>
                             cleanId(s.document?.id ?? s.documentId) === parentDocClean &&
-                            cleanId(s.department?.id ?? s.departmentId) === userDeptClean
+                            (!userDeptClean || cleanId(s.department?.id ?? s.departmentId) === userDeptClean)
                     );
                     if (parentDeptShares.length > 0) {
-                        effectiveDeptShares = parentDeptShares;
+                        // If parent folder share was marked REJECTED (e.g. from legacy folder share mutation),
+                        // child files without their own direct share inherit PENDING_APPROVAL so they can undergo normal review.
+                        effectiveDeptShares = parentDeptShares.map((ps) => {
+                            if (String(ps.status).toUpperCase() === constants.DOCUMENT_SHARES_STATUS.REJECTED) {
+                                return { ...ps, status: constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL };
+                            }
+                            return ps;
+                        });
                         isInheritedFromFolder = true;
                         break;
                     }
                     pId = parentDoc.parentId ?? parentDoc.parentFolderId;
                 }
+            }
+
+            if (isStaff) {
+                // Admin and Coord see everything
+                let effectiveStaffShares = [...docDirectShares];
+                if (effectiveStaffShares.length === 0) {
+                    let pId = doc.parentId ?? doc.parentFolderId;
+                    while (pId && pId !== 'root') {
+                        const parentDoc = documents.find((d) => cleanId(d.id) === cleanId(pId));
+                        if (!parentDoc) break;
+                        const parentClean = cleanId(parentDoc.id);
+                        const parentShares = (documentShares || []).filter(
+                            (s) => cleanId(s.document?.id ?? s.documentId) === parentClean
+                        );
+                        if (parentShares.length > 0) {
+                            effectiveStaffShares = parentShares;
+                            break;
+                        }
+                        pId = parentDoc.parentId ?? parentDoc.parentFolderId;
+                    }
+                }
+                let resolvedStatus = '—';
+                if (effectiveStaffShares.length > 0) {
+                    if (effectiveStaffShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED)) {
+                        resolvedStatus = constants.DOCUMENT_SHARES_STATUS.PUBLISHED;
+                    } else if (effectiveStaffShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.APPROVED)) {
+                        resolvedStatus = constants.DOCUMENT_SHARES_STATUS.APPROVED;
+                    } else if (effectiveStaffShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL)) {
+                        resolvedStatus = constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL;
+                    } else if (effectiveStaffShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.STASHED)) {
+                        resolvedStatus = constants.DOCUMENT_SHARES_STATUS.STASHED;
+                    } else if (effectiveStaffShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.REJECTED)) {
+                        resolvedStatus = constants.DOCUMENT_SHARES_STATUS.REJECTED;
+                    } else {
+                        resolvedStatus = effectiveStaffShares[0].status;
+                    }
+                }
+                setAccessibleItem(doc.id, {
+                    status: resolvedStatus,
+                    share: effectiveStaffShares[0] || null,
+                    shares: effectiveStaffShares,
+                    rootSharedFolder: rootSharedFolder || null,
+                });
+                return;
             }
 
             if (effectiveDeptShares.length === 0) {
@@ -759,7 +775,8 @@ const DocumentsPage = ({
             if (d.isFolder) return;
             const dClean = cleanId(d.id);
             const sharesForDoc = (documentShares || []).filter(
-                (s) => cleanId(s.document?.id ?? s.documentId) === dClean
+                (s) => cleanId(s.document?.id ?? s.documentId) === dClean &&
+                    (!userDeptClean || cleanId(s.department?.id ?? s.departmentId) === userDeptClean)
             );
             const isDocRejected = sharesForDoc.some(
                 (s) => String(s.status).toUpperCase() === constants.DOCUMENT_SHARES_STATUS.REJECTED
@@ -1486,41 +1503,98 @@ const DocumentsPage = ({
             const userDeptClean = cleanId(currentUser?.departmentId);
 
             const executeSingle = async (targetItem, targetShareId, targetDeptId) => {
+                const isTargetFolder = Boolean(targetItem.isFolder);
+                const freshShares = useDocumentStore.getState().documentShares || [];
+                const targetDocClean = cleanId(targetItem.id);
+                const targetDeptClean = cleanId(targetDeptId || currentUser?.departmentId);
+
+                // Find direct departmental share for this exact document
+                const directShare = freshShares.find((s) => {
+                    const sDocClean = cleanId(s.document?.id ?? s.documentId);
+                    const sDeptClean = cleanId(s.department?.id ?? s.departmentId);
+                    const isBase = !s.recipientId && !s.recipient?.id;
+                    return sDocClean === targetDocClean && sDeptClean === targetDeptClean && isBase;
+                }) || freshShares.find((s) => {
+                    const sDocClean = cleanId(s.document?.id ?? s.documentId);
+                    const sDeptClean = cleanId(s.department?.id ?? s.departmentId);
+                    return sDocClean === targetDocClean && sDeptClean === targetDeptClean;
+                });
+
                 if (actionKey === 'approve') {
-                    if (targetItem.isFolder && targetDeptId) {
+                    if (isTargetFolder && targetDeptId) {
                         await updateShareStatusRecursive(targetItem.id, targetDeptId, constants.DOCUMENT_SHARES_STATUS.APPROVED);
-                    } else if (targetShareId) {
-                        await approveShare(targetShareId);
+                    } else if (directShare) {
+                        await approveShare(directShare.id);
+                    } else if (!isTargetFolder && targetDeptId) {
+                        await useDocumentStore.getState().insertDocumentShare({
+                            documentId: targetItem.id,
+                            departmentId: targetDeptId,
+                            sharerId: currentUser?.id,
+                            recipientId: null,
+                            status: constants.DOCUMENT_SHARES_STATUS.APPROVED,
+                        });
                     }
                 } else if (actionKey === 'unapprove') {
-                    if (targetItem.isFolder && targetDeptId) {
+                    if (isTargetFolder && targetDeptId) {
                         await updateShareStatusRecursive(targetItem.id, targetDeptId, constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL);
-                    } else if (targetShareId) {
-                        await unapproveShare(targetShareId);
+                    } else if (directShare) {
+                        await unapproveShare(directShare.id);
+                    } else if (!isTargetFolder && targetDeptId) {
+                        await useDocumentStore.getState().insertDocumentShare({
+                            documentId: targetItem.id,
+                            departmentId: targetDeptId,
+                            sharerId: currentUser?.id,
+                            recipientId: null,
+                            status: constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL,
+                        });
                     }
                 } else if (actionKey === 'stash') {
-                    if (targetItem.isFolder && targetDeptId) {
+                    if (isTargetFolder && targetDeptId) {
                         await updateShareStatusRecursive(targetItem.id, targetDeptId, constants.DOCUMENT_SHARES_STATUS.STASHED);
-                    } else if (targetShareId) {
-                        await stashShare(targetShareId);
+                    } else if (directShare) {
+                        await stashShare(directShare.id);
+                    } else if (!isTargetFolder && targetDeptId) {
+                        await useDocumentStore.getState().insertDocumentShare({
+                            documentId: targetItem.id,
+                            departmentId: targetDeptId,
+                            sharerId: currentUser?.id,
+                            recipientId: null,
+                            status: constants.DOCUMENT_SHARES_STATUS.STASHED,
+                        });
                     }
                 } else if (actionKey === 'unstash') {
-                    if (targetItem.isFolder && targetDeptId) {
+                    if (isTargetFolder && targetDeptId) {
                         await updateShareStatusRecursive(targetItem.id, targetDeptId, constants.DOCUMENT_SHARES_STATUS.APPROVED);
-                    } else if (targetShareId) {
-                        await unstashShare(targetShareId);
+                    } else if (directShare) {
+                        await unstashShare(directShare.id);
+                    } else if (!isTargetFolder && targetDeptId) {
+                        await useDocumentStore.getState().insertDocumentShare({
+                            documentId: targetItem.id,
+                            departmentId: targetDeptId,
+                            sharerId: currentUser?.id,
+                            recipientId: null,
+                            status: constants.DOCUMENT_SHARES_STATUS.APPROVED,
+                        });
                     }
                 } else if (actionKey === 'unreject') {
-                    if (targetItem.isFolder && targetDeptId) {
+                    if (isTargetFolder && targetDeptId) {
                         await updateShareStatusRecursive(targetItem.id, targetDeptId, constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL);
-                    } else if (targetShareId) {
-                        await unrejectShare(targetShareId);
+                    } else if (directShare) {
+                        await unrejectShare(directShare.id);
+                    } else if (!isTargetFolder && targetDeptId) {
+                        await useDocumentStore.getState().insertDocumentShare({
+                            documentId: targetItem.id,
+                            departmentId: targetDeptId,
+                            sharerId: currentUser?.id,
+                            recipientId: null,
+                            status: constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL,
+                        });
                     }
                 } else if (actionKey === 'unpublish') {
-                    if (targetItem.isFolder && targetDeptId) {
+                    if (isTargetFolder && targetDeptId) {
                         await updateShareStatusRecursive(targetItem.id, targetDeptId, constants.DOCUMENT_SHARES_STATUS.APPROVED);
-                    } else if (targetShareId) {
-                        await unpublishShare(targetShareId);
+                    } else if (directShare) {
+                        await unpublishShare(directShare.id);
                     }
                 } else if (actionKey === 'unshare') {
                     await unshareItemFromAllDepartments(targetItem);
@@ -1656,29 +1730,61 @@ const DocumentsPage = ({
             const cleanId = (uid) => (typeof uid === 'string' ? uid.replace(/-/g, '').toLowerCase() : uid);
             const userDeptClean = cleanId(currentUser?.departmentId);
 
+            const executeSingleRejection = async (singleItem, singleDeptId) => {
+                const freshShares = useDocumentStore.getState().documentShares || [];
+                const targetDocClean = cleanId(singleItem.id);
+                const targetDeptClean = cleanId(singleDeptId || currentUser?.departmentId);
+
+                if (singleItem.isFolder && singleDeptId) {
+                    await updateShareStatusRecursive(singleItem.id, singleDeptId, constants.DOCUMENT_SHARES_STATUS.REJECTED);
+                    return;
+                }
+
+                // Check direct share on the file
+                const directShare = freshShares.find((s) => {
+                    const sDocClean = cleanId(s.document?.id ?? s.documentId);
+                    const sDeptClean = cleanId(s.department?.id ?? s.departmentId);
+                    const isBase = !s.recipientId && !s.recipient?.id;
+                    return sDocClean === targetDocClean && sDeptClean === targetDeptClean && isBase;
+                }) || freshShares.find((s) => {
+                    const sDocClean = cleanId(s.document?.id ?? s.documentId);
+                    const sDeptClean = cleanId(s.department?.id ?? s.departmentId);
+                    return sDocClean === targetDocClean && sDeptClean === targetDeptClean;
+                });
+
+                if (directShare) {
+                    await rejectShare(directShare.id, reason, currentUser?.id);
+                } else if (singleDeptId) {
+                    // Create independent share record for this rejected file
+                    await useDocumentStore.getState().insertDocumentShare({
+                        documentId: singleItem.id,
+                        departmentId: singleDeptId,
+                        sharerId: currentUser?.id,
+                        recipientId: null,
+                        status: constants.DOCUMENT_SHARES_STATUS.REJECTED,
+                        rejectionReason: reason,
+                        rejecterId: currentUser?.id,
+                    });
+                    const docVers = (useDocumentStore.getState().documentVersions || []).filter(
+                        (v) => (v.document?.id ?? v.documentId) === singleItem.id
+                    );
+                    const latestVer = [...docVers].sort((a, b) => (b.version || 0) - (a.version || 0))[0];
+                    if (latestVer?.id) {
+                        await useDocumentStore.getState().updateDocumentVersion(latestVer.id, {
+                            rejectionReason: reason,
+                            rejecterId: currentUser?.id,
+                            updatedAt: new Date().toISOString(),
+                        });
+                    }
+                }
+            };
+
             if (Array.isArray(item)) {
                 let successCount = 0;
                 for (const singleItem of item) {
-                    let sRecord = singleItem.share;
-                    if (!sRecord) {
-                        if (userDeptClean) {
-                            sRecord = (documentShares || []).find((s) => {
-                                const sDocId = cleanId(s.document?.id ?? s.documentId);
-                                const sDeptId = cleanId(s.department?.id ?? s.departmentId);
-                                return sDocId === cleanId(singleItem.id) && sDeptId === userDeptClean;
-                            });
-                        } else {
-                            sRecord = (documentShares || []).find((s) => cleanId(s.document?.id ?? s.documentId) === cleanId(singleItem.id));
-                        }
-                    }
-                    const sId = sRecord?.id;
-                    const dId = sRecord?.department?.id ?? sRecord?.departmentId ?? currentUser?.departmentId;
+                    const dId = singleItem.share?.department?.id ?? singleItem.share?.departmentId ?? currentUser?.departmentId;
                     try {
-                        if (singleItem.isFolder && dId) {
-                            await updateShareStatusRecursive(singleItem.id, dId, constants.DOCUMENT_SHARES_STATUS.REJECTED);
-                        } else if (sId) {
-                            await rejectShare(sId, reason, currentUser?.id);
-                        }
+                        await executeSingleRejection(singleItem, dId);
                         successCount++;
                     } catch (singleErr) {
                         console.error(`Failed reject for ${singleItem.name || singleItem.title}:`, singleErr);
@@ -1696,11 +1802,7 @@ const DocumentsPage = ({
                     description: `Rejected ${successCount} of ${item.length} files.`,
                 });
             } else {
-                if (item.isFolder && deptId) {
-                    await updateShareStatusRecursive(item.id, deptId, constants.DOCUMENT_SHARES_STATUS.REJECTED);
-                } else {
-                    await rejectShare(shareId, reason, currentUser?.id);
-                }
+                await executeSingleRejection(item, deptId);
                 if (selectedItems && selectedItems.length > 0) {
                     const remaining = selectedItems.filter((it) => it.id !== item.id);
                     onSelectMultiple?.(remaining);
@@ -1750,6 +1852,7 @@ const DocumentsPage = ({
         }
 
         if (actionKey === 'publish' || actionKey === 're_publish') {
+            // Officers and Directors publish individual files directly
             setPublishModalDocument(item);
             return;
         }
@@ -1911,11 +2014,33 @@ const DocumentsPage = ({
             }
 
             try {
+                const freshShares = useDocumentStore.getState().documentShares || [];
+                const itemDocClean = cleanId(item.id);
+                const targetDeptClean = cleanId(deptId || currentUser?.departmentId);
+                const directShare = freshShares.find((s) => {
+                    const sDocClean = cleanId(s.document?.id ?? s.documentId);
+                    const sDeptClean = cleanId(s.department?.id ?? s.departmentId);
+                    const isBase = !s.recipientId && !s.recipient?.id;
+                    return sDocClean === itemDocClean && sDeptClean === targetDeptClean && isBase;
+                }) || freshShares.find((s) => {
+                    const sDocClean = cleanId(s.document?.id ?? s.documentId);
+                    const sDeptClean = cleanId(s.department?.id ?? s.departmentId);
+                    return sDocClean === itemDocClean && sDeptClean === targetDeptClean;
+                });
+
                 if (actionKey === 'publish') {
                     if (item.isFolder && deptId) {
                         await updateShareStatusRecursive(item.id, deptId, constants.DOCUMENT_SHARES_STATUS.PUBLISHED);
-                    } else {
-                        await publishShare(shareId);
+                    } else if (directShare) {
+                        await publishShare(directShare.id);
+                    } else if (deptId) {
+                        await useDocumentStore.getState().insertDocumentShare({
+                            documentId: item.id,
+                            departmentId: deptId,
+                            sharerId: currentUser?.id,
+                            recipientId: null,
+                            status: constants.DOCUMENT_SHARES_STATUS.PUBLISHED,
+                        });
                     }
                     showToast({
                         type: 'success',
@@ -1925,8 +2050,8 @@ const DocumentsPage = ({
                 } else if (actionKey === 'unpublish') {
                     if (item.isFolder && deptId) {
                         await updateShareStatusRecursive(item.id, deptId, constants.DOCUMENT_SHARES_STATUS.APPROVED);
-                    } else {
-                        await unpublishShare(shareId);
+                    } else if (directShare) {
+                        await unpublishShare(directShare.id);
                     }
                     showToast({
                         type: 'information',

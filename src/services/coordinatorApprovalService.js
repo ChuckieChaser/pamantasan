@@ -120,6 +120,11 @@ function formatCoordinatorActionLabel(action, data = {}) {
         const identifier = resolveDocIdentifier(payload) || 'Document';
         return `Unarchive Document (${identifier})`;
     }
+    if (act === constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_VERSION_REVERT || act === 'DOCUMENT_VERSION_REVERT') {
+        const identifier = resolveDocIdentifier(payload) || payload?.documentName || 'Document';
+        const ver = payload?.versionItem?.version ?? payload?.targetVersion ?? payload?.version ?? '';
+        return `Revert Document (${identifier}${ver ? ` to v${ver}.0` : ''})`;
+    }
     return act ? act.replace(/_/g, ' ') : 'Coordinator Request';
 }
 
@@ -431,6 +436,16 @@ const coordinatorApprovalService = {
 
             case constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_REQUEST_REOPEN: {
                 throw new Error('Closed and resolved document requests cannot be reopened for compliance and auditing.');
+            }
+
+            case constants.COORDINATOR_REQUESTS_ACTION.DOCUMENT_VERSION_REVERT:
+            case 'DOCUMENT_VERSION_REVERT': {
+                const docStore = useDocumentStore.getState();
+                const docId = payloadData.documentId ?? payloadData.id;
+                if (!docId) throw new Error('Document ID missing from request payload.');
+                const versionItem = payloadData.versionItem ?? payloadData;
+                await docStore.revertDocumentVersion(docId, versionItem, coordinatorId);
+                break;
             }
 
             default:
