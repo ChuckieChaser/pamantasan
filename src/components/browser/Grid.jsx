@@ -35,7 +35,7 @@ const Grid = ({
                 const isHighlighted = highlightedIds instanceof Set
                     ? highlightedIds.has(item.id)
                     : (Array.isArray(highlightedIds) && highlightedIds.includes(item.id));
-                const isSoftError = Boolean(item.isRejected || item.hasRejectedChild);
+                const isSoftError = Boolean(item.isRejected);
                 const isWarning = Boolean(!isSoftError && !isHighlighted && (item.isWarning || item.isPendingAction || item.hasPendingActionChild));
 
                 let cardClass = `p-3.5 sm:p-4 gap-3 justify-between transition-colors duration-200 cursor-pointer group select-none min-w-0 rounded-xl`;

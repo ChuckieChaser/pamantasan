@@ -784,6 +784,13 @@ const useDocumentStore = create((set, get) => ({
                 };
             });
 
+            if (documentId) {
+                const targetDoc = (get().documents || []).find((d) => d.id === documentId);
+                if (targetDoc?.isFolder) {
+                    await get().syncParentFolderShares(documentId).catch(() => {});
+                }
+            }
+
             return shares;
         } catch (error) {
             const message = error?.message ?? `Failed to fetch shares for document "${documentId}".`;
@@ -1283,6 +1290,16 @@ const useDocumentStore = create((set, get) => ({
                     return currentShares;
                 }
 
+                try {
+                    const allDocs = get().documents || [];
+                    const folderDocs = allDocs.filter((d) => d.isFolder);
+                    for (const folder of folderDocs) {
+                        await get().syncParentFolderShares(folder.id).catch(() => {});
+                    }
+                } catch {
+                    /* ignore */
+                }
+
                 return get().documentShares || [];
             } catch (error) {
                 console.error('Failed to synchronize document shares:', error);
@@ -1293,6 +1310,119 @@ const useDocumentStore = create((set, get) => ({
         })();
 
         return inFlightSyncPromise;
+    },
+
+    syncParentFolderShares: async (docId, departmentId = null) => {
+        try {
+            if (!docId) return;
+            const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
+            const allDocs = get().documents || [];
+            const targetClean = cleanId(docId);
+            const startDoc = allDocs.find((d) => cleanId(d.id) === targetClean);
+
+            const foldersToSync = [];
+            if (startDoc?.isFolder) {
+                foldersToSync.push(startDoc);
+            }
+            let currentParentId = startDoc?.parent?.id ?? startDoc?.parentId ?? startDoc?.parentFolderId;
+            while (currentParentId && currentParentId !== 'root') {
+                const pClean = cleanId(currentParentId);
+                const pDoc = allDocs.find((d) => cleanId(d.id) === pClean);
+                if (!pDoc) break;
+                if (pDoc.isFolder && !foldersToSync.some((f) => cleanId(f.id) === pClean)) {
+                    foldersToSync.push(pDoc);
+                }
+                currentParentId = pDoc.parent?.id ?? pDoc.parentId ?? pDoc.parentFolderId;
+            }
+
+            if (foldersToSync.length === 0) return;
+
+            const timestamp = new Date().toISOString();
+            const updatedShares = [];
+
+            for (const folder of foldersToSync) {
+                const folderCleanId = cleanId(folder.id);
+                const descendantIds = getRecursiveDescendantDocIds(folder.id, allDocs);
+                const descendantFiles = allDocs.filter(
+                    (d) => descendantIds.includes(d.id) && cleanId(d.id) !== folderCleanId && !d.isFolder
+                );
+
+                if (descendantFiles.length === 0) continue;
+
+                const descendantFileIds = new Set(descendantFiles.map((d) => cleanId(d.id)));
+
+                const folderBaseShares = (get().documentShares || []).filter((s) => {
+                    const sDocClean = cleanId(s.document?.id ?? s.documentId);
+                    const isBase = !s.recipientId && !s.recipient?.id && !s.recipient;
+                    return sDocClean === folderCleanId && isBase;
+                });
+
+                for (const fShare of folderBaseShares) {
+                    const fDeptClean = cleanId(fShare.department?.id ?? fShare.departmentId);
+                    if (departmentId && fDeptClean !== cleanId(departmentId)) continue;
+
+                    const childShares = (get().documentShares || []).filter((s) => {
+                        const sDocClean = cleanId(s.document?.id ?? s.documentId);
+                        const sDeptClean = cleanId(s.department?.id ?? s.departmentId);
+                        const isBase = !s.recipientId && !s.recipient?.id && !s.recipient;
+                        return descendantFileIds.has(sDocClean) && sDeptClean === fDeptClean && isBase;
+                    });
+
+                    if (childShares.length === 0) continue;
+
+                    let nextStatus = fShare.status;
+                    const allPublishedOrStashed = childShares.length >= descendantFiles.length &&
+                        childShares.every(
+                            (s) => s.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED || s.status === constants.DOCUMENT_SHARES_STATUS.STASHED
+                        );
+
+                    if (allPublishedOrStashed) {
+                        const anyPublished = childShares.some(
+                            (s) => s.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED
+                        );
+                        nextStatus = anyPublished
+                            ? constants.DOCUMENT_SHARES_STATUS.PUBLISHED
+                            : constants.DOCUMENT_SHARES_STATUS.STASHED;
+                    } else if (childShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL)) {
+                        nextStatus = constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL;
+                    } else if (childShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.APPROVED)) {
+                        nextStatus = constants.DOCUMENT_SHARES_STATUS.APPROVED;
+                    }
+
+                    const statusChanged = fShare.status !== nextStatus;
+                    const rejectionCleared = Boolean(fShare.rejectionReason);
+
+                    if (statusChanged || rejectionCleared) {
+                        await documentService.updateDocumentShare(fShare.id, {
+                            status: nextStatus,
+                            rejectionReason: null,
+                            rejecterId: null,
+                            updatedAt: timestamp,
+                        });
+
+                        const updatedShare = {
+                            ...fShare,
+                            status: nextStatus,
+                            rejectionReason: null,
+                            rejecterId: null,
+                            updatedAt: timestamp,
+                        };
+                        updatedShares.push(updatedShare);
+                    }
+                }
+            }
+
+            if (updatedShares.length > 0) {
+                set((state) => ({
+                    documentShares: state.documentShares.map((item) => {
+                        const match = updatedShares.find((u) => u.id === item.id);
+                        return match || item;
+                    }),
+                }));
+            }
+        } catch (err) {
+            console.error('Failed to sync parent folder shares:', err);
+        }
     },
 
     shareDocument: async (documentId, departmentId, sharerId) => {
@@ -1972,6 +2102,8 @@ const useDocumentStore = create((set, get) => ({
                     isMajor: true,
                 }).catch(() => {});
 
+                await get().syncParentFolderShares(rootDocId, departmentId);
+
                 return updatedBaseShares;
             } else {
                 // 2. PUBLISH TO SPECIFIC MEMBERS
@@ -2128,6 +2260,8 @@ const useDocumentStore = create((set, get) => ({
                     isMajor: true,
                 }).catch(() => {});
 
+                await get().syncParentFolderShares(rootDocId, departmentId);
+
                 return createdOrUpdatedShares;
             }
         } catch (error) {
@@ -2156,6 +2290,8 @@ const useDocumentStore = create((set, get) => ({
             const merged = {
                 ...existing,
                 status: constants.DOCUMENT_SHARES_STATUS.APPROVED,
+                rejectionReason: null,
+                rejecterId: null,
                 departmentId: deptId,
                 department: existing?.department ?? (deptId ? { id: deptId } : null),
                 recipientId: recId,
@@ -2191,6 +2327,8 @@ const useDocumentStore = create((set, get) => ({
                 targetDepartmentId: deptId,
                 isMajor: true,
             }).catch(() => {});
+
+            await get().syncParentFolderShares(existing?.documentId ?? existing?.document?.id, deptId);
 
             return merged;
         } catch (error) {
@@ -2254,6 +2392,8 @@ const useDocumentStore = create((set, get) => ({
                 targetDepartmentId: deptId,
                 isMajor: true,
             }).catch(() => {});
+
+            await get().syncParentFolderShares(existing?.documentId ?? existing?.document?.id, deptId);
 
             return merged;
         } catch (error) {
@@ -2358,6 +2498,8 @@ const useDocumentStore = create((set, get) => ({
                 isMajor: true,
             }).catch(() => {});
 
+            await get().syncParentFolderShares(docId, deptId);
+
             return merged;
         } catch (error) {
             console.error('Failed to reject document share:', error);
@@ -2447,6 +2589,8 @@ const useDocumentStore = create((set, get) => ({
                 isMajor: true,
             }).catch(() => {});
 
+            await get().syncParentFolderShares(docId, deptId);
+
             return merged;
         } catch (error) {
             console.error('Failed to unreject document share:', error);
@@ -2534,6 +2678,8 @@ const useDocumentStore = create((set, get) => ({
                 isMajor: true,
             }).catch(() => {});
 
+            await get().syncParentFolderShares(docId, deptId);
+
             return newVersion;
         } catch (error) {
             console.error('Failed to reshare new version:', error);
@@ -2620,6 +2766,8 @@ const useDocumentStore = create((set, get) => ({
                 isMajor: true,
             }).catch(() => {});
 
+            await get().syncParentFolderShares(docId, deptId);
+
             return latestVer;
         } catch (error) {
             console.error('Failed to overwrite version file and reshare:', error);
@@ -2644,6 +2792,8 @@ const useDocumentStore = create((set, get) => ({
             const merged = {
                 ...existing,
                 status: constants.DOCUMENT_SHARES_STATUS.PUBLISHED,
+                rejectionReason: null,
+                rejecterId: null,
                 departmentId: deptId,
                 department: existing?.department ?? (deptId ? { id: deptId } : null),
                 recipientId: recId,
@@ -2682,6 +2832,8 @@ const useDocumentStore = create((set, get) => ({
                 targetDepartmentId: deptId,
                 isMajor: true,
             }).catch(() => {});
+
+            await get().syncParentFolderShares(existing?.documentId ?? existing?.document?.id, deptId);
 
             return merged;
         } catch (error) {
@@ -2798,6 +2950,8 @@ const useDocumentStore = create((set, get) => ({
                 isMajor: true,
             }).catch(() => {});
 
+            await get().syncParentFolderShares(targetDocId, deptId);
+
             return merged;
         } catch (error) {
             console.error('Failed to unpublish document share:', error);
@@ -2822,6 +2976,8 @@ const useDocumentStore = create((set, get) => ({
             const merged = {
                 ...existing,
                 status: constants.DOCUMENT_SHARES_STATUS.STASHED,
+                rejectionReason: null,
+                rejecterId: null,
                 departmentId: deptId,
                 department: existing?.department ?? (deptId ? { id: deptId } : null),
                 recipientId: recId,
@@ -2882,6 +3038,8 @@ const useDocumentStore = create((set, get) => ({
             const merged = {
                 ...existing,
                 status: constants.DOCUMENT_SHARES_STATUS.APPROVED,
+                rejectionReason: null,
+                rejecterId: null,
                 departmentId: deptId,
                 department: existing?.department ?? (deptId ? { id: deptId } : null),
                 recipientId: recId,
@@ -2917,6 +3075,8 @@ const useDocumentStore = create((set, get) => ({
                 targetDepartmentId: deptId,
                 isMajor: true,
             }).catch(() => {});
+
+            await get().syncParentFolderShares(existing?.documentId ?? existing?.document?.id, deptId);
 
             return merged;
         } catch (error) {
@@ -3511,12 +3671,7 @@ const useDocumentStore = create((set, get) => ({
     },
 
     setPublishModalDocument: (document) => {
-        if (!document || Array.isArray(document)) {
-            set({ publishModalDocument: document });
-            return;
-        }
-        const root = findRootSharedDoc(document, get().documents, get().documentShares);
-        set({ publishModalDocument: root || document });
+        set({ publishModalDocument: document });
     },
 
     clearError: () => {

@@ -32,7 +32,7 @@ const List = ({
                 const isHighlighted = highlightedIds instanceof Set
                     ? highlightedIds.has(item.id)
                     : (Array.isArray(highlightedIds) && highlightedIds.includes(item.id));
-                const isSoftError = Boolean(item.isRejected || item.hasRejectedChild);
+                const isSoftError = Boolean(item.isRejected);
                 const isWarning = Boolean(!isSoftError && !isHighlighted && (item.isWarning || item.isPendingAction || item.hasPendingActionChild));
 
                 let itemClass = `group flex items-center justify-between p-3 sm:p-3.5 rounded-xl border transition-colors duration-200 cursor-pointer select-none gap-3 min-w-0`;

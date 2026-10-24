@@ -77,7 +77,7 @@ const Table = ({
                     {data.map((item) => {
                         const isChecked = selectedIds.has(item.id);
                         const isSelected = selectedId === item.id || isChecked;
-                        const isSoftError = Boolean(item.isRejected || item.hasRejectedChild);
+                        const isSoftError = Boolean(item.isRejected);
                         const isHighlighted = Boolean(
                             highlightedIds &&
                             (highlightedIds instanceof Set

@@ -889,10 +889,7 @@ const AppContent = () => {
         if (actionKey === 'publish' || actionKey === 're_publish') {
             const target = item || selectedItem;
             if (target) {
-                const allDocs = useDocumentStore.getState().documents ?? [];
-                const allShares = useDocumentStore.getState().documentShares ?? [];
-                const rootShared = !Array.isArray(target) ? findRootSharedFolder(target, allDocs, allShares) : null;
-                useDocumentStore.getState().setPublishModalDocument(rootShared || target);
+                useDocumentStore.getState().setPublishModalDocument(target);
             }
             return;
         }

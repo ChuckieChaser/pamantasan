@@ -508,9 +508,61 @@ const DocumentsPage = ({
             const docClean = cleanId(doc.id);
             const rootSharedFolder = findRootSharedFolder(doc, documents, documentShares);
             const rootClean = rootSharedFolder ? cleanId(rootSharedFolder.id) : null;
-            const docShares = (documentShares || []).filter(
-                (s) => cleanId(s.document?.id ?? s.documentId) === (rootClean || docClean)
-            );
+            let docShares = [];
+            if (doc.isFolder) {
+                docShares = (documentShares || []).filter(
+                    (s) => cleanId(s.document?.id ?? s.documentId) === docClean
+                );
+                const descendantIds = getRecursiveDescendantDocIds(doc.id, documents);
+                const descendantFiles = documents.filter(
+                    (d) => descendantIds.includes(d.id) && cleanId(d.id) !== docClean && !d.isFolder
+                );
+                if (descendantFiles.length > 0) {
+                    const descendantFileIds = new Set(descendantFiles.map((d) => cleanId(d.id)));
+                    const childShares = (documentShares || []).filter((s) => {
+                        const sDocId = cleanId(s.document?.id ?? s.documentId);
+                        const isBase = !s.recipientId && !s.recipient?.id && !s.recipient;
+                        return descendantFileIds.has(sDocId) && isBase;
+                    });
+                    if (childShares.length > 0) {
+                        docShares = docShares.map((fShare) => {
+                            const fDeptClean = cleanId(fShare.department?.id ?? fShare.departmentId);
+                            const deptChildShares = childShares.filter(
+                                (s) => cleanId(s.department?.id ?? s.departmentId) === fDeptClean
+                            );
+                            if (deptChildShares.length === 0) return fShare;
+
+                            const allPubOrStashed = deptChildShares.length >= descendantFiles.length &&
+                                deptChildShares.every(
+                                    (s) => s.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED || s.status === constants.DOCUMENT_SHARES_STATUS.STASHED
+                                );
+                            if (allPubOrStashed) {
+                                const anyPub = deptChildShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED);
+                                return {
+                                    ...fShare,
+                                    status: anyPub ? constants.DOCUMENT_SHARES_STATUS.PUBLISHED : constants.DOCUMENT_SHARES_STATUS.STASHED,
+                                    rejectionReason: null,
+                                };
+                            }
+                            if (deptChildShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL)) {
+                                return { ...fShare, status: constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL, rejectionReason: null };
+                            }
+                            if (deptChildShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.APPROVED)) {
+                                return { ...fShare, status: constants.DOCUMENT_SHARES_STATUS.APPROVED, rejectionReason: null };
+                            }
+                            return { ...fShare, rejectionReason: null };
+                        });
+                    }
+                }
+            } else {
+                const directShares = (documentShares || []).filter(
+                    (s) => cleanId(s.document?.id ?? s.documentId) === docClean
+                );
+                const rootShares = rootClean
+                    ? (documentShares || []).filter((s) => cleanId(s.document?.id ?? s.documentId) === rootClean)
+                    : [];
+                docShares = directShares.length > 0 ? directShares : rootShares;
+            }
 
             if (isStaff) {
                 // Admin and Coord see everything
@@ -700,9 +752,8 @@ const DocumentsPage = ({
             return accessibleItemMap.has(doc.id) || accessibleItemMap.has(cleanId(doc.id));
         });
 
-        // Build set of rejected documents and ancestor folders containing rejected documents
+        // Build set of rejected documents
         const rejectedDocIdSet = new Set();
-        const foldersWithRejectedChildrenSet = new Set();
 
         documents.forEach((d) => {
             if (d.isFolder) return;
@@ -716,15 +767,6 @@ const DocumentsPage = ({
             if (isDocRejected) {
                 rejectedDocIdSet.add(d.id);
                 rejectedDocIdSet.add(dClean);
-
-                let pId = d.parentId ?? d.parentFolderId;
-                while (pId && pId !== 'root') {
-                    foldersWithRejectedChildrenSet.add(pId);
-                    foldersWithRejectedChildrenSet.add(cleanId(pId));
-                    const parentDoc = documents.find((p) => cleanId(p.id) === cleanId(pId));
-                    if (!parentDoc) break;
-                    pId = parentDoc.parentId ?? parentDoc.parentFolderId;
-                }
             }
         });
 
@@ -848,7 +890,6 @@ const DocumentsPage = ({
             const subtitleText = doc.isFolder ? 'Directory' : getSpecificMimeLabel(effectiveMime, doc.name);
 
             const isDocRejected = !doc.isFolder && (rejectedDocIdSet.has(doc.id) || rejectedDocIdSet.has(docClean));
-            const hasRejectedChild = doc.isFolder && (foldersWithRejectedChildrenSet.has(doc.id) || foldersWithRejectedChildrenSet.has(docClean));
             const isDocActionPending = (isOfficer || isDirector) && !doc.isFolder && (pendingActionDocIdSet.has(doc.id) || pendingActionDocIdSet.has(docClean));
             const hasPendingActionChild = (isOfficer || isDirector) && doc.isFolder && (foldersWithPendingActionChildrenSet.has(doc.id) || foldersWithPendingActionChildrenSet.has(docClean));
             const isActionPending = isDocActionPending || hasPendingActionChild;
@@ -887,7 +928,7 @@ const DocumentsPage = ({
                 directlyArchived: doc.directlyArchived,
                 originalLocation: originalLocation,
                 isRejected: isDocRejected,
-                hasRejectedChild: hasRejectedChild,
+                hasRejectedChild: false,
                 isPendingAction: isActionPending,
                 isWarning: isActionPending,
                 hasPendingActionChild: hasPendingActionChild,
@@ -1709,8 +1750,7 @@ const DocumentsPage = ({
         }
 
         if (actionKey === 'publish' || actionKey === 're_publish') {
-            const root = !Array.isArray(item) ? findRootSharedFolder(item, documents, documentShares) : null;
-            setPublishModalDocument(root || item);
+            setPublishModalDocument(item);
             return;
         }
 
@@ -1929,7 +1969,7 @@ const DocumentsPage = ({
         }
 
         if (actionKey === 'view_share') {
-            const root = findRootSharedFolder(item, documents, documentShares);
+            const root = isStaff ? findRootSharedFolder(item, documents, documentShares) : null;
             const targetDoc = root || item;
             const itemWithTab = { ...targetDoc, _targetTab: 'shares' };
             setSelectedDocument(itemWithTab);
@@ -3984,7 +4024,7 @@ const DocumentsPage = ({
             setPublishModalDocument(null);
             setSelectedPublishMemberIds([]);
             const isBatch = Array.isArray(publishModalDocument);
-            if (isBatch || (selectedItems && selectedItems.length > 0)) {
+            if (isBatch && docs.length > 1) {
                 const processedDocIds = new Set(docs.map((d) => d.id));
                 const remaining = (selectedItems || []).filter((it) => !processedDocIds.has(it.id));
                 onSelectMultiple?.(remaining);
@@ -3997,7 +4037,7 @@ const DocumentsPage = ({
                 }
             } else {
                 const refreshedDoc = useDocumentStore.getState().documents.find((d) => d.id === firstDoc.id) || firstDoc;
-                onSelectMultiple?.([]);
+                onSelectMultiple?.([refreshedDoc]);
                 setSelectedDocument(refreshedDoc);
                 onSelectDocument?.(refreshedDoc);
             }

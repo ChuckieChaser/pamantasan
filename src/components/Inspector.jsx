@@ -305,6 +305,159 @@ const formatChangeSummary = (rawChangeSummary) => {
     return text;
 };
 
+const WorkflowProgressPipeline = ({ status, isStashed = false, isPublished = false }) => {
+    const statusUpper = String(status || '').toUpperCase();
+    const isRejected = statusUpper.includes('REJECT');
+    const stashed = isStashed || statusUpper === constants.DOCUMENT_SHARES_STATUS.STASHED;
+    const published = !stashed && (isPublished || statusUpper === constants.DOCUMENT_SHARES_STATUS.PUBLISHED);
+    const isDirectorApproved = statusUpper === constants.DOCUMENT_SHARES_STATUS.APPROVED && !published;
+    const isOfficerPending = statusUpper === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL && !published && !stashed;
+
+    let currentStep = 1;
+    if (stashed || published) {
+        currentStep = 4;
+    } else if (isDirectorApproved) {
+        currentStep = 3;
+    } else if (isOfficerPending || isRejected) {
+        currentStep = 2;
+    }
+
+    const getLineStyle = (lineIndex) => {
+        if (lineIndex === 1) {
+            if (currentStep > 2) return { backgroundColor: 'var(--color-accent)' };
+            if (currentStep === 2) {
+                return {
+                    background: isRejected
+                        ? 'linear-gradient(to right, var(--color-accent), var(--color-error))'
+                        : 'linear-gradient(to right, var(--color-accent), var(--color-warning))',
+                };
+            }
+            if (currentStep === 1) {
+                return {
+                    background: 'linear-gradient(to right, var(--color-warning), var(--color-surface-border))',
+                };
+            }
+            return { backgroundColor: 'var(--color-surface-border)' };
+        }
+        if (lineIndex === 2) {
+            if (currentStep > 3) return { backgroundColor: 'var(--color-accent)' };
+            if (currentStep === 3) {
+                return {
+                    background: 'linear-gradient(to right, var(--color-accent), var(--color-warning))',
+                };
+            }
+            return { backgroundColor: 'var(--color-surface-border)' };
+        }
+        if (lineIndex === 3) {
+            if (currentStep === 4) return { backgroundColor: 'var(--color-accent)' };
+            return { backgroundColor: 'var(--color-surface-border)' };
+        }
+        return { backgroundColor: 'var(--color-surface-border)' };
+    };
+
+    const getPillStyles = (nodeStep, isNodeRejected = false) => {
+        const isPassed = currentStep > nodeStep;
+        const isCurrent = currentStep === nodeStep;
+        if (isNodeRejected && isCurrent) {
+            return 'bg-error text-text-inverted border-error font-bold ring-2 ring-error/30 shadow-xs';
+        }
+        if (isCurrent) {
+            return 'bg-warning text-text-inverted border-warning font-bold ring-2 ring-warning/30 shadow-xs animate-pulse';
+        }
+        if (isPassed) {
+            return 'bg-accent text-text-inverted border-accent font-semibold shadow-xs ring-1 ring-accent/30';
+        }
+        return 'bg-surface/50 border-surface-border text-text-muted/50 font-normal';
+    };
+
+    const node1Class = getPillStyles(1);
+    const node2Class = getPillStyles(2, isRejected);
+    const node3Class = getPillStyles(3);
+
+    const forkStashedColor = stashed ? 'var(--color-accent)' : 'var(--color-surface-border)';
+    const forkPublishedColor = published ? 'var(--color-accent)' : 'var(--color-surface-border)';
+
+    const stashedNodeClass = stashed
+        ? 'bg-accent text-text-inverted border-accent font-bold ring-2 ring-accent/30 shadow-xs'
+        : 'bg-surface/50 border-surface-border text-text-muted/40 font-normal';
+
+    const publishedNodeClass = published
+        ? 'bg-accent text-text-inverted border-accent font-bold ring-2 ring-accent/30 shadow-xs'
+        : 'bg-surface/50 border-surface-border text-text-muted/40 font-normal';
+
+    return (
+        <div className="p-2.5 rounded-md border border-surface-border bg-surface/60 flex flex-col gap-2">
+            <div className="flex items-center justify-between text-[11px] font-semibold text-text-muted select-none">
+                <span>Workflow Progress</span>
+                <span className="text-[10px] font-medium text-text-muted/80">Lifecycle Review</span>
+            </div>
+            <div className="flex items-center w-full pt-1 pb-0.5">
+                <div
+                    className={`flex items-center justify-center px-2 py-0.5 rounded-md border text-[10px] transition-all select-none shrink-0 ${node1Class}`}
+                    title="Administrator (Origin / Created)"
+                >
+                    <span>Administrator</span>
+                </div>
+                <div
+                    className="flex-1 h-0.5 transition-all duration-300 min-w-2 rounded-full"
+                    style={getLineStyle(1)}
+                />
+                <div
+                    className={`flex items-center justify-center px-2 py-0.5 rounded-md border text-[10px] transition-all select-none shrink-0 ${node2Class}`}
+                    title="Officer Review (Pending Approval)"
+                >
+                    <span>Officer</span>
+                </div>
+                <div
+                    className="flex-1 h-0.5 transition-all duration-300 min-w-2 rounded-full"
+                    style={getLineStyle(2)}
+                />
+                <div
+                    className={`flex items-center justify-center px-2 py-0.5 rounded-md border text-[10px] transition-all select-none shrink-0 ${node3Class}`}
+                    title="Director Review (Approved)"
+                >
+                    <span>Director</span>
+                </div>
+                <div
+                    className="flex-1 h-0.5 transition-all duration-300 min-w-2 rounded-full"
+                    style={getLineStyle(3)}
+                />
+                <div className="w-3.5 h-11 shrink-0 flex items-center">
+                    <svg className="w-3.5 h-11 shrink-0" viewBox="0 0 14 44" fill="none">
+                        <path
+                            d="M 0 22 H 4 C 8 22, 9 9, 14 9"
+                            stroke={forkStashedColor}
+                            strokeWidth={stashed ? '2.5' : '1.5'}
+                            strokeLinecap="round"
+                            className="transition-all duration-300"
+                        />
+                        <path
+                            d="M 0 22 H 4 C 8 22, 9 35, 14 35"
+                            stroke={forkPublishedColor}
+                            strokeWidth={published ? '2.5' : '1.5'}
+                            strokeLinecap="round"
+                            className="transition-all duration-300"
+                        />
+                    </svg>
+                </div>
+                <div className="h-11 flex flex-col justify-between shrink-0">
+                    <div
+                        className={`flex items-center justify-center px-1.5 py-0.5 rounded-md border text-[9px] transition-all select-none truncate ${stashedNodeClass}`}
+                        title="Stashed (Archived / Internal Reserve)"
+                    >
+                        <span>Stashed</span>
+                    </div>
+                    <div
+                        className={`flex items-center justify-center px-1.5 py-0.5 rounded-md border text-[9px] transition-all select-none truncate ${publishedNodeClass}`}
+                        title="Published (Active / Distributed to Members)"
+                    >
+                        <span>Published</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
 
 // --- COMPONENTS ---
 const Inspector = ({
@@ -568,12 +721,18 @@ const Inspector = ({
         }
         if (item?.id && (isDocument || isFolder)) {
             useDocumentStore.getState().fetchDocumentShares(item.id).catch(() => {});
+            if (isFolder) {
+                useDocumentStore.getState().syncParentFolderShares(item.id).catch(() => {});
+            }
         }
     }, [item?.id, isDocument, isFolder]);
 
     useEffect(() => {
         if (activeTab === 'share' && item?.id && (isDocument || isFolder)) {
             useDocumentStore.getState().fetchDocumentShares(item.id).catch(() => {});
+            if (isFolder) {
+                useDocumentStore.getState().syncParentFolderShares(item.id).catch(() => {});
+            }
         }
     }, [activeTab, item?.id, isDocument, isFolder]);
 
@@ -699,8 +858,37 @@ const Inspector = ({
             const matchedDoc = allDocuments.find((doc) => cleanId(doc.id) === itemCleanId);
             const liveShares = allDocumentShares.filter((s) => cleanId(s.document?.id ?? s.documentId) === itemCleanId);
             const isLiveShared = liveShares.length > 0;
+            let folderEffectiveStatus = liveShares[0]?.status || 'SHARED';
+            const descendantIds = getRecursiveDescendantDocIds(item.id, allDocuments);
+            const descendantFiles = allDocuments.filter(
+                (d) => descendantIds.includes(d.id) && cleanId(d.id) !== itemCleanId && !d.isFolder
+            );
+            if (descendantFiles.length > 0) {
+                const descendantFileIds = new Set(descendantFiles.map((d) => cleanId(d.id)));
+                const childShares = allDocumentShares.filter((s) => {
+                    const sDocId = cleanId(s.document?.id ?? s.documentId);
+                    const isBase = !s.recipientId && !s.recipient?.id && !s.recipient;
+                    return descendantFileIds.has(sDocId) && isBase;
+                });
+                if (childShares.length > 0) {
+                    if (
+                        childShares.length >= descendantFiles.length &&
+                        childShares.every(
+                            (s) => s.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED || s.status === constants.DOCUMENT_SHARES_STATUS.STASHED
+                        )
+                    ) {
+                        folderEffectiveStatus = childShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED)
+                            ? constants.DOCUMENT_SHARES_STATUS.PUBLISHED
+                            : constants.DOCUMENT_SHARES_STATUS.STASHED;
+                    } else if (childShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL)) {
+                        folderEffectiveStatus = constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL;
+                    } else if (childShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.APPROVED)) {
+                        folderEffectiveStatus = constants.DOCUMENT_SHARES_STATUS.APPROVED;
+                    }
+                }
+            }
             const liveStatus = isLiveShared
-                ? (liveShares[0]?.status || 'SHARED')
+                ? folderEffectiveStatus
                 : (matchedDoc?.isArchived ? 'ARCHIVED' : (matchedDoc?.status === 'SHARED' ? 'PRIVATE' : (matchedDoc?.status || 'PRIVATE')));
 
             const getFolderSizeBytes = (folderId) => {
@@ -834,6 +1022,57 @@ const Inspector = ({
 
         const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id);
         const itemCleanId = cleanId(item.id);
+
+        if (isFolder) {
+            const descendantIds = getRecursiveDescendantDocIds(item.id, allDocuments);
+            const descendantFiles = allDocuments.filter(
+                (d) => descendantIds.includes(d.id) && cleanId(d.id) !== itemCleanId && !d.isFolder
+            );
+            const descendantFileIds = new Set(descendantFiles.map((d) => cleanId(d.id)));
+
+            const directFolderShares = allDocumentShares.filter((share) => {
+                const sDocId = cleanId(share.document?.id ?? share.documentId);
+                const isBase = !share.recipientId && !share.recipient?.id && !share.recipient;
+                return sDocId === itemCleanId && isBase;
+            });
+
+            const computedFolderDeptShares = directFolderShares.map((fShare) => {
+                const fDeptClean = cleanId(fShare.department?.id ?? fShare.departmentId);
+                const childShares = allDocumentShares.filter((s) => {
+                    const sDocId = cleanId(s.document?.id ?? s.documentId);
+                    const sDeptClean = cleanId(s.department?.id ?? s.departmentId);
+                    const isBase = !s.recipientId && !s.recipient?.id && !s.recipient;
+                    return descendantFileIds.has(sDocId) && sDeptClean === fDeptClean && isBase;
+                });
+
+                if (childShares.length === 0) return fShare;
+
+                let nextStatus = fShare.status;
+                const allPubOrStashed = childShares.length >= descendantFiles.length &&
+                    childShares.every(
+                        (s) => s.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED || s.status === constants.DOCUMENT_SHARES_STATUS.STASHED
+                    );
+
+                if (allPubOrStashed) {
+                    nextStatus = childShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED)
+                        ? constants.DOCUMENT_SHARES_STATUS.PUBLISHED
+                        : constants.DOCUMENT_SHARES_STATUS.STASHED;
+                } else if (childShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL)) {
+                    nextStatus = constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL;
+                } else if (childShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.APPROVED)) {
+                    nextStatus = constants.DOCUMENT_SHARES_STATUS.APPROVED;
+                }
+
+                return {
+                    ...fShare,
+                    status: nextStatus,
+                    rejectionReason: null,
+                    rejecterId: null,
+                };
+            });
+
+            return computedFolderDeptShares;
+        }
 
         const direct = allDocumentShares.filter((share) => {
             const sDocId = cleanId(share.document?.id ?? share.documentId);
@@ -2182,6 +2421,42 @@ const Inspector = ({
 
         const getItemEffectiveStatus = (it) => {
             const itCleanId = cleanId(it?.id);
+            if (it?.isFolder) {
+                const descendantIds = getRecursiveDescendantDocIds(it.id, allDocuments);
+                const descendantFiles = allDocuments.filter(
+                    (d) => descendantIds.includes(d.id) && cleanId(d.id) !== itCleanId && !d.isFolder
+                );
+                if (descendantFiles.length > 0) {
+                    const descendantFileIds = new Set(descendantFiles.map((d) => cleanId(d.id)));
+                    const childShares = (allDocumentShares || []).filter((s) => {
+                        const sDocId = cleanId(s.document?.id ?? s.documentId);
+                        const sDeptId = cleanId(s.department?.id ?? s.departmentId);
+                        return descendantFileIds.has(sDocId) && userDeptClean && sDeptId === userDeptClean;
+                    });
+                    if (childShares.length > 0) {
+                        if (childShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.REJECTED)) {
+                            return constants.DOCUMENT_SHARES_STATUS.REJECTED;
+                        }
+                        if (
+                            childShares.length >= descendantFiles.length &&
+                            childShares.every(
+                                (s) => s.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED || s.status === constants.DOCUMENT_SHARES_STATUS.STASHED
+                            )
+                        ) {
+                            return childShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED)
+                                ? constants.DOCUMENT_SHARES_STATUS.PUBLISHED
+                                : constants.DOCUMENT_SHARES_STATUS.STASHED;
+                        }
+                        if (childShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL)) {
+                            return constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL;
+                        }
+                        if (childShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.APPROVED)) {
+                            return constants.DOCUMENT_SHARES_STATUS.APPROVED;
+                        }
+                    }
+                }
+            }
+
             let deptShares = (allDocumentShares || []).filter((s) => {
                 const sDocId = cleanId(s.document?.id ?? s.documentId);
                 const sDeptId = cleanId(s.department?.id ?? s.departmentId);
@@ -4240,6 +4515,41 @@ const Inspector = ({
                                             (deptFaculty.length > 0 && deptUserShares.length >= deptFaculty.length)
                                         );
 
+                                        const directChildren = isFold
+                                            ? (allDocuments || []).filter((d) => {
+                                                const pId = d.parentId ?? d.parentFolderId;
+                                                return (cleanId(pId) === cleanTargetId || pId === item?.id) && !d.isArchived;
+                                            })
+                                            : [];
+                                        const directFiles = isFold ? directChildren.filter((d) => !d.isFolder) : [];
+                                        const directSubfolders = isFold ? directChildren.filter((d) => d.isFolder) : [];
+
+                                        let folderDeptStatus = shareItem.status;
+                                        if (isFold && directFiles.length > 0) {
+                                            const fileShareStatuses = directFiles.map((childFile) => {
+                                                const childCleanId = cleanId(childFile.id);
+                                                const childShare = (allDocumentShares || []).find((s) => {
+                                                    const sDocClean = cleanId(s.document?.id ?? s.documentId);
+                                                    const sDeptClean = cleanId(s.department?.id ?? s.departmentId);
+                                                    const isBase = !s.recipientId && !s.recipient?.id && !s.recipient;
+                                                    return sDocClean === childCleanId && sDeptClean === targetDeptClean && isBase;
+                                                });
+                                                return String(childShare?.status || shareItem.status || 'PENDING_APPROVAL').toUpperCase();
+                                            });
+                                            const allPubOrStashed = fileShareStatuses.every(
+                                                (st) => st === constants.DOCUMENT_SHARES_STATUS.PUBLISHED || st === constants.DOCUMENT_SHARES_STATUS.STASHED
+                                            );
+                                            if (allPubOrStashed) {
+                                                folderDeptStatus = fileShareStatuses.some((st) => st === constants.DOCUMENT_SHARES_STATUS.PUBLISHED)
+                                                    ? constants.DOCUMENT_SHARES_STATUS.PUBLISHED
+                                                    : constants.DOCUMENT_SHARES_STATUS.STASHED;
+                                            } else if (fileShareStatuses.every((st) => st === constants.DOCUMENT_SHARES_STATUS.APPROVED || st === constants.DOCUMENT_SHARES_STATUS.PUBLISHED || st === constants.DOCUMENT_SHARES_STATUS.STASHED)) {
+                                                folderDeptStatus = constants.DOCUMENT_SHARES_STATUS.APPROVED;
+                                            } else {
+                                                folderDeptStatus = constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL;
+                                            }
+                                        }
+
                                         const isCollapsed = collapsedShareIds.has(shareItem.id);
 
                                         return (
@@ -4260,17 +4570,19 @@ const Inspector = ({
                                                             </span>
                                                             {isCollapsed && (
                                                                 <span className="text-[10px] text-text-muted truncate">
-                                                                    {isAllMembersPublished
-                                                                        ? `${totalDeptMembers} member${totalDeptMembers === 1 ? '' : 's'} • ${uniqueReadersCount}/${totalDeptMembers} read`
-                                                                        : `${deptUserShares.length} published • ${uniqueReadersCount}/${deptUserShares.length} read`}
+                                                                    {isFold
+                                                                        ? `${directFiles.length} file${directFiles.length === 1 ? '' : 's'}${directSubfolders.length > 0 ? ` • ${directSubfolders.length} subfolder${directSubfolders.length === 1 ? '' : 's'}` : ''}`
+                                                                        : (isAllMembersPublished
+                                                                            ? `${totalDeptMembers} member${totalDeptMembers === 1 ? '' : 's'} • ${uniqueReadersCount}/${totalDeptMembers} read`
+                                                                            : `${deptUserShares.length} published • ${uniqueReadersCount}/${deptUserShares.length} read`)}
                                                                 </span>
                                                             )}
                                                         </div>
                                                     </div>
                                                     <div className="flex items-center gap-2 shrink-0">
                                                         <Badge
-                                                            variant={STATUS_BADGE_VARIANT[shareItem.status] ?? 'neutral'}
-                                                            label={shareItem.status}
+                                                            variant={STATUS_BADGE_VARIANT[isFold ? folderDeptStatus : shareItem.status] ?? 'neutral'}
+                                                            label={isFold ? folderDeptStatus : shareItem.status}
                                                         />
                                                         <button
                                                             type="button"
@@ -4284,455 +4596,334 @@ const Inspector = ({
 
                                                 {!isCollapsed && (
                                                 <>
+                                                    {isFold ? (
+                                                        /* FOLDER VIEW: INDIVIDUAL FILES & SUBFOLDERS PER DEPARTMENT */
+                                                        <div className="flex flex-col gap-2.5 pt-1 border-t border-surface-border">
+                                                            {directFiles.map((childFile) => {
+                                                                const childCleanId = cleanId(childFile.id);
+                                                                const childShare = (allDocumentShares || []).find((s) => {
+                                                                    const sDocClean = cleanId(s.document?.id ?? s.documentId);
+                                                                    const sDeptClean = cleanId(s.department?.id ?? s.departmentId);
+                                                                    const isBase = !s.recipientId && !s.recipient?.id && !s.recipient;
+                                                                    return sDocClean === childCleanId && sDeptClean === targetDeptClean && isBase;
+                                                                }) || shareItem;
 
-                                                {/* REJECTION FEEDBACK CALLOUT & ADMIN RESHARE ACTIONS */}
-                                                {(() => {
-                                                    const isShareRejected = shareItem.status === constants.DOCUMENT_SHARES_STATUS.REJECTED;
-                                                    if (!isShareRejected) return null;
+                                                                const fileStatus = String(childShare?.status || 'PENDING_APPROVAL').toUpperCase();
+                                                                const isFileRejected = fileStatus === constants.DOCUMENT_SHARES_STATUS.REJECTED;
+                                                                const isFileStashed = fileStatus === constants.DOCUMENT_SHARES_STATUS.STASHED;
+                                                                const isFilePublished = fileStatus === constants.DOCUMENT_SHARES_STATUS.PUBLISHED;
 
-                                                    const latestVer = documentVersions[0];
-                                                    const rejectionReason = shareItem.rejectionReason || latestVer?.rejectionReason || 'No rejection reason specified.';
-                                                    const rejecter = allUsers.find((u) => u.id === latestVer?.rejecterId || u.id === shareItem.rejecterId || u.id === shareItem.reviewerId);
-                                                    const rejecterName = rejecter ? `${rejecter.firstName || ''} ${rejecter.lastName || ''}`.trim() : null;
+                                                                const childVersions = (allDocumentVersions || []).filter(
+                                                                    (v) => cleanId(v.document?.id ?? v.documentId) === childCleanId
+                                                                ).sort((a, b) => (b.versionNumber ?? b.version ?? 0) - (a.versionNumber ?? a.version ?? 0));
+                                                                const childLatestVer = childVersions[0];
+                                                                const childRejectionReason = childShare?.rejectionReason || childLatestVer?.rejectionReason || 'No rejection reason specified.';
+                                                                const childRejecter = allUsers.find(
+                                                                    (u) => u.id === childLatestVer?.rejecterId || u.id === childShare?.rejecterId || u.id === childShare?.reviewerId
+                                                                );
+                                                                const childRejecterName = childRejecter ? `${childRejecter.firstName || ''} ${childRejecter.lastName || ''}`.trim() : null;
 
-                                                    return (
-                                                        <div className="p-3 rounded-lg border border-error/30 bg-error/10 flex flex-col gap-2.5">
-                                                            <div className="flex items-start gap-2">
-                                                                <AlertTriangle className="h-4 w-4 text-error shrink-0 mt-0.5" />
-                                                                <div className="flex flex-col gap-0.5 min-w-0">
-                                                                    <span className="text-xs font-semibold text-error">
-                                                                        Share Rejected by Department Reviewer {rejecterName ? `(${rejecterName})` : ''}
-                                                                    </span>
-                                                                    <p className="text-xs text-text leading-relaxed">
-                                                                        &ldquo;{rejectionReason}&rdquo;
-                                                                    </p>
+                                                                const fileReadersSet = new Set();
+                                                                if (isFilePublished) {
+                                                                    (allAuditLogs || []).forEach((log) => {
+                                                                        const docId = log?.entityId || log?.document?.id || log?.documentId;
+                                                                        if (!docId || cleanId(docId) !== childCleanId) return;
+                                                                        const isReadAction = ['READ', 'VIEW', 'VIEWED', 'DOWNLOAD', 'DOWNLOADED', 'ACCESS', 'ACCESSED', 'OPEN', 'OPENED'].includes(String(log?.action || '').toUpperCase());
+                                                                        if (!isReadAction) return;
+                                                                        const actorId = String(log?.actor?.id ?? log?.actorId ?? '');
+                                                                        const actorClean = cleanId(actorId);
+                                                                        if (!actorClean || !isEligibleDeptActor(actorClean, log)) return;
+                                                                        fileReadersSet.add(actorClean);
+                                                                    });
+                                                                    (allDocumentShares || []).forEach((s) => {
+                                                                        if (cleanId(s.document?.id ?? s.documentId) !== childCleanId) return;
+                                                                        const recId = cleanId(s.recipientId ?? s.recipient?.id);
+                                                                        if (recId && (deptEligibleReaderIds.has(recId) || deptFacultyMemberIds.has(recId) || isEligibleDeptActor(recId, s))) {
+                                                                            if (s.isRead || String(s.status || '').toUpperCase() === 'READ' || s.readAt) {
+                                                                                fileReadersSet.add(recId);
+                                                                            }
+                                                                        }
+                                                                    });
+                                                                }
+                                                                const fileReadersCount = fileReadersSet.size;
+
+                                                                return (
+                                                                    <div
+                                                                        key={childFile.id}
+                                                                        className="p-3 rounded-lg border border-surface-border bg-surface/40 hover:bg-surface/60 transition-colors flex flex-col gap-2.5"
+                                                                    >
+                                                                        <div className="flex items-center justify-between gap-2">
+                                                                            <div className="flex items-center gap-2 min-w-0">
+                                                                                <FileText className="h-4 w-4 text-accent shrink-0" />
+                                                                                <div className="flex flex-col min-w-0">
+                                                                                    <span className="font-semibold text-xs text-text truncate" title={childFile.name || childFile.title}>
+                                                                                        {childFile.name || childFile.title}
+                                                                                    </span>
+                                                                                    {childFile.size && (
+                                                                                        <span className="text-[10px] text-text-muted">{childFile.size}</span>
+                                                                                    )}
+                                                                                </div>
+                                                                            </div>
+                                                                            <Badge
+                                                                                variant={STATUS_BADGE_VARIANT[fileStatus] ?? 'neutral'}
+                                                                                label={fileStatus}
+                                                                            />
+                                                                        </div>
+
+                                                                        <WorkflowProgressPipeline
+                                                                            status={fileStatus}
+                                                                            isStashed={isFileStashed}
+                                                                            isPublished={isFilePublished}
+                                                                        />
+
+                                                                        {isFileRejected && (
+                                                                            <div className="p-2.5 rounded-lg border border-error/30 bg-error/10 flex flex-col gap-2">
+                                                                                <div className="flex items-start gap-2">
+                                                                                    <AlertTriangle className="h-4 w-4 text-error shrink-0 mt-0.5" />
+                                                                                    <div className="flex flex-col gap-0.5 min-w-0">
+                                                                                        <span className="text-xs font-semibold text-error">
+                                                                                            Share Rejected by Department Reviewer {childRejecterName ? `(${childRejecterName})` : ''}
+                                                                                        </span>
+                                                                                        <p className="text-xs text-text leading-relaxed">
+                                                                                            &ldquo;{childRejectionReason}&rdquo;
+                                                                                        </p>
+                                                                                    </div>
+                                                                                </div>
+                                                                                {isAdmin && (
+                                                                                    <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-error/20">
+                                                                                        <Button
+                                                                                            variant="primary"
+                                                                                            size="xs"
+                                                                                            leadingIcon={UploadCloud}
+                                                                                            onClick={() => {
+                                                                                                setReshareModal({
+                                                                                                    mode: 'new_version',
+                                                                                                    shareItem: childShare,
+                                                                                                    docId: childFile.id,
+                                                                                                    targetDeptName: shareDepartment?.name ?? 'Department',
+                                                                                                });
+                                                                                                setReshareFile(null);
+                                                                                                setReshareChangeSummary('Revision addressing rejection feedback');
+                                                                                            }}
+                                                                                            className="truncate text-[11px]"
+                                                                                        >
+                                                                                            Reshare (New Version)
+                                                                                        </Button>
+                                                                                        <Button
+                                                                                            variant="secondary"
+                                                                                            size="xs"
+                                                                                            leadingIcon={FileCheck}
+                                                                                            onClick={() => {
+                                                                                                setReshareModal({
+                                                                                                    mode: 'overwrite',
+                                                                                                    shareItem: childShare,
+                                                                                                    docId: childFile.id,
+                                                                                                    targetDeptName: shareDepartment?.name ?? 'Department',
+                                                                                                });
+                                                                                                setReshareFile(null);
+                                                                                                setReshareChangeSummary('');
+                                                                                            }}
+                                                                                            className="truncate text-[11px]"
+                                                                                        >
+                                                                                            Overwrite File & Reshare
+                                                                                        </Button>
+                                                                                    </div>
+                                                                                )}
+                                                                            </div>
+                                                                        )}
+
+                                                                        {isFilePublished && (
+                                                                            <div className="flex items-center justify-between px-2.5 py-1.5 rounded-md border border-accent/20 bg-accent/5 text-[11px]">
+                                                                                <span className="text-text-muted flex items-center gap-1.5 font-medium">
+                                                                                    <Eye className="h-3.5 w-3.5 text-accent" />
+                                                                                    <span>Readership</span>
+                                                                                </span>
+                                                                                <span className="font-semibold text-accent">
+                                                                                    {fileReadersCount} / {totalDeptMembers} read
+                                                                                </span>
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                );
+                                                            })}
+
+                                                            {directFiles.length === 0 && directSubfolders.length === 0 && (
+                                                                <div className="p-3 text-center text-xs text-text-muted border border-dashed border-surface-border rounded-lg">
+                                                                    No files or subfolders in this folder.
                                                                 </div>
-                                                            </div>
+                                                            )}
 
-                                                            {/* ADMIN RESHARE ACTIONS */}
-                                                            {isAdmin && (
-                                                                <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-error/20">
-                                                                    <Button
-                                                                        variant="primary"
-                                                                        size="xs"
-                                                                        leadingIcon={UploadCloud}
-                                                                        onClick={() => {
-                                                                            setReshareModal({
-                                                                                mode: 'new_version',
-                                                                                shareItem,
-                                                                                docId: item.id,
-                                                                                targetDeptName: shareDepartment?.name ?? 'Department',
-                                                                            });
-                                                                            setReshareFile(null);
-                                                                            setReshareChangeSummary('Revision addressing rejection feedback');
-                                                                        }}
-                                                                        className="truncate text-[11px]"
-                                                                    >
-                                                                        Reshare (New Version)
-                                                                    </Button>
-                                                                    <Button
-                                                                        variant="secondary"
-                                                                        size="xs"
-                                                                        leadingIcon={FileCheck}
-                                                                        onClick={() => {
-                                                                            setReshareModal({
-                                                                                mode: 'overwrite',
-                                                                                shareItem,
-                                                                                docId: item.id,
-                                                                                targetDeptName: shareDepartment?.name ?? 'Department',
-                                                                            });
-                                                                            setReshareFile(null);
-                                                                            setReshareChangeSummary('');
-                                                                        }}
-                                                                        className="truncate text-[11px]"
-                                                                    >
-                                                                        Overwrite File & Reshare
-                                                                    </Button>
+                                                            {directSubfolders.length > 0 && (
+                                                                <div className="flex flex-col gap-1.5 pt-2 border-t border-surface-border">
+                                                                    <span className="text-[11px] font-semibold text-text-muted select-none">
+                                                                        Subfolders
+                                                                    </span>
+                                                                    <div className="flex flex-col gap-1.5">
+                                                                        {directSubfolders.map((subfolder) => {
+                                                                            const subDescendantIds = getRecursiveDescendantDocIds(subfolder.id, allDocuments);
+                                                                            const subFiles = allDocuments.filter(
+                                                                                (d) => subDescendantIds.includes(d.id) && !d.isFolder && !d.isArchived
+                                                                            );
+                                                                            const fileCount = subFiles.length;
+
+                                                                            return (
+                                                                                <div
+                                                                                    key={subfolder.id}
+                                                                                    onClick={() => {
+                                                                                        handleActionClick('open', {
+                                                                                            ...subfolder,
+                                                                                            parentId: subfolder.parentId ?? item.id,
+                                                                                        });
+                                                                                    }}
+                                                                                    className="flex items-center justify-between p-2 rounded-md border border-surface-border bg-surface/50 hover:bg-surface-hover hover:border-accent/40 cursor-pointer transition-all group"
+                                                                                    title="Click to view folder contents"
+                                                                                >
+                                                                                    <div className="flex items-center gap-2 min-w-0">
+                                                                                        <Folder className="h-4 w-4 text-accent shrink-0 group-hover:scale-105 transition-transform" />
+                                                                                        <span className="text-xs font-medium text-text truncate group-hover:text-accent transition-colors">
+                                                                                            {subfolder.name || subfolder.title}
+                                                                                        </span>
+                                                                                    </div>
+                                                                                    <span className="text-[10px] text-text-muted shrink-0 group-hover:text-text transition-colors">
+                                                                                        ({fileCount} {fileCount === 1 ? 'file' : 'files'})
+                                                                                    </span>
+                                                                                </div>
+                                                                            );
+                                                                        })}
+                                                                    </div>
                                                                 </div>
                                                             )}
                                                         </div>
-                                                    );
-                                                })()}
+                                                    ) : (
+                                                        /* SINGLE FILE VIEW */
+                                                        <>
+                                                            {/* REJECTION FEEDBACK CALLOUT & ADMIN RESHARE ACTIONS */}
+                                                            {(() => {
+                                                                const isShareRejected = shareItem.status === constants.DOCUMENT_SHARES_STATUS.REJECTED;
+                                                                if (!isShareRejected) return null;
 
-                                                {/* VISUAL WORKFLOW TRACKING PIPELINE (4 NODES) */}
-                                                {(() => {
-                                                    const statusUpper = String(shareItem.status || '').toUpperCase();
-                                                    const isRejected = statusUpper.includes('REJECT');
+                                                                const latestVer = documentVersions[0];
+                                                                const rejectionReason = shareItem.rejectionReason || latestVer?.rejectionReason || 'No rejection reason specified.';
+                                                                const rejecter = allUsers.find((u) => u.id === latestVer?.rejecterId || u.id === shareItem.rejecterId || u.id === shareItem.reviewerId);
+                                                                const rejecterName = rejecter ? `${rejecter.firstName || ''} ${rejecter.lastName || ''}`.trim() : null;
 
-                                                    const isStashed = statusUpper === constants.DOCUMENT_SHARES_STATUS.STASHED;
-                                                    const hasPublishedMembers = !isStashed && (
-                                                        deptUserShares.some((us) =>
-                                                            String(us.status || '').toUpperCase() === constants.DOCUMENT_SHARES_STATUS.PUBLISHED
-                                                        ) || deptUserShares.length > 0
-                                                    );
-                                                    const isPublished = !isStashed && (
-                                                        statusUpper === constants.DOCUMENT_SHARES_STATUS.PUBLISHED ||
-                                                        hasPublishedMembers ||
-                                                        isAllMembersPublished ||
-                                                        isDeptPublished
-                                                    );
-                                                    const isDirectorApproved = statusUpper === constants.DOCUMENT_SHARES_STATUS.APPROVED && !isPublished;
-                                                    const isOfficerPending = statusUpper === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL && !isPublished && !isStashed;
-
-                                                    // Determine active step:
-                                                    // 1: Administrator (Origin / Draft)
-                                                    // 2: Officer (Pending Approval / Review)
-                                                    // 3: Director (Approved / Pre-publish)
-                                                    // 4: Terminal Branch (Stashed or Published)
-                                                    let currentStep = 1;
-                                                    if (isStashed || isPublished) {
-                                                        currentStep = 4;
-                                                    } else if (isDirectorApproved) {
-                                                        currentStep = 3;
-                                                    } else if (isOfficerPending || isRejected) {
-                                                        currentStep = 2;
-                                                    }
-
-                                                    // Connector line styles with smooth gradients where the color transitions:
-                                                    const getLineStyle = (lineIndex) => {
-                                                        if (lineIndex === 1) {
-                                                            if (currentStep > 2) {
-                                                                return { backgroundColor: 'var(--color-accent)' };
-                                                            }
-                                                            if (currentStep === 2) {
-                                                                return {
-                                                                    background: isRejected
-                                                                        ? 'linear-gradient(to right, var(--color-accent), var(--color-error))'
-                                                                        : 'linear-gradient(to right, var(--color-accent), var(--color-warning))',
-                                                                };
-                                                            }
-                                                            if (currentStep === 1) {
-                                                                return {
-                                                                    background: 'linear-gradient(to right, var(--color-warning), var(--color-surface-border))',
-                                                                };
-                                                            }
-                                                            return { backgroundColor: 'var(--color-surface-border)' };
-                                                        }
-
-                                                        if (lineIndex === 2) {
-                                                            if (currentStep > 3) {
-                                                                return { backgroundColor: 'var(--color-accent)' };
-                                                            }
-                                                            if (currentStep === 3) {
-                                                                return {
-                                                                    background: 'linear-gradient(to right, var(--color-accent), var(--color-warning))',
-                                                                };
-                                                            }
-                                                            return { backgroundColor: 'var(--color-surface-border)' };
-                                                        }
-
-                                                        if (lineIndex === 3) {
-                                                            if (currentStep === 4) {
-                                                                return { backgroundColor: 'var(--color-accent)' };
-                                                            }
-                                                            return { backgroundColor: 'var(--color-surface-border)' };
-                                                        }
-
-                                                        return { backgroundColor: 'var(--color-surface-border)' };
-                                                    };
-
-                                                    // Helper for Pill styling (matching the 2-branch design):
-                                                    const getPillStyles = (nodeStep, isNodeRejected = false) => {
-                                                        const isPassed = currentStep > nodeStep;
-                                                        const isCurrent = currentStep === nodeStep;
-
-                                                        if (isNodeRejected && isCurrent) {
-                                                            return 'bg-error text-text-inverted border-error font-bold ring-2 ring-error/30 shadow-xs';
-                                                        }
-                                                        if (isCurrent) {
-                                                            return 'bg-warning text-text-inverted border-warning font-bold ring-2 ring-warning/30 shadow-xs animate-pulse';
-                                                        }
-                                                        if (isPassed) {
-                                                            return 'bg-accent text-text-inverted border-accent font-semibold shadow-xs ring-1 ring-accent/30';
-                                                        }
-                                                        return 'bg-surface/50 border-surface-border text-text-muted/50 font-normal';
-                                                    };
-
-                                                    const node1Class = getPillStyles(1);
-                                                    const node2Class = getPillStyles(2, isRejected);
-                                                    const node3Class = getPillStyles(3);
-
-                                                    // Branch fork paths & node styling:
-                                                    const forkStashedColor = isStashed ? 'var(--color-accent)' : 'var(--color-surface-border)';
-                                                    const forkPublishedColor = isPublished ? 'var(--color-accent)' : 'var(--color-surface-border)';
-
-                                                    const stashedNodeClass = isStashed
-                                                        ? 'bg-accent text-text-inverted border-accent font-bold ring-2 ring-accent/30 shadow-xs'
-                                                        : 'bg-surface/50 border-surface-border text-text-muted/40 font-normal';
-
-                                                    const publishedNodeClass = isPublished
-                                                        ? 'bg-accent text-text-inverted border-accent font-bold ring-2 ring-accent/30 shadow-xs'
-                                                        : 'bg-surface/50 border-surface-border text-text-muted/40 font-normal';
-
-                                                    return (
-                                                        <div className="p-2.5 rounded-md border border-surface-border bg-surface/60 flex flex-col gap-2">
-                                                            <div className="flex items-center justify-between text-[11px] font-semibold text-text-muted select-none">
-                                                                <span>Workflow Progress</span>
-                                                                <span className="text-[10px] font-medium text-text-muted/80">Lifecycle Review</span>
-                                                            </div>
-
-                                                            {/* EQUAL DISTANCE WORKFLOW TRACK (PILL BADGES) */}
-                                                            <div className="flex items-center w-full pt-1 pb-0.5">
-                                                                {/* 1. NODE 1: ADMINISTRATOR */}
-                                                                <div
-                                                                    className={`flex items-center justify-center px-2 py-0.5 rounded-md border text-[10px] transition-all select-none shrink-0 ${node1Class}`}
-                                                                    title="Administrator (Origin / Created)"
-                                                                >
-                                                                    <span>Administrator</span>
-                                                                </div>
-
-                                                                {/* CONNECTOR 1 -> 2 (EQUAL DISTANCE WITH GRADIENT) */}
-                                                                <div
-                                                                    className="flex-1 h-0.5 transition-all duration-300 min-w-2 rounded-full"
-                                                                    style={getLineStyle(1)}
-                                                                />
-
-                                                                {/* 2. NODE 2: OFFICER */}
-                                                                <div
-                                                                    className={`flex items-center justify-center px-2 py-0.5 rounded-md border text-[10px] transition-all select-none shrink-0 ${node2Class}`}
-                                                                    title="Officer Review (Pending Approval)"
-                                                                >
-                                                                    <span>Officer</span>
-                                                                </div>
-
-                                                                {/* CONNECTOR 2 -> 3 (EQUAL DISTANCE WITH GRADIENT) */}
-                                                                <div
-                                                                    className="flex-1 h-0.5 transition-all duration-300 min-w-2 rounded-full"
-                                                                    style={getLineStyle(2)}
-                                                                />
-
-                                                                {/* 3. NODE 3: DIRECTOR */}
-                                                                <div
-                                                                    className={`flex items-center justify-center px-2 py-0.5 rounded-md border text-[10px] transition-all select-none shrink-0 ${node3Class}`}
-                                                                    title="Director Review (Approved)"
-                                                                >
-                                                                    <span>Director</span>
-                                                                </div>
-
-                                                                {/* CONNECTOR 3 -> BRANCH FORK (EQUAL DISTANCE) */}
-                                                                <div
-                                                                    className="flex-1 h-0.5 transition-all duration-300 min-w-2 rounded-full"
-                                                                    style={getLineStyle(3)}
-                                                                />
-
-                                                                {/* BRANCH CONNECTOR (SVG FORK) */}
-                                                                <div className="w-3.5 h-11 shrink-0 flex items-center">
-                                                                    <svg className="w-3.5 h-11 shrink-0" viewBox="0 0 14 44" fill="none">
-                                                                        <path
-                                                                            d="M 0 22 H 4 C 8 22, 9 9, 14 9"
-                                                                            stroke={forkStashedColor}
-                                                                            strokeWidth={isStashed ? '2.5' : '1.5'}
-                                                                            strokeLinecap="round"
-                                                                            className="transition-all duration-300"
-                                                                        />
-                                                                        <path
-                                                                            d="M 0 22 H 4 C 8 22, 9 35, 14 35"
-                                                                            stroke={forkPublishedColor}
-                                                                            strokeWidth={isPublished ? '2.5' : '1.5'}
-                                                                            strokeLinecap="round"
-                                                                            className="transition-all duration-300"
-                                                                        />
-                                                                    </svg>
-                                                                </div>
-
-                                                                {/* 4. BRANCHING NODES: TOP (STASHED) & BOTTOM (PUBLISHED) */}
-                                                                <div className="h-11 flex flex-col justify-between shrink-0">
-                                                                    {/* TOP BRANCH: STASHED */}
-                                                                    <div
-                                                                        className={`flex items-center justify-center px-1.5 py-0.5 rounded-md border text-[9px] transition-all select-none truncate ${stashedNodeClass}`}
-                                                                        title="Stashed (Archived / Internal Reserve)"
-                                                                    >
-                                                                        <span>Stashed</span>
-                                                                    </div>
-
-                                                                    {/* BOTTOM BRANCH: PUBLISHED */}
-                                                                    <div
-                                                                        className={`flex items-center justify-center px-1.5 py-0.5 rounded-md border text-[9px] transition-all select-none truncate ${publishedNodeClass}`}
-                                                                        title="Published (Active / Distributed to Members)"
-                                                                    >
-                                                                        <span>Published</span>
-                                                                    </div>
-                                                                </div>
-                                                            </div>
-                                                        </div>
-                                                    );
-                                                })()}
-
-                                                {/* DEPARTMENT READERSHIP STATISTIC & READERSHIP CHART */}
-                                                <div className="p-2.5 rounded-md border border-surface-border bg-surface/50 flex flex-col gap-1.5">
-                                                    <div className="flex items-center justify-between text-[11px]">
-                                                        <span className="font-semibold text-text-muted flex items-center gap-1.5">
-                                                            <Eye className="h-3 w-3 text-accent" />
-                                                            <span>Unit Readership</span>
-                                                        </span>
-                                                        <span className="text-[10px] font-medium text-text">
-                                                            {deptReadCount} {deptReadCount === 1 ? 'read' : 'reads'}
-                                                            {isFold ? ' (combined)' : ''}
-                                                            {isFold && uniqueReadersCount > 0 ? ` • ${uniqueReadersCount} unique ${uniqueReadersCount === 1 ? 'reader' : 'readers'}` : ''}
-                                                        </span>
-                                                    </div>
-                                                    <div className="w-full pt-1">
-                                                        <ReadershipChart logs={deptAuditLogs} compact={true} showPeak={false} />
-                                                    </div>
-                                                </div>
-
-                                                {/* MEMBER ACCESS SUBSECTION */}
-                                                {(isAllMembersPublished || deptUserShares.length > 0) && (
-                                                    <div className="flex flex-col gap-1.5 pt-1 border-t border-surface-border">
-                                                        <div className="flex items-center justify-between text-[11px] font-semibold text-text-muted select-none">
-                                                            <span>Member Distribution</span>
-                                                            <span className="text-[10px] font-medium text-text-muted/80">
-                                                                {isAllMembersPublished ? 'Converged Access' : `${deptUserShares.length} Selected`}
-                                                            </span>
-                                                        </div>
-                                                        {isAllMembersPublished ? (
-                                                            <div className="px-2.5 py-2 rounded-md border border-surface-border bg-surface/50 flex items-center justify-between gap-2">
-                                                                <div className="flex items-center gap-2 min-w-0">
-                                                                    <div className="w-6 h-6 rounded-full bg-accent/15 text-accent flex items-center justify-center shrink-0">
-                                                                        <Users className="h-3.5 w-3.5" />
-                                                                    </div>
-                                                                    <div className="flex flex-col min-w-0">
-                                                                        <span className="font-semibold text-xs text-text truncate leading-tight">
-                                                                            {shareDepartment?.code ? `${shareDepartment.code} Members` : `${shareDepartment?.name || 'Department'} Members`}
-                                                                        </span>
-                                                                        <span className="text-[10px] text-text-muted truncate leading-tight">
-                                                                            All {totalDeptMembers} Department Members
-                                                                        </span>
-                                                                    </div>
-                                                                </div>
-                                                                <div className="flex items-center gap-1.5 shrink-0">
-                                                                    <div className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-accent/15 text-accent border border-accent/20">
-                                                                        {uniqueReadersCount} / {totalDeptMembers} read
-                                                                    </div>
-                                                                </div>
-                                                            </div>
-                                                        ) : (
-                                                            <div className="flex flex-col gap-1.5">
-                                                                {deptUserShares.map((uShare) => {
-                                                                    const recId = uShare.recipient?.id ?? uShare.recipientId;
-                                                                    const recClean = cleanId(recId);
-                                                                    const recipientUser = allUsers.find((u) => cleanId(u.id) === recClean) ?? uShare.recipient;
-                                                                    const recipientName = recipientUser
-                                                                        ? `${recipientUser.firstName || ''} ${recipientUser.lastName || ''}`.trim() || recipientUser.name || 'User'
-                                                                        : 'User';
-
-                                                                    const isRecipientRead = Boolean(
-                                                                        uShare.isRead ||
-                                                                        String(uShare.status || '').toUpperCase() === 'READ' ||
-                                                                        uShare.readAt ||
-                                                                        allAuditLogs.some(
-                                                                            (log) => {
-                                                                                const lActor = cleanId(log.actor?.id || log.actorId);
-                                                                                const lDoc = cleanId(log.entityId || log.documentId || log.document?.id);
-                                                                                const isRead = ['READ', 'VIEW', 'VIEWED', 'DOWNLOAD', 'DOWNLOADED', 'ACCESS', 'ACCESSED', 'OPEN', 'OPENED'].includes(String(log.action || '').toUpperCase());
-                                                                                return lActor === recClean && lDoc === cleanId(item.id) && isRead;
-                                                                            }
-                                                                        )
-                                                                    );
-
-                                                                    const uPublisherName = resolvePublisherName(uShare);
-
-                                                                    return (
-                                                                        <div
-                                                                            key={uShare.id}
-                                                                            className="px-2.5 py-2 rounded-md border border-surface-border bg-surface/50 hover:bg-surface transition-colors flex flex-col gap-1.5"
-                                                                        >
-                                                                            <div className="flex items-center justify-between gap-2">
-                                                                                <div className="flex items-center gap-2 min-w-0">
-                                                                                    <Avatar
-                                                                                        src={resolveUserAvatar(recipientUser, activeUser)}
-                                                                                        user={recipientUser}
-                                                                                        alt={recipientName}
-                                                                                        size="small"
-                                                                                    />
-                                                                                    <div className="flex flex-col min-w-0">
-                                                                                        <span className="font-semibold text-xs text-text truncate leading-tight" title={recipientName}>
-                                                                                            {recipientName}
-                                                                                        </span>
-                                                                                        {recipientUser?.email && (
-                                                                                            <span className="text-[10px] text-text-muted truncate leading-tight" title={recipientUser.email}>
-                                                                                                {recipientUser.email}
-                                                                                            </span>
-                                                                                        )}
-                                                                                    </div>
-                                                                                </div>
-
-                                                                                {/* COMPACT 2-NODE TRACKING: SENT -> READ */}
-                                                                                <div className="flex items-center w-24 shrink-0">
-                                                                                    <div
-                                                                                        className="flex items-center justify-center px-1.5 py-0.5 rounded text-[9px] select-none shrink-0 bg-accent text-text-inverted border border-accent font-semibold shadow-2xs"
-                                                                                        title="Sent"
-                                                                                    >
-                                                                                        <span>Sent</span>
-                                                                                    </div>
-
-                                                                                    <div
-                                                                                        className="flex-1 h-0.5 min-w-2 transition-all duration-300 rounded-full"
-                                                                                        style={
-                                                                                            isRecipientRead
-                                                                                                ? { backgroundColor: 'var(--color-accent)' }
-                                                                                                : { background: 'linear-gradient(to right, var(--color-accent), var(--color-warning))' }
-                                                                                        }
-                                                                                    />
-
-                                                                                    <div
-                                                                                        className={`flex items-center justify-center px-1.5 py-0.5 rounded text-[9px] select-none shrink-0 transition-all ${
-                                                                                            isRecipientRead
-                                                                                                ? 'bg-accent text-text-inverted border border-accent font-semibold shadow-2xs'
-                                                                                                : 'bg-warning text-text-inverted border border-warning font-bold ring-1 ring-warning/30 shadow-2xs animate-pulse'
-                                                                                        }`}
-                                                                                        title={isRecipientRead ? 'Read' : 'Pending read'}
-                                                                                    >
-                                                                                        <span>Read</span>
-                                                                                    </div>
-                                                                                </div>
-                                                                            </div>
-
-                                                                            {/* COMPACT FOOTER */}
-                                                                            <div className="flex items-center justify-between text-[10px] text-text-muted pt-1 border-t border-surface-border/60 leading-none">
-                                                                                <span className="truncate">
-                                                                                    Shared by {uPublisherName} • {formatTimestamp(uShare.createdAt)}
+                                                                return (
+                                                                    <div className="p-3 rounded-lg border border-error/30 bg-error/10 flex flex-col gap-2.5">
+                                                                        <div className="flex items-start gap-2">
+                                                                            <AlertTriangle className="h-4 w-4 text-error shrink-0 mt-0.5" />
+                                                                            <div className="flex flex-col gap-0.5 min-w-0">
+                                                                                <span className="text-xs font-semibold text-error">
+                                                                                    Share Rejected by Department Reviewer {rejecterName ? `(${rejecterName})` : ''}
                                                                                 </span>
-                                                                                {isDirector && !isStaff && (
-                                                                                    <button
-                                                                                        type="button"
-                                                                                        onClick={(e) => {
-                                                                                            e.stopPropagation();
-                                                                                            handleActionClick('unpublish', uShare);
-                                                                                        }}
-                                                                                        className="text-error hover:underline cursor-pointer font-medium ml-2 shrink-0"
-                                                                                    >
-                                                                                        Unpublish
-                                                                                    </button>
-                                                                                )}
+                                                                                <p className="text-xs text-text leading-relaxed">
+                                                                                    &ldquo;{rejectionReason}&rdquo;
+                                                                                </p>
                                                                             </div>
                                                                         </div>
-                                                                    );
-                                                                })}
+
+                                                                        {isAdmin && (
+                                                                            <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-error/20">
+                                                                                <Button
+                                                                                    variant="primary"
+                                                                                    size="xs"
+                                                                                    leadingIcon={UploadCloud}
+                                                                                    onClick={() => {
+                                                                                        setReshareModal({
+                                                                                            mode: 'new_version',
+                                                                                            shareItem,
+                                                                                            docId: item.id,
+                                                                                            targetDeptName: shareDepartment?.name ?? 'Department',
+                                                                                        });
+                                                                                        setReshareFile(null);
+                                                                                        setReshareChangeSummary('Revision addressing rejection feedback');
+                                                                                    }}
+                                                                                    className="truncate text-[11px]"
+                                                                                >
+                                                                                    Reshare (New Version)
+                                                                                </Button>
+                                                                                <Button
+                                                                                    variant="secondary"
+                                                                                    size="xs"
+                                                                                    leadingIcon={FileCheck}
+                                                                                    onClick={() => {
+                                                                                        setReshareModal({
+                                                                                            mode: 'overwrite',
+                                                                                            shareItem,
+                                                                                            docId: item.id,
+                                                                                            targetDeptName: shareDepartment?.name ?? 'Department',
+                                                                                        });
+                                                                                        setReshareFile(null);
+                                                                                        setReshareChangeSummary('');
+                                                                                    }}
+                                                                                    className="truncate text-[11px]"
+                                                                                >
+                                                                                    Overwrite File & Reshare
+                                                                                </Button>
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                );
+                                                            })()}
+
+                                                            {/* WORKFLOW TRACKING PIPELINE FOR SINGLE FILE */}
+                                                            <WorkflowProgressPipeline
+                                                                status={shareItem.status}
+                                                                isStashed={String(shareItem.status || '').toUpperCase() === constants.DOCUMENT_SHARES_STATUS.STASHED}
+                                                                isPublished={isDeptPublished}
+                                                            />
+
+                                                            {/* DEPARTMENT READERSHIP STATISTIC & READERSHIP CHART */}
+                                                            <div className="p-2.5 rounded-md border border-surface-border bg-surface/50 flex flex-col gap-1.5">
+                                                                <div className="flex items-center justify-between text-[11px]">
+                                                                    <span className="font-semibold text-text-muted flex items-center gap-1.5">
+                                                                        <Eye className="h-3 w-3 text-accent" />
+                                                                        <span>Unit Readership</span>
+                                                                    </span>
+                                                                    <span className="text-[10px] font-medium text-text">
+                                                                        {deptReadCount} {deptReadCount === 1 ? 'read' : 'reads'}
+                                                                    </span>
+                                                                </div>
+                                                                <div className="w-full pt-1">
+                                                                    <ReadershipChart logs={deptAuditLogs} compact={true} showPeak={false} />
+                                                                </div>
                                                             </div>
-                                                        )}
+
+                                                            {/* CONVERGED READERSHIP STATISTIC FOR PUBLISHED FILE */}
+                                                            {isDeptPublished && (
+                                                                <div className="flex items-center justify-between px-2.5 py-1.5 rounded-md border border-accent/20 bg-accent/5 text-[11px]">
+                                                                    <span className="text-text-muted flex items-center gap-1.5 font-medium">
+                                                                        <Eye className="h-3.5 w-3.5 text-accent" />
+                                                                        <span>Distribution Readership</span>
+                                                                    </span>
+                                                                    <span className="font-semibold text-accent">
+                                                                        {uniqueReadersCount} / {totalDeptMembers} read
+                                                                    </span>
+                                                                </div>
+                                                            )}
+                                                        </>
+                                                    )}
+
+                                                    {/* DEPARTMENT CARD FOOTER */}
+                                                    <div className="flex items-center justify-between text-xs text-text-muted pt-1 border-t border-surface-border">
+                                                        <span>
+                                                            Shared by {publisherName}
+                                                        </span>
+                                                        <div className="flex items-center gap-2">
+                                                            <span>{formatTimestamp(shareItem.createdAt)}</span>
+                                                            {isStaff && !isDirector && (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        handleActionClick('unshare', rootSharedFolder ? rootSharedFolder : shareItem);
+                                                                    }}
+                                                                    className="text-error hover:underline cursor-pointer font-medium ml-1"
+                                                                >
+                                                                    {isFold ? 'Unshare Folder' : 'Unshare'}
+                                                                </button>
+                                                            )}
+                                                        </div>
                                                     </div>
-                                                )}
-                                                <div className="flex items-center justify-between text-xs text-text-muted pt-1 border-t border-surface-border">
-                                                    <span>
-                                                        Shared by {publisherName}
-                                                    </span>
-                                                    <div className="flex items-center gap-2">
-                                                        <span>{formatTimestamp(shareItem.createdAt)}</span>
-                                                        {isStaff && !isDirector && (
-                                                            <button
-                                                                type="button"
-                                                                onClick={(e) => {
-                                                                    e.stopPropagation();
-                                                                    handleActionClick('unshare', rootSharedFolder ? rootSharedFolder : shareItem);
-                                                                }}
-                                                                className="text-error hover:underline cursor-pointer font-medium ml-1"
-                                                            >
-                                                                Unshare
-                                                            </button>
-                                                        )}
-                                                    </div>
-                                                </div>
                                                 </>
                                                 )}
                                             </div>

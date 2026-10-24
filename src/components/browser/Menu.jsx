@@ -28,7 +28,7 @@ import {
 } from 'lucide-react';
 import { Container } from '../Container';
 import { constants } from '../../constants';
-import { useAuthStore, useDocumentStore, useDepartmentStore } from '../../stores';
+import { useAuthStore, useDocumentStore, useDepartmentStore, getRecursiveDescendantDocIds } from '../../stores';
 import { ICON_STYLE, findRootSharedFolder } from './common';
 
 
@@ -188,6 +188,38 @@ const Menu = ({
 
     const getItemEffectiveStatus = (it) => {
         const itCleanId = cleanId(it?.id);
+        if (it?.isFolder) {
+            const descendantIds = getRecursiveDescendantDocIds(it.id, allDocuments);
+            const descendantFiles = allDocuments.filter(
+                (d) => descendantIds.includes(d.id) && cleanId(d.id) !== itCleanId && !d.isFolder
+            );
+            if (descendantFiles.length > 0) {
+                const descendantFileIds = new Set(descendantFiles.map((d) => cleanId(d.id)));
+                const childShares = (allDocumentShares || []).filter((s) => {
+                    const sDocId = cleanId(s.document?.id ?? s.documentId);
+                    return descendantFileIds.has(sDocId) && isShareForUserDept(s);
+                });
+                if (childShares.length > 0) {
+                    if (
+                        childShares.length >= descendantFiles.length &&
+                        childShares.every(
+                            (s) => s.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED || s.status === constants.DOCUMENT_SHARES_STATUS.STASHED
+                        )
+                    ) {
+                        return childShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.PUBLISHED)
+                            ? constants.DOCUMENT_SHARES_STATUS.PUBLISHED
+                            : constants.DOCUMENT_SHARES_STATUS.STASHED;
+                    }
+                    if (childShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL)) {
+                        return constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL;
+                    }
+                    if (childShares.some((s) => s.status === constants.DOCUMENT_SHARES_STATUS.APPROVED)) {
+                        return constants.DOCUMENT_SHARES_STATUS.APPROVED;
+                    }
+                }
+            }
+        }
+
         let deptShares = (allDocumentShares || []).filter((s) => {
             const sDocId = cleanId(s.document?.id ?? s.documentId);
             return sDocId === itCleanId && isShareForUserDept(s);
