@@ -308,6 +308,265 @@ const formatChangeSummary = (rawChangeSummary) => {
 
 const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id ? String(id).toLowerCase() : '');
 
+const computeDeptActualViewersAndReads = ({
+    targetDeptId,
+    fileStatus,
+    targetDocId,
+    allUsers = [],
+    allAuditLogs = [],
+    allDocumentShares = [],
+    isFolder = false,
+    descendantIds = null,
+}) => {
+    const cleanDept = cleanId(targetDeptId);
+    const cleanDoc = cleanId(targetDocId);
+
+    // 1. All department members
+    const deptUsers = allUsers.filter((u) => {
+        const uDept = cleanId(u.departmentId ?? u.department?.id ?? u.department);
+        return uDept && uDept === cleanDept;
+    });
+
+    // 2. Filter viewers based on workflow stage
+    const st = String(fileStatus || '').toUpperCase();
+    let eligibleViewers;
+
+    if (st === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL || st.includes('REJECT')) {
+        // Officer review stage: Only Officer(s) can see the document
+        eligibleViewers = deptUsers.filter((u) => constants.isOfficerRole(u.role));
+    } else if (st === constants.DOCUMENT_SHARES_STATUS.APPROVED || st === constants.DOCUMENT_SHARES_STATUS.STASHED) {
+        // Director review stage: Officer(s) + Director(s)
+        eligibleViewers = deptUsers.filter((u) => constants.isOfficerRole(u.role) || constants.isDirectorRole(u.role));
+    } else if (st === constants.DOCUMENT_SHARES_STATUS.PUBLISHED) {
+        // Distribution stage: Officer(s) + Director(s) + published Member(s)
+        const officersAndDirectors = deptUsers.filter((u) => constants.isOfficerRole(u.role) || constants.isDirectorRole(u.role));
+
+        // Find member publication shares for this specific document/file in this department
+        const docMemberShares = allDocumentShares.filter((s) => {
+            const sDoc = cleanId(s.document?.id ?? s.documentId);
+            const sDept = cleanId(s.department?.id ?? s.departmentId);
+            const hasRec = Boolean(s.recipientId ?? s.recipient?.id);
+            return sDoc === cleanDoc && (!sDept || sDept === cleanDept) && hasRec;
+        });
+
+        const publishedRecipientIds = new Set(
+            docMemberShares
+                .filter((s) => String(s.status || '').toUpperCase() === constants.DOCUMENT_SHARES_STATUS.PUBLISHED)
+                .map((s) => cleanId(s.recipientId ?? s.recipient?.id))
+                .filter(Boolean)
+        );
+
+        let publishedMembers;
+        if (docMemberShares.length === 0) {
+            // Broadcast published to all department members
+            publishedMembers = deptUsers.filter((u) => constants.isMemberRole(u.role));
+        } else {
+            // Targeted publication: only include specific members published to
+            publishedMembers = deptUsers.filter((u) => publishedRecipientIds.has(cleanId(u.id)));
+        }
+
+        eligibleViewers = [...officersAndDirectors, ...publishedMembers];
+    } else {
+        eligibleViewers = deptUsers.filter((u) => constants.isOfficerRole(u.role));
+    }
+
+    // Deduplicate by user ID
+    const seen = new Set();
+    const uniqueViewers = [];
+    for (const u of eligibleViewers) {
+        const uid = cleanId(u.id);
+        if (uid && !seen.has(uid)) {
+            seen.add(uid);
+            uniqueViewers.push(u);
+        }
+    }
+
+    // Sort: Officers first, then Directors, then Members
+    uniqueViewers.sort((a, b) => {
+        const getWeight = (r) => {
+            if (constants.isOfficerRole(r)) return 1;
+            if (constants.isDirectorRole(r)) return 2;
+            return 3;
+        };
+        const wDiff = getWeight(a.role) - getWeight(b.role);
+        if (wDiff !== 0) return wDiff;
+        return (a.firstName || '').localeCompare(b.firstName || '');
+    });
+
+    // 3. Compute read status for each viewer
+    const viewersWithReadStatus = uniqueViewers.map((viewer) => {
+        const vClean = cleanId(viewer.id);
+        let firstReadLog = null;
+
+        (allAuditLogs || []).forEach((log) => {
+            const logDocId = cleanId(log?.entityId ?? log?.document?.id ?? log?.documentId);
+            const isMatch = isFolder
+                ? descendantIds && (descendantIds.has(logDocId) || descendantIds.has(cleanId(logDocId)))
+                : logDocId === cleanDoc;
+            if (!isMatch) return;
+
+            const isReadAction = ['READ', 'VIEW', 'VIEWED', 'DOWNLOAD', 'DOWNLOADED', 'ACCESS', 'ACCESSED', 'OPEN', 'OPENED'].includes(
+                String(log?.action || '').toUpperCase()
+            );
+            if (!isReadAction) return;
+
+            const actorClean = cleanId(log?.actor?.id ?? log?.actorId);
+            if (actorClean === vClean) {
+                if (!firstReadLog || new Date(log.createdAt) < new Date(firstReadLog.createdAt)) {
+                    firstReadLog = log;
+                }
+            }
+        });
+
+        let shareReadAt = null;
+        (allDocumentShares || []).forEach((s) => {
+            const sDocId = cleanId(s.document?.id ?? s.documentId);
+            const isMatch = isFolder
+                ? descendantIds && (descendantIds.has(sDocId) || descendantIds.has(cleanId(sDocId)))
+                : sDocId === cleanDoc;
+            if (!isMatch) return;
+
+            const recId = cleanId(s.recipientId ?? s.recipient?.id);
+            if (recId === vClean) {
+                if (s.isRead || s.readAt || String(s.status || '').toUpperCase() === 'READ') {
+                    shareReadAt = s.readAt || s.updatedAt || null;
+                }
+            }
+        });
+
+        const hasRead = Boolean(firstReadLog || shareReadAt);
+        const readAt = firstReadLog?.createdAt || shareReadAt || null;
+
+        return {
+            ...viewer,
+            hasRead,
+            readAt,
+        };
+    });
+
+    const readCount = viewersWithReadStatus.filter((v) => v.hasRead).length;
+    const totalCount = viewersWithReadStatus.length;
+
+    return {
+        viewers: viewersWithReadStatus,
+        readCount,
+        totalCount: totalCount > 0 ? totalCount : 1,
+    };
+};
+
+const renderReadershipWidget = ({
+    readershipKey,
+    readCount,
+    totalCount,
+    viewers,
+    isExpanded,
+    onToggleExpand,
+}) => {
+    return (
+        <div className="flex flex-col gap-1.5 w-full">
+            <button
+                type="button"
+                onClick={(e) => {
+                    e.stopPropagation();
+                    onToggleExpand(readershipKey);
+                }}
+                className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md border border-accent/20 bg-accent/5 hover:bg-accent/10 transition-colors text-[11px] cursor-pointer select-none group"
+                aria-expanded={isExpanded}
+                title={isExpanded ? 'Click to collapse reader list' : 'Click to view reader breakdown'}
+            >
+                <span className="text-text-muted flex items-center gap-1.5 font-medium">
+                    <Eye className="h-3.5 w-3.5 text-accent group-hover:scale-110 transition-transform" />
+                    <span>Readership</span>
+                </span>
+                <div className="flex items-center gap-2">
+                    <span className="font-semibold text-accent">
+                        {readCount} / {totalCount} read
+                    </span>
+                    {isExpanded ? (
+                        <ChevronUp className="h-3.5 w-3.5 text-accent" />
+                    ) : (
+                        <ChevronDown className="h-3.5 w-3.5 text-accent/70 group-hover:text-accent transition-colors" />
+                    )}
+                </div>
+            </button>
+
+            {/* Collapsible Reader List */}
+            {isExpanded && (
+                <div className="flex flex-col gap-1.5 pl-1 pt-1">
+                    {viewers.length === 0 ? (
+                        <div className="p-2 text-center text-[10px] text-text-muted rounded-md border border-dashed border-surface-border">
+                            No eligible users assigned to this stage.
+                        </div>
+                    ) : (
+                        viewers.map((viewer) => {
+                            const isOfficerRole = constants.isOfficerRole(viewer.role);
+                            const isDirectorRole = constants.isDirectorRole(viewer.role);
+                            const initials = (viewer.firstName ? viewer.firstName[0] : 'U').toUpperCase();
+
+                            return (
+                                <div
+                                    key={viewer.id}
+                                    className="flex items-center justify-between p-2 rounded-lg bg-surface border border-surface-border/60 hover:bg-surface-hover/80 transition-colors text-xs"
+                                >
+                                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                                        <div className="w-6 h-6 rounded-full bg-accent/15 text-accent border border-accent/20 flex items-center justify-center font-bold text-[10px] shrink-0">
+                                            {initials}
+                                        </div>
+                                        <div className="flex flex-col min-w-0">
+                                            <div className="flex items-center gap-1.5 flex-wrap">
+                                                <span className="font-semibold text-text truncate text-[11px]">
+                                                    {viewer.firstName} {viewer.lastName}
+                                                </span>
+                                                <span
+                                                    className={`text-[9px] uppercase font-mono px-1 py-0.2 rounded font-semibold ${
+                                                        isOfficerRole
+                                                            ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30'
+                                                            : isDirectorRole
+                                                            ? 'bg-purple-500/15 text-purple-300 border border-purple-500/30'
+                                                            : 'bg-surface-border text-text-muted border border-surface-border'
+                                                    }`}
+                                                >
+                                                    {viewer.role}
+                                                </span>
+                                            </div>
+                                            {viewer.email && (
+                                                <span className="text-[10px] text-text-muted truncate">
+                                                    {viewer.email}
+                                                </span>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* Read Status */}
+                                    <div className="flex items-center gap-1.5 shrink-0 select-none">
+                                        {viewer.hasRead ? (
+                                            <div
+                                                className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-accent/15 text-accent border border-accent/30 text-[10px] font-semibold"
+                                                title={viewer.readAt ? `Read ${formatTimestamp(viewer.readAt)}` : 'Document read'}
+                                            >
+                                                <Check className="h-2.5 w-2.5 stroke-[3]" />
+                                                <span>Read</span>
+                                            </div>
+                                        ) : (
+                                            <div
+                                                className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-warning/10 text-warning border border-warning/20 text-[10px] font-medium"
+                                                title="Has not opened or read the document yet"
+                                            >
+                                                <Clock className="h-2.5 w-2.5" />
+                                                <span>Unread</span>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            );
+                        })
+                    )}
+                </div>
+            )}
+        </div>
+    );
+};
+
 const WorkflowProgressPipeline = ({ status, isStashed = false, isPublished = false }) => {
     const statusUpper = String(status || '').toUpperCase();
     const isRejected = statusUpper.includes('REJECT');
@@ -538,6 +797,12 @@ const Inspector = ({
     });
     const collapseAllShares = (ids) => setCollapsedShareIds(new Set(ids));
     const expandAllShares = () => setCollapsedShareIds(new Set());
+    const [expandedReadershipShareIds, setExpandedReadershipShareIds] = useState(() => new Set());
+    const toggleReadershipExpand = (id) => setExpandedReadershipShareIds((prev) => {
+        const next = new Set(prev);
+        if (next.has(id)) next.delete(id); else next.add(id);
+        return next;
+    });
 
     // STATES: QUICK ACTION CONFIRMATION & REJECTION MODALS
     const [inspectorConfirmAction, setInspectorConfirmAction] = useState(null);
@@ -4489,7 +4754,6 @@ const Inspector = ({
 
                                         let deptReadCount;
                                         let deptAuditLogs;
-                                        let uniqueReadersCount;
 
                                         const readMemberIdsSet = new Set();
                                         const rawDescendantIds = isFold ? getRecursiveDescendantDocIds(item?.id, allDocuments) : [];
@@ -4570,9 +4834,6 @@ const Inspector = ({
                                             }
                                         });
 
-                                        uniqueReadersCount = readMemberIdsSet.size;
-                                        const deptTargetCount = deptEligibleReaders.length > 0 ? deptEligibleReaders.length : deptFaculty.length;
-                                        const totalDeptMembers = Math.max(deptTargetCount, uniqueReadersCount || 0) || 1;
 
                                         const deptUserShares = userShares.filter((us) => {
                                             const usDeptClean = cleanId(us.department?.id ?? us.departmentId);
@@ -4587,14 +4848,24 @@ const Inspector = ({
                                         );
                                         const isDeptPublished = String(shareItem.status || '').toUpperCase() === constants.DOCUMENT_SHARES_STATUS.PUBLISHED || hasMemberPublished;
                                         const isDeptStashed = String(shareItem.status || '').toUpperCase() === constants.DOCUMENT_SHARES_STATUS.STASHED;
-                                        const isAllMembersPublished = (String(shareItem.status || '').toUpperCase() === constants.DOCUMENT_SHARES_STATUS.PUBLISHED && deptUserShares.length === 0) ||
-                                            (deptFaculty.length > 0 && deptUserShares.length >= deptFaculty.length && deptUserShares.every((us) => String(us.status || '').toUpperCase() === constants.DOCUMENT_SHARES_STATUS.PUBLISHED));
 
                                         const singleEffectiveStatus = isDeptPublished
                                             ? constants.DOCUMENT_SHARES_STATUS.PUBLISHED
                                             : isDeptStashed
                                             ? constants.DOCUMENT_SHARES_STATUS.STASHED
                                             : shareItem.status;
+
+                                        const deptReadership = computeDeptActualViewersAndReads({
+                                            targetDeptId: targetDeptClean,
+                                            fileStatus: singleEffectiveStatus,
+                                            targetDocId: item?.id,
+                                            allUsers,
+                                            allAuditLogs,
+                                            allDocumentShares,
+                                            isFolder: isFold,
+                                            descendantIds,
+                                        });
+                                        const isDeptReadershipExpanded = expandedReadershipShareIds.has(shareItem.id);
 
                                         const directChildren = isFold
                                             ? (allDocuments || []).filter((d) => {
@@ -4658,9 +4929,7 @@ const Inspector = ({
                                                                 <span className="text-[10px] text-text-muted truncate">
                                                                     {isFold
                                                                         ? `${directFiles.length} file${directFiles.length === 1 ? '' : 's'}${directSubfolders.length > 0 ? ` • ${directSubfolders.length} subfolder${directSubfolders.length === 1 ? '' : 's'}` : ''}`
-                                                                        : (isAllMembersPublished
-                                                                            ? `${totalDeptMembers} member${totalDeptMembers === 1 ? '' : 's'} • ${uniqueReadersCount}/${totalDeptMembers} read`
-                                                                            : `${deptUserShares.length} published • ${uniqueReadersCount}/${deptUserShares.length} read`)}
+                                                                        : `${deptReadership.readCount}/${deptReadership.totalCount} read`}
                                                                 </span>
                                                             )}
                                                         </div>
@@ -4732,29 +5001,16 @@ const Inspector = ({
                                                                 );
                                                                 const childRejecterName = childRejecter ? `${childRejecter.firstName || ''} ${childRejecter.lastName || ''}`.trim() : null;
 
-                                                                const fileReadersSet = new Set();
-                                                                if (isFilePublished) {
-                                                                    (allAuditLogs || []).forEach((log) => {
-                                                                        const docId = log?.entityId || log?.document?.id || log?.documentId;
-                                                                        if (!docId || cleanId(docId) !== childCleanId) return;
-                                                                        const isReadAction = ['READ', 'VIEW', 'VIEWED', 'DOWNLOAD', 'DOWNLOADED', 'ACCESS', 'ACCESSED', 'OPEN', 'OPENED'].includes(String(log?.action || '').toUpperCase());
-                                                                        if (!isReadAction) return;
-                                                                        const actorId = String(log?.actor?.id ?? log?.actorId ?? '');
-                                                                        const actorClean = cleanId(actorId);
-                                                                        if (!actorClean || !isEligibleDeptActor(actorClean, log)) return;
-                                                                        fileReadersSet.add(actorClean);
-                                                                    });
-                                                                    (allDocumentShares || []).forEach((s) => {
-                                                                        if (cleanId(s.document?.id ?? s.documentId) !== childCleanId) return;
-                                                                        const recId = cleanId(s.recipientId ?? s.recipient?.id);
-                                                                        if (recId && (deptEligibleReaderIds.has(recId) || deptFacultyMemberIds.has(recId) || isEligibleDeptActor(recId, s))) {
-                                                                            if (s.isRead || String(s.status || '').toUpperCase() === 'READ' || s.readAt) {
-                                                                                fileReadersSet.add(recId);
-                                                                            }
-                                                                        }
-                                                                    });
-                                                                }
-                                                                const fileReadersCount = fileReadersSet.size;
+                                                                const childReadership = computeDeptActualViewersAndReads({
+                                                                    targetDeptId: targetDeptClean,
+                                                                    fileStatus,
+                                                                    targetDocId: childFile.id,
+                                                                    allUsers,
+                                                                    allAuditLogs,
+                                                                    allDocumentShares,
+                                                                    isFolder: false,
+                                                                });
+
 
                                                                 return (
                                                                     <div
@@ -4841,17 +5097,14 @@ const Inspector = ({
                                                                             </div>
                                                                         )}
 
-                                                                        {isFilePublished && (
-                                                                            <div className="flex items-center justify-between px-2.5 py-1.5 rounded-md border border-accent/20 bg-accent/5 text-[11px]">
-                                                                                <span className="text-text-muted flex items-center gap-1.5 font-medium">
-                                                                                    <Eye className="h-3.5 w-3.5 text-accent" />
-                                                                                    <span>Readership</span>
-                                                                                </span>
-                                                                                <span className="font-semibold text-accent">
-                                                                                    {fileReadersCount} / {totalDeptMembers} read
-                                                                                </span>
-                                                                            </div>
-                                                                        )}
+                                                                        {renderReadershipWidget({
+                                                                            readershipKey: `${shareItem.id}_${childFile.id}`,
+                                                                            readCount: childReadership.readCount,
+                                                                            totalCount: childReadership.totalCount,
+                                                                            viewers: childReadership.viewers,
+                                                                            isExpanded: expandedReadershipShareIds.has(`${shareItem.id}_${childFile.id}`),
+                                                                            onToggleExpand: toggleReadershipExpand,
+                                                                        })}
                                                                     </div>
                                                                 );
                                                             })}
@@ -4996,18 +5249,15 @@ const Inspector = ({
                                                                 </div>
                                                             </div>
 
-                                                            {/* CONVERGED READERSHIP STATISTIC FOR PUBLISHED FILE */}
-                                                            {isDeptPublished && (
-                                                                <div className="flex items-center justify-between px-2.5 py-1.5 rounded-md border border-accent/20 bg-accent/5 text-[11px]">
-                                                                    <span className="text-text-muted flex items-center gap-1.5 font-medium">
-                                                                        <Eye className="h-3.5 w-3.5 text-accent" />
-                                                                        <span>Distribution Readership</span>
-                                                                    </span>
-                                                                    <span className="font-semibold text-accent">
-                                                                        {uniqueReadersCount} / {totalDeptMembers} read
-                                                                    </span>
-                                                                </div>
-                                                            )}
+                                                            {/* ALWAYS-VISIBLE READERSHIP WIDGET WITH COLLAPSIBLE READER BREAKDOWN */}
+                                                            {renderReadershipWidget({
+                                                                readershipKey: shareItem.id,
+                                                                readCount: deptReadership.readCount,
+                                                                totalCount: deptReadership.totalCount,
+                                                                viewers: deptReadership.viewers,
+                                                                isExpanded: isDeptReadershipExpanded,
+                                                                onToggleExpand: toggleReadershipExpand,
+                                                            })}
                                                         </>
                                                     )}
 

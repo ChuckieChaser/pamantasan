@@ -33,6 +33,9 @@ import {
     FolderTree,
     ChevronDown,
     ChevronUp,
+    ChevronRight,
+    FolderOpen,
+    Minus,
 } from 'lucide-react';
 import {
     Badge,
@@ -127,6 +130,15 @@ const CLASSIFICATION_OPTIONS = [
 const INITIAL_BREADCRUMBS = [
     { id: 'root', label: 'Repository Root' },
 ];
+
+const isPdfFileItem = (item, versList = []) => {
+    if (!item || item.isFolder) return false;
+    const vers = (versList || []).filter((v) => (v.document?.id ?? v.documentId) === item.id);
+    const latestVer = vers.length > 0 ? [...vers].sort((a, b) => (b.version || 0) - (a.version || 0))[0] : null;
+    const mime = String(latestVer?.mimeType || item.mimeType || '').toLowerCase();
+    const nameOrPath = String(latestVer?.path || item.name || item.title || '').toLowerCase();
+    return mime === 'application/pdf' || nameOrPath.endsWith('.pdf');
+};
 
 const ModalAffectedDocumentsSection = ({
     targetDocument,
@@ -369,6 +381,9 @@ const DocumentsPage = ({
     const [isSharingDepartment, setIsSharingDepartment] = useState(false);
     const [unsharingShareId, setUnsharingShareId] = useState(null);
     const initializedShareDocIdRef = useRef(null);
+    const [shareRequiresSignatureMap, setShareRequiresSignatureMap] = useState({});
+    const [excludedShareDocIds, setExcludedShareDocIds] = useState(() => new Set());
+    const [expandedShareFolderIds, setExpandedShareFolderIds] = useState(() => new Set());
 
     // STATES: PUBLISH TO MEMBERS MODAL
     const [selectedPublishMemberIds, setSelectedPublishMemberIds] = useState([]);
@@ -435,6 +450,9 @@ const DocumentsPage = ({
             queueMicrotask(() => {
                 setSelectedShareDepartmentIds([]);
                 setDepartmentSearchQuery('');
+                setExcludedShareDocIds(new Set());
+                setShareRequiresSignatureMap({});
+                setExpandedShareFolderIds(new Set());
             });
             return;
         }
@@ -449,11 +467,43 @@ const DocumentsPage = ({
         }
         initializedShareDocIdRef.current = docKey;
 
+        // Initialize signature map and expand staged folders by default
+        const rawDocs = isShareArray ? shareModalDocument : [shareModalDocument];
+        const initialSigMap = {};
+        const initialExpanded = new Set();
+        const allDocs = documents || [];
+
+        rawDocs.forEach((d) => {
+            if (!d) return;
+            if (d.isFolder) {
+                initialExpanded.add(d.id);
+                const descIds = getRecursiveDescendantDocIds(d.id, allDocs);
+                allDocs.forEach((child) => {
+                    if (descIds.includes(child.id) && !child.isArchived) {
+                        if (child.isFolder) {
+                            initialExpanded.add(child.id);
+                        } else {
+                            initialSigMap[child.id] = Boolean(
+                                child.requiresSignature ?? documentService.getLocalRequiresSignature(child.id) ?? false
+                            );
+                        }
+                    }
+                });
+            } else {
+                initialSigMap[d.id] = Boolean(
+                    d.requiresSignature ?? documentService.getLocalRequiresSignature(d.id) ?? false
+                );
+            }
+        });
+
         queueMicrotask(() => {
             setSelectedShareDepartmentIds([]);
             setDepartmentSearchQuery('');
+            setExcludedShareDocIds(new Set());
+            setShareRequiresSignatureMap(initialSigMap);
+            setExpandedShareFolderIds(initialExpanded);
         });
-    }, [shareModalDocument]);
+    }, [shareModalDocument, documents]);
 
     useEffect(() => {
         if (!publishModalDocument) {
@@ -3521,6 +3571,288 @@ const DocumentsPage = ({
         setStagedDroppedItems([]);
     };
 
+    // AFFECTED ITEMS DIRECTORY TREE (FOLDER FIRST) FOR SHARE MODAL
+    const affectedShareTree = useMemo(() => {
+        if (!shareModalDocument) {
+            return { roots: [], allPdfs: [], totalActive: 0, hasExcluded: false };
+        }
+        const rawDocs = Array.isArray(shareModalDocument) ? shareModalDocument : [shareModalDocument];
+        const allDocs = documents || [];
+        const allVers = documentVersions || [];
+
+        const checkIsPdf = (item) => isPdfFileItem(item, allVers);
+
+        // Recursively build tree for a folder
+        const buildFolderSubtree = (folderItem, level = 0) => {
+            if (!folderItem || excludedShareDocIds.has(folderItem.id)) return null;
+
+            const descIds = getRecursiveDescendantDocIds(folderItem.id, allDocs);
+            const childDocs = allDocs.filter(
+                (c) => (c.parentId === folderItem.id || c.parentFolderId === folderItem.id) &&
+                       !c.isArchived &&
+                       !excludedShareDocIds.has(c.id)
+            );
+
+            const childFolders = childDocs
+                .filter((d) => d.isFolder)
+                .sort((a, b) => (a.name || a.title || '').localeCompare(b.name || b.title || ''));
+            const childFiles = childDocs
+                .filter((d) => !d.isFolder)
+                .sort((a, b) => (a.name || a.title || '').localeCompare(b.name || b.title || ''));
+
+            const childNodes = [];
+            for (const cf of childFolders) {
+                const sub = buildFolderSubtree(cf, level + 1);
+                if (sub) childNodes.push(sub);
+            }
+            for (const cf of childFiles) {
+                const isPdf = checkIsPdf(cf);
+                childNodes.push({
+                    id: cf.id,
+                    doc: cf,
+                    name: cf.name || cf.title || 'document',
+                    isFolder: false,
+                    isPdf,
+                    level: level + 1,
+                    allDescendantPdfIds: isPdf ? [cf.id] : [],
+                    allDescendantDocIds: [cf.id],
+                    children: [],
+                });
+            }
+
+            const allDescendantPdfIds = [];
+            const allDescendantDocIds = [folderItem.id, ...descIds];
+            for (const cn of childNodes) {
+                allDescendantPdfIds.push(...cn.allDescendantPdfIds);
+            }
+
+            return {
+                id: folderItem.id,
+                doc: folderItem,
+                name: folderItem.name || folderItem.title || 'Folder',
+                isFolder: true,
+                isPdf: false,
+                level,
+                allDescendantPdfIds: [...new Set(allDescendantPdfIds)],
+                allDescendantDocIds,
+                children: childNodes,
+            };
+        };
+
+        const rootNodes = [];
+        const seenRootIds = new Set();
+        const sortedRawFolders = rawDocs.filter((d) => d && d.isFolder && !excludedShareDocIds.has(d.id));
+        const sortedRawFiles = rawDocs.filter((d) => d && !d.isFolder && !excludedShareDocIds.has(d.id));
+
+        for (const rf of sortedRawFolders) {
+            if (!seenRootIds.has(rf.id)) {
+                seenRootIds.add(rf.id);
+                const sub = buildFolderSubtree(rf, 0);
+                if (sub) rootNodes.push(sub);
+            }
+        }
+        for (const rf of sortedRawFiles) {
+            if (!seenRootIds.has(rf.id)) {
+                seenRootIds.add(rf.id);
+                const isPdf = checkIsPdf(rf);
+                rootNodes.push({
+                    id: rf.id,
+                    doc: rf,
+                    name: rf.name || rf.title || 'document',
+                    isFolder: false,
+                    isPdf,
+                    level: 0,
+                    allDescendantPdfIds: isPdf ? [rf.id] : [],
+                    allDescendantDocIds: [rf.id],
+                    children: [],
+                });
+            }
+        }
+
+        const allPdfs = [];
+        const collectPdfs = (nodes) => {
+            nodes.forEach((n) => {
+                if (!n.isFolder && n.isPdf) {
+                    allPdfs.push(n.doc);
+                }
+                if (n.children && n.children.length > 0) {
+                    collectPdfs(n.children);
+                }
+            });
+        };
+        collectPdfs(rootNodes);
+
+        let totalActive = 0;
+        const countActive = (nodes) => {
+            nodes.forEach((n) => {
+                totalActive++;
+                if (n.children && n.children.length > 0) {
+                    countActive(n.children);
+                }
+            });
+        };
+        countActive(rootNodes);
+
+        return {
+            roots: rootNodes,
+            allPdfs,
+            totalActive,
+            hasExcluded: excludedShareDocIds.size > 0,
+        };
+    }, [shareModalDocument, documents, documentVersions, excludedShareDocIds]);
+
+    const renderShareTreeNode = (node) => {
+        const isExpanded = expandedShareFolderIds.has(node.id);
+        const hasChildren = node.children && node.children.length > 0;
+        const indentPx = node.level * 16;
+
+        let isChecked = false;
+        let isIndeterminate = false;
+        let hasPdfToSign = false;
+
+        if (node.isFolder) {
+            const descendantPdfIds = node.allDescendantPdfIds;
+            if (descendantPdfIds.length > 0) {
+                hasPdfToSign = true;
+                const checkedCount = descendantPdfIds.filter((id) => Boolean(shareRequiresSignatureMap[id])).length;
+                isChecked = checkedCount === descendantPdfIds.length;
+                isIndeterminate = checkedCount > 0 && checkedCount < descendantPdfIds.length;
+            }
+        } else if (node.isPdf) {
+            hasPdfToSign = true;
+            isChecked = Boolean(shareRequiresSignatureMap[node.id]);
+        }
+
+        const handleToggleSignature = (e) => {
+            e.stopPropagation();
+            if (node.isFolder) {
+                const nextVal = !isChecked;
+                const updates = {};
+                node.allDescendantPdfIds.forEach((pid) => {
+                    updates[pid] = nextVal;
+                    documentService.setLocalRequiresSignature(pid, nextVal);
+                });
+                setShareRequiresSignatureMap((prev) => ({ ...prev, ...updates }));
+            } else if (node.isPdf) {
+                const nextVal = !isChecked;
+                documentService.setLocalRequiresSignature(node.id, nextVal);
+                setShareRequiresSignatureMap((prev) => ({ ...prev, [node.id]: nextVal }));
+            }
+        };
+
+        const handleExclude = (e) => {
+            e.stopPropagation();
+            setExcludedShareDocIds((prev) => new Set([...prev, ...node.allDescendantDocIds]));
+        };
+
+        const toggleFolderExpand = (e) => {
+            e.stopPropagation();
+            setExpandedShareFolderIds((prev) => {
+                const next = new Set(prev);
+                if (next.has(node.id)) next.delete(node.id);
+                else next.add(node.id);
+                return next;
+            });
+        };
+
+        return (
+            <div key={node.id} className="flex flex-col">
+                <div
+                    className={`group flex items-center justify-between gap-1.5 py-1 px-1.5 rounded-lg text-xs hover:bg-surface-hover/80 transition-colors ${
+                        node.isFolder ? 'font-medium' : ''
+                    }`}
+                    style={{ paddingLeft: `${indentPx + 6}px` }}
+                >
+                    <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                        {node.isFolder ? (
+                            <button
+                                type="button"
+                                onClick={toggleFolderExpand}
+                                className="p-0.5 hover:bg-surface-border/50 rounded text-text-muted hover:text-text shrink-0 cursor-pointer"
+                                title={isExpanded ? 'Collapse folder' : 'Expand folder'}
+                                aria-label={isExpanded ? `Collapse ${node.name}` : `Expand ${node.name}`}
+                            >
+                                {isExpanded ? (
+                                    <ChevronDown className="h-3.5 w-3.5" />
+                                ) : (
+                                    <ChevronRight className="h-3.5 w-3.5" />
+                                )}
+                            </button>
+                        ) : (
+                            <span className="w-4.5 shrink-0" />
+                        )}
+
+                        {hasPdfToSign ? (
+                            <button
+                                type="button"
+                                role="checkbox"
+                                aria-checked={isIndeterminate ? 'mixed' : isChecked}
+                                onClick={handleToggleSignature}
+                                className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors cursor-pointer ${
+                                    isChecked
+                                        ? 'bg-amber-500 border-amber-500 text-white shadow-2xs'
+                                        : isIndeterminate
+                                        ? 'bg-amber-500/30 border-amber-500 text-amber-300'
+                                        : 'border-surface-border bg-surface hover:border-amber-500/70'
+                                }`}
+                                title={
+                                    node.isFolder
+                                        ? isChecked
+                                            ? 'All child PDFs require official signature. Click to toggle OFF for all.'
+                                            : 'Require official signature on all child PDFs. Click to toggle ON.'
+                                        : isChecked
+                                        ? 'Mandatory signature is ON for this PDF. Click to toggle OFF.'
+                                        : 'Require official signature on this PDF. Click to toggle ON.'
+                                }
+                            >
+                                {isChecked && <Check className="h-2.5 w-2.5 stroke-[3]" />}
+                                {isIndeterminate && <Minus className="h-2.5 w-2.5 stroke-[3]" />}
+                            </button>
+                        ) : (
+                            <span className="w-3.5 shrink-0" />
+                        )}
+
+                        {node.isFolder ? (
+                            isExpanded ? (
+                                <FolderOpen className="h-3.5 w-3.5 text-accent shrink-0" />
+                            ) : (
+                                <Folder className="h-3.5 w-3.5 text-accent shrink-0" />
+                            )
+                        ) : (
+                            <FileText className="h-3.5 w-3.5 text-text-muted shrink-0" />
+                        )}
+
+                        <span className="truncate text-text select-none text-[11px]" title={node.name}>
+                            {node.name}
+                        </span>
+
+                        {node.isPdf && (
+                            <span className="text-[9px] uppercase px-1 py-0.2 rounded font-mono font-semibold bg-surface-border text-text-muted shrink-0">
+                                PDF
+                            </span>
+                        )}
+                    </div>
+
+                    <button
+                        type="button"
+                        onClick={handleExclude}
+                        className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-text-muted hover:text-error hover:bg-error-background transition-opacity cursor-pointer shrink-0"
+                        title={`Exclude "${node.name}"`}
+                        aria-label={`Exclude ${node.name}`}
+                    >
+                        <Minus className="h-3.5 w-3.5" />
+                    </button>
+                </div>
+
+                {node.isFolder && isExpanded && hasChildren && (
+                    <div className="relative border-l border-surface-border/60 ml-4 pl-1 flex flex-col gap-0.5">
+                        {node.children.map(renderShareTreeNode)}
+                    </div>
+                )}
+            </div>
+        );
+    };
+
     // ACTIVE SHARES AND OPTIONS FOR SHARE MODAL
     const activeSharesForModalDoc = useMemo(() => {
         if (!shareModalDocument) return [];
@@ -3652,7 +3984,23 @@ const DocumentsPage = ({
 
         setIsSharingDepartment(true);
         try {
-            const docs = Array.isArray(shareModalDocument) ? shareModalDocument : [shareModalDocument];
+            const rawDocs = Array.isArray(shareModalDocument) ? shareModalDocument : [shareModalDocument];
+            const docs = rawDocs.filter((d) => !excludedShareDocIds.has(d.id));
+            if (docs.length === 0) {
+                showToast({
+                    type: 'warning',
+                    title: 'No Documents Selected',
+                    description: 'All items have been excluded. Please restore at least one item.',
+                });
+                setIsSharingDepartment(false);
+                return;
+            }
+
+            // Sync any updated requiresSignature preferences to local storage / memory
+            for (const [docId, reqSig] of Object.entries(shareRequiresSignatureMap)) {
+                documentService.setLocalRequiresSignature(docId, reqSig);
+            }
+
             const targetCount = selectedShareDepartmentIds.length;
             const docCount = docs.length;
             const isSingle = docCount === 1;
@@ -3671,6 +4019,7 @@ const DocumentsPage = ({
                         documentTitle: singleDocTitle,
                         departmentIds: selectedShareDepartmentIds,
                         isRecursive: isFolder,
+                        requiresSignatureMap: shareRequiresSignatureMap,
                     };
 
                     await coordinatorApprovalService.submitCoordinatorRequest({
@@ -5088,7 +5437,8 @@ const DocumentsPage = ({
                         ? `Manage departmental distribution and review routing for ${shareModalDocument.length} selected documents.`
                         : `Manage departmental distribution and review routing for "${shareModalDocument.title || shareModalDocument.name}".`}
                     icon={Share2}
-                    size="xl"
+                    size="full"
+                    className="max-w-6xl"
                     secondaryAction={{
                         label: 'Cancel',
                         isDisabled: isSharingDepartment,
@@ -5105,22 +5455,113 @@ const DocumentsPage = ({
                         variant: 'primary',
                         leadingIcon: Share2,
                         isLoading: isSharingDepartment,
-                        isDisabled: selectedShareDepartmentIds.length === 0 || isSharingDepartment,
+                        isDisabled: selectedShareDepartmentIds.length === 0 || isSharingDepartment || affectedShareTree.totalActive === 0,
                         onClick: handleShareSubmit,
                     }}
                 >
-                    <div className="flex flex-col gap-4">
-                        {/* AFFECTED DOCUMENTS PREVIEW SECTION */}
-                        <ModalAffectedDocumentsSection
-                            targetDocument={shareModalDocument}
-                            allDocuments={documents}
-                            actionType="share"
-                        />
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-stretch">
+                        {/* COLUMN 1: AFFECTED FILES DIRECTORY TREE */}
+                        <div className="lg:col-span-4 flex flex-col gap-3.5 p-4 rounded-xl border border-surface-border bg-surface-hover/30">
+                            <div className="flex items-center justify-between gap-2">
+                                <div>
+                                    <h4 className="text-xs font-bold text-text uppercase tracking-wider">
+                                        Affected Files
+                                    </h4>
+                                    <p className="text-[11px] text-text-muted">
+                                        {affectedShareTree.totalActive} included
+                                        {affectedShareTree.hasExcluded ? ` (${excludedShareDocIds.size} excluded)` : ''}
+                                    </p>
+                                </div>
+                                {affectedShareTree.hasExcluded && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setExcludedShareDocIds(new Set())}
+                                        className="text-xs text-accent hover:underline font-medium cursor-pointer"
+                                        title="Restore all excluded items"
+                                    >
+                                        Restore All
+                                    </button>
+                                )}
+                            </div>
 
-                        {/* 2-COLUMN LAYOUT: LEFT = PICKER / DISPATCH, RIGHT = ACTIVE SHARES */}
-                        <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-stretch">
-                            {/* LEFT COLUMN: DEPARTMENT PICKER */}
-                            <div className="md:col-span-7 flex flex-col gap-3.5 p-4 rounded-xl border border-surface-border bg-surface-hover/30">
+                            {/* MASTER TOGGLE ALL STAGED PDFS */}
+                            {affectedShareTree.allPdfs.length > 0 && (() => {
+                                const allPdfIds = affectedShareTree.allPdfs.map((p) => p.id);
+                                const allMandatory = allPdfIds.length > 0 && allPdfIds.every((id) => Boolean(shareRequiresSignatureMap[id]));
+                                const someMandatory = allPdfIds.some((id) => Boolean(shareRequiresSignatureMap[id]));
+                                return (
+                                    <div className="flex items-center justify-between p-2 rounded-lg bg-surface border border-surface-border text-xs">
+                                        <div className="flex items-center gap-2">
+                                            <button
+                                                type="button"
+                                                role="checkbox"
+                                                aria-checked={allMandatory}
+                                                onClick={() => {
+                                                    const nextVal = !allMandatory;
+                                                    const updates = {};
+                                                    allPdfIds.forEach((pid) => {
+                                                        updates[pid] = nextVal;
+                                                        documentService.setLocalRequiresSignature(pid, nextVal);
+                                                    });
+                                                    setShareRequiresSignatureMap((prev) => ({ ...prev, ...updates }));
+                                                }}
+                                                className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors cursor-pointer ${
+                                                    allMandatory
+                                                        ? 'bg-amber-500 border-amber-500 text-white'
+                                                        : someMandatory
+                                                        ? 'bg-amber-500/30 border-amber-500 text-amber-300'
+                                                        : 'border-surface-border bg-surface hover:border-amber-500/70'
+                                                }`}
+                                                title={allMandatory ? 'All PDFs mandatory. Click to uncheck all.' : 'Click to require signature on all staged PDFs.'}
+                                            >
+                                                {allMandatory && <Check className="h-3 w-3 stroke-[3]" />}
+                                                {!allMandatory && someMandatory && <Minus className="h-3 w-3 stroke-[3]" />}
+                                            </button>
+                                            <span className="text-[11px] font-medium text-text">
+                                                {allMandatory ? 'All PDFs Mandatory Sign' : 'Require Sign on All PDFs'}
+                                            </span>
+                                        </div>
+                                        <span className="text-[10px] text-text-muted font-mono">
+                                            {affectedShareTree.allPdfs.filter((p) => shareRequiresSignatureMap[p.id]).length}/{affectedShareTree.allPdfs.length}
+                                        </span>
+                                    </div>
+                                );
+                            })()}
+
+                            {/* HIERARCHICAL TREE CONTAINER */}
+                            <div
+                                role="region"
+                                aria-label="Affected files directory tree"
+                                className="flex-1 overflow-y-auto max-h-[350px] pr-1 space-y-1 min-h-[220px]"
+                            >
+                                {affectedShareTree.roots.length === 0 ? (
+                                    <div className="h-full min-h-[180px] flex flex-col items-center justify-center p-6 text-center rounded-lg border border-dashed border-surface-border bg-surface/50 text-xs text-text-muted gap-2">
+                                        <FileText className="h-6 w-6 text-text-muted/50" />
+                                        <span className="font-semibold text-text">No Items Selected</span>
+                                        <span className="text-[11px] leading-relaxed">
+                                            All staged items have been excluded. Click "Restore All" above to include them again.
+                                        </span>
+                                    </div>
+                                ) : (
+                                    affectedShareTree.roots.map(renderShareTreeNode)
+                                )}
+                            </div>
+
+                            {/* TREE FOOTER */}
+                            <div className="pt-2 border-t border-surface-border flex items-center justify-between gap-2 mt-auto text-[11px] text-text-muted">
+                                <span>
+                                    {affectedShareTree.allPdfs.length} {affectedShareTree.allPdfs.length === 1 ? 'PDF' : 'PDFs'}
+                                </span>
+                                {affectedShareTree.allPdfs.length > 0 && (
+                                    <span className="text-amber-500 font-medium">
+                                        {affectedShareTree.allPdfs.filter((p) => shareRequiresSignatureMap[p.id]).length} mandatory
+                                    </span>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* COLUMN 2: DEPARTMENT PICKER */}
+                        <div className="lg:col-span-4 flex flex-col gap-3.5 p-4 rounded-xl border border-surface-border bg-surface-hover/30">
                                 <div className="flex items-center justify-between gap-2">
                                     <div>
                                         <h4 className="text-xs font-bold text-text uppercase tracking-wider">
@@ -5261,8 +5702,8 @@ const DocumentsPage = ({
                                 </div>
                             </div>
 
-                            {/* RIGHT COLUMN: ACTIVE SHARES LIST */}
-                            <div className="md:col-span-5 flex flex-col gap-3.5 p-4 rounded-xl border border-surface-border bg-surface">
+                        {/* COLUMN 3: ACTIVE SHARES LIST */}
+                        <div className="lg:col-span-4 flex flex-col gap-3.5 p-4 rounded-xl border border-surface-border bg-surface">
                                 <div className="flex items-center justify-between">
                                     <div>
                                         <h4 className="text-xs font-bold text-text uppercase tracking-wider">
@@ -5363,7 +5804,6 @@ const DocumentsPage = ({
                                 </div>
                             </div>
                         </div>
-                    </div>
                 </Modal>
             )}
 
