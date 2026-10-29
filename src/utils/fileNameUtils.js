@@ -75,3 +75,28 @@ function sanitizeTitle(value) {
         .slice(0, 120)
         .trim();
 }
+
+
+/**
+ * Formats a user record into institutional signatory name pattern:
+ * "Given Name Middle Initial. Last Name" in ALL CAPS (e.g. "CHARLES DUSTIN M. CAMPOS").
+ */
+export function formatSignatoryName(user) {
+    if (!user) return '';
+
+    const first = (user.firstName || '').trim();
+    const middle = (user.middleName || '').trim();
+    const last = (user.lastName || '').trim();
+
+    if (first && last) {
+        if (middle) {
+            const cleanMiddle = middle.replace(/\./g, '').trim();
+            const initial = cleanMiddle ? `${cleanMiddle.charAt(0).toUpperCase()}.` : '';
+            return `${first} ${initial} ${last}`.replace(/\s+/g, ' ').toUpperCase();
+        }
+        return `${first} ${last}`.replace(/\s+/g, ' ').toUpperCase();
+    }
+
+    const raw = (user.name || '').trim();
+    return raw ? raw.toUpperCase() : '';
+}

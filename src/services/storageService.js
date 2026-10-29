@@ -573,6 +573,10 @@ const storageService = {
         }
     },
 
+    deleteFile: async (storagePath) => {
+        return storageService.deleteDocument(storagePath);
+    },
+
     // AVATARS
     uploadAvatar: async (userId, file) => {
         if (!storage) {
@@ -818,6 +822,267 @@ const storageService = {
 
     triggerBrowserUrlDownload: (url, fileName) => {
         return triggerBrowserUrlDownload(url, fileName);
+    },
+
+    renderTimestampToPngBuffer: async (dateText, timeText) => {
+        if (typeof document === 'undefined') return null;
+        const canvas = document.createElement('canvas');
+        const scale = 3;
+        const w = 280 * scale;
+        const h = 100 * scale;
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return null;
+
+        // Completely transparent background (no box, no fill, no stroke)
+        ctx.clearRect(0, 0, w, h);
+
+        ctx.fillStyle = '#0f172a';
+        ctx.font = 'bold ' + (26 * scale) + 'px "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(dateText, w / 2, 38 * scale);
+
+        ctx.fillStyle = '#334155';
+        ctx.font = '600 ' + (22 * scale) + 'px "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+        ctx.fillText(timeText, w / 2, 72 * scale);
+
+        return new Promise((resolve) => {
+            canvas.toBlob(async (blob) => {
+                if (!blob) {
+                    resolve(null);
+                    return;
+                }
+                const buffer = await blob.arrayBuffer();
+                resolve(buffer);
+            }, 'image/png');
+        });
+    },
+
+    renderSignatureWithNameBuffer: async (signatureBlob, signatoryName) => {
+        if (typeof document === 'undefined' || !signatureBlob) return null;
+
+        return new Promise((resolve) => {
+            const img = new Image();
+            const objectUrl = URL.createObjectURL(signatureBlob);
+
+            img.onload = () => {
+                try {
+                    const scale = 3;
+                    const viewW = 360;
+                    const rawRatio = img.naturalWidth && img.naturalHeight
+                        ? img.naturalWidth / img.naturalHeight
+                        : 2.6;
+                    const sigH = Math.round(viewW / Math.max(1.2, rawRatio));
+                    const nameH = Math.max(42, Math.round(sigH * 0.30));
+                    const totalH = sigH + nameH;
+
+                    const canvas = document.createElement('canvas');
+                    canvas.width = viewW * scale;
+                    canvas.height = totalH * scale;
+
+                    const ctx = canvas.getContext('2d');
+                    if (!ctx) {
+                        URL.revokeObjectURL(objectUrl);
+                        resolve(null);
+                        return;
+                    }
+
+                    // Transparent background
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                    // Draw signature centered in upper portion
+                    const targetSigW = viewW * scale;
+                    const targetSigH = sigH * scale;
+                    const imgAspect = img.naturalWidth / img.naturalHeight;
+                    let drawW = targetSigW;
+                    let drawH = targetSigW / imgAspect;
+                    if (drawH > targetSigH) {
+                        drawH = targetSigH;
+                        drawW = targetSigH * imgAspect;
+                    }
+                    const drawX = (targetSigW - drawW) / 2;
+                    const drawY = (targetSigH - drawH) / 2;
+
+                    ctx.drawImage(img, drawX, drawY, drawW, drawH);
+
+                    // Draw uppercase signatory name below signature (prominent, similar to timestamp text)
+                    const cleanName = (signatoryName || '').trim().toUpperCase();
+                    if (cleanName) {
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'middle';
+                        ctx.fillStyle = '#0f172a';
+
+                        const maxCharFit = Math.floor((viewW - 24) / Math.max(cleanName.length, 1) / 0.58);
+                        const baseFont = Math.min(24, Math.max(14, maxCharFit));
+                        ctx.font = `bold ${Math.round(baseFont * scale)}px "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+
+                        const textY = (sigH + nameH / 2) * scale;
+                        ctx.fillText(cleanName, (viewW / 2) * scale, textY);
+                    }
+
+                    URL.revokeObjectURL(objectUrl);
+
+                    canvas.toBlob(async (blob) => {
+                        if (!blob) {
+                            resolve(null);
+                            return;
+                        }
+                        const buffer = await blob.arrayBuffer();
+                        resolve(buffer);
+                    }, 'image/png');
+                } catch (err) {
+                    URL.revokeObjectURL(objectUrl);
+                    console.warn('renderSignatureWithNameBuffer error:', err);
+                    resolve(null);
+                }
+            };
+
+            img.onerror = () => {
+                URL.revokeObjectURL(objectUrl);
+                resolve(null);
+            };
+
+            img.src = objectUrl;
+        });
+    },
+
+    stampPdfWithSignatures: async (pdfBlob, signatureBlob, stamps = [], outputFileName = 'document.pdf', signatoryName = '') => {
+        if (!pdfBlob) {
+            throw new Error('Base PDF binary is required for stamping.');
+        }
+        if (!signatureBlob || !Array.isArray(stamps) || stamps.length === 0) {
+            throw new Error('Officer signature and at least one stamp placement are required.');
+        }
+
+        const { PDFDocument, degrees } = await import('pdf-lib');
+
+        // Ensure signature is a clean transparent PNG
+        let processedSigFile = signatureBlob;
+        try {
+            const sigInputFile = signatureBlob instanceof File
+                ? signatureBlob
+                : new File([signatureBlob], 'signature.png', { type: signatureBlob.type || 'image/png' });
+            processedSigFile = await storageService.processSignatureToTransparentPng(sigInputFile);
+        } catch {
+            processedSigFile = signatureBlob;
+        }
+
+        // Composite signatory name below signature if provided
+        let finalSigArrayBuffer = null;
+        if (signatoryName && typeof document !== 'undefined') {
+            try {
+                const compositeBuffer = await storageService.renderSignatureWithNameBuffer(
+                    processedSigFile,
+                    signatoryName
+                );
+                if (compositeBuffer) {
+                    finalSigArrayBuffer = compositeBuffer;
+                }
+            } catch (compositeErr) {
+                console.warn('Failed to render composite signature with name:', compositeErr);
+            }
+        }
+
+        if (!finalSigArrayBuffer) {
+            finalSigArrayBuffer = await processedSigFile.arrayBuffer();
+        }
+
+        const [pdfArrayBuffer] = await Promise.all([
+            pdfBlob.arrayBuffer(),
+        ]);
+
+        const pdfDoc = await PDFDocument.load(pdfArrayBuffer, { ignoreEncryption: true });
+        const pngImage = await pdfDoc.embedPng(finalSigArrayBuffer);
+        const pages = pdfDoc.getPages();
+        const naturalRatio = pngImage.width / Math.max(1, pngImage.height);
+
+        let timestampImage = null;
+        const hasTimestamp = stamps.some((s) => s.type === 'timestamp');
+        if (hasTimestamp) {
+            const now = new Date();
+            const firstTs = stamps.find((s) => s.type === 'timestamp');
+            const dateText = firstTs?.dateText || now.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+            const timeText = firstTs?.timeText || now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+            const tsBuffer = await storageService.renderTimestampToPngBuffer(dateText, timeText);
+            if (tsBuffer) {
+                timestampImage = await pdfDoc.embedPng(tsBuffer);
+            }
+        }
+
+        for (const stamp of stamps) {
+            const rawTargetPage = stamp.pageIndex !== undefined ? Number(stamp.pageIndex) : (Number(stamp.pageNumber) || 1) - 1;
+            const pageIndex = Math.max(0, Math.min(pages.length - 1, rawTargetPage));
+            const page = pages[pageIndex];
+            if (!page) continue;
+
+            const { width: pageWidth, height: pageHeight } = page.getSize();
+            const widthRatio = Number(stamp.widthRatio) || 0.22;
+            const xRatio = Number(stamp.xRatio) ?? 0.65;
+            const yRatio = Number(stamp.yRatio) ?? 0.78;
+            const rotationDeg = Number(stamp.rotationDeg) || 0;
+
+            const isTimestamp = stamp.type === 'timestamp';
+            const imageToDraw = isTimestamp && timestampImage ? timestampImage : pngImage;
+            if (!imageToDraw) continue;
+
+            const imgRatio = imageToDraw.width / Math.max(1, imageToDraw.height);
+            const stampW = widthRatio * pageWidth;
+            const stampH = stampW / imgRatio;
+
+            // Center in PDF points (origin at bottom-left)
+            const cx = xRatio * pageWidth + stampW / 2;
+            const cy = (1 - yRatio) * pageHeight - stampH / 2;
+
+            // CSS positive rotation is clockwise; pdf-lib degrees() is counter-clockwise
+            const pdfAngleDeg = -rotationDeg;
+            const theta = (pdfAngleDeg * Math.PI) / 180;
+            const cosT = Math.cos(theta);
+            const sinT = Math.sin(theta);
+
+            // Offset bottom-left anchor so rotation pivots around the stamp center (cx, cy)
+            const halfW = stampW / 2;
+            const halfH = stampH / 2;
+            const x = cx - (halfW * cosT - halfH * sinT);
+            const y = cy - (halfW * sinT + halfH * cosT);
+
+            page.drawImage(imageToDraw, {
+                x,
+                y,
+                width: stampW,
+                height: stampH,
+                rotate: degrees(pdfAngleDeg),
+            });
+        }
+
+        const stampedPdfBytes = await pdfDoc.save();
+        let checksum = null;
+        if (typeof crypto !== 'undefined' && crypto.subtle) {
+            try {
+                const hashBuffer = await crypto.subtle.digest('SHA-256', stampedPdfBytes);
+                const hashArray = Array.from(new Uint8Array(hashBuffer));
+                checksum = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+            } catch {
+                checksum = null;
+            }
+        }
+
+        const finalName = outputFileName.toLowerCase().endsWith('.pdf')
+            ? outputFileName
+            : (outputFileName + '.pdf');
+        const stampedBlob = new Blob([stampedPdfBytes], { type: 'application/pdf' });
+        const stampedFile = new File([stampedBlob], finalName, {
+            type: 'application/pdf',
+            lastModified: Date.now(),
+        });
+
+        return {
+            file: stampedFile,
+            blob: stampedBlob,
+            sizeBytes: stampedFile.size,
+            checksum,
+        };
     },
 
     toProxiedUrl: (url) => {

@@ -76,7 +76,7 @@ import { Account } from './ui/Account';
 import { formatMimeTypeLabel } from './common';
 import { findRootSharedFolder, getActionConfirmationConfig } from './browser/common';
 import { constants, isStaffRole } from '../constants';
-import { storageService, coordinatorApprovalService, aiService, systemEventService } from '../services';
+import { documentService, storageService, coordinatorApprovalService, aiService, systemEventService } from '../services';
 import { stripFileExtension } from '../utils/fileNameUtils';
 
 const isRmoUser = (user, safeDepts = []) => {
@@ -304,6 +304,22 @@ const formatChangeSummary = (rawChangeSummary) => {
     }
 
     return text;
+};
+
+const isPdfFileItem = (item, versList = []) => {
+    if (!item || item.isFolder) return false;
+    const cleanDoc = typeof item.id === 'string' ? item.id.replace(/-/g, '').toLowerCase() : String(item.id || '').toLowerCase();
+    const vers = (versList || []).filter((v) => {
+        const vId = v.document?.id ?? v.documentId;
+        const cleanV = typeof vId === 'string' ? vId.replace(/-/g, '').toLowerCase() : String(vId || '').toLowerCase();
+        return cleanV === cleanDoc;
+    });
+    const latestVer = vers.length > 0 ? [...vers].sort((a, b) => (b.version || 0) - (a.version || 0))[0] : null;
+    const mime = String(latestVer?.mimeType || item.mimeType || item.type || '').toLowerCase();
+    const nameOrPath = String(latestVer?.path || item.path || item.name || item.title || item.fileName || '').toLowerCase();
+    if (mime.includes('pdf') || nameOrPath.endsWith('.pdf') || nameOrPath.includes('.pdf?')) return true;
+    if (nameOrPath.endsWith('.docx') || nameOrPath.endsWith('.xlsx') || nameOrPath.endsWith('.jpg') || nameOrPath.endsWith('.png') || nameOrPath.endsWith('.zip')) return false;
+    return true;
 };
 
 const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id ? String(id).toLowerCase() : '');
@@ -2103,6 +2119,13 @@ const Inspector = ({
             return;
         }
 
+        if (actionKey === 'approve' && constants.isOfficerRole(currentUser?.role)) {
+            window.dispatchEvent(new CustomEvent('pamantasan:document-action', {
+                detail: { actionKey: 'approve', item: targetItem }
+            }));
+            return;
+        }
+
         const shouldSkipLoading = actionKey === 'archive' && targetItem?.isFolder;
 
         if (!shouldSkipLoading) {
@@ -2161,6 +2184,7 @@ const Inspector = ({
     const handleConfirmInspectorAction = async () => {
         if (!inspectorConfirmAction) return;
         const { actionKey, targetItem } = inspectorConfirmAction;
+
         try {
             await handleActionClick(actionKey, targetItem);
             setInspectorConfirmAction(null);
@@ -2937,6 +2961,10 @@ const Inspector = ({
                     resolve: 'primary',
                 };
 
+                if (actionKey === 'approve' && constants.isOfficerRole(currentUser?.role)) {
+                    await handleActionClick('approve', targetList);
+                    return;
+                }
                 setInspectorConfirmAction({
                     actionKey,
                     targetItem: targetList,
@@ -6799,12 +6827,7 @@ const Inspector = ({
                                     isLoading={activeActionLoading === 'approve'}
                                     isDisabled={Boolean(activeActionLoading)}
                                     onClick={() => {
-                                        const conf = getActionConfirmationConfig('approve', item, 1);
-                                        setInspectorConfirmAction({
-                                            actionKey: 'approve',
-                                            targetItem: targetWithShare,
-                                            ...conf,
-                                        });
+                                        handleActionClick('approve', targetWithShare);
                                     }}
                                     className="justify-center truncate px-2"
                                 >

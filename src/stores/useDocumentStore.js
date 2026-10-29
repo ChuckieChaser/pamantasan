@@ -4,7 +4,7 @@ import { create } from 'zustand';
 import { constants } from '../constants';
 import { mutationSchema } from '../schemas';
 import { documentService, departmentService, systemEventService, storageService } from '../services';
-import { stripFileExtension, getKnownFileExtension } from '../utils/fileNameUtils';
+import { stripFileExtension, getKnownFileExtension, formatSignatoryName } from '../utils/fileNameUtils';
 import { useDepartmentStore } from './useDepartmentStore';
 import { useUserStore } from './useUserStore';
 
@@ -2309,6 +2309,135 @@ const useDocumentStore = create((set, get) => ({
         }
     },
 
+    approveAndStampShare: async (shareId, { shouldStamp = false, stamps = [], officerUser = null } = {}) => {
+        try {
+            const existing = (get().documentShares || []).find((s) => s.id === shareId);
+            const docId = existing?.documentId ?? existing?.document?.id;
+            const targetDoc = (get().documents || []).find((d) => d.id === docId);
+            const timestamp = new Date().toISOString();
+
+            let docVersions = (get().documentVersions || []).filter(
+                (v) => (v.document?.id ?? v.documentId) === docId
+            );
+            if (docVersions.length === 0 && docId) {
+                try {
+                    const fetchedVers = await get().fetchDocumentVersions(docId);
+                    if (Array.isArray(fetchedVers) && fetchedVers.length > 0) {
+                        docVersions = fetchedVers;
+                    }
+                } catch {
+                    // ignore
+                }
+            }
+            const sortedVers = [...docVersions].sort((a, b) => (b.version || 0) - (a.version || 0));
+            let latestVer = sortedVers[0];
+
+            // Self-healing: if latest version was an unapproved/orphaned stamp from an interrupted unapproval, clean it up first
+            const isOrphanedStamp = latestVer && sortedVers.length > 1 && (
+                latestVer.changeSummary?.includes('Approved and stamped with Officer digital signature') ||
+                latestVer.changeSummary?.includes('stamped')
+            );
+            if (isOrphanedStamp && existing?.status === constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL) {
+                const prevVer = sortedVers[1];
+                if (latestVer.path) {
+                    try {
+                        if (typeof storageService.deleteDocument === 'function') {
+                            await storageService.deleteDocument(latestVer.path);
+                        } else if (typeof storageService.deleteFile === 'function') {
+                            await storageService.deleteFile(latestVer.path);
+                        }
+                    } catch {}
+                }
+                await documentService.deleteDocumentVersion(latestVer.id).catch(() => {});
+                latestVer = prevVer;
+                docVersions = docVersions.filter((v) => v.id !== sortedVers[0].id);
+                set((state) => ({
+                    documentVersions: state.documentVersions.filter((v) => v.id !== sortedVers[0].id),
+                    selectedVersion: state.selectedVersion?.id === sortedVers[0].id ? prevVer : state.selectedVersion,
+                    documents: (state.documents || []).map((d) =>
+                        d.id === docId ? { ...d, version: `v${prevVer.version || 1}.0`, currentVersion: prevVer.version || 1, sizeBytes: prevVer.sizeBytes || d.sizeBytes } : d
+                    ),
+                    selectedDocument:
+                        state.selectedDocument?.id === docId
+                            ? { ...state.selectedDocument, version: `v${prevVer.version || 1}.0`, currentVersion: prevVer.version || 1, sizeBytes: prevVer.sizeBytes || state.selectedDocument.sizeBytes }
+                            : state.selectedDocument,
+                }));
+            }
+
+            if (shouldStamp && stamps.length > 0 && docId && latestVer?.path) {
+                if (!officerUser?.signaturePath) {
+                    throw new Error('Your Officer profile does not have an official signature uploaded yet.');
+                }
+
+                const [pdfBlob, sigBlob] = await Promise.all([
+                    storageService.getFileBlob(latestVer.path),
+                    storageService.getFileBlob(officerUser.signaturePath),
+                ]);
+
+                const docFileName = targetDoc?.name || 'document.pdf';
+                const signatoryName = formatSignatoryName(officerUser);
+                const stamped = await storageService.stampPdfWithSignatures(
+                    pdfBlob,
+                    sigBlob,
+                    stamps,
+                    docFileName,
+                    signatoryName
+                );
+
+                const nextVersionNumber = (latestVer.version || 1) + 1;
+                const uploadRes = await storageService.uploadDocument(
+                    docId,
+                    stamped.file,
+                    nextVersionNumber,
+                    docFileName
+                );
+
+                const newStampedVersion = await documentService.insertDocumentVersion({
+                    documentId: docId,
+                    version: nextVersionNumber,
+                    uploaderId: officerUser.id,
+                    approverId: officerUser.id,
+                    path: uploadRes.path,
+                    sizeBytes: stamped.sizeBytes || uploadRes.sizeBytes,
+                    mimeType: 'application/pdf',
+                    checksum: stamped.checksum || uploadRes.checksum,
+                    classification: latestVer.classification || targetDoc?.classification || 'UNCLASSIFIED',
+                    summary: latestVer.summary || targetDoc?.summary || null,
+                    embedding: latestVer.embedding || null,
+                    textHash: latestVer.textHash || null,
+                    changeSummary: `Approved and stamped with Officer digital signature (from v${latestVer.version || 1}.0)`,
+                    rejectionReason: null,
+                    rejecterId: null,
+                    createdAt: timestamp,
+                });
+
+                set((state) => ({
+                    documentVersions: [newStampedVersion, ...(state.documentVersions || [])],
+                    selectedVersion: newStampedVersion,
+                    documents: (state.documents || []).map((d) =>
+                        d.id === docId ? { ...d, version: `v${nextVersionNumber}.0`, currentVersion: nextVersionNumber, sizeBytes: stamped.sizeBytes || uploadRes.sizeBytes, classification: newStampedVersion.classification, summary: newStampedVersion.summary, updatedAt: timestamp } : d
+                    ),
+                    selectedDocument:
+                        state.selectedDocument?.id === docId
+                            ? { ...state.selectedDocument, version: `v${nextVersionNumber}.0`, currentVersion: nextVersionNumber, sizeBytes: stamped.sizeBytes || uploadRes.sizeBytes, classification: newStampedVersion.classification, summary: newStampedVersion.summary, updatedAt: timestamp }
+                            : state.selectedDocument,
+                }));
+            } else if (latestVer?.id && officerUser?.id) {
+                await get().updateDocumentVersion(latestVer.id, {
+                    approverId: officerUser.id,
+                    rejectionReason: null,
+                    rejecterId: null,
+                    updatedAt: timestamp,
+                });
+            }
+
+            return await get().approveShare(shareId);
+        } catch (error) {
+            console.error('Failed to approve and stamp document share:', error);
+            throw error;
+        }
+    },
+
     approveShare: async (shareId) => {
         try {
             const existing = (get().documentShares || []).find((s) => s.id === shareId);
@@ -2407,6 +2536,79 @@ const useDocumentStore = create((set, get) => ({
                     item.id === shareId ? merged : item
                 ),
             }));
+
+            // SCHOOL A: If unapproving a share with an Officer-stamped version, delete the stamped version and revert to previous
+            const docId = existing?.documentId ?? existing?.document?.id;
+            if (docId) {
+                let docVersions = (get().documentVersions || []).filter(
+                    (v) => (v.document?.id ?? v.documentId) === docId
+                );
+                if (docVersions.length === 0) {
+                    try {
+                        const fetched = await get().fetchDocumentVersions(docId);
+                        if (Array.isArray(fetched) && fetched.length > 0) {
+                            docVersions = fetched;
+                        }
+                    } catch {
+                        // ignore
+                    }
+                }
+                const sorted = [...docVersions].sort((a, b) => (b.version || 0) - (a.version || 0));
+                const latestVer = sorted[0];
+                const isStampedVersion = latestVer && (
+                    latestVer.changeSummary?.includes('Approved and stamped with Officer digital signature') ||
+                    latestVer.changeSummary?.includes('stamped')
+                );
+
+                if (isStampedVersion && sorted.length > 1) {
+                    const previousVer = sorted[1];
+                    if (latestVer.path) {
+                        try {
+                            if (typeof storageService.deleteDocument === 'function') {
+                                await storageService.deleteDocument(latestVer.path);
+                            } else if (typeof storageService.deleteFile === 'function') {
+                                await storageService.deleteFile(latestVer.path);
+                            }
+                        } catch (storageErr) {
+                            console.warn('Failed to delete stamped file from storage:', storageErr);
+                        }
+                    }
+                    await documentService.deleteDocumentVersion(latestVer.id).catch((err) => {
+                        console.warn('Failed to delete stamped version in backend:', err);
+                    });
+
+                    const remainingVersions = (get().documentVersions || []).filter((v) => v.id !== latestVer.id);
+                    set((state) => ({
+                        documentVersions: remainingVersions,
+                        selectedVersion: state.selectedVersion?.id === latestVer.id ? previousVer : state.selectedVersion,
+                        documents: (state.documents || []).map((d) =>
+                            d.id === docId
+                                ? {
+                                      ...d,
+                                      version: `v${previousVer.version || 1}.0`,
+                                      currentVersion: previousVer.version || 1,
+                                      sizeBytes: previousVer.sizeBytes || d.sizeBytes,
+                                      classification: previousVer.classification || d.classification,
+                                      summary: previousVer.summary || d.summary,
+                                      updatedAt: timestamp,
+                                  }
+                                : d
+                        ),
+                        selectedDocument:
+                            state.selectedDocument?.id === docId
+                                ? {
+                                      ...state.selectedDocument,
+                                      version: `v${previousVer.version || 1}.0`,
+                                      currentVersion: previousVer.version || 1,
+                                      sizeBytes: previousVer.sizeBytes || state.selectedDocument.sizeBytes,
+                                      classification: previousVer.classification || state.selectedDocument.classification,
+                                      summary: previousVer.summary || state.selectedDocument.summary,
+                                      updatedAt: timestamp,
+                                  }
+                                : state.selectedDocument,
+                    }));
+                }
+            }
 
             const targetDoc = (get().documents || []).find(
                 (d) => d.id === (existing?.documentId ?? existing?.document?.id)

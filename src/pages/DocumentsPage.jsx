@@ -58,6 +58,7 @@ import {
     fileToBase64,
 } from '../components';
 import { getSpecificMimeLabel, findRootSharedFolder, getActionConfirmationConfig } from '../components/browser/common';
+import { OfficerSignatureStampModal } from '../components/OfficerSignatureStampModal';
 import { useToast, useAuth, useSeenDocuments } from '../hooks';
 import { constants } from '../constants';
 import { stripFileExtension, isGenericFileName, deriveTitleFromDocumentText } from '../utils/fileNameUtils';
@@ -81,6 +82,7 @@ import {
 
 
 // --- CONFIGURATIONS ---
+const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id ? String(id).toLowerCase() : '');
 const FILE_EXTENSION_OPTIONS = ['.pdf', '.docx', '.xlsx', '.pptx', '.txt', '.csv', '.png', '.jpg'];
 
 const DOCUMENT_COLUMNS = [
@@ -133,11 +135,18 @@ const INITIAL_BREADCRUMBS = [
 
 const isPdfFileItem = (item, versList = []) => {
     if (!item || item.isFolder) return false;
-    const vers = (versList || []).filter((v) => (v.document?.id ?? v.documentId) === item.id);
+    const cleanDoc = typeof item.id === 'string' ? item.id.replace(/-/g, '').toLowerCase() : String(item.id || '').toLowerCase();
+    const vers = (versList || []).filter((v) => {
+        const vId = v.document?.id ?? v.documentId;
+        const cleanV = typeof vId === 'string' ? vId.replace(/-/g, '').toLowerCase() : String(vId || '').toLowerCase();
+        return cleanV === cleanDoc;
+    });
     const latestVer = vers.length > 0 ? [...vers].sort((a, b) => (b.version || 0) - (a.version || 0))[0] : null;
-    const mime = String(latestVer?.mimeType || item.mimeType || '').toLowerCase();
-    const nameOrPath = String(latestVer?.path || item.name || item.title || '').toLowerCase();
-    return mime === 'application/pdf' || nameOrPath.endsWith('.pdf');
+    const mime = String(latestVer?.mimeType || item.mimeType || item.type || '').toLowerCase();
+    const nameOrPath = String(latestVer?.path || item.path || item.name || item.title || item.fileName || '').toLowerCase();
+    if (mime.includes('pdf') || mime === 'application/pdf') return true;
+    if (/\.pdf(?:[?#]|$)/i.test(nameOrPath)) return true;
+    return false;
 };
 
 const ModalAffectedDocumentsSection = ({
@@ -397,6 +406,60 @@ const DocumentsPage = ({
     const [rejectionActionModal, setRejectionActionModal] = useState(null);
     const [rejectionReasonText, setRejectionReasonText] = useState('');
     const [isSubmittingAction, setIsSubmittingAction] = useState(false);
+
+    // STATES: OFFICER DIGITAL SIGNATURE STAMPING
+    const [stampSignatureMap, setStampSignatureMap] = useState({});
+    const [officerStampModalQueue, setOfficerStampModalQueue] = useState(null);
+    const [isOfficerStampModalOpen, setIsOfficerStampModalOpen] = useState(false);
+    const [isSubmittingOfficerStamp, setIsSubmittingOfficerStamp] = useState(false);
+
+    const stagedFilesForApproval = useMemo(() => {
+        if (!confirmActionModal || confirmActionModal.actionKey !== 'approve') return [];
+        const raw = confirmActionModal.item;
+        return (Array.isArray(raw) ? raw : [raw]).filter((i) => !i.isFolder);
+    }, [confirmActionModal]);
+
+    const handleOfficerStampConfirm = async ({ item, shareId, deptId, shouldStamp, stamps, isLastInQueue, queueIndex, advanceQueue }) => {
+        setIsSubmittingOfficerStamp(true);
+        try {
+            if (shouldStamp && stamps.length > 0) {
+                await useDocumentStore.getState().approveAndStampShare(shareId, {
+                    shouldStamp: true,
+                    stamps,
+                    officerUser: currentUser,
+                });
+            } else {
+                await useDocumentStore.getState().approveShare(shareId);
+            }
+
+            showToast({
+                type: 'success',
+                title: shouldStamp ? 'Document Stamped & Approved' : 'Document Approved',
+                description: shouldStamp
+                    ? `Successfully stamped signature on "${item?.name || item?.title || 'Document'}".`
+                    : `Approved "${item?.name || item?.title || 'Document'}".`,
+            });
+
+            if (isLastInQueue) {
+                setIsOfficerStampModalOpen(false);
+                setOfficerStampModalQueue(null);
+                if (currentUser) {
+                    await syncAllDocumentShares(currentUser, departments, true).catch(() => {});
+                }
+            } else {
+                advanceQueue();
+            }
+        } catch (err) {
+            console.error('Failed to stamp/approve:', err);
+            showToast({
+                type: 'error',
+                title: 'Stamping Failed',
+                description: err?.message || 'Could not complete stamping.',
+            });
+        } finally {
+            setIsSubmittingOfficerStamp(false);
+        }
+    };
 
     // HOOKS
     const { showToast, showProcessing } = useToast();
@@ -1652,6 +1715,100 @@ const DocumentsPage = ({
                 }
             };
 
+        // OFFICER SIGNATURE STAMPING & QUEUE FLOW
+        if (actionKey === 'approve' && constants.isOfficerRole(currentUser?.role)) {
+            const filesToApprove = (Array.isArray(item) ? item : [item]).filter((i) => !i.isFolder);
+            const freshShares = useDocumentStore.getState().documentShares || [];
+
+            const filesToStamp = filesToApprove.filter((f) => {
+                const isPdf = isPdfFileItem(f, documentVersions);
+                const isMandatory = Boolean(
+                    f.requiresSignature ||
+                    (documentService?.getLocalRequiresSignature && documentService.getLocalRequiresSignature(f.id)) ||
+                    f.share?.requiresSignature ||
+                    (freshShares || []).find((s) => cleanId(s.document?.id ?? s.documentId) === cleanId(f.id))?.requiresSignature
+                );
+                return isPdf && (isMandatory || stampSignatureMap[f.id]);
+            });
+
+            const filesDirectApprove = filesToApprove.filter((f) => !filesToStamp.some((s) => s.id === f.id));
+
+            // 1. Immediately approve files with stamp OFF
+            for (const singleItem of filesDirectApprove) {
+                let sRecord = singleItem.share;
+                if (!sRecord) {
+                    sRecord = freshShares.find((s) => cleanId(s.document?.id ?? s.documentId) === cleanId(singleItem.id));
+                }
+                const sId = sRecord?.id;
+                const dId = sRecord?.department?.id ?? sRecord?.departmentId ?? currentUser?.departmentId;
+                if (sId) {
+                    await approveShare(sId);
+                }
+            }
+
+            // 2. If files to stamp exist, build queue and open modal
+            if (filesToStamp.length > 0) {
+                const queueTasks = await Promise.all(filesToStamp.map(async (file) => {
+                    const fileClean = cleanId(file.id);
+                    let sRecord = file.share;
+                    if (!sRecord) {
+                        if (userDeptClean) {
+                            sRecord = freshShares.find(
+                                (s) => cleanId(s.document?.id ?? s.documentId) === fileClean && cleanId(s.department?.id ?? s.departmentId) === userDeptClean
+                            );
+                        } else {
+                            sRecord = freshShares.find((s) => cleanId(s.document?.id ?? s.documentId) === fileClean);
+                        }
+                    }
+                    let vers = (useDocumentStore.getState().documentVersions || []).filter((v) => cleanId(v.document?.id ?? v.documentId) === fileClean);
+                    if (vers.length === 0 && file.id) {
+                        try {
+                            const fetched = await useDocumentStore.getState().fetchDocumentVersions(file.id);
+                            if (Array.isArray(fetched) && fetched.length > 0) {
+                                vers = fetched;
+                            }
+                        } catch {
+                            // ignore
+                        }
+                    }
+                    const activeVer = [...vers].sort((a, b) => (b.version || 0) - (a.version || 0))[0];
+                    const isMandatory = Boolean(
+                        file.requiresSignature ||
+                        (documentService?.getLocalRequiresSignature && documentService.getLocalRequiresSignature(file.id)) ||
+                        file.share?.requiresSignature ||
+                        sRecord?.requiresSignature
+                    );
+                    return {
+                        item: file,
+                        shareRecord: sRecord,
+                        shareId: sRecord?.id,
+                        deptId: sRecord?.department?.id ?? sRecord?.departmentId ?? currentUser?.departmentId,
+                        activeVersion: activeVer,
+                        effectiveIsMandatorySign: isMandatory,
+                    };
+                }));
+
+                setConfirmActionModal(null);
+                setIsSubmittingAction(false);
+                setOfficerStampModalQueue(queueTasks);
+                setIsOfficerStampModalOpen(true);
+                return;
+            }
+
+            // If everything direct approved
+            setConfirmActionModal(null);
+            setIsSubmittingAction(false);
+            showToast({
+                type: 'success',
+                title: 'Documents Approved',
+                description: `Approved ${filesDirectApprove.length} document${filesDirectApprove.length === 1 ? '' : 's'} directly.`,
+            });
+            if (currentUser) {
+                await syncAllDocumentShares(currentUser, departments, true).catch(() => {});
+            }
+            return;
+        }
+
             if (Array.isArray(item)) {
                 let successCount = 0;
                 for (const singleItem of item) {
@@ -1924,6 +2081,23 @@ const DocumentsPage = ({
                     return;
                 }
 
+
+                if (actionKey === 'approve' && constants.isOfficerRole(currentUser?.role)) {
+                    const filesToApprove = (item ? (Array.isArray(item) ? item : [item]) : []).filter((i) => !i.isFolder);
+                    const initMap = {};
+                    filesToApprove.forEach((f) => {
+                        const isPdf = isPdfFileItem(f, documentVersions);
+                        const isMandatory = Boolean(
+                            f.requiresSignature ||
+                            (documentService?.getLocalRequiresSignature && documentService.getLocalRequiresSignature(f.id)) ||
+                            f.share?.requiresSignature ||
+                            (documentShares || []).find((s) => cleanId(s.document?.id ?? s.documentId) === cleanId(f.id))?.requiresSignature
+                        );
+                        initMap[f.id] = isPdf ? (isMandatory ? true : true) : false;
+                    });
+                    setStampSignatureMap(initMap);
+                }
+
                 const config = getActionConfirmationConfig(actionKey, item, count);
                 setConfirmActionModal({
                     actionKey,
@@ -2027,6 +2201,22 @@ const DocumentsPage = ({
             }
 
             if (['approve', 'unapprove', 'stash', 'unstash', 'unreject', 'unpublish'].includes(actionKey)) {
+                if (actionKey === 'approve' && constants.isOfficerRole(currentUser?.role)) {
+                    const filesToApprove = (item ? (Array.isArray(item) ? item : [item]) : []).filter((i) => !i.isFolder);
+                    const initMap = {};
+                    filesToApprove.forEach((f) => {
+                        const isPdf = isPdfFileItem(f, documentVersions);
+                        const isMandatory = Boolean(
+                            f.requiresSignature ||
+                            (documentService?.getLocalRequiresSignature && documentService.getLocalRequiresSignature(f.id)) ||
+                            f.share?.requiresSignature ||
+                            (documentShares || []).find((s) => cleanId(s.document?.id ?? s.documentId) === cleanId(f.id))?.requiresSignature
+                        );
+                        initMap[f.id] = isPdf ? (isMandatory ? true : true) : false;
+                    });
+                    setStampSignatureMap(initMap);
+                }
+
                 const config = getActionConfirmationConfig(actionKey, item, 1);
                 setConfirmActionModal({
                     actionKey,
@@ -2330,6 +2520,20 @@ const DocumentsPage = ({
             return;
         }
     };
+
+    // LISTEN FOR EXTERNAL DOCUMENT ACTION TRIGGERS (E.G. FROM INSPECTOR QUICK ACTION)
+    useEffect(() => {
+        const handleDocumentActionEvent = (event) => {
+            const { actionKey, item } = event.detail || {};
+            if (actionKey && item) {
+                handleItemAction(actionKey, item);
+            }
+        };
+        window.addEventListener('pamantasan:document-action', handleDocumentActionEvent);
+        return () => {
+            window.removeEventListener('pamantasan:document-action', handleDocumentActionEvent);
+        };
+    }, []);
 
     const performRestoreItem = async (item) => {
         try {
@@ -5091,7 +5295,7 @@ const DocumentsPage = ({
                     description={`The original parent folder "${restoreConflictModalItem.parentFolder?.name || restoreConflictModalItem.parentFolder?.title || 'Parent Folder'}" is currently archived. To restore this item, its parent folder must also be restored.`}
                     icon={AlertTriangle}
                     variant="warning"
-                    size="sm"
+                    size={confirmActionModal?.actionKey === 'approve' && constants.isOfficerRole(currentUser?.role) ? 'md' : 'sm'}
                     callout={`Restoring "${restoreConflictModalItem.item?.title || restoreConflictModalItem.item?.name}" will restore parent folder "${restoreConflictModalItem.parentFolder?.name || restoreConflictModalItem.parentFolder?.title}" first into its original repository location.`}
                     primaryAction={{
                         label: 'Restore Parent & Item',
@@ -6178,7 +6382,7 @@ const DocumentsPage = ({
                     title={confirmActionModal.title}
                     description={confirmActionModal.message}
                     icon={confirmActionModal.icon || (confirmActionModal.actionKey === 'stash' ? Clock : (['restore', 'unshare'].includes(confirmActionModal.actionKey) ? RotateCcw : CheckCircle2))}
-                    size="sm"
+                    size={confirmActionModal?.actionKey === 'approve' && constants.isOfficerRole(currentUser?.role) ? 'md' : 'sm'}
                     confirmOnClose={false}
                     primaryAction={{
                         label: confirmActionModal.primaryLabel,
@@ -6193,10 +6397,116 @@ const DocumentsPage = ({
                         onClick: () => setConfirmActionModal(null),
                     }}
                 >
-                    <div className="text-xs text-text-muted leading-relaxed">
-                        {confirmActionModal.impact || 'Please confirm you wish to perform this action. The status will update immediately across departmental queues.'}
-                    </div>
+                    {confirmActionModal.actionKey === 'approve' && constants.isOfficerRole(currentUser?.role) ? (
+                        <div className="flex flex-col gap-3">
+                            <div className="flex flex-col gap-2 max-h-60 overflow-y-auto pr-1">
+                                <span className="text-xs font-semibold text-text">
+                                    Files to Approve ({stagedFilesForApproval.length})
+                                </span>
+                                {stagedFilesForApproval.map((file) => {
+                                    const isPdf = isPdfFileItem(file, documentVersions);
+                                    const isMandatory = Boolean(
+                                        file.requiresSignature ||
+                                        (documentService?.getLocalRequiresSignature && documentService.getLocalRequiresSignature(file.id)) ||
+                                        file.share?.requiresSignature ||
+                                        (documentShares || []).find((s) => cleanId(s.document?.id ?? s.documentId) === cleanId(file.id))?.requiresSignature
+                                    );
+                                    const isStampOn = isMandatory ? true : Boolean(stampSignatureMap[file.id]);
+
+                                    return (
+                                        <div
+                                            key={file.id}
+                                            className="flex items-center justify-between p-2.5 rounded-lg border border-surface-border bg-surface-hover/50 gap-2"
+                                        >
+                                            <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                                                <FileText className="w-4 h-4 text-accent shrink-0" />
+                                                <div className="flex flex-col min-w-0">
+                                                    <span className="text-xs font-medium text-text truncate" title={file.name || file.title}>
+                                                        {file.name || file.title}
+                                                    </span>
+                                                    <div className="flex items-center gap-1.5 mt-0.5">
+                                                        {isMandatory && (
+                                                            <span className="inline-flex items-center gap-0.5 text-[9px] font-bold text-amber-400 bg-amber-500/15 border border-amber-500/30 px-1.5 py-0.2 rounded-full uppercase">
+                                                                <Lock className="w-2.5 h-2.5" /> Mandatory Sign
+                                                            </span>
+                                                        )}
+                                                        {!isPdf && (
+                                                            <span className="text-[10px] text-text-muted">
+                                                                Non-PDF
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {isPdf ? (
+                                                <div className="flex items-center gap-2 shrink-0 select-none">
+                                                    <span className="text-[11px] text-text-muted font-medium">Stamp:</span>
+                                                    <button
+                                                        type="button"
+                                                        role="switch"
+                                                        aria-checked={isStampOn}
+                                                        disabled={isMandatory}
+                                                        onClick={() => {
+                                                            if (!isMandatory) {
+                                                                setStampSignatureMap((prev) => ({
+                                                                    ...prev,
+                                                                    [file.id]: !isStampOn,
+                                                                }));
+                                                            }
+                                                        }}
+                                                        className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
+                                                            isStampOn ? 'bg-accent' : 'bg-surface-border'
+                                                        } ${isMandatory ? 'opacity-85 cursor-not-allowed' : 'cursor-pointer'}`}
+                                                        title={isMandatory ? 'Mandatory signature required by sender' : 'Toggle signature stamping'}
+                                                    >
+                                                        <span
+                                                            className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                                                                isStampOn ? 'translate-x-4' : 'translate-x-1'
+                                                            }`}
+                                                        />
+                                                    </button>
+                                                </div>
+                                            ) : (
+                                                <span
+                                                    className="text-[10px] font-medium text-text-muted px-2 py-0.5 rounded bg-surface border border-surface-border shrink-0 select-none"
+                                                    title="Signature stamping is unavailable for non-PDF files"
+                                                >
+                                                    Unavailable
+                                                </span>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+
+                            <div className="text-xs text-text-muted leading-relaxed">
+                                {confirmActionModal.impact || 'Please confirm you wish to perform this action. The status will update immediately across departmental queues.'}
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="text-xs text-text-muted leading-relaxed">
+                            {confirmActionModal.impact || 'Please confirm you wish to perform this action. The status will update immediately across departmental queues.'}
+                        </div>
+                    )}
                 </Modal>
+            )}
+
+            {/* OFFICER SIGNATURE STAMP MODAL */}
+            {isOfficerStampModalOpen && (
+                <OfficerSignatureStampModal
+                    isOpen={isOfficerStampModalOpen}
+                    onClose={() => {
+                        if (!isSubmittingOfficerStamp) {
+                            setIsOfficerStampModalOpen(false);
+                            setOfficerStampModalQueue(null);
+                        }
+                    }}
+                    queue={officerStampModalQueue}
+                    currentUser={currentUser}
+                    isSubmitting={isSubmittingOfficerStamp}
+                    onConfirmApprove={handleOfficerStampConfirm}
+                />
             )}
 
             {/* REJECTION FORM MODAL */}

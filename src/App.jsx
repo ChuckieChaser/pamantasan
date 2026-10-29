@@ -936,6 +936,25 @@ const AppContent = () => {
                 selectedItem?.subject
             );
 
+        if (!isCoordinatorReq && !isDocRequest && actionKey === 'approve' && constants.isOfficerRole(currentUser?.role)) {
+            const targetDocs = Array.isArray(item) ? item : (item ? [item] : (selectedItem ? [selectedItem] : []));
+            if (targetDocs.length === 0) return;
+            const target = targetDocs.length === 1 ? targetDocs[0] : targetDocs;
+            if (location.pathname !== '/documents') {
+                navigate('/documents');
+                setTimeout(() => {
+                    window.dispatchEvent(new CustomEvent('pamantasan:document-action', {
+                        detail: { actionKey: 'approve', item: target }
+                    }));
+                }, 100);
+            } else {
+                window.dispatchEvent(new CustomEvent('pamantasan:document-action', {
+                    detail: { actionKey: 'approve', item: target }
+                }));
+            }
+            return;
+        }
+
         if (!isCoordinatorReq && !isDocRequest && ['approve', 'unapprove', 'reject', 'unreject', 'publish', 'unpublish', 'stash', 'unstash', 'unshare'].includes(actionKey)) {
             const targetDocs = Array.isArray(item) ? item : (item ? [item] : (selectedItem ? [selectedItem] : []));
             if (targetDocs.length === 0) return;
