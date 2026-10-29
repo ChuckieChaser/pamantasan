@@ -61,6 +61,7 @@ query FetchUsers(
         role
         email
         avatarPath
+        signaturePath
         firstName
         middleName
         lastName
@@ -84,6 +85,7 @@ query FetchUserById(
         role
         email
         avatarPath
+        signaturePath
         firstName
         middleName
         lastName
@@ -107,6 +109,7 @@ query FetchUserByUniversityId(
         role
         email
         avatarPath
+        signaturePath
         firstName
         middleName
         lastName
@@ -130,6 +133,7 @@ query FetchUserByEmail(
         role
         email
         avatarPath
+        signaturePath
         firstName
         middleName
         lastName
@@ -212,6 +216,7 @@ query FetchDocuments(
         isFolder
         isArchived
         directlyArchived
+        requiresSignature
         createdAt
         updatedAt
     }
@@ -236,6 +241,7 @@ query FetchAllDocuments(
         isFolder
         isArchived
         directlyArchived
+        requiresSignature
         createdAt
         updatedAt
     }
@@ -255,6 +261,7 @@ query FetchDocumentById(
         isFolder
         isArchived
         directlyArchived
+        requiresSignature
         createdAt
         updatedAt
     }
@@ -285,6 +292,7 @@ query FetchDocumentVersions(
             id
             firstName
             lastName
+            signaturePath
         }
         publisher {
             id
@@ -335,6 +343,7 @@ query FetchAllDocumentVersions(
             id
             firstName
             lastName
+            signaturePath
         }
         publisher {
             id
@@ -380,6 +389,7 @@ query FetchDocumentVersionById(
             id
             firstName
             lastName
+            signaturePath
         }
         publisher {
             id

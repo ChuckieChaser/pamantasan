@@ -27,6 +27,7 @@ const UsersSchema = z.object({
     role: common.UsersRoleSchema,
     email: common.InstitutionalEmailSchema,
     avatarPath: z.string().nullable(),
+    signaturePath: z.string().nullable().optional(),
     firstName: z.string().min(1).max(constants.INSTITUTIONAL_CONFIGURATION.MAX_USER_NAME_LENGTH),
     middleName: z.string().max(constants.INSTITUTIONAL_CONFIGURATION.MAX_USER_NAME_LENGTH).nullable(),
     lastName: z.string().min(1).max(constants.INSTITUTIONAL_CONFIGURATION.MAX_USER_NAME_LENGTH),
@@ -88,6 +89,7 @@ const DocumentsSchema = z.object({
     comment: z.string().nullable(),
     isFolder: z.boolean().default(false),
     isArchived: z.boolean().default(false),
+    requiresSignature: z.boolean().default(false).optional(),
     createdAt: common.IsoTimestampSchema,
     updatedAt: common.IsoTimestampSchema,
 });

@@ -27,6 +27,7 @@ const InsertUserSchema = z.object({
     role: common.UsersRoleSchema,
     email: common.InstitutionalEmailSchema,
     avatarPath: z.string().nullable().optional(),
+    signaturePath: z.string().nullable().optional(),
     firstName: z.string().min(1).max(constants.INSTITUTIONAL_CONFIGURATION.MAX_USER_NAME_LENGTH),
     middleName: z.string().max(constants.INSTITUTIONAL_CONFIGURATION.MAX_USER_NAME_LENGTH).nullable().optional(),
     lastName: z.string().min(1).max(constants.INSTITUTIONAL_CONFIGURATION.MAX_USER_NAME_LENGTH),
@@ -41,6 +42,7 @@ const UpdateUserSchema = z.object({
     role: common.UsersRoleSchema.optional(),
     email: common.InstitutionalEmailSchema.optional(),
     avatarPath: z.string().nullable().optional(),
+    signaturePath: z.string().nullable().optional(),
     firstName: z.string().min(1).max(constants.INSTITUTIONAL_CONFIGURATION.MAX_USER_NAME_LENGTH).optional(),
     middleName: z.string().max(constants.INSTITUTIONAL_CONFIGURATION.MAX_USER_NAME_LENGTH).nullable().optional(),
     lastName: z.string().min(1).max(constants.INSTITUTIONAL_CONFIGURATION.MAX_USER_NAME_LENGTH).optional(),
@@ -96,6 +98,7 @@ const InsertDocumentSchema = z.object({
     isFolder: z.boolean().default(false),
     isArchived: z.boolean().default(false),
     directlyArchived: z.boolean().default(false).optional(),
+    requiresSignature: z.boolean().default(false).optional(),
     createdAt: common.IsoTimestampSchema.optional(),
     updatedAt: common.IsoTimestampSchema.optional(),
 });
@@ -107,6 +110,7 @@ const UpdateDocumentSchema = z.object({
     isFolder: z.boolean().optional(),
     isArchived: z.boolean().optional(),
     directlyArchived: z.boolean().optional(),
+    requiresSignature: z.boolean().optional(),
     updatedAt: common.IsoTimestampSchema.optional(),
 });
 
@@ -154,6 +158,7 @@ const InsertDocumentShareSchema = z.object({
     recipientId: z.string().nullable().optional(),
     departmentId: z.string(),
     status: common.DocumentSharesStatusSchema.default(constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL),
+    requiresSignature: z.boolean().optional(),
     createdAt: common.IsoTimestampSchema.optional(),
     updatedAt: common.IsoTimestampSchema.optional(),
 });
@@ -162,6 +167,7 @@ const UpdateDocumentShareSchema = z.object({
     recipientId: z.string().nullable().optional(),
     departmentId: z.string().optional(),
     status: common.DocumentSharesStatusSchema.optional(),
+    requiresSignature: z.boolean().optional(),
     updatedAt: common.IsoTimestampSchema.optional(),
 });
 

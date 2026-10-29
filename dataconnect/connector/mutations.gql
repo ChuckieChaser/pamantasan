@@ -45,6 +45,7 @@ mutation InsertUser(
     $role: String!
     $email: String!
     $avatarPath: String
+    $signaturePath: String
     $firstName: String!
     $middleName: String
     $lastName: String!
@@ -59,6 +60,7 @@ mutation InsertUser(
             role: $role
             email: $email
             avatarPath: $avatarPath
+            signaturePath: $signaturePath
             firstName: $firstName
             middleName: $middleName
             lastName: $lastName
@@ -75,6 +77,7 @@ mutation UpdateUser(
     $role: String
     $email: String
     $avatarPath: String
+    $signaturePath: String
     $firstName: String
     $middleName: String
     $lastName: String
@@ -88,6 +91,7 @@ mutation UpdateUser(
             role: $role
             email: $email
             avatarPath: $avatarPath
+            signaturePath: $signaturePath
             firstName: $firstName
             middleName: $middleName
             lastName: $lastName
@@ -222,6 +226,7 @@ mutation InsertDocument(
     $isFolder: Boolean!
     $isArchived: Boolean!
     $directlyArchived: Boolean
+    $requiresSignature: Boolean
     $createdAt: Timestamp
     $updatedAt: Timestamp
 ) @auth(level: PUBLIC) {
@@ -233,6 +238,7 @@ mutation InsertDocument(
             isFolder: $isFolder
             isArchived: $isArchived
             directlyArchived: $directlyArchived
+            requiresSignature: $requiresSignature
             createdAt: $createdAt
             updatedAt: $updatedAt
         }
@@ -247,6 +253,7 @@ mutation UpdateDocument(
     $isFolder: Boolean
     $isArchived: Boolean
     $directlyArchived: Boolean
+    $requiresSignature: Boolean
     $updatedAt: Timestamp
 ) @auth(level: PUBLIC) {
     document_update(
@@ -258,6 +265,7 @@ mutation UpdateDocument(
             isFolder: $isFolder
             isArchived: $isArchived
             directlyArchived: $directlyArchived
+            requiresSignature: $requiresSignature
             updatedAt: $updatedAt
         }
     )

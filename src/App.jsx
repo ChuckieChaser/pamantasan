@@ -240,6 +240,8 @@ const AppContent = () => {
                         previous.role === matchingUser.role &&
                         previous.status === matchingUser.status &&
                         previous.departmentId === matchingUser.departmentId &&
+                        previous.avatarPath === matchingUser.avatarPath &&
+                        previous.signaturePath === matchingUser.signaturePath &&
                         previous.updatedAt === matchingUser.updatedAt
                     ) {
                         return previous;
@@ -259,6 +261,7 @@ const AppContent = () => {
                         status: matchingUser.status ?? previous.status,
                         departmentId: matchingUser.departmentId ?? previous.departmentId,
                         avatarPath: matchingUser.avatarPath ?? previous.avatarPath ?? null,
+                        signaturePath: matchingUser.signaturePath ?? previous.signaturePath ?? null,
                         createdAt: matchingUser.createdAt ?? previous.createdAt,
                         updatedAt: matchingUser.updatedAt ?? previous.updatedAt,
                     };
@@ -454,7 +457,10 @@ const AppContent = () => {
             minDelay,
         ]);
 
-        if (authenticatedUser?.status === constants.USERS_STATUS.PENDING_PASSWORD) {
+        if (
+            authenticatedUser?.status === constants.USERS_STATUS.PENDING_PASSWORD ||
+            authenticatedUser?.status === constants.USERS_STATUS.PENDING_SIGNATURE
+        ) {
             navigate('/onboarding', { replace: true });
             return;
         }
@@ -487,7 +493,10 @@ const AppContent = () => {
             minDelay,
         ]);
 
-        if (authenticatedUser?.status === constants.USERS_STATUS.PENDING_PASSWORD) {
+        if (
+            authenticatedUser?.status === constants.USERS_STATUS.PENDING_PASSWORD ||
+            authenticatedUser?.status === constants.USERS_STATUS.PENDING_SIGNATURE
+        ) {
             navigate('/onboarding', { replace: true });
             return;
         }
@@ -522,6 +531,7 @@ const AppContent = () => {
             await logout();
         } catch (error) {
             console.error('Sign out error:', error);
+            navigate('/login', { replace: true, state: { isLogout: true, from: null } });
         }
     };
 

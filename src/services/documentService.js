@@ -3,9 +3,34 @@ import { dataConnectService } from './dataConnectService';
 import { storageService } from './storageService';
 import { constants } from '../constants';
 
+const LOCAL_REQUIRES_SIGNATURE_PREFIX = 'pamantasan_doc_requires_sig_';
+
+function getLocalRequiresSignature(docId) {
+    if (!docId || typeof localStorage === 'undefined') return undefined;
+    try {
+        const clean = String(docId).replace(/-/g, '').toLowerCase();
+        const val = localStorage.getItem(`${LOCAL_REQUIRES_SIGNATURE_PREFIX}${clean}`);
+        if (val === 'true') return true;
+        if (val === 'false') return false;
+        return undefined;
+    } catch {
+        return undefined;
+    }
+}
+
+function setLocalRequiresSignature(docId, requiresSignature) {
+    if (!docId || typeof localStorage === 'undefined' || requiresSignature === undefined) return;
+    try {
+        const clean = String(docId).replace(/-/g, '').toLowerCase();
+        localStorage.setItem(`${LOCAL_REQUIRES_SIGNATURE_PREFIX}${clean}`, String(Boolean(requiresSignature)));
+    } catch {
+        // Ignore storage error
+    }
+}
+
 
 // --- SERVICES ---
-const documentService = {
+const documentService = { getLocalRequiresSignature, setLocalRequiresSignature,
     // DOCUMENTS
     fetchDocuments: async (isArchived = null, options = {}) => {
         try {
@@ -53,11 +78,15 @@ const documentService = {
             isFolder: payload.isFolder ?? false,
             isArchived: payload.isArchived ?? false,
             directlyArchived: payload.directlyArchived ?? false,
+            requiresSignature: Boolean(payload.requiresSignature ?? false),
             createdAt: timestamp,
             updatedAt: updatedTimestamp,
         });
 
         const raw = data?.document_insert ?? data?.documents_insert;
+        if (raw?.id && payload.requiresSignature !== undefined) {
+            setLocalRequiresSignature(raw.id, payload.requiresSignature);
+        }
         const formatted = formatLiveDocument(raw);
 
         return {
@@ -68,6 +97,7 @@ const documentService = {
             isFolder: Boolean(payload.isFolder),
             isArchived: Boolean(payload.isArchived),
             directlyArchived: Boolean(payload.directlyArchived),
+            requiresSignature: Boolean(payload.requiresSignature ?? false),
             createdAt: timestamp,
             updatedAt: updatedTimestamp,
         };
@@ -89,6 +119,9 @@ const documentService = {
             isFolder: payload.isFolder !== undefined ? payload.isFolder : Boolean(existing?.isFolder),
             isArchived: payload.isArchived !== undefined ? payload.isArchived : Boolean(existing?.isArchived),
             directlyArchived: payload.directlyArchived !== undefined ? payload.directlyArchived : Boolean(existing?.directlyArchived),
+            requiresSignature: payload.requiresSignature !== undefined
+                ? Boolean(payload.requiresSignature)
+                : Boolean(existing?.requiresSignature ?? getLocalRequiresSignature(id) ?? false),
             updatedAt: timestamp,
         };
 
@@ -100,6 +133,10 @@ const documentService = {
             isFolder: merged.isFolder,
             isArchived: merged.isArchived,
             directlyArchived: merged.directlyArchived,
+            requiresSignature: (() => {
+                setLocalRequiresSignature(id, merged.requiresSignature);
+                return merged.requiresSignature;
+            })(),
             updatedAt: timestamp,
         });
 
@@ -353,7 +390,13 @@ const documentService = {
             mimeType: targetVersion.mimeType || 'application/octet-stream',
             classification: targetVersion.classification || constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED,
             changeSummary: `Reverted to version v${targetVersion.version}.0`,
+            approverId: null,
+            publisherId: null,
+            rejecterId: null,
+            rejectionReason: null,
             summary: targetVersion.summary ?? '',
+            embedding: targetVersion.embedding ?? null,
+            textHash: targetVersion.textHash ?? null,
             createdAt: timestamp,
             updatedAt: timestamp,
         });
@@ -705,6 +748,7 @@ function formatLiveDocument(rawDocument) {
         isFolder: Boolean(rawDocument.isFolder),
         isArchived: Boolean(rawDocument.isArchived),
         directlyArchived: Boolean(rawDocument.directlyArchived ?? rawDocument.directly_archived ?? false),
+        requiresSignature: Boolean(rawDocument.requiresSignature ?? rawDocument.requires_signature ?? getLocalRequiresSignature(rawDocument.id) ?? false),
         createdAt: rawDocument.createdAt,
         updatedAt: rawDocument.updatedAt,
     };
@@ -715,9 +759,14 @@ function formatLiveDocumentVersion(rawVersion) {
         return null;
     }
 
+    const docId = typeof rawVersion.document === 'object'
+        ? rawVersion.document?.id
+        : (rawVersion.documentId ?? rawVersion.document ?? null);
+
     return {
         id: rawVersion.id,
-        document: rawVersion.document,
+        document: rawVersion.document ?? (docId ? { id: docId } : null),
+        documentId: docId,
         uploader: rawVersion.uploader,
         approver: rawVersion.approver,
         publisher: rawVersion.publisher,
@@ -759,6 +808,7 @@ function formatLiveDocumentShare(rawShare) {
         department: rawShare.department ?? (deptId ? { id: deptId } : null),
         departmentId: deptId,
         status: rawShare.status,
+        requiresSignature: Boolean(rawShare.requiresSignature ?? getLocalRequiresSignature(docId) ?? false),
         createdAt: rawShare.createdAt,
         updatedAt: rawShare.updatedAt,
     };

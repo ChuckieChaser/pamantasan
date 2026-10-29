@@ -13,6 +13,11 @@ service firebase.storage {
       allow read, write: if true;
     }
 
+    // Officer Digital Signatures: signatures/{allPaths=**}
+    match /signatures/{allPaths=**} {
+      allow read, write: if true;
+    }
+
     // System Documents: documents/{allPaths=**}
     match /documents/{allPaths=**} {
       allow read, delete: if true;

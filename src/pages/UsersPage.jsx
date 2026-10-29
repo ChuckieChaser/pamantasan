@@ -156,7 +156,7 @@ const UsersPage = ({
         }
     };
     const { currentUser: authUser } = useAuth();
-    const currentUser = propUser ?? authUser ?? storeUser ?? useAuthStore.getState().currentUser;
+    const currentUser = propUser ?? authUser ?? useAuthStore.getState().currentUser;
     const isCoordinator = constants.isCoordinatorRole(currentUser?.role);
     const { markItemAsSeen, getHighlightedIds } = useSeenItems('users', currentUser);
 

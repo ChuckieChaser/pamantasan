@@ -132,7 +132,11 @@ const ProtectedRoute = ({
     }
 
     if (!allowPending) {
-        if (currentUser.status === constants.USERS_STATUS.PENDING_PASSWORD) {
+        if (
+            currentUser.status === constants.USERS_STATUS.PENDING_PASSWORD ||
+            currentUser.status === constants.USERS_STATUS.PENDING_SIGNATURE ||
+            (constants.isOfficerRole(currentUser.role) && !currentUser.signaturePath && currentUser.status !== constants.USERS_STATUS.SUSPENDED)
+        ) {
             return <Navigate to="/onboarding" replace />;
         }
         if (currentUser.status === constants.USERS_STATUS.PENDING_SSO) {
@@ -181,7 +185,11 @@ const PublicRoute = ({
         let destination = (!isLogout && fromPath && fromPath !== '/login' && fromPath !== '/')
             ? fromPath
             : '/dashboard';
-        if (currentUser.status === constants.USERS_STATUS.PENDING_PASSWORD) {
+        if (
+            currentUser.status === constants.USERS_STATUS.PENDING_PASSWORD ||
+            currentUser.status === constants.USERS_STATUS.PENDING_SIGNATURE ||
+            (constants.isOfficerRole(currentUser.role) && !currentUser.signaturePath && currentUser.status !== constants.USERS_STATUS.SUSPENDED)
+        ) {
             destination = '/onboarding';
         } else if (currentUser.status === constants.USERS_STATUS.PENDING_SSO) {
             if (!authService.hasSkippedSSOOnboarding(currentUser.id)) {

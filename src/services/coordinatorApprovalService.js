@@ -308,6 +308,11 @@ const coordinatorApprovalService = {
                 if (!docId) throw new Error('Document ID missing from request payload.');
 
                 // Attributing coordinatorId as the sharer
+                if (payloadData.requiresSignatureMap && typeof payloadData.requiresSignatureMap === 'object') {
+                    await docStore.setDocumentsRequiresSignature(payloadData.requiresSignatureMap);
+                } else if (typeof payloadData.requiresSignature === 'boolean') {
+                    await docStore.setDocumentsRequiresSignature({ [docId]: payloadData.requiresSignature });
+                }
                 if (payloadData.isRecursive || Array.isArray(payloadData.departmentIds)) {
                     const depts = payloadData.departmentIds || (payloadData.departmentId ? [payloadData.departmentId] : []);
                     await docStore.shareDocumentRecursive(docId, depts, coordinatorId);

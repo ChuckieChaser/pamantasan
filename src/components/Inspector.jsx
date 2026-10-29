@@ -151,6 +151,7 @@ const STATUS_BADGE_VARIANT = {
     [constants.DOCUMENT_SHARES_STATUS.REJECTED]: 'error',
     [constants.USERS_STATUS.VERIFIED]: 'success',
     [constants.USERS_STATUS.PENDING_PASSWORD]: 'warning',
+    [constants.USERS_STATUS.PENDING_SIGNATURE]: 'warning',
     [constants.USERS_STATUS.PENDING_SSO]: 'information',
     [constants.USERS_STATUS.SUSPENDED]: 'error',
     [constants.DOCUMENT_REQUESTS_STATUS.OPEN]: 'information',

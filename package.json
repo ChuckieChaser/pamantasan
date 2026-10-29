@@ -19,6 +19,8 @@
         "firebase": "^12.17.1",
         "lucide-react": "^1.31.0",
         "mammoth": "^1.12.3",
+        "pdf-lib": "^1.17.1",
+        "pdfjs-dist": "^6.4.299",
         "qrcode.react": "^4.2.0",
         "react": "^19.2.8",
         "react-dom": "^19.2.8",

@@ -8,6 +8,7 @@ import {
 import { httpsCallable } from 'firebase/functions';
 import { auth, functions, googleProvider, FIREBASE_CONFIGURATION } from './firebase';
 import { userService, hashPassword } from './userService';
+import { storageService } from './storageService';
 import { constants } from '../constants';
 
 
@@ -585,7 +586,9 @@ const authService = {
         if (cachedCurrentUser.status === constants.USERS_STATUS.PENDING_PASSWORD) {
             try {
                 const updatedUser = await userService.updateUser(cachedCurrentUser.id, {
-                    status: constants.USERS_STATUS.PENDING_SSO,
+                    status: (constants.isOfficerRole(cachedCurrentUser.role) && !cachedCurrentUser.signaturePath)
+                        ? constants.USERS_STATUS.PENDING_SIGNATURE
+                        : constants.USERS_STATUS.PENDING_SSO,
                 });
                 if (updatedUser) {
                     notifyAuthListeners(updatedUser);
@@ -596,13 +599,61 @@ const authService = {
         }
     },
 
+    completeSignatureOnboarding: async (signatureFile) => {
+        if (!cachedCurrentUser?.id) {
+            throw new Error('No authenticated user session found.');
+        }
+
+        if (!signatureFile) {
+            throw new Error('Signature image file is required.');
+        }
+
+        const uploadResult = await storageService.uploadSignature(cachedCurrentUser.id, signatureFile);
+
+        let nextStatus = constants.USERS_STATUS.PENDING_SSO;
+        try {
+            const creds = await userService.fetchUserCredentialsByUserId(cachedCurrentUser.id);
+            if (creds?.googleId) {
+                nextStatus = constants.USERS_STATUS.VERIFIED;
+            }
+        } catch {
+            // Default to PENDING_SSO
+        }
+
+        const targetStatus = cachedCurrentUser.status === constants.USERS_STATUS.PENDING_SIGNATURE
+            ? nextStatus
+            : (cachedCurrentUser.status || nextStatus);
+
+        const updatedUser = await userService.updateUser(cachedCurrentUser.id, {
+            signaturePath: uploadResult.path,
+            status: targetStatus,
+        });
+
+        const finalUser = {
+            ...cachedCurrentUser,
+            ...(updatedUser || {}),
+            signaturePath: uploadResult.path,
+            status: targetStatus,
+        };
+
+        notifyAuthListeners(finalUser);
+        if (typeof window !== 'undefined') {
+            window.dispatchEvent(new Event('pamantasan-signature-changed'));
+        }
+
+        return finalUser;
+    },
+
     logout: async () => {
         const sessionId = authService.getCurrentSessionId();
+        const currentUserId = cachedCurrentUser?.id;
+
+        // 1. Immediately and synchronously purge all storage tokens
         if (typeof sessionStorage !== 'undefined') {
             sessionStorage.removeItem(SESSION_STORAGE_KEY);
             sessionStorage.removeItem('pamantasan_session_token');
-            if (cachedCurrentUser?.id) {
-                sessionStorage.removeItem(`pamantasan_session_skip_sso_${cachedCurrentUser.id}`);
+            if (currentUserId) {
+                sessionStorage.removeItem(`pamantasan_session_skip_sso_${currentUserId}`);
             }
         }
         if (typeof localStorage !== 'undefined') {
@@ -610,6 +661,12 @@ const authService = {
             localStorage.removeItem(USER_STORAGE_KEY);
             localStorage.removeItem('pamantasan_auth_user_email');
         }
+
+        // 2. Immediately clear in-memory user cache and notify all auth listeners
+        cachedCurrentUser = null;
+        notifyAuthListeners(null);
+
+        // 3. Asynchronously clean up remote session & Firebase Auth in background
         if (sessionId && !sessionId.startsWith('session-')) {
             try {
                 await userService.deleteUserSession(sessionId);
@@ -620,11 +677,10 @@ const authService = {
         if (auth) {
             try {
                 await signOut(auth);
-            } catch {
-                /* ignore */
+            } catch (err) {
+                console.warn('Failed to sign out Firebase Auth:', err);
             }
         }
-        notifyAuthListeners(null);
     },
 
     hasSkippedSSOOnboarding: (userId) => {

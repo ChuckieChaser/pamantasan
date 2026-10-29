@@ -13,6 +13,7 @@ type User @table {
     role: String!
     email: String!
     avatarPath: String
+    signaturePath: String
     firstName: String!
     middleName: String
     lastName: String!
@@ -55,6 +56,7 @@ type Document @table {
     isFolder: Boolean!
     isArchived: Boolean!
     directlyArchived: Boolean! @default(value: false)
+    requiresSignature: Boolean @default(value: false)
     createdAt: Timestamp! @default(expr: "request.time")
     updatedAt: Timestamp! @default(expr: "request.time")
 }

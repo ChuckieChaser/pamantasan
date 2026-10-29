@@ -5,6 +5,27 @@ import { constants } from '../constants';
 
 // --- CONFIGURATIONS ---
 const DEFAULT_AVATAR_STORAGE_PATH = 'avatars/placeholder.png';
+const LOCAL_SIGNATURE_KEY_PREFIX = 'pamantasan_signature_path_';
+
+function getLocalSignaturePath(userId) {
+    if (!userId || typeof localStorage === 'undefined') return null;
+    try {
+        return localStorage.getItem(`${LOCAL_SIGNATURE_KEY_PREFIX}${userId}`) || null;
+    } catch {
+        return null;
+    }
+}
+
+function setLocalSignaturePath(userId, signaturePath) {
+    if (!userId || typeof localStorage === 'undefined') return;
+    try {
+        if (signaturePath) {
+            localStorage.setItem(`${LOCAL_SIGNATURE_KEY_PREFIX}${userId}`, signaturePath);
+        }
+    } catch {
+        // Ignore storage error
+    }
+}
 
 
 // --- SERVICES ---
@@ -69,6 +90,7 @@ const userService = {
             role: payload.role,
             email: payload.email,
             avatarPath: payload.avatarPath ?? DEFAULT_AVATAR_STORAGE_PATH,
+            signaturePath: payload.signaturePath ?? null,
             firstName: payload.firstName,
             middleName: payload.middleName ?? null,
             lastName: payload.lastName,
@@ -87,6 +109,7 @@ const userService = {
             role: payload.role,
             email: payload.email,
             avatarPath: payload.avatarPath ?? DEFAULT_AVATAR_STORAGE_PATH,
+            signaturePath: payload.signaturePath ?? null,
             firstName: payload.firstName,
             middleName: payload.middleName ?? null,
             lastName: payload.lastName,
@@ -155,6 +178,11 @@ const userService = {
             role: payloadWithUpdate.role ?? null,
             email: payloadWithUpdate.email ?? null,
             avatarPath: payloadWithUpdate.avatarPath ?? null,
+            signaturePath: (() => {
+                const sig = payloadWithUpdate.signaturePath ?? getLocalSignaturePath(id) ?? null;
+                if (sig) setLocalSignaturePath(id, sig);
+                return sig;
+            })(),
             firstName: payloadWithUpdate.firstName ?? null,
             middleName: payloadWithUpdate.middleName ?? null,
             lastName: payloadWithUpdate.lastName ?? null,
@@ -385,10 +413,11 @@ function formatLiveUser(rawUser) {
         role: rawUser.role,
         email: rawUser.email,
         avatarPath: rawUser.avatarPath ?? null,
+        signaturePath: rawUser.signaturePath ?? getLocalSignaturePath(rawUser.id) ?? null,
         firstName: rawUser.firstName,
         middleName: rawUser.middleName ?? null,
         lastName: rawUser.lastName,
-        status: rawUser.status,
+        status: resolveEffectiveUserStatus(rawUser),
         createdAt: rawUser.createdAt,
         updatedAt: rawUser.updatedAt,
     };
@@ -468,5 +497,22 @@ async function hashPassword(plainTextPassword) {
 
 
 // --- EXPORTS ---
+function resolveEffectiveUserStatus(rawUser, resolvedSignaturePath = null) {
+    const rawStatus = rawUser?.status;
+    const sigPath = resolvedSignaturePath ?? rawUser?.signaturePath ?? getLocalSignaturePath(rawUser?.id);
+    const hasSignature = Boolean(sigPath && String(sigPath).trim());
+    const isOfficer = constants.isOfficerRole(rawUser?.role);
+
+    if (
+        isOfficer &&
+        !hasSignature &&
+        (rawStatus === constants.USERS_STATUS.PENDING_SSO || rawStatus === constants.USERS_STATUS.VERIFIED)
+    ) {
+        return constants.USERS_STATUS.PENDING_SIGNATURE;
+    }
+
+    return rawStatus;
+}
+
 export { userService, hashPassword };
 

@@ -647,6 +647,171 @@ const storageService = {
         return 'avatars/defaultAvatar.png';
     },
 
+    // SIGNATURES
+    processSignatureToTransparentPng: async (file) => {
+        if (!file) {
+            throw new Error('Signature file is required.');
+        }
+
+        if (file._isProcessedSignaturePng) {
+            return file;
+        }
+
+        return new Promise((resolve, reject) => {
+            const objectUrl = URL.createObjectURL(file);
+            const img = new Image();
+            img.crossOrigin = 'anonymous';
+
+            img.onload = () => {
+                URL.revokeObjectURL(objectUrl);
+                try {
+                    const maxDim = 1000;
+                    let width = img.naturalWidth || img.width || 600;
+                    let height = img.naturalHeight || img.height || 300;
+                    if (width > maxDim || height > maxDim) {
+                        const scale = Math.min(maxDim / width, maxDim / height);
+                        width = Math.max(1, Math.round(width * scale));
+                        height = Math.max(1, Math.round(height * scale));
+                    }
+
+                    const canvas = document.createElement('canvas');
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+                    ctx.drawImage(img, 0, 0, width, height);
+
+                    const imageData = ctx.getImageData(0, 0, width, height);
+                    const data = imageData.data;
+
+                    let minX = width;
+                    let minY = height;
+                    let maxX = 0;
+                    let maxY = 0;
+                    let hasInkPixels = false;
+
+                    // Unconditional luminance-to-alpha pass: converts white/light paper to alpha=0
+                    // while preserving already-transparent pixels and dark signature ink strokes.
+                    const whiteThreshold = 235;
+                    const featherThreshold = 180;
+                    const featherRange = whiteThreshold - featherThreshold;
+
+                    for (let y = 0; y < height; y++) {
+                        for (let x = 0; x < width; x++) {
+                            const idx = (y * width + x) * 4;
+                            const r = data[idx];
+                            const g = data[idx + 1];
+                            const b = data[idx + 2];
+                            const a = data[idx + 3];
+
+                            const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+                            const lumFactor = Math.max(0, Math.min(1, (whiteThreshold - lum) / featherRange));
+                            const newAlpha = Math.round(a * lumFactor);
+
+                            data[idx + 3] = newAlpha;
+
+                            if (newAlpha > 20) {
+                                hasInkPixels = true;
+                                if (x < minX) minX = x;
+                                if (y < minY) minY = y;
+                                if (x > maxX) maxX = x;
+                                if (y > maxY) maxY = y;
+                            }
+                        }
+                    }
+
+                    ctx.putImageData(imageData, 0, 0);
+
+                    let outputCanvas = canvas;
+                    if (hasInkPixels && maxX >= minX && maxY >= minY) {
+                        const pad = 12;
+                        const cropX = Math.max(0, minX - pad);
+                        const cropY = Math.max(0, minY - pad);
+                        const cropW = Math.min(width - cropX, (maxX - minX + 1) + pad * 2);
+                        const cropH = Math.min(height - cropY, (maxY - minY + 1) + pad * 2);
+
+                        const trimmedCanvas = document.createElement('canvas');
+                        trimmedCanvas.width = Math.max(1, cropW);
+                        trimmedCanvas.height = Math.max(1, cropH);
+                        const trimmedCtx = trimmedCanvas.getContext('2d');
+                        trimmedCtx.drawImage(canvas, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+                        outputCanvas = trimmedCanvas;
+                    }
+
+                    outputCanvas.toBlob((blob) => {
+                        if (!blob) {
+                            reject(new Error('Failed to encode transparent PNG signature.'));
+                            return;
+                        }
+                        const baseName = (file.name ? file.name.replace(/\.[^/.]+$/, '') : 'signature') || 'signature';
+                        const processedFile = new File([blob], `${baseName}.png`, {
+                            type: 'image/png',
+                            lastModified: Date.now(),
+                        });
+                        Object.defineProperty(processedFile, '_isProcessedSignaturePng', {
+                            value: true,
+                            enumerable: false,
+                        });
+                        resolve(processedFile);
+                    }, 'image/png');
+                } catch (err) {
+                    reject(err);
+                }
+            };
+
+            img.onerror = () => {
+                URL.revokeObjectURL(objectUrl);
+                reject(new Error('Invalid or unsupported image file for signature.'));
+            };
+
+            img.src = objectUrl;
+        });
+    },
+
+    uploadSignature: async (userId, file) => {
+        if (!storage) {
+            throw new Error('Firebase Storage is not initialized.');
+        }
+
+        if (!userId || !file) {
+            throw new Error('User ID and signature file are required for upload.');
+        }
+
+        const processedPngFile = await storageService.processSignatureToTransparentPng(file);
+        const sanitizedFileName = `signature_${Date.now()}.png`;
+        const primaryStoragePath = `signatures/${userId}/${sanitizedFileName}`;
+        let storageReference = ref(storage, primaryStoragePath);
+        const uploadMetadata = {
+            contentType: 'image/png',
+            customMetadata: {
+                uploaderId: userId,
+                uploadedAt: new Date().toISOString(),
+            },
+        };
+
+        let uploadResult;
+        try {
+            uploadResult = await uploadBytes(storageReference, processedPngFile, uploadMetadata);
+        } catch (uploadError) {
+            if (uploadError?.code === 'storage/unauthorized' || String(uploadError?.message || '').includes('storage/unauthorized')) {
+                const fallbackStoragePath = `avatars/signatures/${userId}/${sanitizedFileName}`;
+                storageReference = ref(storage, fallbackStoragePath);
+                uploadResult = await uploadBytes(storageReference, processedPngFile, uploadMetadata);
+            } else {
+                throw uploadError;
+            }
+        }
+
+        const downloadUrl = await getDownloadURL(uploadResult.ref);
+        URL_CACHE.set(storageReference.fullPath, downloadUrl);
+
+        return {
+            path: storageReference.fullPath,
+            downloadUrl: downloadUrl,
+            sizeBytes: processedPngFile.size,
+            mimeType: 'image/png',
+        };
+    },
+
     triggerBrowserDownload: async (blob, fileName) => {
         return triggerBrowserDownload(blob, fileName);
     },
