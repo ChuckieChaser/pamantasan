@@ -765,15 +765,19 @@ const DocumentViewerModal = ({
                 embedding: aiResult?.embedding || null,
             });
 
-            // 5. Update parent document updatedAt
+            // 5. Update parent document updatedAt & currentVersion
             await useDocumentStore.getState().updateDocument(targetDocId, {
+                currentVersion: nextVersionNumber,
                 updatedAt: new Date().toISOString(),
             });
+
+            // 6. Workflow re-initiation: reset departmental shares to PENDING_APPROVAL and revoke member shares
+            await useDocumentStore.getState().reinitiateWorkflowProgress(targetDocId);
 
             showToast({
                 type: 'success',
                 title: 'New Version Saved',
-                description: `Successfully published version v${nextVersionNumber}.0.`,
+                description: `Successfully saved version v${nextVersionNumber}.0 and submitted for Officer review.`,
             });
 
             if (isSpreadsheet) {

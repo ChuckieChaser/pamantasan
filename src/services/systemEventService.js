@@ -489,9 +489,10 @@ const systemEventService = {
             return null;
         }
 
+        const effectiveVersion = version ?? document?.currentVersion ?? 1;
         const docId = String(document.id);
         const userId = String(user.id);
-        const cacheKey = `${userId}:${docId}`;
+        const cacheKey = `${userId}:${docId}:v${effectiveVersion}`;
         const lastRead = recentReadCache.get(cacheKey);
 
         // Check if recently read in this session
@@ -574,7 +575,12 @@ const systemEventService = {
             if (!lDocId || !lActorId) return false;
             const matchDoc = cleanId(lDocId) === targetCleanDocId;
             const matchActor = cleanId(lActorId) === targetCleanUserId;
-            return isReadAct && isDoc && matchDoc && matchActor;
+
+            // Scope read deduplication strictly to the target version
+            const logVer = parsed?.new?.version ?? parsed?.version;
+            const matchVer = logVer != null ? Number(logVer) === Number(effectiveVersion) : Number(effectiveVersion) === 1;
+
+            return isReadAct && isDoc && matchDoc && matchActor && matchVer;
         });
 
         if (hasExistingRead) {
@@ -608,9 +614,10 @@ const systemEventService = {
                         departmentName: departmentName,
                         _departmentId: departmentId,
                         role: resolvedRole,
-                        version: version || document.currentVersion || 1,
+                        version: effectiveVersion,
                         timestamp: new Date().toISOString(),
                     },
+                    version: effectiveVersion,
                     actorId: userId,
                     actorName: actorName,
                     actorRole: resolvedRole,

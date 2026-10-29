@@ -717,20 +717,88 @@ const useDocumentStore = create((set, get) => ({
         }
     },
 
+    reinitiateWorkflowProgress: async (documentId) => {
+        const cleanId = (uid) => (typeof uid === 'string' ? uid.replace(/-/g, '').toLowerCase() : uid ? String(uid).toLowerCase() : '');
+        const targetClean = cleanId(documentId);
+        const timestamp = new Date().toISOString();
+        const allShares = get().documentShares || [];
+        const sharesForDoc = allShares.filter((s) => cleanId(s.document?.id ?? s.documentId) === targetClean);
+
+        const memberSharesToDelete = sharesForDoc.filter((s) => Boolean(s.recipientId ?? s.recipient?.id));
+        const deletedMemberShareIds = new Set(memberSharesToDelete.map((s) => s.id));
+
+        for (const ms of memberSharesToDelete) {
+            try {
+                await documentService.deleteDocumentShare(ms.id);
+            } catch (e) {
+                console.warn(`[reinitiateWorkflowProgress] Failed to delete member share ${ms.id}:`, e);
+            }
+        }
+
+        const baseSharesToReset = sharesForDoc.filter((s) => !s.recipientId && !s.recipient?.id);
+        const resetBaseShareMap = new Map();
+
+        for (const bs of baseSharesToReset) {
+            try {
+                await documentService.updateDocumentShare(bs.id, {
+                    status: constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL,
+                    rejectionReason: null,
+                    rejecterId: null,
+                    updatedAt: timestamp,
+                });
+                resetBaseShareMap.set(bs.id, {
+                    ...bs,
+                    status: constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL,
+                    rejectionReason: null,
+                    rejecterId: null,
+                    updatedAt: timestamp,
+                });
+            } catch (e) {
+                console.warn(`[reinitiateWorkflowProgress] Failed to reset base share ${bs.id}:`, e);
+            }
+        }
+
+        set((state) => ({
+            documentShares: (state.documentShares || [])
+                .filter((s) => !deletedMemberShareIds.has(s.id))
+                .map((s) => resetBaseShareMap.get(s.id) || s),
+        }));
+
+        for (const bs of baseSharesToReset) {
+            const deptId = bs.departmentId ?? bs.department?.id;
+            if (deptId) {
+                await get().syncParentFolderShares(documentId, deptId).catch(() => {});
+            }
+        }
+
+        return { deletedMemberShareIds, resetBaseShareMap };
+    },
+
     revertDocumentVersion: async (documentId, targetVersion, uploaderId) => {
         set({ isLoading: true, error: null });
 
         try {
             const timestamp = new Date().toISOString();
-            const newVersion = await documentService.revertDocumentVersion(documentId, targetVersion, uploaderId);
+            const rawNewVersion = await documentService.revertDocumentVersion(documentId, targetVersion, uploaderId);
+            const newVersion = {
+                ...rawNewVersion,
+                revertedFromVersion: targetVersion?.version,
+            };
+
+            // WORKFLOW RE-INITIATION:
+            // When a document version is reverted, the approval workflow re-initiates:
+            // Purges member distribution shares and resets departmental base shares to PENDING_APPROVAL.
+            await get().reinitiateWorkflowProgress(documentId);
 
             set((state) => ({
                 documentVersions: [newVersion, ...state.documentVersions],
                 documents: state.documents.map((d) =>
-                    d.id === documentId ? { ...d, updatedAt: timestamp } : d
+                    d.id === documentId
+                        ? { ...d, currentVersion: newVersion?.version ?? d.currentVersion, updatedAt: timestamp }
+                        : d
                 ),
                 selectedDocument: state.selectedDocument?.id === documentId
-                    ? { ...state.selectedDocument, updatedAt: timestamp }
+                    ? { ...state.selectedDocument, currentVersion: newVersion?.version ?? state.selectedDocument.currentVersion, updatedAt: timestamp }
                     : state.selectedDocument,
                 isLoading: false,
                 error: null,
@@ -753,7 +821,7 @@ const useDocumentStore = create((set, get) => ({
                     targetVersion: targetVersion?.version,
                     newVersion: newVersion?.version,
                 },
-                targetRoles: ['ADMINISTRATOR', 'COORDINATOR', 'RMO_STAFF'],
+                targetRoles: ['ADMINISTRATOR', 'COORDINATOR', 'OFFICER', 'RMO_STAFF'],
                 isMajor: true,
             }).catch(() => {});
 
@@ -2894,11 +2962,8 @@ const useDocumentStore = create((set, get) => ({
                 checksum: storageResult.checksum || null,
             });
 
-            // 3. Reset share to PENDING_APPROVAL
-            await documentService.updateDocumentShare(shareId, {
-                status: constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL,
-                updatedAt: timestamp,
-            });
+            // 3. Purge member-specific shares and reset base share to PENDING_APPROVAL
+            await get().reinitiateWorkflowProgress(docId);
 
             // 4. Update parent document name and updatedAt
             await get().updateDocument(docId, {
@@ -2910,11 +2975,6 @@ const useDocumentStore = create((set, get) => ({
             set((state) => ({
                 documents: state.documents.map((d) =>
                     d.id === docId ? { ...d, name: finalDocName, updatedAt: timestamp } : d
-                ),
-                documentShares: state.documentShares.map((item) =>
-                    item.id === shareId
-                        ? { ...item, status: constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL, rejectionReason: null, updatedAt: timestamp }
-                        : item
                 ),
             }));
 
@@ -3002,21 +3062,8 @@ const useDocumentStore = create((set, get) => ({
                 });
             }
 
-            // 3. Reset share(s) to PENDING_APPROVAL
-            const sharesToReset = targetShareId
-                ? (get().documentShares || []).filter((s) => s.id === targetShareId)
-                : (get().documentShares || []).filter(
-                    (s) => (s.document?.id ?? s.documentId) === docId && String(s.status || '').toUpperCase().includes('REJECT')
-                );
-
-            for (const sh of sharesToReset) {
-                await documentService.updateDocumentShare(sh.id, {
-                    status: constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL,
-                    rejectionReason: null,
-                    rejecterId: null,
-                    updatedAt: timestamp,
-                });
-            }
+            // 3. Purge member-specific shares and reset share(s) to PENDING_APPROVAL
+            await get().reinitiateWorkflowProgress(docId);
 
             // 4. Update parent document name and updatedAt
             await get().updateDocument(docId, {
@@ -3025,7 +3072,6 @@ const useDocumentStore = create((set, get) => ({
             });
 
             // 5. Update local store
-            const resetShareIds = new Set(sharesToReset.map((s) => s.id));
             set((state) => ({
                 documents: state.documents.map((d) =>
                     d.id === docId ? { ...d, name: finalDocName, updatedAt: timestamp } : d
@@ -3043,11 +3089,6 @@ const useDocumentStore = create((set, get) => ({
                               updatedAt: timestamp,
                           }
                         : v
-                ),
-                documentShares: state.documentShares.map((item) =>
-                    resetShareIds.has(item.id)
-                        ? { ...item, status: constants.DOCUMENT_SHARES_STATUS.PENDING_APPROVAL, rejectionReason: null, updatedAt: timestamp }
-                        : item
                 ),
             }));
 

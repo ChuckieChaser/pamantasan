@@ -29,6 +29,8 @@ import {
     FileCheck,
     FileX,
     FileQuestion,
+    ChevronDown,
+    Layers,
 } from 'lucide-react';
 import {
     Avatar,
@@ -484,6 +486,31 @@ const useContainerTier = ({ full = 800, half = 600, quarter = 440 } = {}) => {
     return [ref, tier, width];
 };
 
+const getOriginVersion = (ver) => {
+    if (!ver) return null;
+    if (ver?.revertedFromVersion != null) return Number(ver.revertedFromVersion);
+    const m = String(ver?.changeSummary || '').match(/Reverted to version v(\d+)/i);
+    return m ? Number(m[1]) : null;
+};
+
+const getEquivalentVersions = (verItem, allVersions = []) => {
+    if (!verItem) return null;
+    const targetVer = Number(verItem.version ?? verItem.versionNumber);
+    if (!targetVer) return null;
+    const set = new Set([targetVer]);
+    const origin = getOriginVersion(verItem);
+    if (origin) set.add(origin);
+    if (verItem.path) {
+        (allVersions || []).forEach((v) => {
+            if (v.path && v.path === verItem.path) {
+                const vNum = Number(v.version ?? v.versionNumber);
+                if (vNum) set.add(vNum);
+            }
+        });
+    }
+    return set;
+};
+
 
 // --- COMPONENTS ---
 const DashboardPage = ({
@@ -573,6 +600,15 @@ const DashboardPage = ({
     });
     const [pendingSearch, setPendingSearch] = useState('');
     const [specializedSearch, setSpecializedSearch] = useState('');
+    const [selectedAnalysisVersionMap, setSelectedAnalysisVersionMap] = useState({});
+    const [activeAnalysisDropdownId, setActiveAnalysisDropdownId] = useState(null);
+
+    useEffect(() => {
+        if (!activeAnalysisDropdownId) return;
+        const handleOutsideClick = () => setActiveAnalysisDropdownId(null);
+        window.addEventListener('click', handleOutsideClick);
+        return () => window.removeEventListener('click', handleOutsideClick);
+    }, [activeAnalysisDropdownId]);
 
     useEffect(() => {
         if (typeof window === 'undefined') return;
@@ -1147,61 +1183,143 @@ const DashboardPage = ({
                 return true;
             });
 
-            // Count readership once per user only
-            const userFirstReadMap = new Map();
-            nonRmoLogs.forEach((log) => {
-                const actorId = String(log?.actor?.id || log?.actorId || '');
-                if (!actorId) return;
-                const rawDate = log.createdAt || log.timestamp || log.readAt || log.updatedAt;
-                const logTime = rawDate ? new Date(rawDate).getTime() : 0;
-                if (!userFirstReadMap.has(actorId)) {
-                    userFirstReadMap.set(actorId, log);
-                } else {
-                    const existingLog = userFirstReadMap.get(actorId);
-                    const existingRaw = existingLog?.createdAt || existingLog?.timestamp || existingLog?.readAt || existingLog?.updatedAt;
-                    const existingTime = existingRaw ? new Date(existingRaw).getTime() : 0;
-                    if (logTime < existingTime) {
+            // Modular metrics computation per log set (supports All Versions & Per-Version comparison with Option B origin inheritance)
+            const computeMetricsForLogs = (logs) => {
+                const userFirstReadMap = new Map();
+                logs.forEach((log) => {
+                    const actorId = String(log?.actor?.id || log?.actorId || '');
+                    if (!actorId) return;
+                    const rawDate = log.createdAt || log.timestamp || log.readAt || log.updatedAt;
+                    const logTime = rawDate ? new Date(rawDate).getTime() : 0;
+                    if (!userFirstReadMap.has(actorId)) {
                         userFirstReadMap.set(actorId, log);
+                    } else {
+                        const existingLog = userFirstReadMap.get(actorId);
+                        const existingRaw = existingLog?.createdAt || existingLog?.timestamp || existingLog?.readAt || existingLog?.updatedAt;
+                        const existingTime = existingRaw ? new Date(existingRaw).getTime() : 0;
+                        if (logTime < existingTime) {
+                            userFirstReadMap.set(actorId, log);
+                        }
                     }
+                });
+
+                const uniqueLogs = Array.from(userFirstReadMap.values());
+                uniqueLogs.sort((a, b) => {
+                    const timeA = new Date(a.createdAt || a.timestamp || a.readAt || a.updatedAt || 0).getTime();
+                    const timeB = new Date(b.createdAt || b.timestamp || b.readAt || b.updatedAt || 0).getTime();
+                    return timeB - timeA;
+                });
+
+                const totalReads = uniqueLogs.length;
+
+                const now = new Date();
+                const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+                const weekLogs = uniqueLogs.filter((l) => {
+                    const rawDate = l.createdAt || l.timestamp || l.readAt || l.updatedAt;
+                    if (!rawDate) return false;
+                    const d = new Date(rawDate);
+                    return !isNaN(d.getTime()) && d >= sevenDaysAgo;
+                });
+                const weekUniqueReaders = weekLogs.length;
+
+                const currentYear = now.getFullYear();
+                const currentMonth = now.getMonth();
+                const monthLogs = uniqueLogs.filter((l) => {
+                    const rawDate = l.createdAt || l.timestamp || l.readAt || l.updatedAt;
+                    if (!rawDate) return false;
+                    const d = new Date(rawDate);
+                    return !isNaN(d.getTime()) && d.getFullYear() === currentYear && d.getMonth() === currentMonth;
+                });
+                const monthUniqueReaders = monthLogs.length;
+
+                const slots = compute7DaySlots(uniqueLogs);
+                const monthlySlots = computeMonthlySlots(uniqueLogs);
+
+                const deptCounts = {};
+                uniqueLogs.forEach((l) => {
+                    const actorUser = safeUsers.find((u) => String(u.id) === String(l?.actor?.id ?? l?.actorId));
+                    let deptId = actorUser?.departmentId;
+                    if (!deptId && typeof l?.data === 'string') {
+                        try {
+                            const parsed = JSON.parse(l.data);
+                            deptId = parsed.departmentId || parsed._actorDepartmentId || parsed.new?._departmentId;
+                        } catch {}
+                    }
+                    if (deptId) {
+                        deptCounts[deptId] = (deptCounts[deptId] || 0) + 1;
+                    }
+                });
+
+                let topDeptName = 'Repository Wide';
+                let topDeptMax = 0;
+                Object.entries(deptCounts).forEach(([deptId, count]) => {
+                    if (count > topDeptMax) {
+                        topDeptMax = count;
+                        const d = safeDepts.find((item) => item.id === deptId);
+                        if (d) topDeptName = d.name;
+                    }
+                });
+
+                const lastLog = uniqueLogs[0];
+                const rawLastDate = lastLog?.createdAt || lastLog?.timestamp || lastLog?.readAt || lastLog?.updatedAt;
+                const lastReadAt = rawLastDate ? new Date(rawLastDate) : null;
+
+                return {
+                    totalReads,
+                    weekUniqueReaders,
+                    monthUniqueReaders,
+                    slots,
+                    monthlySlots,
+                    topDeptName,
+                    lastReadAt,
+                };
+            };
+
+            const allMetrics = computeMetricsForLogs(nonRmoLogs);
+
+            const versionsForDoc = (documentVersions || []).filter(
+                (v) => cleanId(v.document?.id ?? v.documentId) === cleanId(doc.id)
+            );
+            const latestVer = versionsForDoc.length > 0
+                ? [...versionsForDoc].sort((a, b) => (b.version ?? 0) - (a.version ?? 0))[0]
+                : (Array.isArray(doc.versions) && doc.versions.length > 0
+                    ? doc.versions[0]
+                    : (doc.latestVersion ?? null));
+            const latestVersionNumber = latestVer?.version ?? doc.currentVersion ?? 1;
+
+            const getLogVersion = (log) => {
+                let parsed = log?.data;
+                if (typeof parsed === 'string') {
+                    try { parsed = JSON.parse(parsed); } catch {}
                 }
+                const v = parsed?.new?.version ?? parsed?.version;
+                return v != null ? Number(v) : 1;
+            };
+
+            const availableVersionSet = new Set();
+            versionsForDoc.forEach((v) => {
+                const num = Number(v.version ?? v.versionNumber);
+                if (num) availableVersionSet.add(num);
             });
-
-            const uniqueUserReadLogs = Array.from(userFirstReadMap.values());
-            uniqueUserReadLogs.sort((a, b) => {
-                const timeA = new Date(a.createdAt || a.timestamp || a.readAt || a.updatedAt || 0).getTime();
-                const timeB = new Date(b.createdAt || b.timestamp || b.readAt || b.updatedAt || 0).getTime();
-                return timeB - timeA;
+            if (doc.currentVersion) availableVersionSet.add(Number(doc.currentVersion));
+            if (latestVersionNumber) availableVersionSet.add(Number(latestVersionNumber));
+            nonRmoLogs.forEach((l) => {
+                const lv = getLogVersion(l);
+                if (lv) availableVersionSet.add(lv);
             });
+            if (availableVersionSet.size === 0) availableVersionSet.add(1);
 
-            const totalReads = uniqueUserReadLogs.length;
-            const totalUniqueReaders = totalReads;
+            const availableVersions = Array.from(availableVersionSet).sort((a, b) => b - a);
 
-            const now = new Date();
-            const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-            const weekUniqueUserLogs = uniqueUserReadLogs.filter((l) => {
-                const rawDate = l.createdAt || l.timestamp || l.readAt || l.updatedAt;
-                if (!rawDate) return false;
-                const d = new Date(rawDate);
-                return !isNaN(d.getTime()) && d >= sevenDaysAgo;
+            const versionMetrics = {
+                ALL: allMetrics,
+            };
+            availableVersions.forEach((v) => {
+                const vItem = versionsForDoc.find((item) => Number(item.version ?? item.versionNumber) === v) || { version: v };
+                const equivVersions = getEquivalentVersions(vItem, versionsForDoc) || new Set([v]);
+                const logsForVer = nonRmoLogs.filter((l) => equivVersions.has(getLogVersion(l)));
+                versionMetrics[v] = computeMetricsForLogs(logsForVer);
             });
-            const weekReads = weekUniqueUserLogs.length;
-            const weekUniqueReaders = weekReads;
-
-            // Monthly Reads: unique readers in the current calendar month
-            const currentYear = now.getFullYear();
-            const currentMonth = now.getMonth();
-            const monthUniqueUserLogs = uniqueUserReadLogs.filter((l) => {
-                const rawDate = l.createdAt || l.timestamp || l.readAt || l.updatedAt;
-                if (!rawDate) return false;
-                const d = new Date(rawDate);
-                return !isNaN(d.getTime()) && d.getFullYear() === currentYear && d.getMonth() === currentMonth;
-            });
-            const monthReads = monthUniqueUserLogs.length;
-            const monthUniqueReaders = monthReads;
-
-            const slots = compute7DaySlots(uniqueUserReadLogs);
-            const monthlySlots = computeMonthlySlots(uniqueUserReadLogs);
-            const allTimeSlots = monthlySlots;
 
             let parentFolderName = null;
             let currParentId = doc.parentId ?? doc.parent?.id ?? doc.parentFolderId;
@@ -1227,45 +1345,6 @@ const DashboardPage = ({
                 }
             }
 
-            const deptCounts = {};
-            uniqueUserReadLogs.forEach((l) => {
-                const actorUser = safeUsers.find((u) => String(u.id) === String(l?.actor?.id ?? l?.actorId));
-                let deptId = actorUser?.departmentId;
-                if (!deptId && typeof l?.data === 'string') {
-                    try {
-                        const parsed = JSON.parse(l.data);
-                        deptId = parsed.departmentId || parsed._actorDepartmentId || parsed.new?._departmentId;
-                    } catch {
-                        /* ignore */
-                    }
-                }
-                if (deptId) {
-                    deptCounts[deptId] = (deptCounts[deptId] || 0) + 1;
-                }
-            });
-
-            let topDeptName = 'Repository Wide';
-            let topDeptMax = 0;
-            Object.entries(deptCounts).forEach(([deptId, count]) => {
-                if (count > topDeptMax) {
-                    topDeptMax = count;
-                    const d = safeDepts.find((item) => item.id === deptId);
-                    if (d) topDeptName = d.name;
-                }
-            });
-
-            const lastLog = uniqueUserReadLogs[0];
-            const rawLastDate = lastLog?.createdAt || lastLog?.timestamp || lastLog?.readAt || lastLog?.updatedAt;
-            const lastReadAt = rawLastDate ? new Date(rawLastDate) : null;
-
-            const versionsForDoc = (documentVersions || []).filter(
-                (v) => cleanId(v.document?.id ?? v.documentId) === cleanId(doc.id)
-            );
-            const latestVer = versionsForDoc.length > 0
-                ? [...versionsForDoc].sort((a, b) => (b.version ?? 0) - (a.version ?? 0))[0]
-                : (Array.isArray(doc.versions) && doc.versions.length > 0
-                    ? doc.versions[0]
-                    : (doc.latestVersion ?? null));
             const rawClassification = String(
                 latestVer?.classification || doc.classification || constants.DOCUMENT_VERSIONS_CLASSIFICATION.UNCLASSIFIED
             ).toUpperCase();
@@ -1285,17 +1364,20 @@ const DashboardPage = ({
                 classification,
                 classificationLabel,
                 isShared,
-                weekReads,
-                totalReads,
-                monthReads,
-                weekUniqueReaders,
-                monthUniqueReaders,
-                totalUniqueReaders,
-                slots,
-                monthlySlots,
-                allTimeSlots,
-                topDeptName,
-                lastReadAt,
+                availableVersions,
+                latestVersionNumber,
+                versionMetrics,
+                weekReads: allMetrics.weekUniqueReaders,
+                totalReads: allMetrics.totalReads,
+                monthReads: allMetrics.monthUniqueReaders,
+                weekUniqueReaders: allMetrics.weekUniqueReaders,
+                monthUniqueReaders: allMetrics.monthUniqueReaders,
+                totalUniqueReaders: allMetrics.totalReads,
+                slots: allMetrics.slots,
+                monthlySlots: allMetrics.monthlySlots,
+                allTimeSlots: allMetrics.monthlySlots,
+                topDeptName: allMetrics.topDeptName,
+                lastReadAt: allMetrics.lastReadAt,
                 documentItem: {
                     ...doc,
                     classification,
@@ -2702,113 +2784,190 @@ const DashboardPage = ({
                             </div>
                         ) : (
                             <div className="grid grid-cols-1 gap-3">
-                                {documentAnalyticsList.map((item) => (
-                                    <div
-                                        key={item.id}
-                                        onClick={() => {
-                                            if (item.documentItem) {
-                                                if (item.documentItem.isArchived) {
-                                                    navigate('/archives');
-                                                } else {
-                                                    navigate('/documents');
+                                {documentAnalyticsList.map((item) => {
+                                    const activeVerKey = selectedAnalysisVersionMap[item.id] || 'ALL';
+                                    const currentMetrics = item.versionMetrics?.[activeVerKey] || item.versionMetrics?.['ALL'] || item;
+
+                                    return (
+                                        <div
+                                            key={item.id}
+                                            onClick={() => {
+                                                if (item.documentItem) {
+                                                    if (item.documentItem.isArchived) {
+                                                        navigate('/archives');
+                                                    } else {
+                                                        navigate('/documents');
+                                                    }
+                                                    onSelectActivity?.({ ...item.documentItem, _targetTab: 'information' });
                                                 }
-                                                onSelectActivity?.({ ...item.documentItem, _targetTab: 'information' });
-                                            }
-                                        }}
-                                        className="p-3.5 rounded-xl border border-surface-border bg-surface-hover/20 hover:bg-surface-hover/50 hover:border-accent/40 transition-all flex flex-col gap-3 cursor-pointer group shadow-2xs shrink-0"
-                                    >
-                                        {/* DOCUMENT HEADER TITLE & INLINE META BADGES */}
-                                        <div className="flex flex-wrap sm:flex-nowrap items-center justify-between gap-2 min-w-0">
-                                            <div className="flex items-center gap-2 min-w-0 flex-1 max-w-full">
-                                                <div className="p-1.5 rounded-lg bg-accent-background text-accent shrink-0">
-                                                    <FileText className="h-3.5 w-3.5" />
-                                                </div>
-                                                <span
-                                                    className="font-bold text-xs text-text truncate group-hover:text-accent transition-colors"
-                                                    title={item.title}
-                                                >
-                                                    {item.title}
-                                                </span>
-                                                {/* ACTUAL TOTAL READ COUNT ACROSS ALL */}
-                                                <span
-                                                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-accent/15 text-accent border border-accent/25 shrink-0 select-none shadow-2xs"
-                                                    title={`Total reads across all: ${item.totalReads}`}
-                                                >
-                                                    <Eye className="h-2.5 w-2.5" />
-                                                    <span>{item.totalReads}</span>
-                                                </span>
-                                                {!item.isShared && (
+                                            }}
+                                            className="p-3.5 rounded-xl border border-surface-border bg-surface-hover/20 hover:bg-surface-hover/50 hover:border-accent/40 transition-all flex flex-col gap-3 cursor-pointer group shadow-2xs shrink-0"
+                                        >
+                                            {/* DOCUMENT HEADER TITLE & INLINE META BADGES */}
+                                            <div className="flex flex-wrap sm:flex-nowrap items-center justify-between gap-2 min-w-0">
+                                                <div className="flex items-center gap-2 min-w-0 flex-1 max-w-full">
+                                                    <div className="p-1.5 rounded-lg bg-accent-background text-accent shrink-0">
+                                                        <FileText className="h-3.5 w-3.5" />
+                                                    </div>
                                                     <span
-                                                        className="text-[9px] font-semibold px-1.5 py-0.5 rounded border bg-surface text-text-muted border-surface-border shrink-0 select-none"
-                                                        title="Unshared repository document"
+                                                        className="font-bold text-xs text-text truncate group-hover:text-accent transition-colors"
+                                                        title={item.title}
                                                     >
-                                                        Unshared
+                                                        {item.title}
                                                     </span>
-                                                )}
+                                                    {/* ACTUAL READ COUNT BADGE */}
+                                                    <span
+                                                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-accent/15 text-accent border border-accent/25 shrink-0 select-none shadow-2xs"
+                                                        title={activeVerKey === 'ALL' ? `Total reads across all versions: ${currentMetrics.totalReads}` : `Reads for v${activeVerKey}.0: ${currentMetrics.totalReads}`}
+                                                    >
+                                                        <Eye className="h-2.5 w-2.5" />
+                                                        <span>{currentMetrics.totalReads} {currentMetrics.totalReads === 1 ? 'read' : 'reads'}</span>
+                                                    </span>
+                                                    {/* VERSION BREAKDOWN DROPDOWN PILL */}
+                                                    {item.availableVersions && item.availableVersions.length > 1 && (
+                                                        <div className="relative inline-block" onClick={(e) => e.stopPropagation()}>
+                                                            <button
+                                                                type="button"
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    setActiveAnalysisDropdownId((prev) => (prev === item.id ? null : item.id));
+                                                                }}
+                                                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-surface hover:bg-surface-hover text-text border border-surface-border transition-colors select-none shadow-2xs"
+                                                                title="Compare readership across document versions"
+                                                            >
+                                                                <Layers className="h-2.5 w-2.5 text-accent" />
+                                                                <span>
+                                                                    {activeVerKey === 'ALL'
+                                                                        ? `All Versions (${item.totalReads})`
+                                                                        : `v${activeVerKey}.0 (${item.versionMetrics?.[activeVerKey]?.totalReads || 0})`}
+                                                                </span>
+                                                                <ChevronDown className={`h-2.5 w-2.5 text-text-muted transition-transform duration-150 ${activeAnalysisDropdownId === item.id ? 'rotate-180' : ''}`} />
+                                                            </button>
+
+                                                            {activeAnalysisDropdownId === item.id && (
+                                                                <div
+                                                                    className="absolute left-0 mt-1 w-44 rounded-xl bg-surface border border-surface-border shadow-xl z-30 py-1 overflow-hidden animate-in fade-in zoom-in-95 duration-100"
+                                                                    onClick={(e) => e.stopPropagation()}
+                                                                >
+                                                                    <div className="px-2.5 py-1 text-[9px] font-bold text-text-muted uppercase tracking-wider border-b border-surface-border/50">
+                                                                        Version Comparison
+                                                                    </div>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={(e) => {
+                                                                            e.stopPropagation();
+                                                                            setSelectedAnalysisVersionMap((prev) => ({ ...prev, [item.id]: 'ALL' }));
+                                                                            setActiveAnalysisDropdownId(null);
+                                                                        }}
+                                                                        className={`w-full flex items-center justify-between px-2.5 py-1.5 text-xs text-left transition-colors ${
+                                                                            activeVerKey === 'ALL' ? 'bg-accent/10 text-accent font-semibold' : 'text-text hover:bg-surface-hover'
+                                                                        }`}
+                                                                    >
+                                                                        <span>All Versions</span>
+                                                                        <span className="text-[10px] text-text-muted">{item.versionMetrics?.ALL?.totalReads || 0} reads</span>
+                                                                    </button>
+                                                                    {item.availableVersions.map((v) => {
+                                                                        const vReads = item.versionMetrics?.[v]?.totalReads || 0;
+                                                                        return (
+                                                                            <button
+                                                                                key={v}
+                                                                                type="button"
+                                                                                onClick={(e) => {
+                                                                                    e.stopPropagation();
+                                                                                    setSelectedAnalysisVersionMap((prev) => ({ ...prev, [item.id]: String(v) }));
+                                                                                    setActiveAnalysisDropdownId(null);
+                                                                                }}
+                                                                                className={`w-full flex items-center justify-between px-2.5 py-1.5 text-xs text-left transition-colors ${
+                                                                                    String(activeVerKey) === String(v) ? 'bg-accent/10 text-accent font-semibold' : 'text-text hover:bg-surface-hover'
+                                                                                }`}
+                                                                            >
+                                                                                <span className="flex items-center gap-1">
+                                                                                    <span>v{v}.0</span>
+                                                                                    {v === item.latestVersionNumber && (
+                                                                                        <span className="text-[9px] px-1 rounded bg-accent/15 text-accent font-medium">latest</span>
+                                                                                    )}
+                                                                                </span>
+                                                                                <span className="text-[10px] text-text-muted">{vReads} {vReads === 1 ? 'read' : 'reads'}</span>
+                                                                            </button>
+                                                                        );
+                                                                    })}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                    {!item.isShared && (
+                                                        <span
+                                                            className="text-[9px] font-semibold px-1.5 py-0.5 rounded border bg-surface text-text-muted border-surface-border shrink-0 select-none"
+                                                            title="Unshared repository document"
+                                                        >
+                                                            Unshared
+                                                        </span>
+                                                    )}
+                                                </div>
+
+                                                <div className="flex items-center gap-1.5 shrink-0 ml-auto sm:ml-0">
+                                                    {item.parentFolderName && (
+                                                        <span
+                                                            className="text-[10px] font-medium bg-surface-hover px-1.5 py-0.5 rounded border border-surface-border text-text-muted truncate max-w-[120px] sm:max-w-[160px]"
+                                                            title={item.parentFolderName}
+                                                        >
+                                                            📁 {item.parentFolderName}
+                                                        </span>
+                                                    )}
+                                                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${CLASSIFICATION_STYLES[item.classification] || CLASSIFICATION_STYLES.UNCLASSIFIED}`}>
+                                                        {item.classificationLabel}
+                                                    </span>
+                                                    <ArrowUpRight className="h-3.5 w-3.5 text-text-muted opacity-0 group-hover:opacity-100 transition-opacity shrink-0 hidden sm:inline" />
+                                                </div>
                                             </div>
 
-                                            <div className="flex items-center gap-1.5 shrink-0 ml-auto sm:ml-0">
-                                                {item.parentFolderName && (
-                                                    <span
-                                                        className="text-[10px] font-medium bg-surface-hover px-1.5 py-0.5 rounded border border-surface-border text-text-muted truncate max-w-[120px] sm:max-w-[160px]"
-                                                        title={item.parentFolderName}
-                                                    >
-                                                        📁 {item.parentFolderName}
-                                                    </span>
-                                                )}
-                                                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${CLASSIFICATION_STYLES[item.classification] || CLASSIFICATION_STYLES.UNCLASSIFIED}`}>
-                                                    {item.classificationLabel}
-                                                </span>
-                                                <ArrowUpRight className="h-3.5 w-3.5 text-text-muted opacity-0 group-hover:opacity-100 transition-opacity shrink-0 hidden sm:inline" />
+                                            {/* MODERN DUAL-GRAPH PANEL */}
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-2 border-t border-surface-border">
+                                                {/* GRAPH 1: READ OF THE WEEK */}
+                                                <div className="p-2.5 rounded-lg bg-surface border border-surface-border flex flex-col gap-1.5">
+                                                    <div className="flex items-center justify-between text-xs">
+                                                        <span className="font-semibold text-text flex items-center gap-1 text-[11px]">
+                                                            <Eye className="h-3 w-3 text-accent" />
+                                                            <span>Weekly Reads</span>
+                                                        </span>
+                                                        <span className="text-[10px] text-text-muted font-medium">
+                                                            {currentMetrics.weekUniqueReaders} {currentMetrics.weekUniqueReaders === 1 ? 'reader' : 'readers'}
+                                                        </span>
+                                                    </div>
+
+                                                    <div className="w-full pt-0.5">
+                                                        <ReadershipChart precomputedSlots={currentMetrics.slots} compact={true} showPeak={false} />
+                                                    </div>
+
+                                                    <div className="flex items-center justify-between text-[10px] text-text-muted pt-0.5 border-t border-surface-border/50">
+                                                        <span className="truncate">Top: {currentMetrics.topDeptName}</span>
+                                                    </div>
+                                                </div>
+
+                                                {/* GRAPH 2: MONTHLY READS */}
+                                                <div className="p-2.5 rounded-lg bg-surface border border-surface-border flex flex-col gap-1.5">
+                                                    <div className="flex items-center justify-between text-xs">
+                                                        <span className="font-semibold text-text flex items-center gap-1 text-[11px]">
+                                                            <BarChart3 className="h-3 w-3 text-sky-500" />
+                                                            <span>Monthly Reads</span>
+                                                        </span>
+                                                        <span className="text-[10px] text-text-muted font-medium">
+                                                            {currentMetrics.monthUniqueReaders} {currentMetrics.monthUniqueReaders === 1 ? 'reader' : 'readers'}
+                                                        </span>
+                                                    </div>
+
+                                                    <div className="w-full pt-0.5">
+                                                        <ReadershipChart precomputedSlots={currentMetrics.monthlySlots} compact={true} showPeak={false} color="#0ea5e9" />
+                                                    </div>
+
+                                                    <div className="flex items-center justify-between text-[10px] text-text-muted pt-0.5 border-t border-surface-border/50">
+                                                        <span className="truncate">Top: {currentMetrics.topDeptName}</span>
+                                                    </div>
+                                                </div>
                                             </div>
                                         </div>
-
-                                        {/* MODERN DUAL-GRAPH PANEL */}
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-2 border-t border-surface-border">
-                                            {/* GRAPH 1: READ OF THE WEEK */}
-                                            <div className="p-2.5 rounded-lg bg-surface border border-surface-border flex flex-col gap-1.5">
-                                                <div className="flex items-center justify-between text-xs">
-                                                    <span className="font-semibold text-text flex items-center gap-1 text-[11px]">
-                                                        <Eye className="h-3 w-3 text-accent" />
-                                                        <span>Weekly Reads</span>
-                                                    </span>
-                                                    <span className="text-[10px] text-text-muted font-medium">
-                                                        {item.weekUniqueReaders} {item.weekUniqueReaders === 1 ? 'reader' : 'readers'}
-                                                    </span>
-                                                </div>
-
-                                                <div className="w-full pt-0.5">
-                                                    <ReadershipChart precomputedSlots={item.slots} compact={true} showPeak={false} />
-                                                </div>
-
-                                                <div className="flex items-center justify-between text-[10px] text-text-muted pt-0.5 border-t border-surface-border/50">
-                                                    <span className="truncate">Top: {item.topDeptName}</span>
-                                                </div>
-                                            </div>
-
-                                            {/* GRAPH 2: MONTHLY READS */}
-                                            <div className="p-2.5 rounded-lg bg-surface border border-surface-border flex flex-col gap-1.5">
-                                                <div className="flex items-center justify-between text-xs">
-                                                    <span className="font-semibold text-text flex items-center gap-1 text-[11px]">
-                                                        <BarChart3 className="h-3 w-3 text-sky-500" />
-                                                        <span>Monthly Reads</span>
-                                                    </span>
-                                                    <span className="text-[10px] text-text-muted font-medium">
-                                                        {item.monthUniqueReaders} {item.monthUniqueReaders === 1 ? 'reader' : 'readers'}
-                                                    </span>
-                                                </div>
-
-                                                <div className="w-full pt-0.5">
-                                                    <ReadershipChart precomputedSlots={item.monthlySlots} compact={true} showPeak={false} color="#0ea5e9" />
-                                                </div>
-
-                                                <div className="flex items-center justify-between text-[10px] text-text-muted pt-0.5 border-t border-surface-border/50">
-                                                    <span className="truncate">Top: {item.topDeptName}</span>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                ))}
+                                    );
+                                })}
                             </div>
                         )}
                     </div>

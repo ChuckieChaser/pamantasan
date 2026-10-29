@@ -2444,9 +2444,16 @@ const DocumentsPage = ({
                             (d) => !d.isFolder && (d.parentId === downloadTarget.id || d.parentFolderId === downloadTarget.id)
                         );
                         childFiles.forEach((file) => {
+                            const childVers = (documentVersions || []).filter(
+                                (v) => (v.document?.id ?? v.documentId) === file.id
+                            );
+                            const childLatest = childVers.length > 0
+                                ? [...childVers].sort((a, b) => (b.version ?? 0) - (a.version ?? 0))[0]
+                                : null;
                             systemEventService.recordDocumentRead({
                                 document: file,
                                 user: currentUser,
+                                version: childLatest?.version ?? file.currentVersion ?? 1,
                             }).catch(() => {});
                         });
                     } else {

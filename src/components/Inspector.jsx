@@ -324,6 +324,31 @@ const isPdfFileItem = (item, versList = []) => {
 
 const cleanId = (id) => (typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : id ? String(id).toLowerCase() : '');
 
+const getOriginVersion = (ver) => {
+    if (!ver) return null;
+    if (ver?.revertedFromVersion != null) return Number(ver.revertedFromVersion);
+    const m = String(ver?.changeSummary || '').match(/Reverted to version v(\d+)/i);
+    return m ? Number(m[1]) : null;
+};
+
+const getEquivalentVersions = (verItem, allVersions = []) => {
+    if (!verItem) return null;
+    const targetVer = Number(verItem.version ?? verItem.versionNumber);
+    if (!targetVer) return null;
+    const set = new Set([targetVer]);
+    const origin = getOriginVersion(verItem);
+    if (origin) set.add(origin);
+    if (verItem.path) {
+        (allVersions || []).forEach((v) => {
+            if (v.path && v.path === verItem.path) {
+                const vNum = Number(v.version ?? v.versionNumber);
+                if (vNum) set.add(vNum);
+            }
+        });
+    }
+    return set;
+};
+
 const computeDeptActualViewersAndReads = ({
     targetDeptId,
     fileStatus,
@@ -333,6 +358,7 @@ const computeDeptActualViewersAndReads = ({
     allDocumentShares = [],
     isFolder = false,
     descendantIds = null,
+    targetVersion = null,
 }) => {
     const cleanDept = cleanId(targetDeptId);
     const cleanDoc = cleanId(targetDocId);
@@ -425,6 +451,21 @@ const computeDeptActualViewersAndReads = ({
                 String(log?.action || '').toUpperCase()
             );
             if (!isReadAction) return;
+
+            if (!isFolder && targetVersion != null) {
+                let parsed = log?.data;
+                if (typeof parsed === 'string') {
+                    try { parsed = JSON.parse(parsed); } catch {}
+                }
+                const logVer = parsed?.new?.version ?? parsed?.version;
+                const effLogVer = logVer != null ? Number(logVer) : 1;
+                const isMatch = targetVersion instanceof Set
+                    ? targetVersion.has(effLogVer)
+                    : Array.isArray(targetVersion)
+                    ? targetVersion.includes(effLogVer)
+                    : effLogVer === Number(targetVersion);
+                if (!isMatch) return;
+            }
 
             const actorClean = cleanId(log?.actor?.id ?? log?.actorId);
             if (actorClean === vClean) {
@@ -4825,12 +4866,23 @@ const Inspector = ({
                                             deptAuditLogs = deptLogs;
                                         } else {
                                             const nonRmoUserFirstReadLogs = new Map();
+                                            const targetFileVer = (documentVersions && documentVersions[0]?.version) ?? item?.currentVersion ?? 1;
+                                            const targetVerItem = (documentVersions && documentVersions[0]) || null;
+                                            const equivVersions = getEquivalentVersions(targetVerItem, documentVersions) || new Set([Number(targetFileVer)]);
 
                                             (allAuditLogs || []).forEach((log) => {
                                                 const docId = log?.entityId || log?.document?.id || log?.documentId;
                                                 const isDoc = docId && cleanId(docId) === cleanTargetId;
                                                 const isReadAction = ['READ', 'VIEW', 'VIEWED', 'DOWNLOAD', 'DOWNLOADED', 'ACCESS', 'ACCESSED', 'OPEN', 'OPENED'].includes(String(log?.action || '').toUpperCase());
                                                 if (!isDoc || !isReadAction) return;
+
+                                                let parsed = log?.data;
+                                                if (typeof parsed === 'string') {
+                                                    try { parsed = JSON.parse(parsed); } catch {}
+                                                }
+                                                const logVer = parsed?.new?.version ?? parsed?.version;
+                                                const effLogVer = logVer != null ? Number(logVer) : 1;
+                                                if (!equivVersions.has(effLogVer)) return;
 
                                                 const actorId = String(log?.actor?.id ?? log?.actorId ?? '');
                                                 const actorClean = cleanId(actorId);
@@ -4883,6 +4935,11 @@ const Inspector = ({
                                             ? constants.DOCUMENT_SHARES_STATUS.STASHED
                                             : shareItem.status;
 
+                                        const targetVerItem = !isFold ? (documentVersions && documentVersions[0]) : null;
+                                        const equivVersions = !isFold
+                                            ? getEquivalentVersions(targetVerItem, documentVersions) || new Set([(documentVersions && documentVersions[0]?.version) ?? item?.currentVersion ?? 1])
+                                            : null;
+
                                         const deptReadership = computeDeptActualViewersAndReads({
                                             targetDeptId: targetDeptClean,
                                             fileStatus: singleEffectiveStatus,
@@ -4892,6 +4949,7 @@ const Inspector = ({
                                             allDocumentShares,
                                             isFolder: isFold,
                                             descendantIds,
+                                            targetVersion: equivVersions,
                                         });
                                         const isDeptReadershipExpanded = expandedReadershipShareIds.has(shareItem.id);
 
@@ -5029,6 +5087,7 @@ const Inspector = ({
                                                                 );
                                                                 const childRejecterName = childRejecter ? `${childRejecter.firstName || ''} ${childRejecter.lastName || ''}`.trim() : null;
 
+                                                                const childEquivVersions = getEquivalentVersions(childLatestVer, childVersions) || new Set([Number(childLatestVer?.versionNumber ?? childLatestVer?.version ?? childFile?.currentVersion ?? 1)]);
                                                                 const childReadership = computeDeptActualViewersAndReads({
                                                                     targetDeptId: targetDeptClean,
                                                                     fileStatus,
@@ -5037,6 +5096,7 @@ const Inspector = ({
                                                                     allAuditLogs,
                                                                     allDocumentShares,
                                                                     isFolder: false,
+                                                                    targetVersion: childEquivVersions,
                                                                 });
 
 
